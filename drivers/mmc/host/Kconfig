@@ -33,6 +33,19 @@ config MMC_ARMMMCI
 
 	  If unsure, say N.
 
+config MMC_RDA
+	tristate "RDA SD/SDIO/eMMC Interface support"
+	depends on ARCH_RDA
+	select RDA_IFC
+	help
+	  This enables support for the RDA8810PL SD/SDIO/eMMC host.
+
+	  If unsure, say N.
+
+config RDA_IFC
+	bool
+	depends on ARCH_RDA
+
 config MMC_QCOM_DML
 	bool "Qualcomm Data Mover for SD Card Controller"
 	depends on MMC_ARMMMCI && QCOM_BAM_DMA
