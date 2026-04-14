@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef __PLAT_RDA_CHARGER_H
+#define __PLAT_RDA_CHARGER_H
+
+enum {
+	PM_CHARGER_DISCONNECTED = 0,
+	PM_CHARGER_CONNECTED = 1,
+	PM_CHARGER_CHARGING = 2,
+	PM_CHARGER_FINISHED = 3,
+};
+
+#endif /* __PLAT_RDA_CHARGER_H */
