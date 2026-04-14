@@ -163,6 +163,8 @@ config USB_ULPI_VIEWPORT
 config USB_RDA_PHY
 	bool  "RDA usb phy util"
 	depends on ARCH_RDA
+	depends on !USB_GPIO_VBUS
+	select USB_PHY
 	help
 	  RDA USB support
 

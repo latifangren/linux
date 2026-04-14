@@ -1990,6 +1990,7 @@ static int rda_mmc_resume(struct platform_device *dev)
 
 static const struct of_device_id rda_mmc_dt_matches[] = {
 	{ .compatible = "rda,8810pl-mmc" },
+	{ .compatible = "rda,8810pl-sdmmc" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, rda_mmc_dt_matches);
