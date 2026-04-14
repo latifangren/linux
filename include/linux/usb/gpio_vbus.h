@@ -22,6 +22,7 @@ struct usb_phy;
 void rda_start_host(struct usb_bus *host);
 void rda_stop_host(struct usb_bus *host);
 void rda_usbid_set(int value);
+int rda_modem_charger_enable(int enable);
 
 void rda_vbus_release(void);
 void rda_vbus_acquire(void);

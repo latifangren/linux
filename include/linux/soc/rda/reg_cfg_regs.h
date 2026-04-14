@@ -36,4 +36,10 @@ typedef volatile struct {
 #define CFG_REGS_CLK_OUT_MASK		(1U << 28)
 #define CFG_REGS_CLK_OUT_CLK_OUT	(1U << 28)
 
+/* Alt_mux_select bits used by USBID on i96 board (GPO_1 over KEYOUT_5/LPG). */
+#define CFG_REGS_GPO_1_MASK		(3U << 22)
+#define CFG_REGS_GPO_1_GPO_1		(0U << 22)
+#define CFG_REGS_GPO_1_LPG		(1U << 22)
+#define CFG_REGS_GPO_1_KEYOUT_5	(2U << 22)
+
 #endif /* __LINUX_SOC_RDA_REG_CFG_REGS_H */

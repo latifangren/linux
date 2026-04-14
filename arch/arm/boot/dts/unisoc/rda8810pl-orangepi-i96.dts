@@ -152,5 +152,9 @@
 	vbus-supply = <&v_usb_reg>;
 	rda,vbus-always-on;
 	rda,vbus-switch-gpios = <&gpioa 17 GPIO_ACTIVE_HIGH>;
+	rda,usbid-gpo-enable;
+	rda,usbid-gpo-controller = <&gpioa>;
+	rda,usbid-gpo-bit = <1>;
+	rda,usbid-dual-fallback;
 	rda,plugin-ctrl-gpios = <&gpiob 5 GPIO_ACTIVE_HIGH>;
 };

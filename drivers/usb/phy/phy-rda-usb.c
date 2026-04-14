@@ -70,6 +70,7 @@ static struct regulator *usb_ldo;
 static struct wake_lock vbus_lock;
 static struct workqueue_struct *usb_otg_wq = NULL;
 static struct clk *clk; /* 'usb' clock, enable/disable it when the cable is plugged in/out */
+static struct msys_device *rda_usb_charger_msys;
 
 extern int android_usb_ready(void);
 extern int musb_g_addressed(struct usb_gadget *gadget);
@@ -101,7 +102,24 @@ int __weak musb_disconnect_gadget(struct usb_gadget *gadget)
 
 int __weak rda_modem_charger_enable(int enable)
 {
-	(void)enable;
+	struct client_cmd cmd_set;
+	unsigned int ret;
+	int value = !!enable;
+
+	if (!rda_usb_charger_msys)
+		return -ENODEV;
+
+	memset(&cmd_set, 0, sizeof(cmd_set));
+	cmd_set.pmsys_dev = rda_usb_charger_msys;
+	cmd_set.mod_id = SYS_PM_MOD;
+	cmd_set.mesg_id = SYS_PM_CMD_ENABLE_CHARGER;
+	cmd_set.pdata = &value;
+	cmd_set.data_size = sizeof(value);
+
+	ret = rda_msys_send_cmd(&cmd_set);
+	if (ret > 0)
+		return -EIO;
+
 	return 0;
 }
 
@@ -551,6 +569,7 @@ static int __init gpio_vbus_probe(struct platform_device *pdev)
 
 	mutex_init(&mutex);
 	rda_msys_register_device(gpio_vbus->vbus_msys);
+	rda_usb_charger_msys = gpio_vbus->vbus_msys;
 
 	ATOMIC_INIT_NOTIFIER_HEAD(&gpio_vbus->phy.notifier);
 
@@ -638,6 +657,8 @@ static int __exit gpio_vbus_remove(struct platform_device *pdev)
 
 	rda_msys_unregister_device(gpio_vbus->vbus_msys);
 	rda_msys_free_device(gpio_vbus->vbus_msys);
+	if (rda_usb_charger_msys == gpio_vbus->vbus_msys)
+		rda_usb_charger_msys = NULL;
 
 	free_irq(gpio_to_irq(otg_detect), &pdev->dev);
 	gpio_free(otg_detect);

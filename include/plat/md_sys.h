@@ -8,6 +8,7 @@
 
 #define SYS_PM_MOD 0
 #define SYS_PM_CMD_SET_CHARGER_TYPE 0
+#define SYS_PM_CMD_ENABLE_CHARGER 0x100B
 #define SYS_PM_MESG_BATT_STATUS 0
 
 struct msys_device {

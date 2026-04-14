@@ -343,7 +343,7 @@ static int rda_i2c_probe(struct platform_device *pdev)
 		dev->master_clk = clk_get(NULL, RDA_CLK_APB1);
 	if (IS_ERR(dev->master_clk)) {
 		ret = PTR_ERR(dev->master_clk);
-		dev_warn(&pdev->dev,
+		dev_dbg(&pdev->dev,
 			 "no clock handler for %s: %d, fallback to fixed %lu Hz\n",
 			 RDA_CLK_APB1, ret, RDA_I2C_DEFAULT_BUS_CLK);
 		dev->master_clk = NULL;
@@ -351,7 +351,7 @@ static int rda_i2c_probe(struct platform_device *pdev)
 	} else {
 		ret = clk_prepare_enable(dev->master_clk);
 		if (ret) {
-			dev_warn(&pdev->dev,
+			dev_dbg(&pdev->dev,
 				 "failed to enable %s: %d, fallback to fixed %lu Hz\n",
 				 RDA_CLK_APB1, ret, RDA_I2C_DEFAULT_BUS_CLK);
 			clk_put(dev->master_clk);
