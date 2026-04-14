@@ -60,6 +60,15 @@
 		regulator-always-on;
 	};
 
+	v_usb_reg: v-usb-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "v_usb";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
 	rda_combo_net: combo-net {
 		compatible = "rda,8810pl-combo-net";
 		clocks = <&rda_out_clk>, <&rda_aux_clk>;
@@ -130,6 +139,11 @@
 		compatible = "rda_bt_core_i2c";
 		reg = <0x15>;
 	};
+};
+
+&usb_phy {
+	vbus-supply = <&v_usb_reg>;
+	status = "okay";
 };
 
 &usb {
