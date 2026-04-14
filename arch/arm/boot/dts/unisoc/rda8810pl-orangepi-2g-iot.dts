@@ -147,6 +147,8 @@
 
 &usb {
 	status = "okay";
+	dr_mode = "otg";
+	vbus-supply = <&v_usb_reg>;
 	rda,vbus-switch-gpios = <&gpioa 17 GPIO_ACTIVE_HIGH>;
 	rda,plugin-ctrl-gpios = <&gpiob 5 GPIO_ACTIVE_HIGH>;
 };
