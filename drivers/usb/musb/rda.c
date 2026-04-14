@@ -133,6 +133,7 @@ static int rda_musb_set_mode(struct musb *musb, u8 mode)
 static int gpio_vbus_switch = -1;
 static int gpio_usbid_ctrl = -1;
 static int gpio_plugin_ctrl = -1;
+static bool rda_vbus_always_on;
 
 static int rda_musb_vbus_status(struct musb *musb)
 {
@@ -147,7 +148,8 @@ static int rda_musb_vbus_status(struct musb *musb)
 static void rda_musb_set_vbus(struct musb *musb, int is_on)
 {
 	if (gpio_is_valid(gpio_vbus_switch))
-		gpio_set_value(gpio_vbus_switch, !!is_on);
+		gpio_set_value(gpio_vbus_switch,
+			      rda_vbus_always_on ? 1 : !!is_on);
 
 	return;
 }
@@ -327,7 +329,10 @@ static int rda_probe(struct platform_device *pdev)
 					     "vbus-switch");
 	if (gpio_is_valid(gpio_vbus_switch)) {
 		gpio_request(gpio_vbus_switch, "vbus-switch");
-		gpio_direction_output(gpio_vbus_switch, 0);
+		rda_vbus_always_on = device_property_read_bool(&pdev->dev,
+			"rda,vbus-always-on");
+		gpio_direction_output(gpio_vbus_switch,
+			rda_vbus_always_on ? 1 : 0);
 		host_enable = 1;
 	} else {
 		pr_info("cannot get vbus switch gpio, usb host disable\n ");
@@ -342,8 +347,8 @@ static int rda_probe(struct platform_device *pdev)
 			gpio_direction_output(gpio_usbid_ctrl,
 				pdata->mode == MUSB_HOST ? 0 : 1);
 		} else {
-			pr_info("can't get usbid control, maybe usbid is \
-					connected to micro-A plug\n ");
+			dev_dbg(&pdev->dev,
+				"optional usbid control GPIO is missing\n");
 		}
 
 		gpio_plugin_ctrl = rda_get_named_gpio(pdev,
@@ -353,8 +358,8 @@ static int rda_probe(struct platform_device *pdev)
 			gpio_request(gpio_plugin_ctrl, "plugin_ctrl");
 			gpio_direction_output(gpio_plugin_ctrl, 1);
 		} else {
-			pr_info("can't get plugin control, maybe plugin is \
-				disconnected to usbid, only for force download\n ");
+			dev_dbg(&pdev->dev,
+				"optional plugin control GPIO is missing\n");
 		}
 	}
 
