@@ -7,6 +7,7 @@
 /dts-v1/;
 
 #include "rda8810pl.dtsi"
+#include <dt-bindings/gpio/gpio.h>
 
 / {
 	compatible = "xunlong,orangepi-i96", "rda,8810pl";
@@ -16,6 +17,9 @@
 		serial0 = &uart2;
 		serial1 = &uart1;
 		serial2 = &uart3;
+		mmc0 = &sdmmc0;
+		mmc1 = &sdmmc1;
+		i2c0 = &i2c0;
 	};
 
 	chosen {
@@ -32,6 +36,38 @@
 		clock-frequency = <921600>;
 		#clock-cells = <0>;
 	};
+
+	rda_out_clk: rda-out-clk {
+		compatible = "fixed-clock";
+		clock-frequency = <32768>;
+		#clock-cells = <0>;
+		clock-output-names = "clk_out";
+	};
+
+	rda_aux_clk: rda-aux-clk {
+		compatible = "fixed-clock";
+		clock-frequency = <26000000>;
+		#clock-cells = <0>;
+		clock-output-names = "aux_clk";
+	};
+
+	v_bt_reg: v-bt-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "v_bt";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	rda_combo_net: combo-net {
+		compatible = "rda,8810pl-combo-net";
+		clocks = <&rda_out_clk>, <&rda_aux_clk>;
+		clock-names = "rda_out", "rda_aux";
+		v_bt-supply = <&v_bt_reg>;
+		status = "okay";
+	};
+
 };
 
 &uart1 {
@@ -47,4 +83,57 @@
 &uart3 {
 	status = "okay";
 	clocks = <&uart_clk>;
+};
+
+&sdmmc0 {
+	status = "okay";
+	bus-width = <4>;
+	max-frequency = <30000000>;
+	rda,mclk-adj = <1>;
+	rda,clk-inv;
+	cap-sd-highspeed;
+};
+
+&sdmmc1 {
+	status = "okay";
+	bus-width = <4>;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	min-frequency = <1000000>;
+	max-frequency = <20000000>;
+	rda,mclk-adj = <3>;
+	rda,clk-inv;
+	sdio-safe-frequency = <6000000>;
+	sdio-ultra-safe-frequency = <1000000>;
+	rda,sdio-eirq-gpios = <&gpiob 2 GPIO_ACTIVE_LOW>;
+};
+
+&i2c0 {
+	status = "okay";
+
+	wifi_rf@14 {
+		compatible = "rda_wifi_rf_i2c";
+		reg = <0x14>;
+	};
+
+	wifi_core@13 {
+		compatible = "rda_wifi_core_i2c";
+		reg = <0x13>;
+	};
+
+	bt_rf@16 {
+		compatible = "rda_bt_rf_i2c";
+		reg = <0x16>;
+	};
+
+	bt_core@15 {
+		compatible = "rda_bt_core_i2c";
+		reg = <0x15>;
+	};
+};
+
+&usb {
+	status = "okay";
+	rda,vbus-switch-gpios = <&gpioa 17 GPIO_ACTIVE_HIGH>;
+	rda,plugin-ctrl-gpios = <&gpiob 5 GPIO_ACTIVE_HIGH>;
 };

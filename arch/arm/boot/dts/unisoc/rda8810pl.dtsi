@@ -7,6 +7,7 @@
  */
 
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/gpio/gpio.h>
 
 / {
 	compatible = "rda,8810pl";
@@ -31,6 +32,21 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
+	};
+
+	usb_phy: usb-phy {
+		compatible = "usb-nop-xceiv";
+		status = "okay";
+	};
+
+	usb: usb@20400000 {
+		compatible = "rda,8810pl-musb";
+		reg = <0x20400000 0x40000>;
+		interrupts = <20 IRQ_TYPE_LEVEL_HIGH>,
+			     <20 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "mc", "dma";
+		dr_mode = "otg";
+		status = "disabled";
 	};
 
 	modem@10000000 {
@@ -68,6 +84,36 @@
 		#size-cells = <1>;
 		ranges = <0x0 0x20900000 0x100000>;
 
+		i2c0: i2c@50000 {
+			compatible = "rda,8810pl-i2c";
+			reg = <0x50000 0x1000>;
+			interrupts = <1 IRQ_TYPE_LEVEL_HIGH>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c1: i2c@60000 {
+			compatible = "rda,8810pl-i2c";
+			reg = <0x60000 0x1000>;
+			interrupts = <1 IRQ_TYPE_LEVEL_HIGH>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c2: i2c@70000 {
+			compatible = "rda,8810pl-i2c";
+			reg = <0x70000 0x1000>;
+			interrupts = <1 IRQ_TYPE_LEVEL_HIGH>;
+			clock-frequency = <100000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		timer@10000 {
 			compatible = "rda,8810pl-timer";
 			reg = <0x10000 0x1000>;
@@ -76,7 +122,7 @@
 			interrupt-names = "hwtimer", "ostimer";
 		};
 
-		gpioa@30000 {
+		gpioa: gpioa@30000 {
 			compatible = "rda,8810pl-gpio";
 			reg = <0x30000 0x1000>;
 			gpio-controller;
@@ -87,7 +133,7 @@
 			interrupts = <12 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
-		gpiob@31000 {
+		gpiob: gpiob@31000 {
 			compatible = "rda,8810pl-gpio";
 			reg = <0x31000 0x1000>;
 			gpio-controller;
@@ -98,7 +144,7 @@
 			interrupts = <13 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
-		gpiod@32000 {
+		gpiod: gpiod@32000 {
 			compatible = "rda,8810pl-gpio";
 			reg = <0x32000 0x1000>;
 			gpio-controller;
@@ -134,6 +180,60 @@
 			compatible = "rda,8810pl-uart";
 			reg = <0x90000 0x1000>;
 			interrupts = <11 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		spi0: spi@20000 {
+			compatible = "rda,8810pl-spi";
+			reg = <0x20000 0x1000>;
+			interrupts = <6 IRQ_TYPE_LEVEL_HIGH>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-cs = <3>;
+			status = "disabled";
+		};
+
+		spi1: spi@30000 {
+			compatible = "rda,8810pl-spi";
+			reg = <0x30000 0x1000>;
+			interrupts = <7 IRQ_TYPE_LEVEL_HIGH>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-cs = <3>;
+			status = "disabled";
+		};
+
+		spi2: spi@40000 {
+			compatible = "rda,8810pl-spi";
+			reg = <0x40000 0x1000>;
+			interrupts = <8 IRQ_TYPE_LEVEL_HIGH>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-cs = <2>;
+			status = "disabled";
+		};
+
+		sdmmc0: mmc@50000 {
+			compatible = "rda,8810pl-sdmmc";
+			reg = <0x50000 0x1000>;
+			interrupts = <3 IRQ_TYPE_LEVEL_HIGH>;
+			rda,host-id = <0>;
+			status = "disabled";
+		};
+
+		sdmmc1: mmc@60000 {
+			compatible = "rda,8810pl-sdmmc";
+			reg = <0x60000 0x1000>;
+			interrupts = <4 IRQ_TYPE_LEVEL_HIGH>;
+			rda,host-id = <1>;
+			status = "disabled";
+		};
+
+		sdmmc2: mmc@70000 {
+			compatible = "rda,8810pl-sdmmc";
+			reg = <0x70000 0x1000>;
+			interrupts = <5 IRQ_TYPE_LEVEL_HIGH>;
+			rda,host-id = <2>;
 			status = "disabled";
 		};
 	};
