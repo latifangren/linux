@@ -160,4 +160,10 @@ config USB_ULPI_VIEWPORT
 	  Provides read/write operations to the ULPI phy register set for
 	  controllers with a viewport register (e.g. Chipidea/ARC controllers).
 
+config USB_RDA_PHY
+	bool  "RDA usb phy util"
+	depends on ARCH_RDA
+	help
+	  RDA USB support
+
 endmenu
