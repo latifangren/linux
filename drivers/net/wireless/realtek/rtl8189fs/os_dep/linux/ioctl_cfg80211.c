@@ -34,6 +34,11 @@
 #define STATION_INFO_PLINK_STATE	BIT(NL80211_STA_INFO_PLINK_STATE)
 #define STATION_INFO_SIGNAL			BIT(NL80211_STA_INFO_SIGNAL)
 #define STATION_INFO_TX_BITRATE		BIT(NL80211_STA_INFO_TX_BITRATE)
+#ifdef NL80211_STA_INFO_RX_BITRATE
+#define STATION_INFO_RX_BITRATE		BIT(NL80211_STA_INFO_RX_BITRATE)
+#else
+#define STATION_INFO_RX_BITRATE		0
+#endif
 #define STATION_INFO_RX_PACKETS		BIT(NL80211_STA_INFO_RX_PACKETS)
 #define STATION_INFO_TX_PACKETS		BIT(NL80211_STA_INFO_TX_PACKETS)
 #define STATION_INFO_TX_FAILED		BIT(NL80211_STA_INFO_TX_FAILED)
@@ -2191,6 +2196,118 @@ static void rtw_cfg80211_fill_mesh_only_sta_info(struct mesh_plink_ent *plink, s
 }
 #endif /* CONFIG_RTW_MESH */
 
+static u32 rtw_cfg80211_get_vht_bitrate(u8 mcs, u8 bw, u8 nss, u8 sgi)
+{
+	static const u32 base[4][10] = {
+		{6500000, 13000000, 19500000, 26000000, 39000000, 52000000, 58500000, 65000000, 78000000, 86500000},
+		{13500000, 27000000, 40500000, 54000000, 81000000, 108000000, 121500000, 135000000, 162000000, 180000000},
+		{29300000, 58500000, 87800000, 117000000, 175500000, 234000000, 263300000, 292500000, 351000000, 390000000},
+		{58500000, 117000000, 175500000, 234000000, 351000000, 468000000, 526500000, 585000000, 702000000, 780000000},
+	};
+	u32 bitrate;
+	int bw_idx;
+
+	if (mcs > 9 || nss < 1 || nss > 4)
+		return 0;
+
+	switch (bw) {
+	case CHANNEL_WIDTH_160:
+		bw_idx = 3;
+		break;
+	case CHANNEL_WIDTH_80:
+		bw_idx = 2;
+		break;
+	case CHANNEL_WIDTH_40:
+		bw_idx = 1;
+		break;
+	case CHANNEL_WIDTH_20:
+		bw_idx = 0;
+		break;
+	default:
+		return 0;
+	}
+
+	bitrate = base[bw_idx][mcs] * nss;
+	if (sgi)
+		bitrate = (bitrate / 9) * 10;
+
+	return (bitrate + 50000) / 100000;
+}
+
+static u32 rtw_cfg80211_get_ht_bitrate(u8 mcs, u8 bw, u8 sgi)
+{
+	int modulation, streams;
+	u32 bitrate;
+
+	if (mcs >= 32)
+		return 0;
+
+	if (bw > CHANNEL_WIDTH_40)
+		return 0;
+
+	modulation = mcs & 7;
+	streams = (mcs >> 3) + 1;
+	bitrate = (bw == CHANNEL_WIDTH_40) ? 13500000 : 6500000;
+
+	if (modulation < 4)
+		bitrate *= (modulation + 1);
+	else if (modulation == 4)
+		bitrate *= (modulation + 2);
+	else
+		bitrate *= (modulation + 3);
+
+	bitrate *= streams;
+	if (sgi)
+		bitrate = (bitrate / 9) * 10;
+
+	return (bitrate + 50000) / 100000;
+}
+
+static u32 rtw_cfg80211_desc_rate_to_bitrate(u8 bw, u8 rate_idx, u8 sgi)
+{
+	static const u16 legacy_rate[12] = {10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540};
+
+	if (rate_idx <= DESC_RATE54M)
+		return legacy_rate[rate_idx];
+
+	if (rate_idx >= DESC_RATEMCS0 && rate_idx <= DESC_RATEMCS31)
+		return rtw_cfg80211_get_ht_bitrate(rate_idx - DESC_RATEMCS0, bw, sgi);
+
+	if (rate_idx >= DESC_RATEVHTSS1MCS0 && rate_idx <= DESC_RATEVHTSS4MCS9)
+		return rtw_cfg80211_get_vht_bitrate((rate_idx - DESC_RATEVHTSS1MCS0) % 10,
+			bw, ((rate_idx - DESC_RATEVHTSS1MCS0) / 10) + 1, sgi);
+
+	return 0;
+}
+
+static void rtw_cfg80211_fill_sta_bitrate(_adapter *padapter, struct sta_info *psta, struct station_info *sinfo)
+{
+	u8 tx_rate, tx_rate_idx, tx_sgi;
+	u8 rx_rate, rx_rate_idx, rx_sgi;
+	u32 tx_bitrate, rx_bitrate;
+
+	if (!psta)
+		return;
+
+	tx_rate = (padapter->fix_rate == 0xff) ? psta->cmn.ra_info.curr_tx_rate : padapter->fix_rate;
+	tx_rate_idx = tx_rate & 0x7f;
+	tx_sgi = tx_rate >> 7;
+	tx_bitrate = rtw_cfg80211_desc_rate_to_bitrate(psta->cmn.ra_info.curr_tx_bw, tx_rate_idx, tx_sgi);
+	if (tx_bitrate) {
+		sinfo->filled |= STATION_INFO_TX_BITRATE;
+		sinfo->txrate.legacy = tx_bitrate;
+	}
+
+	rx_rate = psta->curr_rx_rate;
+	rx_rate_idx = rx_rate & 0x7f;
+	rx_sgi = rx_rate >> 7;
+	rx_bitrate = rtw_cfg80211_desc_rate_to_bitrate(psta->cmn.bw_mode, rx_rate_idx, rx_sgi);
+	if (rx_bitrate) {
+		sinfo->filled |= STATION_INFO_RX_BITRATE;
+		sinfo->rxrate.legacy = rx_bitrate;
+	}
+}
+
 static int cfg80211_rtw_get_station(struct wiphy *wiphy,
 	struct net_device *ndev,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 16, 0))
@@ -2268,6 +2385,7 @@ static int cfg80211_rtw_get_station(struct wiphy *wiphy,
 			sinfo->filled |= STATION_INFO_SIGNAL;
 			sinfo->signal = translate_percentage_to_dbm(psta->cmn.rssi_stat.rssi);
 		}
+		rtw_cfg80211_fill_sta_bitrate(padapter, psta, sinfo);
 		sinfo->filled |= STATION_INFO_INACTIVE_TIME;
 		sinfo->inactive_time = rtw_get_passing_time_ms(psta->sta_stats.last_rx_time);
 		sinfo->filled |= STATION_INFO_RX_PACKETS;
@@ -4107,12 +4225,19 @@ static int cfg80211_rtw_get_txpower(struct wiphy *wiphy,
 #endif
 	int *dbm)
 {
-	RTW_INFO("%s\n", __func__);
-	(void)wdev;
-	(void)radio_idx;
-	(void)link_id;
+	struct cfg80211_chan_def *chandef = NULL;
 
-	*dbm = (12);
+	RTW_INFO("%s\n", __func__);
+	(void)radio_idx;
+	(void)wiphy;
+
+	if (wdev)
+		chandef = wdev_chandef(wdev, link_id);
+
+	if (chandef && chandef->chan)
+		*dbm = ieee80211_chandef_max_power(chandef);
+	else
+		*dbm = 20;
 
 	return 0;
 }
@@ -5711,8 +5836,15 @@ static int	cfg80211_rtw_dump_station(struct wiphy *wiphy, struct net_device *nde
 	if (psta) {
 		sinfo->filled |= STATION_INFO_SIGNAL;
 		sinfo->signal = translate_percentage_to_dbm(psta->cmn.rssi_stat.rssi);
+		rtw_cfg80211_fill_sta_bitrate(padapter, psta, sinfo);
 		sinfo->filled |= STATION_INFO_INACTIVE_TIME;
 		sinfo->inactive_time = rtw_get_passing_time_ms(psta->sta_stats.last_rx_time);
+		sinfo->filled |= STATION_INFO_RX_PACKETS;
+		sinfo->rx_packets = sta_rx_data_pkts(psta);
+		sinfo->filled |= STATION_INFO_TX_PACKETS;
+		sinfo->tx_packets = psta->sta_stats.tx_pkts;
+		sinfo->filled |= STATION_INFO_TX_FAILED;
+		sinfo->tx_failed = psta->sta_stats.tx_fail_cnt;
 	}
 
 #ifdef CONFIG_RTW_MESH
