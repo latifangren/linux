@@ -34,11 +34,7 @@
 #define STATION_INFO_PLINK_STATE	BIT(NL80211_STA_INFO_PLINK_STATE)
 #define STATION_INFO_SIGNAL			BIT(NL80211_STA_INFO_SIGNAL)
 #define STATION_INFO_TX_BITRATE		BIT(NL80211_STA_INFO_TX_BITRATE)
-#ifdef NL80211_STA_INFO_RX_BITRATE
 #define STATION_INFO_RX_BITRATE		BIT(NL80211_STA_INFO_RX_BITRATE)
-#else
-#define STATION_INFO_RX_BITRATE		0
-#endif
 #define STATION_INFO_RX_PACKETS		BIT(NL80211_STA_INFO_RX_PACKETS)
 #define STATION_INFO_TX_PACKETS		BIT(NL80211_STA_INFO_TX_PACKETS)
 #define STATION_INFO_TX_FAILED		BIT(NL80211_STA_INFO_TX_FAILED)
@@ -2302,6 +2298,17 @@ static void rtw_cfg80211_fill_sta_bitrate(_adapter *padapter, struct sta_info *p
 	rx_rate_idx = rx_rate & 0x7f;
 	rx_sgi = rx_rate >> 7;
 	rx_bitrate = rtw_cfg80211_desc_rate_to_bitrate(psta->cmn.bw_mode, rx_rate_idx, rx_sgi);
+
+	if (!rx_bitrate) {
+		rx_rate = psta->curr_rx_rate_bmc;
+		rx_rate_idx = rx_rate & 0x7f;
+		rx_sgi = rx_rate >> 7;
+		rx_bitrate = rtw_cfg80211_desc_rate_to_bitrate(psta->cmn.bw_mode, rx_rate_idx, rx_sgi);
+	}
+
+	if (!rx_bitrate)
+		rx_bitrate = tx_bitrate;
+
 	if (rx_bitrate) {
 		sinfo->filled |= STATION_INFO_RX_BITRATE;
 		sinfo->rxrate.legacy = rx_bitrate;
