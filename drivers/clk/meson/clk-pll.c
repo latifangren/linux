@@ -27,6 +27,7 @@
  */
 
 #include <linux/clk-provider.h>
+#include <linux/arm-smccc.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
@@ -35,6 +36,7 @@
 
 #include "clk-regmap.h"
 #include "clk-pll.h"
+#include "clk-secure.h"
 
 static inline struct meson_clk_pll_data *
 meson_clk_pll_data(struct clk_regmap *clk)
@@ -499,6 +501,123 @@ const struct clk_ops meson_clk_pll_ro_ops = {
 	.is_enabled	= meson_clk_pll_is_enabled,
 };
 EXPORT_SYMBOL_NS_GPL(meson_clk_pll_ro_ops, "CLK_MESON");
+
+static int __meson_secure_clk_pll_set_rate(struct clk_hw *hw,
+					   unsigned long rate,
+					   unsigned long parent_rate)
+{
+	struct arm_smccc_res res;
+
+	if (!strcmp(clk_hw_get_name(hw), "sys_pll_dco")) {
+		arm_smccc_smc(CLK_SECURE_RW, SYS_PLL_STEP0, rate,
+			      0, 0, 0, 0, 0, &res);
+	} else if (!strcmp(clk_hw_get_name(hw), "gp1_pll_dco")) {
+		arm_smccc_smc(CLK_SECURE_RW, GP1_PLL_STEP0, rate,
+			      0, 0, 0, 0, 0, &res);
+	} else {
+		pr_err("%s: %s pll not found\n", __func__, clk_hw_get_name(hw));
+		return -EINVAL;
+	}
+
+	/* Wait for firmware to apply step 0 writes. */
+	udelay(10);
+
+	if (!strcmp(clk_hw_get_name(hw), "sys_pll_dco"))
+		arm_smccc_smc(CLK_SECURE_RW, SYS_PLL_STEP1,
+			      0, 0, 0, 0, 0, 0, &res);
+	else
+		arm_smccc_smc(CLK_SECURE_RW, GP1_PLL_STEP1,
+			      0, 0, 0, 0, 0, 0, &res);
+
+	return meson_clk_pll_wait_lock(hw);
+}
+
+static int meson_secure_clk_pll_set_rate(struct clk_hw *hw,
+					 unsigned long rate,
+					 unsigned long parent_rate)
+{
+	int ret = __meson_secure_clk_pll_set_rate(hw, rate, parent_rate);
+
+	if (ret == -ETIMEDOUT) {
+		pr_info("%s: %s did not lock, retrying rate %lu\n",
+			__func__, clk_hw_get_name(hw), rate);
+		ret = __meson_secure_clk_pll_set_rate(hw, rate, parent_rate);
+	}
+
+	return ret;
+}
+
+static long meson_secure_clk_pll_round_rate(struct clk_hw *hw,
+					    unsigned long rate,
+					    unsigned long *parent_rate)
+{
+	return rate;
+}
+
+static int meson_secure_clk_pll_enable(struct clk_hw *hw)
+{
+	struct clk_regmap *clk = to_clk_regmap(hw);
+	struct meson_clk_pll_data *pll = meson_clk_pll_data(clk);
+	struct clk_hw *parent = clk_hw_get_parent(hw);
+	unsigned int val;
+	u64 rate;
+	bool first_set = true;
+
+	if (meson_parm_read(clk->map, &pll->en))
+		return 0;
+
+	if (!strcmp(clk_hw_get_name(hw), "sys_pll_dco") ||
+	    !strcmp(clk_hw_get_name(hw), "gp1_pll_dco")) {
+		regmap_read(clk->map, (&pll->en)->reg_off + (6 * 4), &val);
+		if (val == 0x56540000)
+			first_set = false;
+	}
+
+	if (first_set) {
+		rate = __pll_params_to_rate(clk_hw_get_rate(parent),
+					    pll->table[0].m,
+					    pll->table[0].n,
+					    0, pll);
+	} else {
+		rate = meson_clk_pll_recalc_rate(hw, clk_hw_get_rate(parent));
+		rate = meson_secure_clk_pll_round_rate(hw, rate, NULL);
+	}
+
+	return meson_secure_clk_pll_set_rate(hw, rate,
+					     clk_hw_get_rate(parent));
+}
+
+static void meson_secure_clk_pll_disable(struct clk_hw *hw)
+{
+	struct arm_smccc_res res;
+
+	if (!strcmp(clk_hw_get_name(hw), "sys_pll_dco"))
+		arm_smccc_smc(CLK_SECURE_RW, SYS_PLL_DISABLE,
+			      0, 0, 0, 0, 0, 0, &res);
+	else
+		arm_smccc_smc(CLK_SECURE_RW, GP1_PLL_DISABLE,
+			      0, 0, 0, 0, 0, 0, &res);
+}
+
+const struct clk_ops meson_secure_clk_pll_ops = {
+	.recalc_rate	= meson_clk_pll_recalc_rate,
+	.round_rate	= meson_secure_clk_pll_round_rate,
+	.set_rate	= meson_secure_clk_pll_set_rate,
+	.enable		= meson_secure_clk_pll_enable,
+	.disable	= meson_secure_clk_pll_disable,
+};
+EXPORT_SYMBOL_NS_GPL(meson_secure_clk_pll_ops, "CLK_MESON");
+
+/* Backward-compatible secure PLL ops name used by vendor SC2 clock data. */
+const struct clk_ops meson_secure_pll_v2_ops = {
+	.recalc_rate	= meson_clk_pll_recalc_rate,
+	.round_rate	= meson_secure_clk_pll_round_rate,
+	.set_rate	= meson_secure_clk_pll_set_rate,
+	.is_enabled	= meson_clk_pll_is_enabled,
+	.enable		= meson_secure_clk_pll_enable,
+	.disable	= meson_secure_clk_pll_disable,
+};
+EXPORT_SYMBOL_NS_GPL(meson_secure_pll_v2_ops, "CLK_MESON");
 
 MODULE_DESCRIPTION("Amlogic PLL driver");
 MODULE_AUTHOR("Carlo Caione <carlo@endlessm.com>");

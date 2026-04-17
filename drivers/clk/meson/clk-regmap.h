@@ -73,9 +73,11 @@ extern const struct clk_ops clk_regmap_gate_ro_ops;
  */
 struct clk_regmap_div_data {
 	unsigned int	offset;
+	unsigned int	smc_id;
 	u8		shift;
 	u8		width;
 	u8		flags;
+	u8		secid;
 	const struct clk_div_table	*table;
 };
 
@@ -87,6 +89,11 @@ clk_get_regmap_div_data(struct clk_regmap *clk)
 
 extern const struct clk_ops clk_regmap_divider_ops;
 extern const struct clk_ops clk_regmap_divider_ro_ops;
+extern const struct clk_ops meson_clk_regmap_secure_divider_ops;
+extern const struct clk_ops meson_clk_regmap_secure_divider_ro_ops;
+
+/* Keep vendor naming used by sc2.c compatible with local secure divider ops. */
+#define clk_regmap_secure_v2_divider_ops meson_clk_regmap_secure_divider_ops
 
 /**
  * struct clk_regmap_mux_data - regmap backed multiplexer clock specific data
@@ -105,8 +112,11 @@ struct clk_regmap_mux_data {
 	unsigned int	offset;
 	u32		*table;
 	u32		mask;
+	u32		smc_id;
 	u8		shift;
 	u8		flags;
+	u8		secid;
+	u8		secid_rd;
 };
 
 static inline struct clk_regmap_mux_data *
@@ -117,5 +127,7 @@ clk_get_regmap_mux_data(struct clk_regmap *clk)
 
 extern const struct clk_ops clk_regmap_mux_ops;
 extern const struct clk_ops clk_regmap_mux_ro_ops;
+extern const struct clk_ops meson_clk_regmap_secure_mux_ops;
+extern const struct clk_ops meson_clk_regmap_secure_mux_ro_ops;
 
 #endif /* __CLK_REGMAP_H */

@@ -67,6 +67,12 @@ config PINCTRL_MESON_S4
 	select PINCTRL_MESON_AXG_PMX
 	default ARCH_MESON
 
+config PINCTRL_MESON_SC2
+	tristate "Meson sc2 Soc pinctrl driver"
+	depends on ARM64 || COMPILE_TEST
+	select PINCTRL_MESON_AXG_PMX
+	default ARCH_MESON
+
 config PINCTRL_AMLOGIC_A4
 	bool "AMLOGIC pincontrol"
 	depends on ARM64 || COMPILE_TEST
