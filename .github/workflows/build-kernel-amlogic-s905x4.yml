@@ -32,6 +32,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Print runner details
+        run: |
+          echo "Runner name: ${RUNNER_NAME:-unknown}"
+          echo "Runner OS/Arch: ${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}"
+          echo "CPU cores (nproc): $(nproc)"
+          lscpu
+          free -h
+          df -h
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
