@@ -1,0 +1,86 @@
+name: Build Kernel (Amlogic S905X4)
+
+on:
+  push:
+    branches:
+      - Amlogic-s905x4
+  pull_request:
+    branches:
+      - Amlogic-s905x4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KBUILD_OUTPUT: out
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            dwarves \
+            flex \
+            gcc-aarch64-linux-gnu \
+            kmod \
+            libelf-dev \
+            libssl-dev \
+            rsync
+
+      - name: Show toolchain versions
+        run: |
+          ${CROSS_COMPILE}gcc --version | head -n 1
+          make --version | head -n 1
+
+      - name: Configure kernel
+        run: |
+          make O="${KBUILD_OUTPUT}" aml_defconfig
+
+      - name: Build kernel, modules, and DTBs
+        run: |
+          make -j"$(nproc)" O="${KBUILD_OUTPUT}" Image modules dtbs
+
+      - name: Package artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+
+          cp "${KBUILD_OUTPUT}/.config" artifacts/
+          cp "${KBUILD_OUTPUT}/System.map" artifacts/
+          cp "${KBUILD_OUTPUT}/vmlinux" artifacts/
+          cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/zImage
+
+          if [ -d "${KBUILD_OUTPUT}/lib/modules" ]; then
+            tar -C "${KBUILD_OUTPUT}" -czf artifacts/modules.tar.gz lib/modules
+          fi
+
+          if [ -d "${KBUILD_OUTPUT}/arch/arm64/boot/dts" ]; then
+            tar -C "${KBUILD_OUTPUT}/arch/arm64/boot" -czf artifacts/dtbs.tar.gz dts
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-amlogic-s905x4-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
