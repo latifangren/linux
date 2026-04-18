@@ -113,6 +113,15 @@ jobs:
           gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${RELEASE_TAG}"
           set -e
 
+      - name: Create release notes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
+        run: |
+          cat > release-notes.txt <<EOF
+          Automated kernel build from branch Amlogic-s905x4
+
+          Commit: ${{ github.sha }}
+          EOF
+
       - name: Create GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
         env:
@@ -121,6 +130,4 @@ jobs:
           gh release create "${RELEASE_TAG}" \
             artifacts/* \
             --title "${RELEASE_TITLE}" \
-            --notes "Automated kernel build from branch Amlogic-s905x4
-
-Commit: ${{ github.sha }}"
+            --notes-file release-notes.txt
