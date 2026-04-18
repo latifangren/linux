@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: kernel-build-${{ github.ref }}
@@ -57,13 +57,15 @@ jobs:
             libssl-dev \
             lld \
             llvm \
-            rsync
+            rsync \
+            gh
 
       - name: Show toolchain versions
         run: |
           clang --version | head -n 1
           ld.lld --version | head -n 1
           make --version | head -n 1
+          gh --version | head -n 1
 
       - name: Configure kernel
         run: |
@@ -77,10 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-
-          cp "${KBUILD_OUTPUT}/.config" artifacts/
           cp "${KBUILD_OUTPUT}/System.map" artifacts/
-          cp "${KBUILD_OUTPUT}/vmlinux" artifacts/
           cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/zImage
 
           if [ -d "${KBUILD_OUTPUT}/lib/modules" ]; then
@@ -91,9 +90,37 @@ jobs:
             tar -C "${KBUILD_OUTPUT}/arch/arm64/boot" -czf artifacts/dtbs.tar.gz dts
           fi
 
-      - name: Upload build artifacts
+      - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kernel-amlogic-s905x4-${{ github.sha }}
           path: artifacts
           if-no-files-found: error
+
+      - name: Prepare release metadata
+        if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
+        run: |
+          echo "RELEASE_TAG=kernel-amlogic-s905x4-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=Kernel Amlogic S905X4 ${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Delete existing release tag if present
+        if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          gh release delete "${RELEASE_TAG}" --yes
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/${RELEASE_TAG}"
+          set -e
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${RELEASE_TAG}" \
+            artifacts/* \
+            --title "${RELEASE_TITLE}" \
+            --notes "Automated kernel build from branch Amlogic-s905x4
+
+Commit: ${{ github.sha }}"
