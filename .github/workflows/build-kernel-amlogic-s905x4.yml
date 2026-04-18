@@ -22,8 +22,9 @@ jobs:
     timeout-minutes: 90
     env:
       ARCH: arm64
-      CROSS_COMPILE: aarch64-linux-gnu-
       KBUILD_OUTPUT: out
+      LLVM: 1
+      LLVM_IAS: 1
 
     steps:
       - name: Checkout source
@@ -39,17 +40,20 @@ jobs:
             bison \
             build-essential \
             ccache \
+            clang \
             dwarves \
             flex \
-            gcc-aarch64-linux-gnu \
             kmod \
             libelf-dev \
             libssl-dev \
+            lld \
+            llvm \
             rsync
 
       - name: Show toolchain versions
         run: |
-          ${CROSS_COMPILE}gcc --version | head -n 1
+          clang --version | head -n 1
+          ld.lld --version | head -n 1
           make --version | head -n 1
 
       - name: Configure kernel
