@@ -1,0 +1,9 @@
+config UNISOC_UWE5621
+	tristate "uwe5621"
+	depends on m
+	depends on ARCH_MESON
+	default m
+	help
+	  Build the Unisoc UWE5621 WCN BSP support driver.
+
+	  This option is intended for Amlogic UWE5621 platforms.

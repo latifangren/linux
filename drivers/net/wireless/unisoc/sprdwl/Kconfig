@@ -1,0 +1,12 @@
+config UNISOC_SPRDWL
+	tristate "sprdwl"
+	depends on m
+	depends on ARCH_MESON
+	depends on CFG80211
+	depends on UNISOC_UWE5621
+	default m
+	help
+	  Build the Unisoc SPRDWL Wi-Fi driver.
+
+	  When compiled as a module, this driver will be called sprdwl.
+
