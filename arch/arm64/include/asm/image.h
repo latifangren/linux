@@ -5,6 +5,12 @@
 
 #define ARM64_IMAGE_MAGIC	"ARM\x64"
 
+/*
+ * Image load offset from a 2 MiB-aligned DRAM base. Keep this in sync with
+ * bootloader placement when using a non-default arm64 Image text offset.
+ */
+#define ARM64_IMAGE_TEXT_OFFSET		0x01080000
+
 #define ARM64_IMAGE_FLAG_BE_SHIFT		0
 #define ARM64_IMAGE_FLAG_PAGE_SIZE_SHIFT	(ARM64_IMAGE_FLAG_BE_SHIFT + 1)
 #define ARM64_IMAGE_FLAG_PHYS_BASE_SHIFT \

@@ -41,6 +41,7 @@
 #include <asm/elf.h>
 #include <asm/cpufeature.h>
 #include <asm/cpu_ops.h>
+#include <asm/image.h>
 #include <asm/kasan.h>
 #include <asm/numa.h>
 #include <asm/rsi.h>
@@ -323,7 +324,8 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	efi_init();
 
 	if (!efi_enabled(EFI_BOOT)) {
-		if ((u64)_text % MIN_KIMG_ALIGN)
+		if (((u64)_text % MIN_KIMG_ALIGN) !=
+		    (ARM64_IMAGE_TEXT_OFFSET % MIN_KIMG_ALIGN))
 			pr_warn(FW_BUG "Kernel image misaligned at boot, please fix your bootloader!");
 		WARN_TAINT(mmu_enabled_at_boot, TAINT_FIRMWARE_WORKAROUND,
 			   FW_BUG "Booted with MMU enabled!");
