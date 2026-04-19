@@ -91,14 +91,9 @@ jobs:
             cp -r "${KBUILD_OUTPUT}/arch/arm64/boot/dts" artifacts/boot_content/dtb
           fi
           wget https://github.com/sib0ndt/Busybox/releases/download/busybox-v1.37.0/uInitrd -O artifacts/boot_content/uInitrd
+          cp "${KBUILD_OUTPUT}/System.map" artifacts/boot_content/System.map
           
           tar -czf artifacts/boot.tar.gz -C artifacts/boot_content .
-          
-          if [ -d "${KBUILD_OUTPUT}/lib/modules" ]; then
-            tar -czf artifacts/rootfs.tar.gz -C "${KBUILD_OUTPUT}" lib/modules
-          fi
-          
-          cp "${KBUILD_OUTPUT}/System.map" artifacts/System.map
 
           # Bersihkan folder sementara sebelum upload
           rm -rf artifacts/boot_content
@@ -133,8 +128,7 @@ jobs:
           Automated kernel build from branch Amlogic
 
           Isi Rilis:
-          - boot.tar.gz: Berisi zImage, DTB, dan uInitrd.
-          - rootfs.tar.gz: Berisi modul kernel (/lib/modules).
+          - boot.tar.gz: Berisi zImage, DTB, uInitrd, dan System.map.
           
           Commit: ${{ github.sha }}
           EOF
@@ -145,7 +139,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${RELEASE_TAG}" \
-            artifacts/*.tar.gz \
-            artifacts/System.map \
+            artifacts/boot.tar.gz \
             --title "${RELEASE_TITLE}" \
             --notes-file release-notes.txt
