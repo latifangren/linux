@@ -80,7 +80,7 @@ jobs:
       - name: Package artifacts
         run: |
           set -euo pipefail
-          mkdir -p artifacts/boot_content
+          mkdir -p artifacts/boot_content artifacts/rootfs_content
           
           # Copy Kernel Image
           cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/boot_content/zImage
@@ -95,8 +95,18 @@ jobs:
           
           tar -czf artifacts/boot.tar.gz -C artifacts/boot_content .
 
+          # Copy rootfs modules from modules_install output
+          if [ -d "${KBUILD_OUTPUT}/lib/modules" ]; then
+            cp -a "${KBUILD_OUTPUT}/lib" artifacts/rootfs_content/lib
+          else
+            echo "Error: modules_install output not found at ${KBUILD_OUTPUT}/lib/modules"
+            exit 1
+          fi
+
+          tar -czf artifacts/rootfs.tar.gz -C artifacts/rootfs_content .
+
           # Bersihkan folder sementara sebelum upload
-          rm -rf artifacts/boot_content
+          rm -rf artifacts/boot_content artifacts/rootfs_content
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -129,6 +139,7 @@ jobs:
 
           Isi Rilis:
           - boot.tar.gz: Berisi zImage, DTB, uInitrd, dan System.map.
+          - rootfs.tar.gz: Berisi rootfs minimal dengan lib/modules hasil modules_install.
           
           Commit: ${{ github.sha }}
           EOF
@@ -140,5 +151,6 @@ jobs:
         run: |
           gh release create "${RELEASE_TAG}" \
             artifacts/boot.tar.gz \
+            artifacts/rootfs.tar.gz \
             --title "${RELEASE_TITLE}" \
             --notes-file release-notes.txt
