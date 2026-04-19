@@ -58,7 +58,8 @@ jobs:
             lld \
             llvm \
             rsync \
-            gh
+            gh \
+            wget
 
       - name: Show toolchain versions
         run: |
@@ -74,21 +75,33 @@ jobs:
       - name: Build kernel, modules, and DTBs
         run: |
           make -j"$(nproc)" O="${KBUILD_OUTPUT}" Image modules dtbs
+          make -j"$(nproc)" O="${KBUILD_OUTPUT}" INSTALL_MOD_PATH="${KBUILD_OUTPUT}" modules_install
 
       - name: Package artifacts
         run: |
           set -euo pipefail
-          mkdir -p artifacts
-          cp "${KBUILD_OUTPUT}/System.map" artifacts/
-          cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/zImage
-
+          mkdir -p artifacts/boot_content
+          
+          # Copy Kernel Image
+          cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/boot_content/zImage
+          # Copy DTBs
+          if [ -d "${KBUILD_OUTPUT}/arch/arm64/boot/dts/amlogic" ]; then
+            cp -r "${KBUILD_OUTPUT}/arch/arm64/boot/dts/amlogic" artifacts/boot_content/dtb
+          else
+            cp -r "${KBUILD_OUTPUT}/arch/arm64/boot/dts" artifacts/boot_content/dtb
+          fi
+          wget https://github.com/sib0ndt/Busybox/releases/download/busybox-v1.37.0/uInitrd -O artifacts/boot_content/uInitrd
+          
+          tar -czf artifacts/boot.tar.gz -C artifacts/boot_content .
+          
           if [ -d "${KBUILD_OUTPUT}/lib/modules" ]; then
-            tar -C "${KBUILD_OUTPUT}" -czf artifacts/modules.tar.gz lib/modules
+            tar -czf artifacts/rootfs.tar.gz -C "${KBUILD_OUTPUT}" lib/modules
           fi
+          
+          cp "${KBUILD_OUTPUT}/System.map" artifacts/System.map
 
-          if [ -d "${KBUILD_OUTPUT}/arch/arm64/boot/dts" ]; then
-            tar -C "${KBUILD_OUTPUT}/arch/arm64/boot" -czf artifacts/dtbs.tar.gz dts
-          fi
+          # Bersihkan folder sementara sebelum upload
+          rm -rf artifacts/boot_content
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -119,6 +132,10 @@ jobs:
           cat > release-notes.txt <<EOF
           Automated kernel build from branch Amlogic-s905x4
 
+          Isi Rilis:
+          - boot.tar.gz: Berisi zImage, DTB, dan uInitrd.
+          - rootfs.tar.gz: Berisi modul kernel (/lib/modules).
+          
           Commit: ${{ github.sha }}
           EOF
 
@@ -128,6 +145,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${RELEASE_TAG}" \
-            artifacts/* \
+            artifacts/*.tar.gz \
+            artifacts/System.map \
             --title "${RELEASE_TITLE}" \
             --notes-file release-notes.txt
