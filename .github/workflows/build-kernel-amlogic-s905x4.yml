@@ -212,7 +212,7 @@ jobs:
 
           Isi Rilis:
           - boot-${KERNEL_RELEASE}.tar.gz: Berisi zImage, DTB, uInitrd, dan System.map.
-          - rootfs-${KERNEL_RELEASE}.tar.gz: Berisi rootfs minimal dengan lib/modules hasil modules_install.
+          - rootfs-${KERNEL_RELEASE}.tar.gz: Berisi rootfs minimal dengan lib/modules/${KERNEL_RELEASE}.
 
           Commit: ${{ github.sha }}
           EOF
