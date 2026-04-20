@@ -93,7 +93,7 @@ jobs:
           mkdir -p "${MODULES_STAGING}"
           make -j"$(nproc)" \
             O="${KBUILD_OUTPUT}" ARCH=arm64 LLVM=1 LLVM_IAS=1 LOCALVERSION= LOCALVERSION_AUTO=n \
-            INSTALL_MOD_PATH="${GITHUB_WORKSPACE}/${MODULES_STAGING}" \
+            INSTALL_MOD_PATH="${GITHUB_WORKSPACE}/${MODULES_STAGING}" INSTALL_MOD_STRIP=1 \
             modules_install
 
       - name: Debug build outputs
