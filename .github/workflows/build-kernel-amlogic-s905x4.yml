@@ -189,7 +189,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
         run: |
           echo "RELEASE_TAG=kernel-amlogic-${KERNEL_RELEASE}" >> "$GITHUB_ENV"
-          echo "RELEASE_TITLE=Kernel Amlogic ${KERNEL_RELEASE}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=Kernel Amlogic-s905x4 ${KERNEL_RELEASE}" >> "$GITHUB_ENV"
 
       - name: Delete existing release tag if present
         if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic-s905x4'
