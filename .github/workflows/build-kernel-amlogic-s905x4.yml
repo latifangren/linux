@@ -10,7 +10,43 @@ on:
   workflow_dispatch:
 
 permissions:
+  contents: writename: Build Kernel (Amlogic S905X4)
+
+on:
+  push:
+    branches:
+      - Amlogic-s905x4
+  pull_request:
+    branches:
+      - Amlogic-s905x4
+  workflow_dispatch:
+
+permissions:
   contents: write
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      ARCH: arm64
+      KBUILD_OUTPUT: out
+      LLVM: 1
+      LLVM_IAS: 1
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Print runner details
+        run: |
+
 
 concurrency:
   group: kernel-build-${{ github.ref }}
