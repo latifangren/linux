@@ -71,7 +71,15 @@ jobs:
 
       - name: Configure kernel
         run: |
+          set -euo pipefail
           make O="${KBUILD_OUTPUT}" aml_defconfig
+
+      - name: Get kernel release
+        run: |
+          set -euo pipefail
+          KERNEL_RELEASE="$(make -s O="${KBUILD_OUTPUT}" kernelrelease)"
+          echo "KERNEL_RELEASE=${KERNEL_RELEASE}" >> "$GITHUB_ENV"
+          echo "Detected kernel release: ${KERNEL_RELEASE}"
 
       - name: Build kernel, modules, and DTBs
         run: |
@@ -103,10 +111,8 @@ jobs:
           mkdir -p artifacts/boot_content
           mkdir -p artifacts/rootfs_content
 
-          # Kernel image
           cp "${KBUILD_OUTPUT}/arch/arm64/boot/Image" artifacts/boot_content/zImage
 
-          # DTBs
           if [ -d "${KBUILD_OUTPUT}/arch/arm64/boot/dts/amlogic" ]; then
             cp -r "${KBUILD_OUTPUT}/arch/arm64/boot/dts/amlogic" artifacts/boot_content/dtb
           elif [ -d "${KBUILD_OUTPUT}/arch/arm64/boot/dts" ]; then
@@ -116,17 +122,13 @@ jobs:
             exit 1
           fi
 
-          # Initrd
           wget -O artifacts/boot_content/uInitrd \
             https://github.com/sib0ndt/Busybox/releases/download/busybox-v1.37.0/uInitrd
 
-          # System.map
           cp "${KBUILD_OUTPUT}/System.map" artifacts/boot_content/System.map
 
-          # Pack boot archive
-          tar -czf artifacts/boot.tar.gz -C artifacts/boot_content .
+          tar -czf "artifacts/boot-${KERNEL_RELEASE}.tar.gz" -C artifacts/boot_content .
 
-          # Copy installed modules
           if [ -d "${MODULES_STAGING}/lib/modules" ]; then
             cp -a "${MODULES_STAGING}/lib" artifacts/rootfs_content/lib
           else
@@ -136,24 +138,22 @@ jobs:
             exit 1
           fi
 
-          # Pack rootfs archive
-          tar -czf artifacts/rootfs.tar.gz -C artifacts/rootfs_content .
+          tar -czf "artifacts/rootfs-${KERNEL_RELEASE}.tar.gz" -C artifacts/rootfs_content .
 
-          # Cleanup temp folders
           rm -rf artifacts/boot_content artifacts/rootfs_content
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-amlogic-${{ github.sha }}
+          name: kernel-amlogic-${{ env.KERNEL_RELEASE }}-${{ github.sha }}
           path: artifacts
           if-no-files-found: error
 
       - name: Prepare release metadata
         if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic'
         run: |
-          echo "RELEASE_TAG=kernel-amlogic-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          echo "RELEASE_TITLE=Kernel Amlogic ${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=kernel-amlogic-${KERNEL_RELEASE}" >> "$GITHUB_ENV"
+          echo "RELEASE_TITLE=Kernel Amlogic ${KERNEL_RELEASE}" >> "$GITHUB_ENV"
 
       - name: Delete existing release tag if present
         if: github.event_name == 'push' && github.ref == 'refs/heads/Amlogic'
@@ -171,9 +171,12 @@ jobs:
           cat > release-notes.txt <<EOF
           Automated kernel build from branch Amlogic
 
+          Kernel release:
+          - ${KERNEL_RELEASE}
+
           Isi Rilis:
-          - boot.tar.gz: Berisi zImage, DTB, uInitrd, dan System.map.
-          - rootfs.tar.gz: Berisi rootfs minimal dengan lib/modules hasil modules_install.
+          - boot-${KERNEL_RELEASE}.tar.gz: Berisi zImage, DTB, uInitrd, dan System.map.
+          - rootfs-${KERNEL_RELEASE}.tar.gz: Berisi rootfs minimal dengan lib/modules hasil modules_install.
 
           Commit: ${{ github.sha }}
           EOF
@@ -184,7 +187,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${RELEASE_TAG}" \
-            artifacts/boot.tar.gz \
-            artifacts/rootfs.tar.gz \
+            "artifacts/boot-${KERNEL_RELEASE}.tar.gz" \
+            "artifacts/rootfs-${KERNEL_RELEASE}.tar.gz" \
             --title "${RELEASE_TITLE}" \
             --notes-file release-notes.txt
