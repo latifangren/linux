@@ -175,7 +175,7 @@ reserved-memory {
 
 	bluetooth {
 		compatible = "mtk,mt7663-bt";
-		shutdown-gpios = <&gpio GPIOX_17 GPIO_ACTIVE_HIGH>;
+		shutdown-gpios = <&gpio GPIOX_18 GPIO_ACTIVE_HIGH>;
 		max-speed = <2000000>;
 		clocks = <&wifi32k>;
 		clock-names = "lpo";
