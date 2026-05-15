@@ -583,7 +583,7 @@ static ssize_t speed_show(struct device *dev, struct device_attribute *attr,
 		return result;
 
 	/* Return current speed value. */
-	return sysfs_emit(buf, "%d\n", result);
+	return sprintf(buf, "%d\n", result);
 }
 
 static ssize_t speed_store(struct device *dev, struct device_attribute *attr,
@@ -633,7 +633,7 @@ static ssize_t stretch_show(struct device *dev, struct device_attribute *attr,
 	struct w1_f19_data *data = sl->family_data;
 
 	/* Return current stretch value. */
-	return sysfs_emit(buf, "%d\n", data->stretch);
+	return sprintf(buf, "%d\n", data->stretch);
 }
 
 static ssize_t stretch_store(struct device *dev, struct device_attribute *attr,
@@ -719,8 +719,8 @@ static int w1_f19_add_slave(struct w1_slave *sl)
 	data->adapter.owner      = THIS_MODULE;
 	data->adapter.algo       = &w1_f19_i2c_algorithm;
 	data->adapter.algo_data  = sl;
-	scnprintf(data->adapter.name, sizeof(data->adapter.name), "w1-%s",
-		  sl->name);
+	strcpy(data->adapter.name, "w1-");
+	strcat(data->adapter.name, sl->name);
 	data->adapter.dev.parent = &sl->dev;
 	data->adapter.quirks     = &w1_f19_i2c_adapter_quirks;
 

@@ -119,8 +119,6 @@ xdr_buf_init(struct xdr_buf *buf, void *start, size_t len)
 #define	rpc_autherr_badverf	cpu_to_be32(RPC_AUTH_BADVERF)
 #define	rpc_autherr_rejectedverf cpu_to_be32(RPC_AUTH_REJECTEDVERF)
 #define	rpc_autherr_tooweak	cpu_to_be32(RPC_AUTH_TOOWEAK)
-#define	rpc_autherr_invalidresp	cpu_to_be32(RPC_AUTH_INVALIDRESP)
-#define	rpc_autherr_failed	cpu_to_be32(RPC_AUTH_FAILED)
 #define	rpcsec_gsserr_credproblem	cpu_to_be32(RPCSEC_GSS_CREDPROBLEM)
 #define	rpcsec_gsserr_ctxproblem	cpu_to_be32(RPCSEC_GSS_CTXPROBLEM)
 
@@ -130,7 +128,10 @@ xdr_buf_init(struct xdr_buf *buf, void *start, size_t len)
 __be32 *xdr_encode_opaque_fixed(__be32 *p, const void *ptr, unsigned int len);
 __be32 *xdr_encode_opaque(__be32 *p, const void *ptr, unsigned int len);
 __be32 *xdr_encode_string(__be32 *p, const char *s);
+__be32 *xdr_decode_string_inplace(__be32 *p, char **sp, unsigned int *lenp,
+			unsigned int maxlen);
 __be32 *xdr_encode_netobj(__be32 *p, const struct xdr_netobj *);
+__be32 *xdr_decode_netobj(__be32 *p, struct xdr_netobj *);
 
 void	xdr_inline_pages(struct xdr_buf *, unsigned int,
 			 struct page **, unsigned int, unsigned int);
@@ -241,7 +242,8 @@ typedef int	(*kxdrdproc_t)(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 
 extern void xdr_init_encode(struct xdr_stream *xdr, struct xdr_buf *buf,
 			    __be32 *p, struct rpc_rqst *rqst);
-void xdr_init_encode_pages(struct xdr_stream *xdr, struct xdr_buf *buf);
+extern void xdr_init_encode_pages(struct xdr_stream *xdr, struct xdr_buf *buf,
+			   struct page **pages, struct rpc_rqst *rqst);
 extern __be32 *xdr_reserve_space(struct xdr_stream *xdr, size_t nbytes);
 extern int xdr_reserve_space_vec(struct xdr_stream *xdr, size_t nbytes);
 extern void __xdr_commit_encode(struct xdr_stream *xdr);
@@ -288,16 +290,16 @@ xdr_set_scratch_buffer(struct xdr_stream *xdr, void *buf, size_t buflen)
 }
 
 /**
- * xdr_set_scratch_folio - Attach a scratch buffer for decoding data
+ * xdr_set_scratch_page - Attach a scratch buffer for decoding data
  * @xdr: pointer to xdr_stream struct
- * @folio: an anonymous folio
+ * @page: an anonymous page
  *
  * See xdr_set_scratch_buffer().
  */
 static inline void
-xdr_set_scratch_folio(struct xdr_stream *xdr, struct folio *folio)
+xdr_set_scratch_page(struct xdr_stream *xdr, struct page *page)
 {
-	xdr_set_scratch_buffer(xdr, folio_address(folio), folio_size(folio));
+	xdr_set_scratch_buffer(xdr, page_address(page), PAGE_SIZE);
 }
 
 /**
@@ -330,7 +332,7 @@ static inline void xdr_commit_encode(struct xdr_stream *xdr)
  * xdr_stream_remaining - Return the number of bytes remaining in the stream
  * @xdr: pointer to struct xdr_stream
  *
- * Returns:
+ * Return value:
  *   Number of bytes remaining in @xdr before xdr->end
  */
 static inline size_t
@@ -339,6 +341,12 @@ xdr_stream_remaining(const struct xdr_stream *xdr)
 	return xdr->nwords << 2;
 }
 
+ssize_t xdr_stream_decode_opaque(struct xdr_stream *xdr, void *ptr,
+		size_t size);
+ssize_t xdr_stream_decode_opaque_dup(struct xdr_stream *xdr, void **ptr,
+		size_t maxlen, gfp_t gfp_flags);
+ssize_t xdr_stream_decode_string(struct xdr_stream *xdr, char *str,
+		size_t size);
 ssize_t xdr_stream_decode_string_dup(struct xdr_stream *xdr, char **str,
 		size_t maxlen, gfp_t gfp_flags);
 ssize_t xdr_stream_decode_opaque_auth(struct xdr_stream *xdr, u32 *flavor,
@@ -350,7 +358,7 @@ ssize_t xdr_stream_encode_opaque_auth(struct xdr_stream *xdr, u32 flavor,
  * xdr_align_size - Calculate padded size of an object
  * @n: Size of an object being XDR encoded (in bytes)
  *
- * Returns:
+ * Return value:
  *   Size (in bytes) of the object including xdr padding
  */
 static inline size_t
@@ -368,7 +376,7 @@ xdr_align_size(size_t n)
  * This implementation avoids the need for conditional
  * branches or modulo division.
  *
- * Returns:
+ * Return value:
  *   Size (in bytes) of the needed XDR pad
  */
 static inline size_t xdr_pad_size(size_t n)
@@ -380,7 +388,7 @@ static inline size_t xdr_pad_size(size_t n)
  * xdr_stream_encode_item_present - Encode a "present" list item
  * @xdr: pointer to xdr_stream
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -399,7 +407,7 @@ static inline ssize_t xdr_stream_encode_item_present(struct xdr_stream *xdr)
  * xdr_stream_encode_item_absent - Encode a "not present" list item
  * @xdr: pointer to xdr_stream
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -419,7 +427,7 @@ static inline int xdr_stream_encode_item_absent(struct xdr_stream *xdr)
  * @p: address in a buffer into which to encode
  * @n: boolean value to encode
  *
- * Returns:
+ * Return value:
  *   Address of item following the encoded boolean
  */
 static inline __be32 *xdr_encode_bool(__be32 *p, u32 n)
@@ -433,7 +441,7 @@ static inline __be32 *xdr_encode_bool(__be32 *p, u32 n)
  * @xdr: pointer to xdr_stream
  * @n: boolean value to encode
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -453,7 +461,7 @@ static inline int xdr_stream_encode_bool(struct xdr_stream *xdr, __u32 n)
  * @xdr: pointer to xdr_stream
  * @n: integer to encode
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -474,7 +482,7 @@ xdr_stream_encode_u32(struct xdr_stream *xdr, __u32 n)
  * @xdr: pointer to xdr_stream
  * @n: integer to encode
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -495,7 +503,7 @@ xdr_stream_encode_be32(struct xdr_stream *xdr, __be32 n)
  * @xdr: pointer to xdr_stream
  * @n: 64-bit integer to encode
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -517,7 +525,7 @@ xdr_stream_encode_u64(struct xdr_stream *xdr, __u64 n)
  * @ptr: pointer to void pointer
  * @len: size of object
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -542,7 +550,7 @@ xdr_stream_encode_opaque_inline(struct xdr_stream *xdr, void **ptr, size_t len)
  * @ptr: pointer to opaque data object
  * @len: size of object pointed to by @ptr
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -563,7 +571,7 @@ xdr_stream_encode_opaque_fixed(struct xdr_stream *xdr, const void *ptr, size_t l
  * @ptr: pointer to opaque data object
  * @len: size of object pointed to by @ptr
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -585,7 +593,7 @@ xdr_stream_encode_opaque(struct xdr_stream *xdr, const void *ptr, size_t len)
  * @array: array of integers
  * @array_size: number of elements in @array
  *
- * Returns:
+ * Return values:
  *   On success, returns length in bytes of XDR buffer consumed
  *   %-EMSGSIZE on XDR buffer overflow
  */
@@ -608,7 +616,7 @@ xdr_stream_encode_uint32_array(struct xdr_stream *xdr,
  * xdr_item_is_absent - symbolically handle XDR discriminators
  * @p: pointer to undecoded discriminator
  *
- * Returns:
+ * Return values:
  *   %true if the following XDR item is absent
  *   %false if the following XDR item is present
  */
@@ -621,7 +629,7 @@ static inline bool xdr_item_is_absent(const __be32 *p)
  * xdr_item_is_present - symbolically handle XDR discriminators
  * @p: pointer to undecoded discriminator
  *
- * Returns:
+ * Return values:
  *   %true if the following XDR item is present
  *   %false if the following XDR item is absent
  */
@@ -635,7 +643,7 @@ static inline bool xdr_item_is_present(const __be32 *p)
  * @xdr: pointer to xdr_stream
  * @ptr: pointer to a u32 in which to store the result
  *
- * Returns:
+ * Return values:
  *   %0 on success
  *   %-EBADMSG on XDR buffer overflow
  */
@@ -656,7 +664,7 @@ xdr_stream_decode_bool(struct xdr_stream *xdr, __u32 *ptr)
  * @xdr: pointer to xdr_stream
  * @ptr: location to store integer
  *
- * Returns:
+ * Return values:
  *   %0 on success
  *   %-EBADMSG on XDR buffer overflow
  */
@@ -673,32 +681,11 @@ xdr_stream_decode_u32(struct xdr_stream *xdr, __u32 *ptr)
 }
 
 /**
- * xdr_stream_decode_be32 - Decode a big-endian 32-bit integer
- * @xdr: pointer to xdr_stream
- * @ptr: location to store integer
- *
- * Returns:
- *   %0 on success
- *   %-EBADMSG on XDR buffer overflow
- */
-static inline ssize_t
-xdr_stream_decode_be32(struct xdr_stream *xdr, __be32 *ptr)
-{
-	const size_t count = sizeof(*ptr);
-	__be32 *p = xdr_inline_decode(xdr, count);
-
-	if (unlikely(!p))
-		return -EBADMSG;
-	*ptr = *p;
-	return 0;
-}
-
-/**
  * xdr_stream_decode_u64 - Decode a 64-bit integer
  * @xdr: pointer to xdr_stream
  * @ptr: location to store 64-bit integer
  *
- * Returns:
+ * Return values:
  *   %0 on success
  *   %-EBADMSG on XDR buffer overflow
  */
@@ -720,8 +707,8 @@ xdr_stream_decode_u64(struct xdr_stream *xdr, __u64 *ptr)
  * @ptr: location to store data
  * @len: size of buffer pointed to by @ptr
  *
- * Returns:
- *   %0 on success
+ * Return values:
+ *   On success, returns size of object stored in @ptr
  *   %-EBADMSG on XDR buffer overflow
  */
 static inline ssize_t
@@ -732,7 +719,7 @@ xdr_stream_decode_opaque_fixed(struct xdr_stream *xdr, void *ptr, size_t len)
 	if (unlikely(!p))
 		return -EBADMSG;
 	xdr_decode_opaque_fixed(p, ptr, len);
-	return 0;
+	return len;
 }
 
 /**
@@ -746,7 +733,7 @@ xdr_stream_decode_opaque_fixed(struct xdr_stream *xdr, void *ptr, size_t len)
  * on @xdr. It is therefore expected that the object it points to should
  * be processed immediately.
  *
- * Returns:
+ * Return values:
  *   On success, returns size of object stored in *@ptr
  *   %-EBADMSG on XDR buffer overflow
  *   %-EMSGSIZE if the size of the object would exceed @maxlen
@@ -777,7 +764,7 @@ xdr_stream_decode_opaque_inline(struct xdr_stream *xdr, void **ptr, size_t maxle
  * @array: location to store the integer array or NULL
  * @array_size: number of elements to store
  *
- * Returns:
+ * Return values:
  *   On success, returns number of elements stored in @array
  *   %-EBADMSG on XDR buffer overflow
  *   %-EMSGSIZE if the size of the array exceeds @array_size

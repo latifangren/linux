@@ -249,7 +249,6 @@ static void msp430_ir_deinit(struct budget_ci *budget_ci)
 	cancel_work_sync(&budget_ci->ir.msp430_irq_bh_work);
 
 	rc_unregister_device(budget_ci->ir.dev);
-	rc_free_device(budget_ci->ir.dev);
 }
 
 static int ciintf_read_attribute_mem(struct dvb_ca_en50221 *ca, int slot, int address)
@@ -1457,7 +1456,7 @@ static int budget_ci_attach(struct saa7146_dev *dev, struct saa7146_pci_extensio
 	struct budget_ci *budget_ci;
 	int err;
 
-	budget_ci = kzalloc_obj(struct budget_ci);
+	budget_ci = kzalloc(sizeof(struct budget_ci), GFP_KERNEL);
 	if (!budget_ci) {
 		err = -ENOMEM;
 		goto out1;

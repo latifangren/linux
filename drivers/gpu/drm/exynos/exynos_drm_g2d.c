@@ -21,7 +21,6 @@
 #include <linux/workqueue.h>
 
 #include <drm/drm_file.h>
-#include <drm/drm_print.h>
 #include <drm/exynos_drm.h>
 
 #include "exynos_drm_drv.h"
@@ -287,7 +286,7 @@ static int g2d_init_cmdlist(struct g2d_data *g2d)
 		return -ENOMEM;
 	}
 
-	node = kzalloc_objs(*node, G2D_CMDLIST_NUM);
+	node = kcalloc(G2D_CMDLIST_NUM, sizeof(*node), GFP_KERNEL);
 	if (!node) {
 		ret = -ENOMEM;
 		goto err;
@@ -459,7 +458,7 @@ static dma_addr_t *g2d_userptr_get_dma_addr(struct g2d_data *g2d,
 		}
 	}
 
-	g2d_userptr = kzalloc_obj(*g2d_userptr);
+	g2d_userptr = kzalloc(sizeof(*g2d_userptr), GFP_KERNEL);
 	if (!g2d_userptr)
 		return ERR_PTR(-ENOMEM);
 
@@ -470,7 +469,8 @@ static dma_addr_t *g2d_userptr_get_dma_addr(struct g2d_data *g2d,
 	offset = userptr & ~PAGE_MASK;
 	end = PAGE_ALIGN(userptr + size);
 	npages = (end - start) >> PAGE_SHIFT;
-	g2d_userptr->pages = kvmalloc_objs(*g2d_userptr->pages, npages);
+	g2d_userptr->pages = kvmalloc_array(npages, sizeof(*g2d_userptr->pages),
+					    GFP_KERNEL);
 	if (!g2d_userptr->pages) {
 		ret = -ENOMEM;
 		goto err_free;
@@ -490,7 +490,7 @@ static dma_addr_t *g2d_userptr_get_dma_addr(struct g2d_data *g2d,
 	}
 	g2d_userptr->npages = npages;
 
-	sgt = kzalloc_obj(*sgt);
+	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
 		ret = -ENOMEM;
 		goto err_unpin_pages;
@@ -1168,7 +1168,7 @@ int exynos_g2d_set_cmdlist_ioctl(struct drm_device *drm_dev, void *data,
 	node->event = NULL;
 
 	if (req->event_type != G2D_EVENT_NOT) {
-		e = kzalloc_obj(*node->event);
+		e = kzalloc(sizeof(*node->event), GFP_KERNEL);
 		if (!e) {
 			ret = -ENOMEM;
 			goto err;
@@ -1607,7 +1607,7 @@ MODULE_DEVICE_TABLE(of, exynos_g2d_match);
 
 struct platform_driver g2d_driver = {
 	.probe		= g2d_probe,
-	.remove		= g2d_remove,
+	.remove_new	= g2d_remove,
 	.driver		= {
 		.name	= "exynos-drm-g2d",
 		.pm	= pm_ptr(&g2d_pm_ops),

@@ -3,13 +3,12 @@
  *
  * Copyright © 2018 Intel Corporation
  */
-
-#include "gem/i915_gem_internal.h"
-#include "gem/selftests/igt_gem_utils.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt.h"
 
-#include "i915_wait_util.h"
+#include "gem/i915_gem_internal.h"
+#include "gem/selftests/igt_gem_utils.h"
+
 #include "igt_spinner.h"
 
 int igt_spinner_init(struct igt_spinner *spin, struct intel_gt *gt)

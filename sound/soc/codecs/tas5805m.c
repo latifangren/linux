@@ -226,7 +226,8 @@ static int tas5805m_vol_info(struct snd_kcontrol *kcontrol,
 static int tas5805m_vol_get(struct snd_kcontrol *kcontrol,
 			    struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
 	struct tas5805m_priv *tas5805m =
 		snd_soc_component_get_drvdata(component);
 
@@ -246,7 +247,8 @@ static inline int volume_is_valid(int v)
 static int tas5805m_vol_put(struct snd_kcontrol *kcontrol,
 			    struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
 	struct tas5805m_priv *tas5805m =
 		snd_soc_component_get_drvdata(component);
 	int ret = 0;
@@ -472,7 +474,7 @@ static int tas5805m_i2c_probe(struct i2c_client *i2c)
 		return ret;
 	}
 
-	tas5805m = devm_kzalloc(dev, sizeof(*tas5805m), GFP_KERNEL);
+	tas5805m = devm_kzalloc(dev, sizeof(struct tas5805m_priv), GFP_KERNEL);
 	if (!tas5805m)
 		return -ENOMEM;
 

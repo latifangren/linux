@@ -25,7 +25,6 @@
 #include <linux/rfkill.h>
 #include <linux/pci.h>
 #include <linux/pci_hotplug.h>
-#include <linux/sysfs.h>
 #include <linux/leds.h>
 #include <linux/dmi.h>
 #include <acpi/video.h>
@@ -286,7 +285,7 @@ static ssize_t show_sys_acpi(struct device *dev, int cm, char *buf)
 
 	if (value < 0)
 		return -EIO;
-	return sysfs_emit(buf, "%d\n", value);
+	return sprintf(buf, "%d\n", value);
 }
 
 #define EEEPC_ACPI_SHOW_FUNC(_name, _cm)				\
@@ -362,7 +361,7 @@ static ssize_t cpufv_show(struct device *dev,
 
 	if (get_cpufv(eeepc, &c))
 		return -ENODEV;
-	return sysfs_emit(buf, "%#x\n", (c.num << 8) | c.cur);
+	return sprintf(buf, "%#x\n", (c.num << 8) | c.cur);
 }
 
 static ssize_t cpufv_store(struct device *dev,
@@ -394,7 +393,7 @@ static ssize_t cpufv_disabled_show(struct device *dev,
 {
 	struct eeepc_laptop *eeepc = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", eeepc->cpufv_disabled);
+	return sprintf(buf, "%d\n", eeepc->cpufv_disabled);
 }
 
 static ssize_t cpufv_disabled_store(struct device *dev,
@@ -1026,7 +1025,7 @@ static ssize_t store_sys_hwmon(void (*set)(int), const char *buf, size_t count)
 
 static ssize_t show_sys_hwmon(int (*get)(void), char *buf)
 {
-	return sysfs_emit(buf, "%d\n", get());
+	return sprintf(buf, "%d\n", get());
 }
 
 #define EEEPC_SENSOR_SHOW_FUNC(_name, _get)				\
@@ -1204,10 +1203,9 @@ static void eeepc_input_notify(struct eeepc_laptop *eeepc, int event)
 		pr_info("Unknown key %x pressed\n", event);
 }
 
-static void eeepc_acpi_notify(acpi_handle handle, u32 event, void *data)
+static void eeepc_acpi_notify(struct acpi_device *device, u32 event)
 {
-	struct eeepc_laptop *eeepc = data;
-	struct acpi_device *device = eeepc->device;
+	struct eeepc_laptop *eeepc = acpi_driver_data(device);
 	int old_brightness, new_brightness;
 	u16 count;
 
@@ -1361,22 +1359,20 @@ static void eeepc_enable_camera(struct eeepc_laptop *eeepc)
 
 static bool eeepc_device_present;
 
-static int eeepc_acpi_probe(struct platform_device *pdev)
+static int eeepc_acpi_add(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	struct eeepc_laptop *eeepc;
 	int result;
 
 	pr_notice(EEEPC_LAPTOP_NAME "\n");
-	eeepc = kzalloc_obj(struct eeepc_laptop);
+	eeepc = kzalloc(sizeof(struct eeepc_laptop), GFP_KERNEL);
 	if (!eeepc)
 		return -ENOMEM;
 	eeepc->handle = device->handle;
-	strscpy(acpi_device_name(device), EEEPC_ACPI_DEVICE_NAME);
-	strscpy(acpi_device_class(device), EEEPC_ACPI_CLASS);
+	strcpy(acpi_device_name(device), EEEPC_ACPI_DEVICE_NAME);
+	strcpy(acpi_device_class(device), EEEPC_ACPI_CLASS);
+	device->driver_data = eeepc;
 	eeepc->device = device;
-
-	platform_set_drvdata(pdev, eeepc);
 
 	eeepc->hotplug_disabled = hotplug_disabled;
 
@@ -1425,16 +1421,9 @@ static int eeepc_acpi_probe(struct platform_device *pdev)
 	if (result)
 		goto fail_rfkill;
 
-	result = acpi_dev_install_notify_handler(device, ACPI_ALL_NOTIFY,
-						 eeepc_acpi_notify, eeepc);
-	if (result)
-		goto fail_acpi_notifier;
-
 	eeepc_device_present = true;
 	return 0;
 
-fail_acpi_notifier:
-	eeepc_rfkill_exit(eeepc);
 fail_rfkill:
 	eeepc_led_exit(eeepc);
 fail_led:
@@ -1450,12 +1439,10 @@ fail_platform:
 	return result;
 }
 
-static void eeepc_acpi_remove(struct platform_device *pdev)
+static void eeepc_acpi_remove(struct acpi_device *device)
 {
-	struct eeepc_laptop *eeepc = platform_get_drvdata(pdev);
+	struct eeepc_laptop *eeepc = acpi_driver_data(device);
 
-	acpi_dev_remove_notify_handler(ACPI_COMPANION(&pdev->dev),
-				       ACPI_ALL_NOTIFY, eeepc_acpi_notify);
 	eeepc_backlight_exit(eeepc);
 	eeepc_rfkill_exit(eeepc);
 	eeepc_input_exit(eeepc);
@@ -1472,12 +1459,15 @@ static const struct acpi_device_id eeepc_device_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, eeepc_device_ids);
 
-static struct platform_driver eeepc_acpi_driver = {
-	.probe = eeepc_acpi_probe,
-	.remove = eeepc_acpi_remove,
-	.driver = {
-		.name = EEEPC_LAPTOP_NAME,
-		.acpi_match_table = eeepc_device_ids,
+static struct acpi_driver eeepc_acpi_driver = {
+	.name = EEEPC_LAPTOP_NAME,
+	.class = EEEPC_ACPI_CLASS,
+	.ids = eeepc_device_ids,
+	.flags = ACPI_DRIVER_ALL_NOTIFY_EVENTS,
+	.ops = {
+		.add = eeepc_acpi_add,
+		.remove = eeepc_acpi_remove,
+		.notify = eeepc_acpi_notify,
 	},
 };
 
@@ -1490,7 +1480,7 @@ static int __init eeepc_laptop_init(void)
 	if (result < 0)
 		return result;
 
-	result = platform_driver_register(&eeepc_acpi_driver);
+	result = acpi_bus_register_driver(&eeepc_acpi_driver);
 	if (result < 0)
 		goto fail_acpi_driver;
 
@@ -1502,7 +1492,7 @@ static int __init eeepc_laptop_init(void)
 	return 0;
 
 fail_no_device:
-	platform_driver_unregister(&eeepc_acpi_driver);
+	acpi_bus_unregister_driver(&eeepc_acpi_driver);
 fail_acpi_driver:
 	platform_driver_unregister(&platform_driver);
 	return result;
@@ -1510,7 +1500,7 @@ fail_acpi_driver:
 
 static void __exit eeepc_laptop_exit(void)
 {
-	platform_driver_unregister(&eeepc_acpi_driver);
+	acpi_bus_unregister_driver(&eeepc_acpi_driver);
 	platform_driver_unregister(&platform_driver);
 }
 

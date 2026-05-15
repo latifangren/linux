@@ -2,7 +2,6 @@
 /* Do not edit directly, auto-generated from: */
 /*	Documentation/netlink/specs/mptcp_pm.yaml */
 /* YNL-GEN kernel source */
-/* To regenerate run: tools/net/ynl/ynl-regen.sh */
 
 #include <net/netlink.h>
 #include <net/genetlink.h>
@@ -15,7 +14,7 @@
 const struct nla_policy mptcp_pm_address_nl_policy[MPTCP_PM_ADDR_ATTR_IF_IDX + 1] = {
 	[MPTCP_PM_ADDR_ATTR_FAMILY] = { .type = NLA_U16, },
 	[MPTCP_PM_ADDR_ATTR_ID] = { .type = NLA_U8, },
-	[MPTCP_PM_ADDR_ATTR_ADDR4] = { .type = NLA_BE32, },
+	[MPTCP_PM_ADDR_ATTR_ADDR4] = { .type = NLA_U32, },
 	[MPTCP_PM_ADDR_ATTR_ADDR6] = NLA_POLICY_EXACT_LEN(16),
 	[MPTCP_PM_ADDR_ATTR_PORT] = { .type = NLA_U16, },
 	[MPTCP_PM_ADDR_ATTR_FLAGS] = { .type = NLA_U32, },

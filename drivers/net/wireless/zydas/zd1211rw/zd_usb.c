@@ -445,7 +445,7 @@ static void int_urb_complete(struct urb *urb)
 	}
 
 	if (urb->actual_length < sizeof(hdr)) {
-		dev_dbg_f(urb_dev(urb), "error: urb %p too small\n", urb);
+		dev_dbg_f(urb_dev(urb), "error: urb %p to small\n", urb);
 		goto resubmit;
 	}
 
@@ -752,7 +752,7 @@ static int __zd_usb_enable_rx(struct zd_usb *usb)
 	dev_dbg_f(zd_usb_dev(usb), "\n");
 
 	r = -ENOMEM;
-	urbs = kzalloc_objs(struct urb *, RX_URBS_COUNT);
+	urbs = kcalloc(RX_URBS_COUNT, sizeof(struct urb *), GFP_KERNEL);
 	if (!urbs)
 		goto error;
 	for (i = 0; i < RX_URBS_COUNT; i++) {
@@ -791,7 +791,6 @@ error:
 	if (urbs) {
 		for (i = 0; i < RX_URBS_COUNT; i++)
 			free_rx_urb(urbs[i]);
-		kfree(urbs);
 	}
 	return r;
 }

@@ -20,7 +20,8 @@
 #undef DEBUGDATA
 #undef DEBUGCCW
 
-#define pr_fmt(fmt) "ctcm: " fmt
+#define KMSG_COMPONENT "ctcm"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -1268,7 +1269,7 @@ static int ctcm_probe_device(struct ccwgroup_device *cgdev)
 	if (!get_device(&cgdev->dev))
 		return -ENODEV;
 
-	priv = kzalloc_obj(struct ctcm_priv);
+	priv = kzalloc(sizeof(struct ctcm_priv), GFP_KERNEL);
 	if (!priv) {
 		CTCM_DBF_TEXT_(ERROR, CTC_DBF_ERROR,
 			"%s: memory allocation failure",
@@ -1307,7 +1308,7 @@ static int add_channel(struct ccw_device *cdev, enum ctcm_channel_types type,
 		"%s(%s), type %d, proto %d",
 			__func__, dev_name(&cdev->dev),	type, priv->protocol);
 
-	ch = kzalloc_obj(struct channel);
+	ch = kzalloc(sizeof(struct channel), GFP_KERNEL);
 	if (ch == NULL)
 		return -ENOMEM;
 
@@ -1327,7 +1328,7 @@ static int add_channel(struct ccw_device *cdev, enum ctcm_channel_types type,
 	} else
 		ccw_num = 8;
 
-	ch->ccw = kzalloc_objs(struct ccw1, ccw_num, GFP_KERNEL | GFP_DMA);
+	ch->ccw = kcalloc(ccw_num, sizeof(struct ccw1), GFP_KERNEL | GFP_DMA);
 	if (ch->ccw == NULL)
 					goto nomem_return;
 
@@ -1408,7 +1409,7 @@ static int add_channel(struct ccw_device *cdev, enum ctcm_channel_types type,
 
 	fsm_newstate(ch->fsm, CTC_STATE_IDLE);
 
-	ch->irb = kzalloc_obj(struct irb);
+	ch->irb = kzalloc(sizeof(struct irb), GFP_KERNEL);
 	if (ch->irb == NULL)
 				goto nomem_return;
 

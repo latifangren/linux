@@ -20,78 +20,10 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/close_range.h>
-#include <linux/file_ref.h>
 #include <net/sock.h>
 #include <linux/init_task.h>
 
 #include "internal.h"
-
-static noinline bool __file_ref_put_badval(file_ref_t *ref, unsigned long cnt)
-{
-	/*
-	 * If the reference count was already in the dead zone, then this
-	 * put() operation is imbalanced. Warn, put the reference count back to
-	 * DEAD and tell the caller to not deconstruct the object.
-	 */
-	if (WARN_ONCE(cnt >= FILE_REF_RELEASED, "imbalanced put on file reference count")) {
-		atomic_long_set(&ref->refcnt, FILE_REF_DEAD);
-		return false;
-	}
-
-	/*
-	 * This is a put() operation on a saturated refcount. Restore the
-	 * mean saturation value and tell the caller to not deconstruct the
-	 * object.
-	 */
-	if (cnt > FILE_REF_MAXREF)
-		atomic_long_set(&ref->refcnt, FILE_REF_SATURATED);
-	return false;
-}
-
-/**
- * __file_ref_put - Slowpath of file_ref_put()
- * @ref:	Pointer to the reference count
- * @cnt:	Current reference count
- *
- * Invoked when the reference count is outside of the valid zone.
- *
- * Return:
- *	True if this was the last reference with no future references
- *	possible. This signals the caller that it can safely schedule the
- *	object, which is protected by the reference counter, for
- *	deconstruction.
- *
- *	False if there are still active references or the put() raced
- *	with a concurrent get()/put() pair. Caller is not allowed to
- *	deconstruct the protected object.
- */
-bool __file_ref_put(file_ref_t *ref, unsigned long cnt)
-{
-	/* Did this drop the last reference? */
-	if (likely(cnt == FILE_REF_NOREF)) {
-		/*
-		 * Carefully try to set the reference count to FILE_REF_DEAD.
-		 *
-		 * This can fail if a concurrent get() operation has
-		 * elevated it again or the corresponding put() even marked
-		 * it dead already. Both are valid situations and do not
-		 * require a retry. If this fails the caller is not
-		 * allowed to deconstruct the object.
-		 */
-		if (!atomic_long_try_cmpxchg_release(&ref->refcnt, &cnt, FILE_REF_DEAD))
-			return false;
-
-		/*
-		 * The caller can safely schedule the object for
-		 * deconstruction. Provide acquire ordering.
-		 */
-		smp_acquire__after_ctrl_dep();
-		return true;
-	}
-
-	return __file_ref_put_badval(ref, cnt);
-}
-EXPORT_SYMBOL_GPL(__file_ref_put);
 
 unsigned int sysctl_nr_open __read_mostly = 1024*1024;
 unsigned int sysctl_nr_open_min = BITS_PER_LONG;
@@ -200,7 +132,7 @@ static struct fdtable *alloc_fdtable(unsigned int slots_wanted)
 	/*
 	 * Check if the allocation size would exceed INT_MAX. kvmalloc_array()
 	 * and kvmalloc() will warn if the allocation size is greater than
-	 * INT_MAX, as filp_cache objects are not __GFP_NOWARN.
+	 * INT_MAX, as filp_cachep objects are not __GFP_NOWARN.
 	 *
 	 * This can happen when sysctl_nr_open is set to a very high value and
 	 * a process tries to use a file descriptor near that limit. For example,
@@ -212,11 +144,11 @@ static struct fdtable *alloc_fdtable(unsigned int slots_wanted)
 	if (unlikely(nr > INT_MAX / sizeof(struct file *)))
 		return ERR_PTR(-EMFILE);
 
-	fdt = kmalloc_obj(struct fdtable, GFP_KERNEL_ACCOUNT);
+	fdt = kmalloc(sizeof(struct fdtable), GFP_KERNEL_ACCOUNT);
 	if (!fdt)
 		goto out;
 	fdt->max_fds = nr;
-	data = kvmalloc_objs(struct file *, nr, GFP_KERNEL_ACCOUNT);
+	data = kvmalloc_array(nr, sizeof(struct file *), GFP_KERNEL_ACCOUNT);
 	if (!data)
 		goto out_fdt;
 	fdt->fd = data;
@@ -246,7 +178,7 @@ out:
  * Expand the file descriptor table.
  * This function will allocate a new fdtable and both fd array and fdset, of
  * the given size.
- * Return <0 error code on error; 0 on successful completion.
+ * Return <0 error code on error; 1 on successful completion.
  * The files->file_lock should be held on entry, and will be held on exit.
  */
 static int expand_fdtable(struct files_struct *files, unsigned int nr)
@@ -275,14 +207,15 @@ static int expand_fdtable(struct files_struct *files, unsigned int nr)
 		call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
 	/* coupled with smp_rmb() in fd_install() */
 	smp_wmb();
-	return 0;
+	return 1;
 }
 
 /*
  * Expand files.
  * This function will expand the file structures, if the requested size exceeds
  * the current capacity and there is room for expansion.
- * Return <0 error code on error; 0 on success.
+ * Return <0 error code on error; 0 when nothing done; 1 when files were
+ * expanded and execution may have blocked.
  * The files->file_lock should be held on entry, and will be held on exit.
  */
 static int expand_files(struct files_struct *files, unsigned int nr)
@@ -290,50 +223,50 @@ static int expand_files(struct files_struct *files, unsigned int nr)
 	__acquires(files->file_lock)
 {
 	struct fdtable *fdt;
-	int error;
+	int expanded = 0;
 
 repeat:
 	fdt = files_fdtable(files);
 
 	/* Do we need to expand? */
 	if (nr < fdt->max_fds)
-		return 0;
+		return expanded;
+
+	/* Can we expand? */
+	if (nr >= sysctl_nr_open)
+		return -EMFILE;
 
 	if (unlikely(files->resize_in_progress)) {
 		spin_unlock(&files->file_lock);
+		expanded = 1;
 		wait_event(files->resize_wait, !files->resize_in_progress);
 		spin_lock(&files->file_lock);
 		goto repeat;
 	}
 
-	/* Can we expand? */
-	if (unlikely(nr >= sysctl_nr_open))
-		return -EMFILE;
-
 	/* All good, so we try */
 	files->resize_in_progress = true;
-	error = expand_fdtable(files, nr);
+	expanded = expand_fdtable(files, nr);
 	files->resize_in_progress = false;
 
 	wake_up_all(&files->resize_wait);
-	return error;
+	return expanded;
 }
 
-static inline void __set_close_on_exec(unsigned int fd, struct fdtable *fdt,
-				       bool set)
+static inline void __set_close_on_exec(unsigned int fd, struct fdtable *fdt)
 {
-	if (set) {
-		__set_bit(fd, fdt->close_on_exec);
-	} else {
-		if (test_bit(fd, fdt->close_on_exec))
-			__clear_bit(fd, fdt->close_on_exec);
-	}
+	__set_bit(fd, fdt->close_on_exec);
 }
 
-static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt, bool set)
+static inline void __clear_close_on_exec(unsigned int fd, struct fdtable *fdt)
+{
+	if (test_bit(fd, fdt->close_on_exec))
+		__clear_bit(fd, fdt->close_on_exec);
+}
+
+static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt)
 {
 	__set_bit(fd, fdt->open_fds);
-	__set_close_on_exec(fd, fdt, set);
 	fd /= BITS_PER_LONG;
 	if (!~fdt->open_fds[fd])
 		__set_bit(fd, fdt->full_fds_bits);
@@ -342,9 +275,7 @@ static inline void __set_open_fd(unsigned int fd, struct fdtable *fdt, bool set)
 static inline void __clear_open_fd(unsigned int fd, struct fdtable *fdt)
 {
 	__clear_bit(fd, fdt->open_fds);
-	fd /= BITS_PER_LONG;
-	if (test_bit(fd, fdt->full_fds_bits))
-		__clear_bit(fd, fdt->full_fds_bits);
+	__clear_bit(fd / BITS_PER_LONG, fdt->full_fds_bits);
 }
 
 static inline bool fd_is_open(unsigned int fd, const struct fdtable *fdt)
@@ -489,7 +420,7 @@ static struct fdtable *close_files(struct files_struct * files)
 		set = fdt->open_fds[j++];
 		while (set) {
 			if (set & 1) {
-				struct file *file = fdt->fd[i];
+				struct file * file = xchg(&fdt->fd[i], NULL);
 				if (file) {
 					filp_close(file, files);
 					cond_resched();
@@ -546,15 +477,6 @@ static unsigned int find_next_fd(struct fdtable *fdt, unsigned int start)
 	unsigned int maxfd = fdt->max_fds; /* always multiple of BITS_PER_LONG */
 	unsigned int maxbit = maxfd / BITS_PER_LONG;
 	unsigned int bitbit = start / BITS_PER_LONG;
-	unsigned int bit;
-
-	/*
-	 * Try to avoid looking at the second level bitmap
-	 */
-	bit = find_next_zero_bit(&fdt->open_fds[bitbit], BITS_PER_LONG,
-				 start & (BITS_PER_LONG - 1));
-	if (bit < BITS_PER_LONG)
-		return bit + bitbit * BITS_PER_LONG;
 
 	bitbit = find_next_zero_bit(fdt->full_fds_bits, maxbit, bitbit) * BITS_PER_LONG;
 	if (bitbit >= maxfd)
@@ -581,7 +503,7 @@ repeat:
 	if (fd < files->next_fd)
 		fd = files->next_fd;
 
-	if (likely(fd < fdt->max_fds))
+	if (fd < fdt->max_fds)
 		fd = find_next_fd(fdt, fd);
 
 	/*
@@ -589,23 +511,36 @@ repeat:
 	 * will limit the total number of files that can be opened.
 	 */
 	error = -EMFILE;
-	if (unlikely(fd >= end))
+	if (fd >= end)
 		goto out;
 
-	if (unlikely(fd >= fdt->max_fds)) {
-		error = expand_files(files, fd);
-		if (error < 0)
-			goto out;
+	error = expand_files(files, fd);
+	if (error < 0)
+		goto out;
 
+	/*
+	 * If we needed to expand the fs array we
+	 * might have blocked - try again.
+	 */
+	if (error)
 		goto repeat;
-	}
 
 	if (start <= files->next_fd)
 		files->next_fd = fd + 1;
 
-	__set_open_fd(fd, fdt, flags & O_CLOEXEC);
+	__set_open_fd(fd, fdt);
+	if (flags & O_CLOEXEC)
+		__set_close_on_exec(fd, fdt);
+	else
+		__clear_close_on_exec(fd, fdt);
 	error = fd;
-	VFS_BUG_ON(rcu_access_pointer(fdt->fd[fd]) != NULL);
+#if 1
+	/* Sanity check */
+	if (rcu_access_pointer(fdt->fd[fd]) != NULL) {
+		printk(KERN_WARNING "alloc_fd: slot %d not NULL!\n", fd);
+		rcu_assign_pointer(fdt->fd[fd], NULL);
+	}
+#endif
 
 out:
 	spin_unlock(&files->file_lock);
@@ -642,41 +577,21 @@ void put_unused_fd(unsigned int fd)
 EXPORT_SYMBOL(put_unused_fd);
 
 /*
- * Install a file pointer in the fd array while it is being resized.
+ * Install a file pointer in the fd array.
  *
- * We need to make sure our update to the array does not get lost as the resizing
- * thread can be copying the content as we modify it.
+ * The VFS is full of places where we drop the files lock between
+ * setting the open_fds bitmap and installing the file in the file
+ * array.  At any such point, we are vulnerable to a dup2() race
+ * installing a file in the array before us.  We need to detect this and
+ * fput() the struct file we are about to overwrite in this case.
  *
- * We have two ways to do it:
- * - go off CPU waiting for resize_in_progress to clear
- * - take the spin lock
- *
- * The latter is trivial to implement and saves us from having to might_sleep()
- * for debugging purposes.
- *
- * This is moved out of line from fd_install() to convince gcc to optimize that
- * routine better.
- */
-static void noinline fd_install_slowpath(unsigned int fd, struct file *file)
-{
-	struct files_struct *files = current->files;
-	struct fdtable *fdt;
-
-	spin_lock(&files->file_lock);
-	fdt = files_fdtable(files);
-	VFS_BUG_ON(rcu_access_pointer(fdt->fd[fd]) != NULL);
-	rcu_assign_pointer(fdt->fd[fd], file);
-	spin_unlock(&files->file_lock);
-}
-
-/**
- * fd_install - install a file pointer in the fd array
- * @fd: file descriptor to install the file in
- * @file: the file to install
+ * It should never happen - if we allow dup2() do it, _really_ bad things
+ * will follow.
  *
  * This consumes the "file" refcount, so callers should treat it
  * as if they had called fput(file).
  */
+
 void fd_install(unsigned int fd, struct file *file)
 {
 	struct files_struct *files = current->files;
@@ -686,15 +601,20 @@ void fd_install(unsigned int fd, struct file *file)
 		return;
 
 	rcu_read_lock_sched();
+
 	if (unlikely(files->resize_in_progress)) {
 		rcu_read_unlock_sched();
-		fd_install_slowpath(fd, file);
+		spin_lock(&files->file_lock);
+		fdt = files_fdtable(files);
+		BUG_ON(fdt->fd[fd] != NULL);
+		rcu_assign_pointer(fdt->fd[fd], file);
+		spin_unlock(&files->file_lock);
 		return;
 	}
 	/* coupled with smp_wmb() in expand_fdtable() */
 	smp_rmb();
 	fdt = rcu_dereference_sched(files->fdt);
-	VFS_BUG_ON(rcu_access_pointer(fdt->fd[fd]) != NULL);
+	BUG_ON(fdt->fd[fd] != NULL);
 	rcu_assign_pointer(fdt->fd[fd], file);
 	rcu_read_unlock_sched();
 }
@@ -777,36 +697,30 @@ static inline void __range_close(struct files_struct *files, unsigned int fd,
 				 unsigned int max_fd)
 {
 	struct file *file;
-	struct fdtable *fdt;
 	unsigned n;
 
 	spin_lock(&files->file_lock);
-	fdt = files_fdtable(files);
-	n = last_fd(fdt);
+	n = last_fd(files_fdtable(files));
 	max_fd = min(max_fd, n);
 
-	for (fd = find_next_bit(fdt->open_fds, max_fd + 1, fd);
-	     fd <= max_fd;
-	     fd = find_next_bit(fdt->open_fds, max_fd + 1, fd + 1)) {
+	for (; fd <= max_fd; fd++) {
 		file = file_close_fd_locked(files, fd);
 		if (file) {
 			spin_unlock(&files->file_lock);
 			filp_close(file, files);
 			cond_resched();
 			spin_lock(&files->file_lock);
-			fdt = files_fdtable(files);
 		} else if (need_resched()) {
 			spin_unlock(&files->file_lock);
 			cond_resched();
 			spin_lock(&files->file_lock);
-			fdt = files_fdtable(files);
 		}
 	}
 	spin_unlock(&files->file_lock);
 }
 
 /**
- * sys_close_range() - Close all file descriptors in a given range.
+ * __close_range() - Close all file descriptors in a given range.
  *
  * @fd:     starting file descriptor to close
  * @max_fd: last file descriptor to close
@@ -814,10 +728,8 @@ static inline void __range_close(struct files_struct *files, unsigned int fd,
  *
  * This closes a range of file descriptors. All file descriptors
  * from @fd up to and including @max_fd are closed.
- * Currently, errors to close a given file descriptor are ignored.
  */
-SYSCALL_DEFINE3(close_range, unsigned int, fd, unsigned int, max_fd,
-		unsigned int, flags)
+int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 {
 	struct task_struct *me = current;
 	struct files_struct *cur_fds = me->files, *fds = NULL;
@@ -934,7 +846,7 @@ static struct file *__get_file_rcu(struct file __rcu **f)
 	if (!file)
 		return NULL;
 
-	if (unlikely(!file_ref_get(&file->f_ref)))
+	if (unlikely(!atomic_long_inc_not_zero(&file->f_count)))
 		return ERR_PTR(-EAGAIN);
 
 	file_reloaded = rcu_dereference_raw(*f);
@@ -948,8 +860,8 @@ static struct file *__get_file_rcu(struct file __rcu **f)
 	OPTIMIZER_HIDE_VAR(file_reloaded_cmp);
 
 	/*
-	 * file_ref_get() above provided a full memory barrier when we
-	 * acquired a reference.
+	 * atomic_long_inc_not_zero() above provided a full memory
+	 * barrier when we acquired a reference.
 	 *
 	 * This is paired with the write barrier from assigning to the
 	 * __rcu protected file pointer so that if that pointer still
@@ -1047,11 +959,11 @@ static inline struct file *__fget_files_rcu(struct files_struct *files,
 		 * We need to confirm it by incrementing the refcount
 		 * and then check the lookup again.
 		 *
-		 * file_ref_get() gives us a full memory barrier. We
-		 * only really need an 'acquire' one to protect the
-		 * loads below, but we don't have that.
+		 * atomic_long_inc_not_zero() gives us a full memory
+		 * barrier. We only really need an 'acquire' one to
+		 * protect the loads below, but we don't have that.
 		 */
-		if (unlikely(!file_ref_get(&file->f_ref)))
+		if (unlikely(!atomic_long_inc_not_zero(&file->f_count)))
 			continue;
 
 		/*
@@ -1132,7 +1044,29 @@ struct file *fget_task(struct task_struct *task, unsigned int fd)
 	return file;
 }
 
-struct file *fget_task_next(struct task_struct *task, unsigned int *ret_fd)
+struct file *lookup_fdget_rcu(unsigned int fd)
+{
+	return __fget_files_rcu(current->files, fd, 0);
+
+}
+EXPORT_SYMBOL_GPL(lookup_fdget_rcu);
+
+struct file *task_lookup_fdget_rcu(struct task_struct *task, unsigned int fd)
+{
+	/* Must be called with rcu_read_lock held */
+	struct files_struct *files;
+	struct file *file = NULL;
+
+	task_lock(task);
+	files = task->files;
+	if (files)
+		file = __fget_files_rcu(files, fd, 0);
+	task_unlock(task);
+
+	return file;
+}
+
+struct file *task_lookup_next_fdget_rcu(struct task_struct *task, unsigned int *ret_fd)
 {
 	/* Must be called with rcu_read_lock held */
 	struct files_struct *files;
@@ -1142,19 +1076,17 @@ struct file *fget_task_next(struct task_struct *task, unsigned int *ret_fd)
 	task_lock(task);
 	files = task->files;
 	if (files) {
-		rcu_read_lock();
 		for (; fd < files_fdtable(files)->max_fds; fd++) {
 			file = __fget_files_rcu(files, fd, 0);
 			if (file)
 				break;
 		}
-		rcu_read_unlock();
 	}
 	task_unlock(task);
 	*ret_fd = fd;
 	return file;
 }
-EXPORT_SYMBOL(fget_task_next);
+EXPORT_SYMBOL(task_lookup_next_fdget_rcu);
 
 /*
  * Lightweight file lookup - no refcnt increment if fd table isn't shared.
@@ -1171,13 +1103,6 @@ EXPORT_SYMBOL(fget_task_next);
  *
  * The fput_needed flag returned by fget_light should be passed to the
  * corresponding fput_light.
- *
- * (As an exception to rule 2, you can call filp_close between fget_light and
- * fput_light provided that you capture a real refcount with get_file before
- * the call to filp_close, and ensure that this real refcount is fput *after*
- * the fput_light call.)
- *
- * See also the documentation in rust/kernel/file.rs.
  */
 static inline struct fd __fget_light(unsigned int fd, fmode_t mask)
 {
@@ -1228,27 +1153,8 @@ struct fd fdget_raw(unsigned int fd)
  */
 static inline bool file_needs_f_pos_lock(struct file *file)
 {
-	if (!(file->f_mode & FMODE_ATOMIC_POS))
-		return false;
-	if (__file_ref_read_raw(&file->f_ref) != FILE_REF_ONEREF)
-		return true;
-	if (file->f_op->iterate_shared)
-		return true;
-	return false;
-}
-
-bool file_seek_cur_needs_f_lock(struct file *file)
-{
-	if (!(file->f_mode & FMODE_ATOMIC_POS) && !file->f_op->iterate_shared)
-		return false;
-
-	/*
-	 * Note that we are not guaranteed to be called after fdget_pos() on
-	 * this file obj, in which case the caller is expected to provide the
-	 * appropriate locking.
-	 */
-
-	return true;
+	return (file->f_mode & FMODE_ATOMIC_POS) &&
+		(file_count(file) > 1 || file->f_op->iterate_shared);
 }
 
 struct fd fdget_pos(unsigned int fd)
@@ -1256,7 +1162,7 @@ struct fd fdget_pos(unsigned int fd)
 	struct fd f = fdget(fd);
 	struct file *file = fd_file(f);
 
-	if (likely(file) && file_needs_f_pos_lock(file)) {
+	if (file && file_needs_f_pos_lock(file)) {
 		f.word |= FDPUT_POS_UNLOCK;
 		mutex_lock(&file->f_pos_lock);
 	}
@@ -1277,8 +1183,13 @@ void __f_unlock_pos(struct file *f)
 void set_close_on_exec(unsigned int fd, int flag)
 {
 	struct files_struct *files = current->files;
+	struct fdtable *fdt;
 	spin_lock(&files->file_lock);
-	__set_close_on_exec(fd, files_fdtable(files), flag);
+	fdt = files_fdtable(files);
+	if (flag)
+		__set_close_on_exec(fd, fdt);
+	else
+		__clear_close_on_exec(fd, fdt);
 	spin_unlock(&files->file_lock);
 }
 
@@ -1299,30 +1210,18 @@ __releases(&files->file_lock)
 	struct fdtable *fdt;
 
 	/*
-	 * dup2() is expected to close the file installed in the target fd slot
-	 * (if any). However, userspace hand-picking a fd may be racing against
-	 * its own threads which happened to allocate it in open() et al but did
-	 * not populate it yet.
-	 *
-	 * Broadly speaking we may be racing against the following:
-	 * fd = get_unused_fd_flags();     // fd slot reserved, ->fd[fd] == NULL
-	 * file = hard_work_goes_here();
-	 * fd_install(fd, file);           // only now ->fd[fd] == file
-	 *
-	 * It is an invariant that a successfully allocated fd has a NULL entry
-	 * in the array until the matching fd_install().
-	 *
-	 * If we fit the window, we have the fd to populate, yet no target file
-	 * to close. Trying to ignore it and install our new file would violate
-	 * the invariant and make fd_install() overwrite our file.
-	 *
-	 * Things can be done(tm) to handle this. However, the issue does not
-	 * concern legitimate programs and we only need to make sure the kernel
-	 * does not trip over it.
-	 *
-	 * The simplest way out is to return an error if we find ourselves here.
-	 *
-	 * POSIX is silent on the issue, we return -EBUSY.
+	 * We need to detect attempts to do dup2() over allocated but still
+	 * not finished descriptor.  NB: OpenBSD avoids that at the price of
+	 * extra work in their equivalent of fget() - they insert struct
+	 * file immediately after grabbing descriptor, mark it larval if
+	 * more work (e.g. actual opening) is needed and make sure that
+	 * fget() treats larval files as absent.  Potentially interesting,
+	 * but while extra work in fget() is trivial, locking implications
+	 * and amount of surgery on open()-related paths in VFS are not.
+	 * FreeBSD fails with -EBADF in the same situation, NetBSD "solution"
+	 * deadlocks in rather amusing ways, AFAICS.  All of that is out of
+	 * scope of POSIX or SUS, since neither considers shared descriptor
+	 * tables and this condition does not arise without those.
 	 */
 	fdt = files_fdtable(files);
 	fd = array_index_nospec(fd, fdt->max_fds);
@@ -1331,7 +1230,11 @@ __releases(&files->file_lock)
 		goto Ebusy;
 	get_file(file);
 	rcu_assign_pointer(fdt->fd[fd], file);
-	__set_open_fd(fd, fdt, flags & O_CLOEXEC);
+	__set_open_fd(fd, fdt);
+	if (flags & O_CLOEXEC)
+		__set_close_on_exec(fd, fdt);
+	else
+		__clear_close_on_exec(fd, fdt);
 	spin_unlock(&files->file_lock);
 
 	if (tofree)
@@ -1386,25 +1289,28 @@ out_unlock:
  */
 int receive_fd(struct file *file, int __user *ufd, unsigned int o_flags)
 {
+	int new_fd;
 	int error;
 
 	error = security_file_receive(file);
 	if (error)
 		return error;
 
-	FD_PREPARE(fdf, o_flags, file);
-	if (fdf.err)
-		return fdf.err;
-	get_file(file);
+	new_fd = get_unused_fd_flags(o_flags);
+	if (new_fd < 0)
+		return new_fd;
 
 	if (ufd) {
-		error = put_user(fd_prepare_fd(fdf), ufd);
-		if (error)
+		error = put_user(new_fd, ufd);
+		if (error) {
+			put_unused_fd(new_fd);
 			return error;
+		}
 	}
 
-	__receive_sock(fd_prepare_file(fdf));
-	return fd_publish(fdf);
+	fd_install(new_fd, get_file(file));
+	__receive_sock(file);
+	return new_fd;
 }
 EXPORT_SYMBOL_GPL(receive_fd);
 

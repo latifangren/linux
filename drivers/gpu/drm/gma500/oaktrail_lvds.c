@@ -13,7 +13,6 @@
 
 #include <drm/drm_edid.h>
 #include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_print.h>
 #include <drm/drm_simple_kms_helper.h>
 
 #include "intel_bios.h"
@@ -223,7 +222,7 @@ static void oaktrail_lvds_get_configuration_mode(struct drm_device *dev,
 
 	/* Use the firmware provided data on Moorestown */
 	if (dev_priv->has_gct) {
-		mode = kzalloc_obj(*mode);
+		mode = kzalloc(sizeof(*mode), GFP_KERNEL);
 		if (!mode)
 			return;
 
@@ -302,11 +301,11 @@ void oaktrail_lvds_init(struct drm_device *dev,
 	struct drm_display_mode *scan;	/* *modes, *bios_mode; */
 	int ret;
 
-	gma_encoder = kzalloc_obj(struct gma_encoder);
+	gma_encoder = kzalloc(sizeof(struct gma_encoder), GFP_KERNEL);
 	if (!gma_encoder)
 		return;
 
-	gma_connector = kzalloc_obj(struct gma_connector);
+	gma_connector = kzalloc(sizeof(struct gma_connector), GFP_KERNEL);
 	if (!gma_connector)
 		goto err_free_encoder;
 

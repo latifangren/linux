@@ -304,8 +304,7 @@ static int setup_link_status_change_wq(struct net_device *netdev)
 	struct octeon_device *oct = lio->oct_dev;
 
 	lio->link_status_wq.wq = alloc_workqueue("link-status",
-						 WQ_MEM_RECLAIM | WQ_PERCPU,
-						 0);
+						 WQ_MEM_RECLAIM, 0);
 	if (!lio->link_status_wq.wq) {
 		dev_err(&oct->pci_dev->dev, "unable to create cavium link status wq\n");
 		return -1;
@@ -1236,13 +1235,20 @@ liquidio_get_stats64(struct net_device *netdev,
 		lstats->tx_carrier_errors;
 }
 
-static int liquidio_hwtstamp_set(struct net_device *netdev,
-				 struct kernel_hwtstamp_config *conf,
-				 struct netlink_ext_ack *extack)
+/**
+ * hwtstamp_ioctl - Handler for SIOCSHWTSTAMP ioctl
+ * @netdev: network device
+ * @ifr: interface request
+ */
+static int hwtstamp_ioctl(struct net_device *netdev, struct ifreq *ifr)
 {
 	struct lio *lio = GET_LIO(netdev);
+	struct hwtstamp_config conf;
 
-	switch (conf->tx_type) {
+	if (copy_from_user(&conf, ifr->ifr_data, sizeof(conf)))
+		return -EFAULT;
+
+	switch (conf.tx_type) {
 	case HWTSTAMP_TX_ON:
 	case HWTSTAMP_TX_OFF:
 		break;
@@ -1250,7 +1256,7 @@ static int liquidio_hwtstamp_set(struct net_device *netdev,
 		return -ERANGE;
 	}
 
-	switch (conf->rx_filter) {
+	switch (conf.rx_filter) {
 	case HWTSTAMP_FILTER_NONE:
 		break;
 	case HWTSTAMP_FILTER_ALL:
@@ -1268,31 +1274,35 @@ static int liquidio_hwtstamp_set(struct net_device *netdev,
 	case HWTSTAMP_FILTER_PTP_V2_SYNC:
 	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
 	case HWTSTAMP_FILTER_NTP_ALL:
-		conf->rx_filter = HWTSTAMP_FILTER_ALL;
+		conf.rx_filter = HWTSTAMP_FILTER_ALL;
 		break;
 	default:
 		return -ERANGE;
 	}
 
-	if (conf->rx_filter == HWTSTAMP_FILTER_ALL)
+	if (conf.rx_filter == HWTSTAMP_FILTER_ALL)
 		ifstate_set(lio, LIO_IFSTATE_RX_TIMESTAMP_ENABLED);
 
 	else
 		ifstate_reset(lio, LIO_IFSTATE_RX_TIMESTAMP_ENABLED);
 
-	return 0;
+	return copy_to_user(ifr->ifr_data, &conf, sizeof(conf)) ? -EFAULT : 0;
 }
 
-static int liquidio_hwtstamp_get(struct net_device *netdev,
-				 struct kernel_hwtstamp_config *conf)
+/**
+ * liquidio_ioctl - ioctl handler
+ * @netdev: network device
+ * @ifr: interface request
+ * @cmd: command
+ */
+static int liquidio_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 {
-	struct lio *lio = GET_LIO(netdev);
-
-	/* TX timestamping is techically always on */
-	conf->tx_type = HWTSTAMP_TX_ON;
-	conf->rx_filter = ifstate_check(lio, LIO_IFSTATE_RX_TIMESTAMP_ENABLED) ?
-			  HWTSTAMP_FILTER_ALL : HWTSTAMP_FILTER_NONE;
-	return 0;
+	switch (cmd) {
+	case SIOCSHWTSTAMP:
+		return hwtstamp_ioctl(netdev, ifr);
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static void handle_timestamp(struct octeon_device *oct, u32 status, void *buf)
@@ -1870,10 +1880,9 @@ static const struct net_device_ops lionetdevops = {
 	.ndo_vlan_rx_add_vid    = liquidio_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid   = liquidio_vlan_rx_kill_vid,
 	.ndo_change_mtu		= liquidio_change_mtu,
+	.ndo_eth_ioctl		= liquidio_ioctl,
 	.ndo_fix_features	= liquidio_fix_features,
 	.ndo_set_features	= liquidio_set_features,
-	.ndo_hwtstamp_get	= liquidio_hwtstamp_get,
-	.ndo_hwtstamp_set	= liquidio_hwtstamp_set,
 };
 
 static int lio_nic_info(struct octeon_recv_info *recv_info, void *buf)

@@ -37,10 +37,9 @@
 #include <linux/bitfield.h>
 #include <net/page_pool/helpers.h>
 
-int mlx5e_xdp_max_mtu(struct mlx5e_params *params,
-		      struct mlx5e_rq_opt_param *rqo)
+int mlx5e_xdp_max_mtu(struct mlx5e_params *params, struct mlx5e_xsk_param *xsk)
 {
-	int hr = mlx5e_get_linear_rq_headroom(params, rqo);
+	int hr = mlx5e_get_linear_rq_headroom(params, xsk);
 
 	/* Let S := SKB_DATA_ALIGN(sizeof(struct skb_shared_info)).
 	 * The condition checked in mlx5e_rx_is_linear_skb is:
@@ -123,7 +122,7 @@ mlx5e_xmit_xdp_buff(struct mlx5e_xdpsq *sq, struct mlx5e_rq *rq,
 	 * mode.
 	 */
 
-	dma_addr = page_pool_get_dma_addr(page) + offset_in_page(xdpf->data);
+	dma_addr = page_pool_get_dma_addr(page) + (xdpf->data - (void *)xdpf);
 	dma_sync_single_for_device(sq->pdev, dma_addr, xdptxd->len, DMA_BIDIRECTIONAL);
 
 	if (xdptxd->has_frags) {
@@ -180,7 +179,7 @@ static int mlx5e_xdp_rx_timestamp(const struct xdp_md *ctx, u64 *timestamp)
 {
 	const struct mlx5e_xdp_buff *_ctx = (void *)ctx;
 
-	if (unlikely(!mlx5e_rx_hw_stamp(_ctx->rq->hwtstamp_config)))
+	if (unlikely(!mlx5e_rx_hw_stamp(_ctx->rq->tstamp)))
 		return -ENODATA;
 
 	*timestamp =  mlx5e_cqe_ts_to_ns(_ctx->rq->ptp_cyc2time,
@@ -290,9 +289,9 @@ static u64 mlx5e_xsk_fill_timestamp(void *_priv)
 	ts = get_cqe_ts(priv->cqe);
 
 	if (mlx5_is_real_time_rq(priv->cq->mdev) || mlx5_is_real_time_sq(priv->cq->mdev))
-		return mlx5_real_time_cyc2time(priv->cq->mdev->clock, ts);
+		return mlx5_real_time_cyc2time(&priv->cq->mdev->clock, ts);
 
-	return  mlx5_timecounter_cyc2time(priv->cq->mdev->clock, ts);
+	return  mlx5_timecounter_cyc2time(&priv->cq->mdev->clock, ts);
 }
 
 static void mlx5e_xsk_request_checksum(u16 csum_start, u16 csum_offset, void *priv)
@@ -391,7 +390,6 @@ static void mlx5e_xdp_mpwqe_session_start(struct mlx5e_xdpsq *sq)
 		.wqe = wqe,
 		.bytes_count = 0,
 		.ds_count = MLX5E_TX_WQE_EMPTY_DS_COUNT,
-		.ds_count_max = sq->max_sq_mpw_wqebbs * MLX5_SEND_WQEBB_NUM_DS,
 		.pkt_count = 0,
 		.inline_on = mlx5e_xdp_get_inline_state(sq, session->inline_on),
 	};
@@ -503,7 +501,7 @@ mlx5e_xmit_xdp_frame_mpwqe(struct mlx5e_xdpsq *sq, struct mlx5e_xmit_data *xdptx
 
 	mlx5e_xdp_mpwqe_add_dseg(sq, p, stats);
 
-	if (unlikely(mlx5e_xdp_mpwqe_is_full(session)))
+	if (unlikely(mlx5e_xdp_mpwqe_is_full(session, sq->max_sq_mpw_wqebbs)))
 		mlx5e_xdp_mpwqe_complete(sq);
 
 	stats->xmit++;
@@ -708,11 +706,10 @@ static void mlx5e_free_xdpsq_desc(struct mlx5e_xdpsq *sq,
 				xdpi = mlx5e_xdpi_fifo_pop(xdpi_fifo);
 				page = xdpi.page.page;
 
-				/* No need to check PageNetpp() as we
+				/* No need to check page_pool_page_is_pp() as we
 				 * know this is a page_pool page.
 				 */
-				page_pool_recycle_direct(pp_page_to_nmdesc(page)->pp,
-							 page);
+				page_pool_recycle_direct(page->pp, page);
 			} while (++n < num);
 
 			break;
@@ -861,7 +858,7 @@ int mlx5e_xdp_xmit(struct net_device *dev, int n, struct xdp_frame **frames,
 	if (unlikely(sq_num >= priv->channels.num))
 		return -ENXIO;
 
-	sq = priv->channels.c[sq_num]->xdpsq;
+	sq = &priv->channels.c[sq_num]->xdpsq;
 
 	for (i = 0; i < n; i++) {
 		struct mlx5e_xmit_data_frags xdptxdf = {};

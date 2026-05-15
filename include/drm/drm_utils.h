@@ -16,13 +16,7 @@ struct drm_edid;
 
 int drm_get_panel_orientation_quirk(int width, int height);
 
-struct drm_panel_backlight_quirk {
-	u16 min_brightness;
-	u32 brightness_mask;
-};
-
-const struct drm_panel_backlight_quirk *
-drm_get_panel_backlight_quirk(const struct drm_edid *edid);
+int drm_get_panel_min_brightness_quirk(const struct drm_edid *edid);
 
 signed long drm_timeout_abs_to_jiffies(int64_t timeout_nsec);
 

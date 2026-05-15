@@ -42,6 +42,17 @@ struct nsproxy {
 };
 extern struct nsproxy init_nsproxy;
 
+#define to_ns_common(__ns)                              \
+	_Generic((__ns),                                \
+		struct cgroup_namespace *: &(__ns->ns), \
+		struct ipc_namespace *:    &(__ns->ns), \
+		struct net *:              &(__ns->ns), \
+		struct pid_namespace *:    &(__ns->ns), \
+		struct mnt_namespace *:    &(__ns->ns), \
+		struct time_namespace *:   &(__ns->ns), \
+		struct user_namespace *:   &(__ns->ns), \
+		struct uts_namespace *:    &(__ns->ns))
+
 /*
  * A structure to encompass all bits needed to install
  * a partial or complete new set of namespaces.
@@ -92,14 +103,11 @@ static inline struct cred *nsset_cred(struct nsset *set)
  *
  */
 
-int copy_namespaces(u64 flags, struct task_struct *tsk);
-void switch_cred_namespaces(const struct cred *old, const struct cred *new);
-void exit_nsproxy_namespaces(struct task_struct *tsk);
-void get_cred_namespaces(struct task_struct *tsk);
-void exit_cred_namespaces(struct task_struct *tsk);
+int copy_namespaces(unsigned long flags, struct task_struct *tsk);
+void exit_task_namespaces(struct task_struct *tsk);
 void switch_task_namespaces(struct task_struct *tsk, struct nsproxy *new);
 int exec_task_namespaces(void);
-void deactivate_nsproxy(struct nsproxy *ns);
+void free_nsproxy(struct nsproxy *ns);
 int unshare_nsproxy_namespaces(unsigned long, struct nsproxy **,
 	struct cred *, struct fs_struct *);
 int __init nsproxy_cache_init(void);
@@ -107,7 +115,7 @@ int __init nsproxy_cache_init(void);
 static inline void put_nsproxy(struct nsproxy *ns)
 {
 	if (refcount_dec_and_test(&ns->count))
-		deactivate_nsproxy(ns);
+		free_nsproxy(ns);
 }
 
 static inline void get_nsproxy(struct nsproxy *ns)

@@ -93,10 +93,8 @@ static struct kmem_cache *audit_tree_mark_cachep __ro_after_init;
 static struct audit_tree *alloc_tree(const char *s)
 {
 	struct audit_tree *tree;
-	size_t sz;
 
-	sz = strlen(s) + 1;
-	tree = kmalloc_flex(*tree, pathname, sz);
+	tree = kmalloc(struct_size(tree, pathname, strlen(s) + 1), GFP_KERNEL);
 	if (tree) {
 		refcount_set(&tree->count, 1);
 		tree->goner = 0;
@@ -105,7 +103,7 @@ static struct audit_tree *alloc_tree(const char *s)
 		INIT_LIST_HEAD(&tree->list);
 		INIT_LIST_HEAD(&tree->same_root);
 		tree->root = NULL;
-		strscpy(tree->pathname, s, sz);
+		strcpy(tree->pathname, s);
 	}
 	return tree;
 }
@@ -192,7 +190,7 @@ static struct audit_chunk *alloc_chunk(int count)
 	struct audit_chunk *chunk;
 	int i;
 
-	chunk = kzalloc_flex(*chunk, owners, count);
+	chunk = kzalloc(struct_size(chunk, owners, count), GFP_KERNEL);
 	if (!chunk)
 		return NULL;
 
@@ -670,6 +668,12 @@ int audit_remove_tree_rule(struct audit_krule *rule)
 	return 0;
 }
 
+static int compare_root(struct vfsmount *mnt, void *arg)
+{
+	return inode_to_key(d_backing_inode(mnt->mnt_root)) ==
+	       (unsigned long)arg;
+}
+
 void audit_trim_trees(void)
 {
 	struct list_head cursor;
@@ -679,9 +683,8 @@ void audit_trim_trees(void)
 	while (cursor.next != &tree_list) {
 		struct audit_tree *tree;
 		struct path path;
+		struct vfsmount *root_mnt;
 		struct audit_node *node;
-		const struct path *paths;
-		struct path array[16];
 		int err;
 
 		tree = container_of(cursor.next, struct audit_tree, list);
@@ -693,9 +696,9 @@ void audit_trim_trees(void)
 		if (err)
 			goto skip_it;
 
-		paths = collect_paths(&path, array, 16);
+		root_mnt = collect_mounts(&path);
 		path_put(&path);
-		if (IS_ERR(paths))
+		if (IS_ERR(root_mnt))
 			goto skip_it;
 
 		spin_lock(&hash_lock);
@@ -703,17 +706,14 @@ void audit_trim_trees(void)
 			struct audit_chunk *chunk = find_chunk(node);
 			/* this could be NULL if the watch is dying else where... */
 			node->index |= 1U<<31;
-			for (const struct path *p = paths; p->dentry; p++) {
-				struct inode *inode = p->dentry->d_inode;
-				if (inode_to_key(inode) == chunk->key) {
-					node->index &= ~(1U<<31);
-					break;
-				}
-			}
+			if (iterate_mounts(compare_root,
+					   (void *)(chunk->key),
+					   root_mnt))
+				node->index &= ~(1U<<31);
 		}
 		spin_unlock(&hash_lock);
 		trim_marked(tree);
-		drop_collected_paths(paths, array);
+		drop_collected_mounts(root_mnt);
 skip_it:
 		put_tree(tree);
 		mutex_lock(&audit_filter_mutex);
@@ -742,14 +742,9 @@ void audit_put_tree(struct audit_tree *tree)
 	put_tree(tree);
 }
 
-static int tag_mounts(const struct path *paths, struct audit_tree *tree)
+static int tag_mount(struct vfsmount *mnt, void *arg)
 {
-	for (const struct path *p = paths; p->dentry; p++) {
-		int err = tag_chunk(p->dentry->d_inode, tree);
-		if (err)
-			return err;
-	}
-	return 0;
+	return tag_chunk(d_backing_inode(mnt->mnt_root), arg);
 }
 
 /*
@@ -806,8 +801,7 @@ int audit_add_tree_rule(struct audit_krule *rule)
 {
 	struct audit_tree *seed = rule->tree, *tree;
 	struct path path;
-	struct path array[16];
-	const struct path *paths;
+	struct vfsmount *mnt;
 	int err;
 
 	rule->tree = NULL;
@@ -834,16 +828,16 @@ int audit_add_tree_rule(struct audit_krule *rule)
 	err = kern_path(tree->pathname, 0, &path);
 	if (err)
 		goto Err;
-	paths = collect_paths(&path, array, 16);
+	mnt = collect_mounts(&path);
 	path_put(&path);
-	if (IS_ERR(paths)) {
-		err = PTR_ERR(paths);
+	if (IS_ERR(mnt)) {
+		err = PTR_ERR(mnt);
 		goto Err;
 	}
 
 	get_tree(tree);
-	err = tag_mounts(paths, tree);
-	drop_collected_paths(paths, array);
+	err = iterate_mounts(tag_mount, tree, mnt);
+	drop_collected_mounts(mnt);
 
 	if (!err) {
 		struct audit_node *node;
@@ -878,21 +872,20 @@ int audit_tag_tree(char *old, char *new)
 	struct list_head cursor, barrier;
 	int failed = 0;
 	struct path path1, path2;
-	struct path array[16];
-	const struct path *paths;
+	struct vfsmount *tagged;
 	int err;
 
 	err = kern_path(new, 0, &path2);
 	if (err)
 		return err;
-	paths = collect_paths(&path2, array, 16);
+	tagged = collect_mounts(&path2);
 	path_put(&path2);
-	if (IS_ERR(paths))
-		return PTR_ERR(paths);
+	if (IS_ERR(tagged))
+		return PTR_ERR(tagged);
 
 	err = kern_path(old, 0, &path1);
 	if (err) {
-		drop_collected_paths(paths, array);
+		drop_collected_mounts(tagged);
 		return err;
 	}
 
@@ -921,7 +914,7 @@ int audit_tag_tree(char *old, char *new)
 			continue;
 		}
 
-		failed = tag_mounts(paths, tree);
+		failed = iterate_mounts(tag_mount, tree, tagged);
 		if (failed) {
 			put_tree(tree);
 			mutex_lock(&audit_filter_mutex);
@@ -962,7 +955,7 @@ int audit_tag_tree(char *old, char *new)
 	list_del(&cursor);
 	mutex_unlock(&audit_filter_mutex);
 	path_put(&path1);
-	drop_collected_paths(paths, array);
+	drop_collected_mounts(tagged);
 	return failed;
 }
 

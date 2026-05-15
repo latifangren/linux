@@ -22,7 +22,6 @@
 #include <asm/idle.h>
 #include <asm/plpar_wrappers.h>
 #include <asm/rtas.h>
-#include <asm/time.h>
 
 static struct cpuidle_driver pseries_idle_driver = {
 	.name             = "pseries_idle",
@@ -64,10 +63,7 @@ int snooze_loop(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	}
 
 	HMT_medium();
-
-       /* Avoid double clear when breaking */
-	if (!dev->poll_time_limit)
-		clear_thread_flag(TIF_POLLING_NRFLAG);
+	clear_thread_flag(TIF_POLLING_NRFLAG);
 
 	raw_local_irq_disable();
 

@@ -35,15 +35,10 @@ properties:
     items:
       enum:
         # Board Connectors
-        - Speakers
         - Int Spk
-        - Headphone
-        - Headphones
         - Headphone Jack
         - Earpiece
         - Headset Mic
-        - Mic Jack
-        - Int Mic
         - Internal Mic 1
         - Internal Mic 2
 

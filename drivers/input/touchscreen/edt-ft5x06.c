@@ -120,6 +120,7 @@ struct edt_ft5x06_ts_data {
 	struct regmap *regmap;
 
 #if defined(CONFIG_DEBUG_FS)
+	struct dentry *debug_dir;
 	u8 *raw_buffer;
 	size_t raw_bufsize;
 #endif
@@ -380,13 +381,16 @@ static ssize_t edt_ft5x06_setting_show(struct device *dev,
 			container_of(dattr, struct edt_ft5x06_attribute, dattr);
 	u8 *field = (u8 *)tsdata + attr->field_offset;
 	unsigned int val;
-	int error;
+	size_t count = 0;
+	int error = 0;
 	u8 addr;
 
-	guard(mutex)(&tsdata->mutex);
+	mutex_lock(&tsdata->mutex);
 
-	if (tsdata->factory_mode)
-		return -EIO;
+	if (tsdata->factory_mode) {
+		error = -EIO;
+		goto out;
+	}
 
 	switch (tsdata->version) {
 	case EDT_M06:
@@ -404,7 +408,8 @@ static ssize_t edt_ft5x06_setting_show(struct device *dev,
 		break;
 
 	default:
-		return -ENODEV;
+		error = -ENODEV;
+		goto out;
 	}
 
 	if (addr != NO_REGISTER) {
@@ -413,7 +418,7 @@ static ssize_t edt_ft5x06_setting_show(struct device *dev,
 			dev_err(&tsdata->client->dev,
 				"Failed to fetch attribute %s, error %d\n",
 				dattr->attr.name, error);
-			return error;
+			goto out;
 		}
 	} else {
 		val = *field;
@@ -426,7 +431,10 @@ static ssize_t edt_ft5x06_setting_show(struct device *dev,
 		*field = val;
 	}
 
-	return sysfs_emit(buf, "%d\n", val);
+	count = sysfs_emit(buf, "%d\n", val);
+out:
+	mutex_unlock(&tsdata->mutex);
+	return error ?: count;
 }
 
 static ssize_t edt_ft5x06_setting_store(struct device *dev,
@@ -442,17 +450,21 @@ static ssize_t edt_ft5x06_setting_store(struct device *dev,
 	int error;
 	u8 addr;
 
-	guard(mutex)(&tsdata->mutex);
+	mutex_lock(&tsdata->mutex);
 
-	if (tsdata->factory_mode)
-		return -EIO;
+	if (tsdata->factory_mode) {
+		error = -EIO;
+		goto out;
+	}
 
 	error = kstrtouint(buf, 0, &val);
 	if (error)
-		return error;
+		goto out;
 
-	if (val < attr->limit_low || val > attr->limit_high)
-		return -ERANGE;
+	if (val < attr->limit_low || val > attr->limit_high) {
+		error = -ERANGE;
+		goto out;
+	}
 
 	switch (tsdata->version) {
 	case EDT_M06:
@@ -470,7 +482,8 @@ static ssize_t edt_ft5x06_setting_store(struct device *dev,
 		break;
 
 	default:
-		return -ENODEV;
+		error = -ENODEV;
+		goto out;
 	}
 
 	if (addr != NO_REGISTER) {
@@ -479,12 +492,14 @@ static ssize_t edt_ft5x06_setting_store(struct device *dev,
 			dev_err(&tsdata->client->dev,
 				"Failed to update attribute %s, error: %d\n",
 				dattr->attr.name, error);
-			return error;
+			goto out;
 		}
 	}
 	*field = val;
 
-	return count;
+out:
+	mutex_unlock(&tsdata->mutex);
+	return error ?: count;
 }
 
 /* m06, m09: range 0-31, m12: range 0-5 */
@@ -700,17 +715,21 @@ static int edt_ft5x06_debugfs_mode_get(void *data, u64 *mode)
 static int edt_ft5x06_debugfs_mode_set(void *data, u64 mode)
 {
 	struct edt_ft5x06_ts_data *tsdata = data;
+	int retval = 0;
 
 	if (mode > 1)
 		return -ERANGE;
 
-	guard(mutex)(&tsdata->mutex);
+	mutex_lock(&tsdata->mutex);
 
-	if (mode == tsdata->factory_mode)
-		return 0;
+	if (mode != tsdata->factory_mode) {
+		retval = mode ? edt_ft5x06_factory_mode(tsdata) :
+				edt_ft5x06_work_mode(tsdata);
+	}
 
-	return mode ? edt_ft5x06_factory_mode(tsdata) :
-		      edt_ft5x06_work_mode(tsdata);
+	mutex_unlock(&tsdata->mutex);
+
+	return retval;
 };
 
 DEFINE_SIMPLE_ATTRIBUTE(debugfs_mode_fops, edt_ft5x06_debugfs_mode_get,
@@ -732,16 +751,18 @@ static ssize_t edt_ft5x06_debugfs_raw_data_read(struct file *file,
 	if (*off < 0 || *off >= tsdata->raw_bufsize)
 		return 0;
 
-	guard(mutex)(&tsdata->mutex);
+	mutex_lock(&tsdata->mutex);
 
-	if (!tsdata->factory_mode || !tsdata->raw_buffer)
-		return -EIO;
+	if (!tsdata->factory_mode || !tsdata->raw_buffer) {
+		error = -EIO;
+		goto out;
+	}
 
 	error = regmap_write(tsdata->regmap, 0x08, 0x01);
 	if (error) {
 		dev_err(&client->dev,
 			"failed to write 0x08 register, error %d\n", error);
-		return error;
+		goto out;
 	}
 
 	do {
@@ -751,7 +772,7 @@ static ssize_t edt_ft5x06_debugfs_raw_data_read(struct file *file,
 			dev_err(&client->dev,
 				"failed to read 0x08 register, error %d\n",
 				error);
-			return error;
+			goto out;
 		}
 
 		if (val == 1)
@@ -761,7 +782,8 @@ static ssize_t edt_ft5x06_debugfs_raw_data_read(struct file *file,
 	if (retries == 0) {
 		dev_err(&client->dev,
 			"timed out waiting for register to settle\n");
-		return -ETIMEDOUT;
+		error = -ETIMEDOUT;
+		goto out;
 	}
 
 	rdbuf = tsdata->raw_buffer;
@@ -771,17 +793,21 @@ static ssize_t edt_ft5x06_debugfs_raw_data_read(struct file *file,
 		rdbuf[0] = i;  /* column index */
 		error = regmap_bulk_read(tsdata->regmap, 0xf5, rdbuf, colbytes);
 		if (error)
-			return error;
+			goto out;
 
 		rdbuf += colbytes;
 	}
 
 	read = min_t(size_t, count, tsdata->raw_bufsize - *off);
-	if (copy_to_user(buf, tsdata->raw_buffer + *off, read))
-		return -EFAULT;
+	if (copy_to_user(buf, tsdata->raw_buffer + *off, read)) {
+		error = -EFAULT;
+		goto out;
+	}
 
 	*off += read;
-	return read;
+out:
+	mutex_unlock(&tsdata->mutex);
+	return error ?: read;
 };
 
 static const struct file_operations debugfs_raw_data_fops = {
@@ -789,25 +815,24 @@ static const struct file_operations debugfs_raw_data_fops = {
 	.read = edt_ft5x06_debugfs_raw_data_read,
 };
 
-static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata)
+static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata,
+					  const char *debugfs_name)
 {
-	struct dentry *debug_dir = tsdata->client->debugfs;
+	tsdata->debug_dir = debugfs_create_dir(debugfs_name, NULL);
 
-	debugfs_create_u16("num_x", S_IRUSR, debug_dir, &tsdata->num_x);
-	debugfs_create_u16("num_y", S_IRUSR, debug_dir, &tsdata->num_y);
+	debugfs_create_u16("num_x", S_IRUSR, tsdata->debug_dir, &tsdata->num_x);
+	debugfs_create_u16("num_y", S_IRUSR, tsdata->debug_dir, &tsdata->num_y);
 
 	debugfs_create_file("mode", S_IRUSR | S_IWUSR,
-			    debug_dir, tsdata, &debugfs_mode_fops);
+			    tsdata->debug_dir, tsdata, &debugfs_mode_fops);
 	debugfs_create_file("raw_data", S_IRUSR,
-			    debug_dir, tsdata, &debugfs_raw_data_fops);
+			    tsdata->debug_dir, tsdata, &debugfs_raw_data_fops);
 }
 
 static void edt_ft5x06_ts_teardown_debugfs(struct edt_ft5x06_ts_data *tsdata)
 {
-	guard(mutex)(&tsdata->mutex);
-
+	debugfs_remove_recursive(tsdata->debug_dir);
 	kfree(tsdata->raw_buffer);
-	tsdata->raw_buffer = NULL;
 }
 
 #else
@@ -817,7 +842,8 @@ static int edt_ft5x06_factory_mode(struct edt_ft5x06_ts_data *tsdata)
 	return -ENOSYS;
 }
 
-static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata)
+static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata,
+					  const char *debugfs_name)
 {
 }
 
@@ -1211,7 +1237,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	}
 
 	/*
-	 * Check which sleep modes we can support. Power-off requires the
+	 * Check which sleep modes we can support. Power-off requieres the
 	 * reset-pin to ensure correct power-down/power-up behaviour. Start with
 	 * the EDT_PMODE_POWEROFF test since this is the deepest possible sleep
 	 * mode.
@@ -1323,7 +1349,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	if (error)
 		return error;
 
-	edt_ft5x06_ts_prepare_debugfs(tsdata);
+	edt_ft5x06_ts_prepare_debugfs(tsdata, dev_driver_string(&client->dev));
 
 	dev_dbg(&client->dev,
 		"EDT FT5x06 initialized: IRQ %d, WAKE pin %d, Reset pin %d.\n",
@@ -1453,10 +1479,6 @@ static const struct edt_i2c_chip_data edt_ft5x06_data = {
 	.max_support_points = 5,
 };
 
-static const struct edt_i2c_chip_data edt_ft3518_data = {
-	.max_support_points = 10,
-};
-
 static const struct edt_i2c_chip_data edt_ft5452_data = {
 	.max_support_points = 5,
 };
@@ -1473,10 +1495,6 @@ static const struct edt_i2c_chip_data edt_ft8201_data = {
 	.max_support_points = 10,
 };
 
-static const struct edt_i2c_chip_data edt_ft8716_data = {
-	.max_support_points = 10,
-};
-
 static const struct edt_i2c_chip_data edt_ft8719_data = {
 	.max_support_points = 10,
 };
@@ -1485,12 +1503,10 @@ static const struct i2c_device_id edt_ft5x06_ts_id[] = {
 	{ .name = "edt-ft5x06", .driver_data = (long)&edt_ft5x06_data },
 	{ .name = "edt-ft5506", .driver_data = (long)&edt_ft5506_data },
 	{ .name = "ev-ft5726", .driver_data = (long)&edt_ft5506_data },
-	{ .name = "ft3518", .driver_data = (long)&edt_ft3518_data },
 	{ .name = "ft5452", .driver_data = (long)&edt_ft5452_data },
 	/* Note no edt- prefix for compatibility with the ft6236.c driver */
 	{ .name = "ft6236", .driver_data = (long)&edt_ft6236_data },
 	{ .name = "ft8201", .driver_data = (long)&edt_ft8201_data },
-	{ .name = "ft8716", .driver_data = (long)&edt_ft8716_data },
 	{ .name = "ft8719", .driver_data = (long)&edt_ft8719_data },
 	{ /* sentinel */ }
 };
@@ -1502,13 +1518,11 @@ static const struct of_device_id edt_ft5x06_of_match[] = {
 	{ .compatible = "edt,edt-ft5406", .data = &edt_ft5x06_data },
 	{ .compatible = "edt,edt-ft5506", .data = &edt_ft5506_data },
 	{ .compatible = "evervision,ev-ft5726", .data = &edt_ft5506_data },
-	{ .compatible = "focaltech,ft3518", .data = &edt_ft3518_data },
 	{ .compatible = "focaltech,ft5426", .data = &edt_ft5506_data },
 	{ .compatible = "focaltech,ft5452", .data = &edt_ft5452_data },
 	/* Note focaltech vendor prefix for compatibility with ft6236.c */
 	{ .compatible = "focaltech,ft6236", .data = &edt_ft6236_data },
 	{ .compatible = "focaltech,ft8201", .data = &edt_ft8201_data },
-	{ .compatible = "focaltech,ft8716", .data = &edt_ft8716_data },
 	{ .compatible = "focaltech,ft8719", .data = &edt_ft8719_data },
 	{ /* sentinel */ }
 };

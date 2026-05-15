@@ -37,7 +37,6 @@
 #include <drm/drm_vblank.h>
 #include <drm/drm_writeback.h>
 
-#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/dma-fence.h>
 
@@ -75,7 +74,6 @@ __drm_atomic_helper_crtc_state_reset(struct drm_crtc_state *crtc_state,
 				     struct drm_crtc *crtc)
 {
 	crtc_state->crtc = crtc;
-	crtc_state->background_color = DRM_ARGB64_PREP(0xffff, 0, 0, 0);
 }
 EXPORT_SYMBOL(__drm_atomic_helper_crtc_state_reset);
 
@@ -115,7 +113,7 @@ EXPORT_SYMBOL(__drm_atomic_helper_crtc_reset);
 void drm_atomic_helper_crtc_reset(struct drm_crtc *crtc)
 {
 	struct drm_crtc_state *crtc_state =
-		kzalloc_obj(*crtc->state);
+		kzalloc(sizeof(*crtc->state), GFP_KERNEL);
 
 	if (crtc->state)
 		crtc->funcs->atomic_destroy_state(crtc, crtc->state);
@@ -176,7 +174,7 @@ drm_atomic_helper_crtc_duplicate_state(struct drm_crtc *crtc)
 	if (WARN_ON(!crtc->state))
 		return NULL;
 
-	state = kmalloc_obj(*state);
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
 	if (state)
 		__drm_atomic_helper_crtc_duplicate_state(crtc, state);
 
@@ -269,11 +267,6 @@ void __drm_atomic_helper_plane_state_reset(struct drm_plane_state *plane_state,
 			plane_state->color_range = val;
 	}
 
-	if (plane->color_pipeline_property) {
-		/* default is always NULL, i.e., bypass */
-		plane_state->color_pipeline = NULL;
-	}
-
 	if (plane->zpos_property) {
 		if (!drm_object_property_get_default_value(&plane->base,
 							   plane->zpos_property,
@@ -334,7 +327,7 @@ void drm_atomic_helper_plane_reset(struct drm_plane *plane)
 		__drm_atomic_helper_plane_destroy_state(plane->state);
 
 	kfree(plane->state);
-	plane->state = kzalloc_obj(*plane->state);
+	plane->state = kzalloc(sizeof(*plane->state), GFP_KERNEL);
 	if (plane->state)
 		__drm_atomic_helper_plane_reset(plane, plane->state);
 }
@@ -378,7 +371,7 @@ drm_atomic_helper_plane_duplicate_state(struct drm_plane *plane)
 	if (WARN_ON(!plane->state))
 		return NULL;
 
-	state = kmalloc_obj(*state);
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
 	if (state)
 		__drm_atomic_helper_plane_duplicate_state(plane, state);
 
@@ -474,7 +467,8 @@ EXPORT_SYMBOL(__drm_atomic_helper_connector_reset);
  */
 void drm_atomic_helper_connector_reset(struct drm_connector *connector)
 {
-	struct drm_connector_state *conn_state = kzalloc_obj(*conn_state);
+	struct drm_connector_state *conn_state =
+		kzalloc(sizeof(*conn_state), GFP_KERNEL);
 
 	if (connector->state)
 		__drm_atomic_helper_connector_destroy_state(connector->state);
@@ -666,7 +660,7 @@ drm_atomic_helper_connector_duplicate_state(struct drm_connector *connector)
 	if (WARN_ON(!connector->state))
 		return NULL;
 
-	state = kmalloc_obj(*state);
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
 	if (state)
 		__drm_atomic_helper_connector_duplicate_state(connector, state);
 
@@ -713,28 +707,6 @@ void drm_atomic_helper_connector_destroy_state(struct drm_connector *connector,
 	kfree(state);
 }
 EXPORT_SYMBOL(drm_atomic_helper_connector_destroy_state);
-
-/**
- * __drm_atomic_helper_private_obj_create_state - initializes private object state
- * @obj: private object
- * @state: new state to initialize
- *
- * Initializes the newly allocated @state, usually required when
- * initializing the drivers.
- *
- * @obj is assumed to be zeroed.
- *
- * This is useful for drivers that use private states.
- */
-void __drm_atomic_helper_private_obj_create_state(struct drm_private_obj *obj,
-						  struct drm_private_state *state)
-{
-	if (state)
-		state->obj = obj;
-
-	obj->state = state;
-}
-EXPORT_SYMBOL(__drm_atomic_helper_private_obj_create_state);
 
 /**
  * __drm_atomic_helper_private_obj_duplicate_state - copy atomic private state
@@ -785,7 +757,7 @@ drm_atomic_helper_bridge_duplicate_state(struct drm_bridge *bridge)
 	if (WARN_ON(!bridge->base.state))
 		return NULL;
 
-	new = kzalloc_obj(*new);
+	new = kzalloc(sizeof(*new), GFP_KERNEL);
 	if (new)
 		__drm_atomic_helper_bridge_duplicate_state(bridge, new);
 
@@ -825,7 +797,6 @@ void __drm_atomic_helper_bridge_reset(struct drm_bridge *bridge,
 				      struct drm_bridge_state *state)
 {
 	memset(state, 0, sizeof(*state));
-	__drm_atomic_helper_private_obj_create_state(&bridge->base, &state->base);
 	state->bridge = bridge;
 }
 EXPORT_SYMBOL(__drm_atomic_helper_bridge_reset);
@@ -844,7 +815,7 @@ drm_atomic_helper_bridge_reset(struct drm_bridge *bridge)
 {
 	struct drm_bridge_state *bridge_state;
 
-	bridge_state = kzalloc_obj(*bridge_state);
+	bridge_state = kzalloc(sizeof(*bridge_state), GFP_KERNEL);
 	if (!bridge_state)
 		return ERR_PTR(-ENOMEM);
 

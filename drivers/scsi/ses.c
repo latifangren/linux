@@ -42,8 +42,9 @@ static bool ses_page2_supported(struct enclosure_device *edev)
 	return (ses_dev->page2 != NULL);
 }
 
-static int ses_probe(struct scsi_device *sdev)
+static int ses_probe(struct device *dev)
 {
+	struct scsi_device *sdev = to_scsi_device(dev);
 	int err = -ENODEV;
 
 	if (sdev->type != TYPE_ENCLOSURE)
@@ -714,7 +715,7 @@ static int ses_intf_add(struct device *cdev)
 	if (sdev->type != TYPE_ENCLOSURE)
 		sdev_printk(KERN_NOTICE, sdev, "Embedded Enclosure Device\n");
 
-	ses_dev = kzalloc_obj(*ses_dev);
+	ses_dev = kzalloc(sizeof(*ses_dev), GFP_KERNEL);
 	hdr_buf = kzalloc(INIT_ALLOC_SIZE, GFP_KERNEL);
 	if (!hdr_buf || !ses_dev)
 		goto err_init_free;
@@ -798,7 +799,7 @@ static int ses_intf_add(struct device *cdev)
 	}
 page2_not_supported:
 	if (components > 0) {
-		scomp = kzalloc_objs(struct ses_component, components);
+		scomp = kcalloc(components, sizeof(struct ses_component), GFP_KERNEL);
 		if (!scomp)
 			goto err_free;
 	}
@@ -843,6 +844,11 @@ page2_not_supported:
 	kfree(hdr_buf);
 	sdev_printk(KERN_ERR, sdev, "Failed to bind enclosure %d\n", err);
 	return err;
+}
+
+static int ses_remove(struct device *dev)
+{
+	return 0;
 }
 
 static void ses_intf_remove_component(struct scsi_device *sdev)
@@ -899,9 +905,10 @@ static struct class_interface ses_interface = {
 };
 
 static struct scsi_driver ses_template = {
-	.probe = ses_probe,
 	.gendrv = {
 		.name		= "ses",
+		.probe		= ses_probe,
+		.remove		= ses_remove,
 	},
 };
 
@@ -913,7 +920,7 @@ static int __init ses_init(void)
 	if (err)
 		return err;
 
-	err = scsi_register_driver(&ses_template);
+	err = scsi_register_driver(&ses_template.gendrv);
 	if (err)
 		goto out_unreg;
 
@@ -926,7 +933,7 @@ static int __init ses_init(void)
 
 static void __exit ses_exit(void)
 {
-	scsi_unregister_driver(&ses_template);
+	scsi_unregister_driver(&ses_template.gendrv);
 	scsi_unregister_interface(&ses_interface);
 }
 

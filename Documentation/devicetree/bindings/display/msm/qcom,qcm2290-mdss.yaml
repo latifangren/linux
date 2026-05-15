@@ -33,7 +33,7 @@ properties:
       - const: core
 
   iommus:
-    maxItems: 1
+    maxItems: 2
 
   interconnects:
     items:
@@ -107,7 +107,8 @@ examples:
         interconnect-names = "mdp0-mem",
                              "cpu-cfg";
 
-        iommus = <&apps_smmu 0x420 0x2>;
+        iommus = <&apps_smmu 0x420 0x2>,
+                 <&apps_smmu 0x421 0x0>;
         ranges;
 
         display-controller@5e01000 {

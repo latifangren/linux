@@ -20,7 +20,7 @@
 #include <linux/swap.h>
 #include <linux/mman.h>
 #include <linux/pagemap.h>
-#include <linux/folio_batch.h>
+#include <linux/pagevec.h>
 #include <linux/init.h>
 #include <linux/export.h>
 #include <linux/mm_inline.h>
@@ -45,7 +45,7 @@
 
 /* How many pages do we try to swap or page in/out together? As a power of 2 */
 int page_cluster;
-static const int page_cluster_max = 31;
+const int page_cluster_max = 31;
 
 struct cpu_fbatches {
 	/*
@@ -91,7 +91,7 @@ static void page_cache_release(struct folio *folio)
 
 	__page_cache_release(folio, &lruvec, &flags);
 	if (lruvec)
-		lruvec_unlock_irqrestore(lruvec, flags);
+		unlock_page_lruvec_irqrestore(lruvec, flags);
 }
 
 void __folio_put(struct folio *folio)
@@ -109,9 +109,40 @@ void __folio_put(struct folio *folio)
 	page_cache_release(folio);
 	folio_unqueue_deferred_split(folio);
 	mem_cgroup_uncharge(folio);
-	free_frozen_pages(&folio->page, folio_order(folio));
+	free_unref_page(&folio->page, folio_order(folio));
 }
 EXPORT_SYMBOL(__folio_put);
+
+/**
+ * put_pages_list() - release a list of pages
+ * @pages: list of pages threaded on page->lru
+ *
+ * Release a list of pages which are strung together on page.lru.
+ */
+void put_pages_list(struct list_head *pages)
+{
+	struct folio_batch fbatch;
+	struct folio *folio, *next;
+
+	folio_batch_init(&fbatch);
+	list_for_each_entry_safe(folio, next, pages, lru) {
+		if (!folio_put_testzero(folio))
+			continue;
+		if (folio_test_hugetlb(folio)) {
+			free_huge_folio(folio);
+			continue;
+		}
+		/* LRU flag must be clear because it's passed using the lru */
+		if (folio_batch_add(&fbatch, folio) > 0)
+			continue;
+		free_unref_folios(&fbatch);
+	}
+
+	if (fbatch.nr)
+		free_unref_folios(&fbatch);
+	INIT_LIST_HEAD(pages);
+}
+EXPORT_SYMBOL(put_pages_list);
 
 typedef void (*move_fn_t)(struct lruvec *lruvec, struct folio *folio);
 
@@ -175,7 +206,7 @@ static void folio_batch_move_lru(struct folio_batch *fbatch, move_fn_t move_fn)
 	}
 
 	if (lruvec)
-		lruvec_unlock_irqrestore(lruvec, flags);
+		unlock_page_lruvec_irqrestore(lruvec, flags);
 	folios_put(fbatch);
 }
 
@@ -237,10 +268,8 @@ void folio_rotate_reclaimable(struct folio *folio)
 	folio_batch_add_and_move(folio, lru_move_tail);
 }
 
-void lru_note_cost_unlock_irq(struct lruvec *lruvec, bool file,
-		unsigned int nr_io, unsigned int nr_rotated)
-		__releases(lruvec->lru_lock)
-		__releases(rcu)
+void lru_note_cost(struct lruvec *lruvec, bool file,
+		   unsigned int nr_io, unsigned int nr_rotated)
 {
 	unsigned long cost;
 
@@ -252,15 +281,18 @@ void lru_note_cost_unlock_irq(struct lruvec *lruvec, bool file,
 	 * different between them, adjust scan balance for CPU work.
 	 */
 	cost = nr_io * SWAP_CLUSTER_MAX + nr_rotated;
-	if (!cost) {
-		spin_unlock_irq(&lruvec->lru_lock);
-		rcu_read_unlock();
-		return;
-	}
 
-	for (;;) {
+	do {
 		unsigned long lrusize;
 
+		/*
+		 * Hold lruvec->lru_lock is safe here, since
+		 * 1) The pinned lruvec in reclaim, or
+		 * 2) From a pre-LRU page during refault (which also holds the
+		 *    rcu lock, so would be safe even if the page was on the LRU
+		 *    and could move simultaneously to a new lruvec).
+		 */
+		spin_lock_irq(&lruvec->lru_lock);
 		/* Record cost event */
 		if (file)
 			lruvec->file_cost += cost;
@@ -284,24 +316,14 @@ void lru_note_cost_unlock_irq(struct lruvec *lruvec, bool file,
 			lruvec->file_cost /= 2;
 			lruvec->anon_cost /= 2;
 		}
-
 		spin_unlock_irq(&lruvec->lru_lock);
-		lruvec = parent_lruvec(lruvec);
-		if (!lruvec) {
-			rcu_read_unlock();
-			break;
-		}
-		spin_lock_irq(&lruvec->lru_lock);
-	}
+	} while ((lruvec = parent_lruvec(lruvec)));
 }
 
 void lru_note_cost_refault(struct folio *folio)
 {
-	struct lruvec *lruvec;
-
-	lruvec = folio_lruvec_lock_irq(folio);
-	lru_note_cost_unlock_irq(lruvec, folio_is_file_lru(folio),
-				folio_nr_pages(folio), 0);
+	lru_note_cost(folio_lruvec(folio), folio_is_file_lru(folio),
+		      folio_nr_pages(folio), 0);
 }
 
 static void lru_activate(struct lruvec *lruvec, struct folio *folio)
@@ -318,7 +340,7 @@ static void lru_activate(struct lruvec *lruvec, struct folio *folio)
 	trace_mm_lru_activate(folio);
 
 	__count_vm_events(PGACTIVATE, nr_pages);
-	count_memcg_events(lruvec_memcg(lruvec), PGACTIVATE, nr_pages);
+	__count_memcg_events(lruvec_memcg(lruvec), PGACTIVATE, nr_pages);
 }
 
 #ifdef CONFIG_SMP
@@ -353,7 +375,7 @@ void folio_activate(struct folio *folio)
 
 	lruvec = folio_lruvec_lock_irq(folio);
 	lru_activate(lruvec, folio);
-	lruvec_unlock_irq(lruvec);
+	unlock_page_lruvec_irq(lruvec);
 	folio_set_lru(folio);
 }
 #endif
@@ -389,60 +411,37 @@ static void __lru_cache_activate_folio(struct folio *folio)
 }
 
 #ifdef CONFIG_LRU_GEN
-
-static void lru_gen_inc_refs(struct folio *folio)
+static void folio_inc_refs(struct folio *folio)
 {
-	unsigned long new_flags, old_flags = READ_ONCE(folio->flags.f);
+	unsigned long new_flags, old_flags = READ_ONCE(folio->flags);
 
 	if (folio_test_unevictable(folio))
 		return;
 
-	/* see the comment on LRU_REFS_FLAGS */
 	if (!folio_test_referenced(folio)) {
-		set_mask_bits(&folio->flags.f, LRU_REFS_MASK, BIT(PG_referenced));
+		folio_set_referenced(folio);
 		return;
 	}
 
+	if (!folio_test_workingset(folio)) {
+		folio_set_workingset(folio);
+		return;
+	}
+
+	/* see the comment on MAX_NR_TIERS */
 	do {
-		if ((old_flags & LRU_REFS_MASK) == LRU_REFS_MASK) {
-			if (!folio_test_workingset(folio))
-				folio_set_workingset(folio);
-			return;
-		}
+		new_flags = old_flags & LRU_REFS_MASK;
+		if (new_flags == LRU_REFS_MASK)
+			break;
 
-		new_flags = old_flags + BIT(LRU_REFS_PGOFF);
-	} while (!try_cmpxchg(&folio->flags.f, &old_flags, new_flags));
+		new_flags += BIT(LRU_REFS_PGOFF);
+		new_flags |= old_flags & ~LRU_REFS_MASK;
+	} while (!try_cmpxchg(&folio->flags, &old_flags, new_flags));
 }
-
-static bool lru_gen_clear_refs(struct folio *folio)
-{
-	int gen = folio_lru_gen(folio);
-	int type = folio_is_file_lru(folio);
-	unsigned long seq;
-
-	if (gen < 0)
-		return true;
-
-	set_mask_bits(&folio->flags.f, LRU_REFS_FLAGS | BIT(PG_workingset), 0);
-
-	rcu_read_lock();
-	seq = READ_ONCE(folio_lruvec(folio)->lrugen.min_seq[type]);
-	rcu_read_unlock();
-	/* whether can do without shuffling under the LRU lock */
-	return gen == lru_gen_from_seq(seq);
-}
-
-#else /* !CONFIG_LRU_GEN */
-
-static void lru_gen_inc_refs(struct folio *folio)
+#else
+static void folio_inc_refs(struct folio *folio)
 {
 }
-
-static bool lru_gen_clear_refs(struct folio *folio)
-{
-	return false;
-}
-
 #endif /* CONFIG_LRU_GEN */
 
 /**
@@ -460,10 +459,8 @@ static bool lru_gen_clear_refs(struct folio *folio)
  */
 void folio_mark_accessed(struct folio *folio)
 {
-	if (folio_test_dropbehind(folio))
-		return;
 	if (lru_gen_enabled()) {
-		lru_gen_inc_refs(folio);
+		folio_inc_refs(folio);
 		return;
 	}
 
@@ -509,7 +506,7 @@ void folio_add_lru(struct folio *folio)
 			folio_test_unevictable(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_lru(folio), folio);
 
-	/* see the comment in lru_gen_folio_seq() */
+	/* see the comment in lru_gen_add_folio() */
 	if (lru_gen_enabled() && !folio_test_unevictable(folio) &&
 	    lru_gen_in_fault() && !(current->flags & PF_MEMALLOC))
 		folio_set_active(folio);
@@ -519,7 +516,7 @@ void folio_add_lru(struct folio *folio)
 EXPORT_SYMBOL(folio_add_lru);
 
 /**
- * folio_add_lru_vma() - Add a folio to the appropriate LRU list for this VMA.
+ * folio_add_lru_vma() - Add a folio to the appropate LRU list for this VMA.
  * @folio: The folio to be added to the LRU.
  * @vma: VMA in which the folio is mapped.
  *
@@ -559,7 +556,7 @@ void folio_add_lru_vma(struct folio *folio, struct vm_area_struct *vma)
  */
 static void lru_deactivate_file(struct lruvec *lruvec, struct folio *folio)
 {
-	bool active = folio_test_active(folio) || lru_gen_enabled();
+	bool active = folio_test_active(folio);
 	long nr_pages = folio_nr_pages(folio);
 
 	if (folio_test_unevictable(folio))
@@ -593,7 +590,7 @@ static void lru_deactivate_file(struct lruvec *lruvec, struct folio *folio)
 
 	if (active) {
 		__count_vm_events(PGDEACTIVATE, nr_pages);
-		count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
+		__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
 				     nr_pages);
 	}
 }
@@ -611,7 +608,7 @@ static void lru_deactivate(struct lruvec *lruvec, struct folio *folio)
 	lruvec_add_folio(lruvec, folio);
 
 	__count_vm_events(PGDEACTIVATE, nr_pages);
-	count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE, nr_pages);
+	__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE, nr_pages);
 }
 
 static void lru_lazyfree(struct lruvec *lruvec, struct folio *folio)
@@ -624,10 +621,7 @@ static void lru_lazyfree(struct lruvec *lruvec, struct folio *folio)
 
 	lruvec_del_folio(lruvec, folio);
 	folio_clear_active(folio);
-	if (lru_gen_enabled())
-		lru_gen_clear_refs(folio);
-	else
-		folio_clear_referenced(folio);
+	folio_clear_referenced(folio);
 	/*
 	 * Lazyfree folios are clean anonymous folios.  They have
 	 * the swapbacked flag cleared, to distinguish them from normal
@@ -637,7 +631,7 @@ static void lru_lazyfree(struct lruvec *lruvec, struct folio *folio)
 	lruvec_add_folio(lruvec, folio);
 
 	__count_vm_events(PGLAZYFREE, nr_pages);
-	count_memcg_events(lruvec_memcg(lruvec), PGLAZYFREE, nr_pages);
+	__count_memcg_events(lruvec_memcg(lruvec), PGLAZYFREE, nr_pages);
 }
 
 /*
@@ -695,9 +689,6 @@ void deactivate_file_folio(struct folio *folio)
 	if (folio_test_unevictable(folio) || !folio_test_lru(folio))
 		return;
 
-	if (lru_gen_enabled() && lru_gen_clear_refs(folio))
-		return;
-
 	folio_batch_add_and_move(folio, lru_deactivate_file);
 }
 
@@ -711,10 +702,8 @@ void deactivate_file_folio(struct folio *folio)
  */
 void folio_deactivate(struct folio *folio)
 {
-	if (folio_test_unevictable(folio) || !folio_test_lru(folio))
-		return;
-
-	if (lru_gen_enabled() ? lru_gen_clear_refs(folio) : !folio_test_active(folio))
+	if (folio_test_unevictable(folio) || !folio_test_lru(folio) ||
+	    !(folio_test_active(folio) || lru_gen_enabled()))
 		return;
 
 	folio_batch_add_and_move(folio, lru_deactivate);
@@ -839,9 +828,6 @@ static inline void __lru_add_drain_all(bool force_all_cpus)
 	 * at (D).
 	 */
 	this_gen = smp_load_acquire(&lru_drain_gen);
-
-	/* It helps everyone if we do our own local drain immediately. */
-	lru_add_drain();
 
 	mutex_lock(&lock);
 
@@ -969,9 +955,11 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 
 		if (folio_is_zone_device(folio)) {
 			if (lruvec) {
-				lruvec_unlock_irqrestore(lruvec, flags);
+				unlock_page_lruvec_irqrestore(lruvec, flags);
 				lruvec = NULL;
 			}
+			if (put_devmap_managed_folio_refs(folio, nr_refs))
+				continue;
 			if (folio_ref_sub_and_test(folio, nr_refs))
 				free_zone_device_folio(folio);
 			continue;
@@ -983,7 +971,7 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 		/* hugetlb has its own memcg */
 		if (folio_test_hugetlb(folio)) {
 			if (lruvec) {
-				lruvec_unlock_irqrestore(lruvec, flags);
+				unlock_page_lruvec_irqrestore(lruvec, flags);
 				lruvec = NULL;
 			}
 			free_huge_folio(folio);
@@ -997,7 +985,7 @@ void folios_put_refs(struct folio_batch *folios, unsigned int *refs)
 		j++;
 	}
 	if (lruvec)
-		lruvec_unlock_irqrestore(lruvec, flags);
+		unlock_page_lruvec_irqrestore(lruvec, flags);
 	if (!j) {
 		folio_batch_reinit(folios);
 		return;
@@ -1024,7 +1012,7 @@ EXPORT_SYMBOL(folios_put_refs);
 void release_pages(release_pages_arg arg, int nr)
 {
 	struct folio_batch fbatch;
-	int refs[FOLIO_BATCH_SIZE];
+	int refs[PAGEVEC_SIZE];
 	struct encoded_page **encoded = arg.encoded_pages;
 	int i;
 
@@ -1090,57 +1078,12 @@ void folio_batch_remove_exceptionals(struct folio_batch *fbatch)
 	fbatch->nr = j;
 }
 
-#ifdef CONFIG_MEMCG
-static void lruvec_reparent_lru(struct lruvec *child_lruvec,
-				struct lruvec *parent_lruvec,
-				enum lru_list lru, int nid)
-{
-	int zid;
-	struct zone *zone;
-
-	if (lru != LRU_UNEVICTABLE)
-		list_splice_tail_init(&child_lruvec->lists[lru], &parent_lruvec->lists[lru]);
-
-	for_each_managed_zone_pgdat(zone, NODE_DATA(nid), zid, MAX_NR_ZONES - 1) {
-		unsigned long size = mem_cgroup_get_zone_lru_size(child_lruvec, lru, zid);
-
-		mem_cgroup_update_lru_size(parent_lruvec, lru, zid, size);
-	}
-}
-
-void lru_reparent_memcg(struct mem_cgroup *memcg, struct mem_cgroup *parent, int nid)
-{
-	enum lru_list lru;
-	struct lruvec *child_lruvec, *parent_lruvec;
-
-	child_lruvec = mem_cgroup_lruvec(memcg, NODE_DATA(nid));
-	parent_lruvec = mem_cgroup_lruvec(parent, NODE_DATA(nid));
-	parent_lruvec->anon_cost += child_lruvec->anon_cost;
-	parent_lruvec->file_cost += child_lruvec->file_cost;
-
-	for_each_lru(lru)
-		lruvec_reparent_lru(child_lruvec, parent_lruvec, lru, nid);
-}
-#endif
-
-static const struct ctl_table swap_sysctl_table[] = {
-	{
-		.procname	= "page-cluster",
-		.data		= &page_cluster,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= (void *)&page_cluster_max,
-	}
-};
-
 /*
  * Perform any setup for the swap system
  */
 void __init swap_setup(void)
 {
-	unsigned long megs = PAGES_TO_MB(totalram_pages());
+	unsigned long megs = totalram_pages() >> (20 - PAGE_SHIFT);
 
 	/* Use a smaller cluster for small-memory machines */
 	if (megs < 16)
@@ -1151,6 +1094,4 @@ void __init swap_setup(void)
 	 * Right now other parts of the system means that we
 	 * _really_ don't want to cluster much more
 	 */
-
-	register_sysctl_init("vm", swap_sysctl_table);
 }

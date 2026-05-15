@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "kselftest_harness.h"
+#include "../../kselftest_harness.h"
 
 FIXTURE(scm_rights)
 {
@@ -23,7 +23,6 @@ FIXTURE_VARIANT(scm_rights)
 	int type;
 	int flags;
 	bool test_listener;
-	bool disabled;
 };
 
 FIXTURE_VARIANT_ADD(scm_rights, dgram)
@@ -32,16 +31,6 @@ FIXTURE_VARIANT_ADD(scm_rights, dgram)
 	.type = SOCK_DGRAM,
 	.flags = 0,
 	.test_listener = false,
-	.disabled = false,
-};
-
-FIXTURE_VARIANT_ADD(scm_rights, dgram_disabled)
-{
-	.name = "UNIX ",
-	.type = SOCK_DGRAM,
-	.flags = 0,
-	.test_listener = false,
-	.disabled = true,
 };
 
 FIXTURE_VARIANT_ADD(scm_rights, stream)
@@ -50,16 +39,6 @@ FIXTURE_VARIANT_ADD(scm_rights, stream)
 	.type = SOCK_STREAM,
 	.flags = 0,
 	.test_listener = false,
-	.disabled = false,
-};
-
-FIXTURE_VARIANT_ADD(scm_rights, stream_disabled)
-{
-	.name = "UNIX-STREAM ",
-	.type = SOCK_STREAM,
-	.flags = 0,
-	.test_listener = false,
-	.disabled = true,
 };
 
 FIXTURE_VARIANT_ADD(scm_rights, stream_oob)
@@ -68,16 +47,6 @@ FIXTURE_VARIANT_ADD(scm_rights, stream_oob)
 	.type = SOCK_STREAM,
 	.flags = MSG_OOB,
 	.test_listener = false,
-	.disabled = false,
-};
-
-FIXTURE_VARIANT_ADD(scm_rights, stream_oob_disabled)
-{
-	.name = "UNIX-STREAM ",
-	.type = SOCK_STREAM,
-	.flags = MSG_OOB,
-	.test_listener = false,
-	.disabled = true,
 };
 
 FIXTURE_VARIANT_ADD(scm_rights, stream_listener)
@@ -86,16 +55,6 @@ FIXTURE_VARIANT_ADD(scm_rights, stream_listener)
 	.type = SOCK_STREAM,
 	.flags = 0,
 	.test_listener = true,
-	.disabled = false,
-};
-
-FIXTURE_VARIANT_ADD(scm_rights, stream_listener_disabled)
-{
-	.name = "UNIX-STREAM ",
-	.type = SOCK_STREAM,
-	.flags = 0,
-	.test_listener = true,
-	.disabled = true,
 };
 
 FIXTURE_VARIANT_ADD(scm_rights, stream_listener_oob)
@@ -104,16 +63,6 @@ FIXTURE_VARIANT_ADD(scm_rights, stream_listener_oob)
 	.type = SOCK_STREAM,
 	.flags = MSG_OOB,
 	.test_listener = true,
-	.disabled = false,
-};
-
-FIXTURE_VARIANT_ADD(scm_rights, stream_listener_oob_disabled)
-{
-	.name = "UNIX-STREAM ",
-	.type = SOCK_STREAM,
-	.flags = MSG_OOB,
-	.test_listener = true,
-	.disabled = true,
 };
 
 static int count_sockets(struct __test_metadata *_metadata,
@@ -156,9 +105,6 @@ FIXTURE_SETUP(scm_rights)
 	ret = unshare(CLONE_NEWNET);
 	ASSERT_EQ(0, ret);
 
-	if (variant->disabled)
-		return;
-
 	ret = count_sockets(_metadata, variant);
 	ASSERT_EQ(0, ret);
 }
@@ -166,9 +112,6 @@ FIXTURE_SETUP(scm_rights)
 FIXTURE_TEARDOWN(scm_rights)
 {
 	int ret;
-
-	if (variant->disabled)
-		return;
 
 	sleep(1);
 
@@ -178,7 +121,6 @@ FIXTURE_TEARDOWN(scm_rights)
 
 static void create_listeners(struct __test_metadata *_metadata,
 			     FIXTURE_DATA(scm_rights) *self,
-			     const FIXTURE_VARIANT(scm_rights) *variant,
 			     int n)
 {
 	struct sockaddr_un addr = {
@@ -197,12 +139,6 @@ static void create_listeners(struct __test_metadata *_metadata,
 
 		ret = listen(self->fd[i], -1);
 		ASSERT_EQ(0, ret);
-
-		if (variant->disabled) {
-			ret = setsockopt(self->fd[i], SOL_SOCKET, SO_PASSRIGHTS,
-					 &(int){0}, sizeof(int));
-			ASSERT_EQ(0, ret);
-		}
 
 		addrlen = sizeof(addr);
 		ret = getsockname(self->fd[i], (struct sockaddr *)&addr, &addrlen);
@@ -228,12 +164,6 @@ static void create_socketpairs(struct __test_metadata *_metadata,
 	for (i = 0; i < n * 2; i += 2) {
 		ret = socketpair(AF_UNIX, variant->type, 0, self->fd + i);
 		ASSERT_EQ(0, ret);
-
-		if (variant->disabled) {
-			ret = setsockopt(self->fd[i], SOL_SOCKET, SO_PASSRIGHTS,
-					 &(int){0}, sizeof(int));
-			ASSERT_EQ(0, ret);
-		}
 	}
 }
 
@@ -245,7 +175,7 @@ static void __create_sockets(struct __test_metadata *_metadata,
 	ASSERT_LE(n * 2, sizeof(self->fd) / sizeof(self->fd[0]));
 
 	if (variant->test_listener)
-		create_listeners(_metadata, self, variant, n);
+		create_listeners(_metadata, self, n);
 	else
 		create_socketpairs(_metadata, self, variant, n);
 }
@@ -271,11 +201,20 @@ void __send_fd(struct __test_metadata *_metadata,
 {
 #define MSG "x"
 #define MSGLEN 1
-	int fds[2] = {
-		self->fd[inflight * 2],
-		self->fd[inflight * 2],
+	struct {
+		struct cmsghdr cmsghdr;
+		int fd[2];
+	} cmsg = {
+		.cmsghdr = {
+			.cmsg_len = CMSG_LEN(sizeof(cmsg.fd)),
+			.cmsg_level = SOL_SOCKET,
+			.cmsg_type = SCM_RIGHTS,
+		},
+		.fd = {
+			self->fd[inflight * 2],
+			self->fd[inflight * 2],
+		},
 	};
-	char cmsg_buf[CMSG_SPACE(sizeof(fds))];
 	struct iovec iov = {
 		.iov_base = MSG,
 		.iov_len = MSGLEN,
@@ -285,26 +224,13 @@ void __send_fd(struct __test_metadata *_metadata,
 		.msg_namelen = 0,
 		.msg_iov = &iov,
 		.msg_iovlen = 1,
-		.msg_control = cmsg_buf,
-		.msg_controllen = sizeof(cmsg_buf),
+		.msg_control = &cmsg,
+		.msg_controllen = CMSG_SPACE(sizeof(cmsg.fd)),
 	};
-	struct cmsghdr *cmsg;
 	int ret;
 
-	cmsg = CMSG_FIRSTHDR(&msg);
-	cmsg->cmsg_level = SOL_SOCKET;
-	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(fds));
-	memcpy(CMSG_DATA(cmsg), fds, sizeof(fds));
-
 	ret = sendmsg(self->fd[receiver * 2 + 1], &msg, variant->flags);
-
-	if (variant->disabled) {
-		ASSERT_EQ(-1, ret);
-		ASSERT_EQ(-EPERM, -errno);
-	} else {
-		ASSERT_EQ(MSGLEN, ret);
-	}
+	ASSERT_EQ(MSGLEN, ret);
 }
 
 #define create_sockets(n)					\

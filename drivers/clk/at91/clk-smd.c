@@ -118,7 +118,7 @@ at91sam9x5_clk_register_smd(struct regmap *regmap, const char *name,
 	struct clk_init_data init;
 	int ret;
 
-	smd = kzalloc_obj(*smd);
+	smd = kzalloc(sizeof(*smd), GFP_KERNEL);
 	if (!smd)
 		return ERR_PTR(-ENOMEM);
 

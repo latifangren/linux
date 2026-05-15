@@ -9,6 +9,7 @@
 #define pr_fmt(fmt) "psci: " fmt
 
 #include <linux/init.h>
+#include <linux/io.h>
 #include <linux/of.h>
 #include <linux/smp.h>
 #include <linux/delay.h>
@@ -39,7 +40,24 @@ static int __init cpu_psci_cpu_prepare(unsigned int cpu)
 static int cpu_psci_cpu_boot(unsigned int cpu)
 {
 	phys_addr_t pa_secondary_entry = __pa_symbol(secondary_entry);
-	int err = psci_ops.cpu_on(cpu_logical_map(cpu), pa_secondary_entry);
+	unsigned long mpidr = cpu_logical_map(cpu);
+	void __iomem *mailbox = ioremap(0x98007f30, 0x10);
+	int err;
+
+	if (mailbox) {
+		writel_relaxed((u32)pa_secondary_entry, mailbox);
+		writel_relaxed(0, mailbox + 0x4);
+	}
+
+	err = psci_ops.cpu_on(mpidr, pa_secondary_entry);
+
+	if (mailbox)
+		iounmap(mailbox);
+
+	pr_info("CPU%d cpu_on mpidr 0x%lx entry 0x%llx returned %d mailbox %s\n",
+		cpu, mpidr, (unsigned long long)pa_secondary_entry, err,
+		mailbox ? "set" : "failed");
+
 	if (err && err != -EPERM)
 		pr_err("failed to boot CPU%d (%d)\n", cpu, err);
 
@@ -121,4 +139,3 @@ const struct cpu_operations cpu_psci_ops = {
 	.cpu_kill	= cpu_psci_cpu_kill,
 #endif
 };
-

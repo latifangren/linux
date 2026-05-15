@@ -25,6 +25,11 @@ properties:
   reg:
     maxItems: 1
 
+  label: true
+  reset-gpios: true
+  backlight: true
+  port: true
+
   spi-cpha: true
   spi-cpol: true
 

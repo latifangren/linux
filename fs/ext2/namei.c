@@ -14,6 +14,8 @@
  *
  * The only non-static object here is ext2_dir_inode_operations.
  *
+ * TODO: get rid of kmap() use, add readahead.
+ *
  * Copyright (C) 1992, 1993, 1994, 1995
  * Remy Card (card@masi.ibp.fr)
  * Laboratoire MASI - Institut Blaise Pascal
@@ -223,16 +225,15 @@ static int ext2_link (struct dentry * old_dentry, struct inode * dir,
 	return err;
 }
 
-static struct dentry *ext2_mkdir(struct mnt_idmap * idmap,
-				 struct inode * dir, struct dentry * dentry,
-				 umode_t mode)
+static int ext2_mkdir(struct mnt_idmap * idmap,
+	struct inode * dir, struct dentry * dentry, umode_t mode)
 {
 	struct inode * inode;
 	int err;
 
 	err = dquot_initialize(dir);
 	if (err)
-		return ERR_PTR(err);
+		return err;
 
 	inode_inc_link_count(dir);
 
@@ -257,7 +258,7 @@ static struct dentry *ext2_mkdir(struct mnt_idmap * idmap,
 
 	d_instantiate_new(dentry, inode);
 out:
-	return ERR_PTR(err);
+	return err;
 
 out_fail:
 	inode_dec_link_count(inode);
@@ -291,10 +292,7 @@ static int ext2_unlink(struct inode *dir, struct dentry *dentry)
 		goto out;
 
 	inode_set_ctime_to_ts(inode, inode_get_ctime(dir));
-
-	if (inode->i_nlink)
-		inode_dec_link_count(inode);
-
+	inode_dec_link_count(inode);
 	err = 0;
 out:
 	return err;

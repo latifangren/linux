@@ -187,7 +187,7 @@ void flush_dcache_folio(struct folio *folio)
 
 	/* Flush this page if there are aliases. */
 	if (mapping && !mapping_mapped(mapping)) {
-		clear_bit(PG_dcache_clean, &folio->flags.f);
+		clear_bit(PG_dcache_clean, &folio->flags);
 	} else {
 		__flush_dcache_folio(folio);
 		if (mapping) {
@@ -195,7 +195,7 @@ void flush_dcache_folio(struct folio *folio)
 			flush_aliases(mapping, folio);
 			flush_icache_range(start, start + folio_size(folio));
 		}
-		set_bit(PG_dcache_clean, &folio->flags.f);
+		set_bit(PG_dcache_clean, &folio->flags);
 	}
 }
 EXPORT_SYMBOL(flush_dcache_folio);
@@ -227,7 +227,7 @@ void update_mmu_cache_range(struct vm_fault *vmf, struct vm_area_struct *vma,
 		return;
 
 	folio = page_folio(pfn_to_page(pfn));
-	if (!test_and_set_bit(PG_dcache_clean, &folio->flags.f))
+	if (!test_and_set_bit(PG_dcache_clean, &folio->flags))
 		__flush_dcache_folio(folio);
 
 	mapping = folio_flush_mapping(folio);

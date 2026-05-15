@@ -14,7 +14,6 @@
 #include <linux/interrupt.h>
 #include <linux/param.h>
 #include <linux/sched.h>
-#include <linux/string.h>
 
 #include <asm/bootinfo.h>
 #include <asm/mipsregs.h>
@@ -91,7 +90,7 @@ void __init plat_mem_setup(void)
 			static char options[8] __initdata;
 			char *baud = ArcGetEnvironmentVariable("dbaud");
 			if (baud)
-				strscpy(options, baud);
+				strcpy(options, baud);
 			add_preferred_console("ttyS", *(con + 1) == '2' ? 1 : 0,
 					      baud ? options : NULL);
 		}

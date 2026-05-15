@@ -14,7 +14,6 @@
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_dma_helper.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_writeback.h>
 
@@ -44,7 +43,7 @@ static int malidp_mw_connector_get_modes(struct drm_connector *connector)
 
 static enum drm_mode_status
 malidp_mw_connector_mode_valid(struct drm_connector *connector,
-			       const struct drm_display_mode *mode)
+			       struct drm_display_mode *mode)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_mode_config *mode_config = &dev->mode_config;
@@ -66,7 +65,8 @@ static const struct drm_connector_helper_funcs malidp_mw_connector_helper_funcs 
 
 static void malidp_mw_connector_reset(struct drm_connector *connector)
 {
-	struct malidp_mw_connector_state *mw_state = kzalloc_obj(*mw_state);
+	struct malidp_mw_connector_state *mw_state =
+		kzalloc(sizeof(*mw_state), GFP_KERNEL);
 
 	if (connector->state)
 		__drm_atomic_helper_connector_destroy_state(connector->state);
@@ -97,7 +97,7 @@ malidp_mw_connector_duplicate_state(struct drm_connector *connector)
 	if (WARN_ON(!connector->state))
 		return NULL;
 
-	mw_state = kzalloc_obj(*mw_state);
+	mw_state = kzalloc(sizeof(*mw_state), GFP_KERNEL);
 	if (!mw_state)
 		return NULL;
 

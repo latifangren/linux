@@ -7,9 +7,9 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/fs.h>
-#include <linux/hex.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/string.h>
@@ -23,21 +23,24 @@ static ssize_t force_power_store(struct device *dev,
 				 struct device_attribute *attr,
 				 const char *buf, size_t count)
 {
-	struct wmi_buffer buffer;
-	int ret;
+	struct acpi_buffer input;
+	acpi_status status;
 	u8 mode;
 
-	buffer.length = sizeof(mode);
-	buffer.data = &mode;
-
+	input.length = sizeof(u8);
+	input.pointer = &mode;
 	mode = hex_to_bin(buf[0]);
-	if (mode > 1)
+	dev_dbg(dev, "force_power: storing %#x\n", mode);
+	if (mode == 0 || mode == 1) {
+		status = wmidev_evaluate_method(to_wmi_device(dev), 0, 1, &input, NULL);
+		if (ACPI_FAILURE(status)) {
+			dev_dbg(dev, "force_power: failed to evaluate ACPI method\n");
+			return -ENODEV;
+		}
+	} else {
+		dev_dbg(dev, "force_power: unsupported mode\n");
 		return -EINVAL;
-
-	ret = wmidev_invoke_procedure(to_wmi_device(dev), 0, 1, &buffer);
-	if (ret < 0)
-		return ret;
-
+	}
 	return count;
 }
 

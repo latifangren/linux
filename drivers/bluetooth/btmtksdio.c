@@ -29,7 +29,7 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
-#include "hci_uart.h"
+#include "h4_recv.h"
 #include "btmtk.h"
 
 #define VERSION "0.1"
@@ -42,35 +42,24 @@ struct btmtksdio_data {
 	const char *fwname;
 	u16 chipid;
 	bool lp_mbox_supported;
-	bool pm_runtime_supported;
 };
 
 static const struct btmtksdio_data mt7663_data = {
 	.fwname = FIRMWARE_MT7663,
 	.chipid = 0x7663,
 	.lp_mbox_supported = false,
-	.pm_runtime_supported = true,
 };
 
 static const struct btmtksdio_data mt7668_data = {
 	.fwname = FIRMWARE_MT7668,
 	.chipid = 0x7668,
 	.lp_mbox_supported = false,
-	.pm_runtime_supported = true,
 };
 
 static const struct btmtksdio_data mt7921_data = {
 	.fwname = FIRMWARE_MT7961,
 	.chipid = 0x7921,
 	.lp_mbox_supported = true,
-	.pm_runtime_supported = true,
-};
-
-static const struct btmtksdio_data mt7902_data = {
-	.fwname = FIRMWARE_MT7902,
-	.chipid = 0x7902,
-	.lp_mbox_supported = false,
-	.pm_runtime_supported = false,
 };
 
 static const struct sdio_device_id btmtksdio_table[] = {
@@ -80,8 +69,6 @@ static const struct sdio_device_id btmtksdio_table[] = {
 	 .driver_data = (kernel_ulong_t)&mt7668_data },
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MEDIATEK, SDIO_DEVICE_ID_MEDIATEK_MT7961),
 	 .driver_data = (kernel_ulong_t)&mt7921_data },
-	{SDIO_DEVICE(SDIO_VENDOR_ID_MEDIATEK, SDIO_DEVICE_ID_MEDIATEK_MT7902),
-	.driver_data = (kernel_ulong_t)&mt7902_data },
 	{ }	/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(sdio, btmtksdio_table);
@@ -628,6 +615,7 @@ static void btmtksdio_txrx_work(struct work_struct *work)
 
 	sdio_release_host(bdev->func);
 
+	pm_runtime_mark_last_busy(bdev->dev);
 	pm_runtime_put_autosuspend(bdev->dev);
 }
 
@@ -883,7 +871,7 @@ static int mt79xx_setup(struct hci_dev *hdev, const char *fwname)
 	u8 param = 0x1;
 	int err;
 
-	err = btmtk_setup_firmware_79xx(hdev, fwname, mtk_hci_wmt_sync, 0);
+	err = btmtk_setup_firmware_79xx(hdev, fwname, mtk_hci_wmt_sync);
 	if (err < 0) {
 		bt_dev_err(hdev, "Failed to setup 79xx firmware (%d)", err);
 		return err;
@@ -1103,7 +1091,6 @@ static int btmtksdio_setup(struct hci_dev *hdev)
 	set_bit(BTMTKSDIO_HW_TX_READY, &bdev->tx_state);
 
 	switch (bdev->data->chipid) {
-	case 0x7902:
 	case 0x7921:
 		if (test_bit(BTMTKSDIO_HW_RESET_ACTIVE, &bdev->tx_state)) {
 			err = btmtksdio_mtk_reg_read(hdev, MT7921_DLSTATUS,
@@ -1154,7 +1141,7 @@ static int btmtksdio_setup(struct hci_dev *hdev)
 		}
 
 		/* Enable WBS with mSBC codec */
-		hci_set_quirk(hdev, HCI_QUIRK_WIDEBAND_SPEECH_SUPPORTED);
+		set_bit(HCI_QUIRK_WIDEBAND_SPEECH_SUPPORTED, &hdev->quirks);
 
 		/* Enable GPIO reset mechanism */
 		if (bdev->reset) {
@@ -1181,24 +1168,22 @@ static int btmtksdio_setup(struct hci_dev *hdev)
 	delta = ktime_sub(rettime, calltime);
 	duration = (unsigned long long)ktime_to_ns(delta) >> 10;
 
-	if (bdev->data->pm_runtime_supported) {
-		pm_runtime_set_autosuspend_delay(bdev->dev,
-						 MTKBTSDIO_AUTOSUSPEND_DELAY);
-		pm_runtime_use_autosuspend(bdev->dev);
+	pm_runtime_set_autosuspend_delay(bdev->dev,
+					 MTKBTSDIO_AUTOSUSPEND_DELAY);
+	pm_runtime_use_autosuspend(bdev->dev);
 
-		err = pm_runtime_set_active(bdev->dev);
-		if (err < 0)
-			return err;
+	err = pm_runtime_set_active(bdev->dev);
+	if (err < 0)
+		return err;
 
-		/* Default forbid runtime auto suspend, that can be allowed by
-		 * enable_autosuspend flag or the PM runtime entry under sysfs.
-		 */
-		pm_runtime_forbid(bdev->dev);
-		pm_runtime_enable(bdev->dev);
+	/* Default forbid runtime auto suspend, that can be allowed by
+	 * enable_autosuspend flag or the PM runtime entry under sysfs.
+	 */
+	pm_runtime_forbid(bdev->dev);
+	pm_runtime_enable(bdev->dev);
 
-		if (enable_autosuspend)
-			pm_runtime_allow(bdev->dev);
-	}
+	if (enable_autosuspend)
+		pm_runtime_allow(bdev->dev);
 
 	bt_dev_info(hdev, "Device setup in %llu usecs", duration);
 
@@ -1411,7 +1396,7 @@ static int btmtksdio_probe(struct sdio_func *func,
 	SET_HCIDEV_DEV(hdev, &func->dev);
 
 	hdev->manufacturer = 70;
-	hci_set_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP);
+	set_bit(HCI_QUIRK_NON_PERSISTENT_SETUP, &hdev->quirks);
 
 	sdio_set_drvdata(func, bdev);
 
@@ -1441,7 +1426,7 @@ static int btmtksdio_probe(struct sdio_func *func,
 	 */
 	pm_runtime_put_noidle(bdev->dev);
 
-	err = devm_device_init_wakeup(bdev->dev);
+	err = device_init_wakeup(bdev->dev, true);
 	if (err)
 		bt_dev_err(hdev, "failed to initialize device wakeup");
 
@@ -1488,6 +1473,7 @@ static void btmtksdio_remove(struct sdio_func *func)
 	hci_free_dev(hdev);
 }
 
+#ifdef CONFIG_PM
 static int btmtksdio_runtime_suspend(struct device *dev)
 {
 	struct sdio_func *func = dev_to_sdio_func(dev);
@@ -1557,13 +1543,18 @@ static const struct dev_pm_ops btmtksdio_pm_ops = {
 	RUNTIME_PM_OPS(btmtksdio_runtime_suspend, btmtksdio_runtime_resume, NULL)
 };
 
+#define BTMTKSDIO_PM_OPS (&btmtksdio_pm_ops)
+#else	/* CONFIG_PM */
+#define BTMTKSDIO_PM_OPS NULL
+#endif	/* CONFIG_PM */
+
 static struct sdio_driver btmtksdio_driver = {
 	.name		= "btmtksdio",
 	.probe		= btmtksdio_probe,
 	.remove		= btmtksdio_remove,
 	.id_table	= btmtksdio_table,
 	.drv = {
-		.pm = pm_ptr(&btmtksdio_pm_ops),
+		.pm = BTMTKSDIO_PM_OPS,
 	}
 };
 

@@ -49,7 +49,7 @@ int snd_media_stream_init(struct snd_usb_substream *subs, struct snd_pcm *pcm,
 		return 0;
 
 	/* allocate media_ctl */
-	mctl = kzalloc_obj(*mctl);
+	mctl = kzalloc(sizeof(*mctl), GFP_KERNEL);
 	if (!mctl)
 		return -ENOMEM;
 
@@ -140,10 +140,11 @@ int snd_media_start_pipeline(struct snd_usb_substream *subs)
 	if (!mctl)
 		return 0;
 
-	guard(mutex)(&mctl->media_dev->graph_mutex);
+	mutex_lock(&mctl->media_dev->graph_mutex);
 	if (mctl->media_dev->enable_source)
 		ret = mctl->media_dev->enable_source(&mctl->media_entity,
 						     &mctl->media_pipe);
+	mutex_unlock(&mctl->media_dev->graph_mutex);
 	return ret;
 }
 
@@ -154,9 +155,10 @@ void snd_media_stop_pipeline(struct snd_usb_substream *subs)
 	if (!mctl)
 		return;
 
-	guard(mutex)(&mctl->media_dev->graph_mutex);
+	mutex_lock(&mctl->media_dev->graph_mutex);
 	if (mctl->media_dev->disable_source)
 		mctl->media_dev->disable_source(&mctl->media_entity);
+	mutex_unlock(&mctl->media_dev->graph_mutex);
 }
 
 static int snd_media_mixer_init(struct snd_usb_audio *chip)
@@ -188,7 +190,7 @@ static int snd_media_mixer_init(struct snd_usb_audio *chip)
 			continue;
 
 		/* allocate media_mixer_ctl */
-		mctl = kzalloc_obj(*mctl);
+		mctl = kzalloc(sizeof(*mctl), GFP_KERNEL);
 		if (!mctl)
 			return -ENOMEM;
 

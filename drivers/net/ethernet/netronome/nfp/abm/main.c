@@ -317,7 +317,7 @@ nfp_abm_vnic_alloc(struct nfp_app *app, struct nfp_net *nn, unsigned int id)
 	struct nfp_abm_link *alink;
 	int err;
 
-	alink = kzalloc_obj(*alink);
+	alink = kzalloc(sizeof(*alink), GFP_KERNEL);
 	if (!alink)
 		return -ENOMEM;
 	nn->app_priv = alink;
@@ -461,7 +461,7 @@ static int nfp_abm_init(struct nfp_app *app)
 		return -EINVAL;
 	}
 
-	abm = kzalloc_obj(*abm);
+	abm = kzalloc(sizeof(*abm), GFP_KERNEL);
 	if (!abm)
 		return -ENOMEM;
 	app->priv = abm;

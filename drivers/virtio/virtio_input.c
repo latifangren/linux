@@ -4,7 +4,6 @@
 #include <linux/virtio_config.h>
 #include <linux/input.h>
 #include <linux/slab.h>
-#include <linux/dma-mapping.h>
 
 #include <uapi/linux/virtio_ids.h>
 #include <uapi/linux/virtio_input.h>
@@ -17,9 +16,7 @@ struct virtio_input {
 	char                       serial[64];
 	char                       phys[64];
 	struct virtqueue           *evt, *sts;
-	__dma_from_device_group_begin();
 	struct virtio_input_event  evts[64];
-	__dma_from_device_group_end();
 	spinlock_t                 lock;
 	bool                       ready;
 };
@@ -30,7 +27,7 @@ static void virtinput_queue_evtbuf(struct virtio_input *vi,
 	struct scatterlist sg[1];
 
 	sg_init_one(sg, evtbuf, sizeof(*evtbuf));
-	virtqueue_add_inbuf_cache_clean(vi->evt, sg, 1, evtbuf, GFP_ATOMIC);
+	virtqueue_add_inbuf(vi->evt, sg, 1, evtbuf, GFP_ATOMIC);
 }
 
 static void virtinput_recv_events(struct virtqueue *vq)
@@ -83,7 +80,7 @@ static int virtinput_send_status(struct virtio_input *vi,
 	if (vi->idev->mt && type == EV_MSC && code == MSC_TIMESTAMP)
 		return 0;
 
-	stsbuf = kzalloc_obj(*stsbuf, GFP_ATOMIC);
+	stsbuf = kzalloc(sizeof(*stsbuf), GFP_ATOMIC);
 	if (!stsbuf)
 		return -ENOMEM;
 
@@ -229,7 +226,7 @@ static int virtinput_probe(struct virtio_device *vdev)
 	if (!virtio_has_feature(vdev, VIRTIO_F_VERSION_1))
 		return -ENODEV;
 
-	vi = kzalloc_obj(*vi);
+	vi = kzalloc(sizeof(*vi), GFP_KERNEL);
 	if (!vi)
 		return -ENOMEM;
 
@@ -363,15 +360,11 @@ static int virtinput_freeze(struct virtio_device *vdev)
 {
 	struct virtio_input *vi = vdev->priv;
 	unsigned long flags;
-	void *buf;
 
 	spin_lock_irqsave(&vi->lock, flags);
 	vi->ready = false;
 	spin_unlock_irqrestore(&vi->lock, flags);
 
-	virtio_reset_device(vdev);
-	while ((buf = virtqueue_detach_unused_buf(vi->sts)) != NULL)
-		kfree(buf);
 	vdev->config->del_vqs(vdev);
 	return 0;
 }

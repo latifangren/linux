@@ -10,10 +10,10 @@ Translations
    zh_CN/index
    zh_TW/index
    it_IT/index
-   ja_JP/index
    ko_KR/index
-   pt_BR/index
+   ja_JP/index
    sp_SP/index
+
 
 .. _translations_disclaimer:
 

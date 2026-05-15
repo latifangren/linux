@@ -46,6 +46,4 @@ const char *dma_heap_get_name(struct dma_heap *heap);
 
 struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info);
 
-extern bool mem_accounting;
-
 #endif /* _DMA_HEAPS_H */

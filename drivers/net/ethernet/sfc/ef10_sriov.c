@@ -189,7 +189,8 @@ static int efx_ef10_sriov_alloc_vf_vswitching(struct efx_nic *efx)
 	unsigned int i;
 	int rc;
 
-	nic_data->vf = kzalloc_objs(struct ef10_vf, efx->vf_count);
+	nic_data->vf = kcalloc(efx->vf_count, sizeof(struct ef10_vf),
+			       GFP_KERNEL);
 	if (!nic_data->vf)
 		return -ENOMEM;
 

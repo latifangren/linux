@@ -69,7 +69,7 @@ static void cdv_intel_crt_dpms(struct drm_encoder *encoder, int mode)
 }
 
 static enum drm_mode_status cdv_intel_crt_mode_valid(struct drm_connector *connector,
-				const struct drm_display_mode *mode)
+				struct drm_display_mode *mode)
 {
 	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
 		return MODE_NO_DBLESCAN;
@@ -250,11 +250,11 @@ void cdv_intel_crt_init(struct drm_device *dev,
 	struct drm_encoder *encoder;
 	int ret;
 
-	gma_encoder = kzalloc_obj(struct gma_encoder);
+	gma_encoder = kzalloc(sizeof(struct gma_encoder), GFP_KERNEL);
 	if (!gma_encoder)
 		return;
 
-	gma_connector = kzalloc_obj(struct gma_connector);
+	gma_connector = kzalloc(sizeof(struct gma_connector), GFP_KERNEL);
 	if (!gma_connector)
 		goto err_free_encoder;
 

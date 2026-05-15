@@ -43,9 +43,6 @@
 #define USB_XYLANTA_SAINT3_VENDOR_ID 0x16d0
 #define USB_XYLANTA_SAINT3_PRODUCT_ID 0x0f30
 
-#define USB_CANNECTIVITY_VENDOR_ID 0x1209
-#define USB_CANNECTIVITY_PRODUCT_ID 0xca01
-
 /* Timestamp 32 bit timer runs at 1 MHz (1 µs tick). Worker accounts
  * for timer overflow (will be after ~71 minutes)
  */
@@ -423,7 +420,7 @@ static inline int gs_usb_get_timestamp(const struct gs_usb *parent,
 	return 0;
 }
 
-static u64 gs_usb_timestamp_read(struct cyclecounter *cc) __must_hold(&dev->tc_lock)
+static u64 gs_usb_timestamp_read(const struct cyclecounter *cc) __must_hold(&dev->tc_lock)
 {
 	struct gs_usb *parent = container_of(cc, struct gs_usb, cc);
 	u32 timestamp = 0;
@@ -792,7 +789,7 @@ static int gs_usb_set_bittiming(struct gs_can *dev)
 
 static int gs_usb_set_data_bittiming(struct gs_can *dev)
 {
-	struct can_bittiming *bt = &dev->can.fd.data_bittiming;
+	struct can_bittiming *bt = &dev->can.data_bittiming;
 	struct gs_device_bittiming dbt = {
 		.prop_seg = cpu_to_le32(bt->prop_seg),
 		.phase_seg1 = cpu_to_le32(bt->phase_seg1),
@@ -1182,25 +1179,12 @@ static int gs_can_close(struct net_device *netdev)
 	return 0;
 }
 
-static int gs_can_hwtstamp_get(struct net_device *netdev,
-			       struct kernel_hwtstamp_config *cfg)
+static int gs_can_eth_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 {
 	const struct gs_can *dev = netdev_priv(netdev);
 
 	if (dev->feature & GS_CAN_FEATURE_HW_TIMESTAMP)
-		return can_hwtstamp_get(netdev, cfg);
-
-	return -EOPNOTSUPP;
-}
-
-static int gs_can_hwtstamp_set(struct net_device *netdev,
-			       struct kernel_hwtstamp_config *cfg,
-			       struct netlink_ext_ack *extack)
-{
-	const struct gs_can *dev = netdev_priv(netdev);
-
-	if (dev->feature & GS_CAN_FEATURE_HW_TIMESTAMP)
-		return can_hwtstamp_set(netdev, cfg, extack);
+		return can_eth_ioctl_hwts(netdev, ifr, cmd);
 
 	return -EOPNOTSUPP;
 }
@@ -1209,8 +1193,8 @@ static const struct net_device_ops gs_usb_netdev_ops = {
 	.ndo_open = gs_can_open,
 	.ndo_stop = gs_can_close,
 	.ndo_start_xmit = gs_can_start_xmit,
-	.ndo_hwtstamp_get = gs_can_hwtstamp_get,
-	.ndo_hwtstamp_set = gs_can_hwtstamp_set,
+	.ndo_change_mtu = can_change_mtu,
+	.ndo_eth_ioctl = gs_can_eth_ioctl,
 };
 
 static int gs_usb_set_identify(struct net_device *netdev, bool do_identify)
@@ -1404,7 +1388,7 @@ static struct gs_can *gs_make_candev(unsigned int channel,
 		/* The data bit timing will be overwritten, if
 		 * GS_CAN_FEATURE_BT_CONST_EXT is set.
 		 */
-		dev->can.fd.data_bittiming_const = &dev->bt_const;
+		dev->can.data_bittiming_const = &dev->bt_const;
 	}
 
 	if (feature & GS_CAN_FEATURE_TERMINATION) {
@@ -1484,7 +1468,7 @@ static struct gs_can *gs_make_candev(unsigned int channel,
 		dev->data_bt_const.brp_max = le32_to_cpu(bt_const_extended.dbrp_max);
 		dev->data_bt_const.brp_inc = le32_to_cpu(bt_const_extended.dbrp_inc);
 
-		dev->can.fd.data_bittiming_const = &dev->data_bt_const;
+		dev->can.data_bittiming_const = &dev->data_bt_const;
 	}
 
 	can_rx_offload_add_manual(netdev, &dev->offload, GS_NAPI_WEIGHT);
@@ -1570,7 +1554,7 @@ static int gs_usb_probe(struct usb_interface *intf,
 		return -EINVAL;
 	}
 
-	parent = kzalloc_flex(*parent, canch, icount);
+	parent = kzalloc(struct_size(parent, canch, icount), GFP_KERNEL);
 	if (!parent)
 		return -ENOMEM;
 
@@ -1654,8 +1638,6 @@ static const struct usb_device_id gs_usb_table[] = {
 				      USB_ABE_CANDEBUGGER_FD_PRODUCT_ID, 0) },
 	{ USB_DEVICE_INTERFACE_NUMBER(USB_XYLANTA_SAINT3_VENDOR_ID,
 				      USB_XYLANTA_SAINT3_PRODUCT_ID, 0) },
-	{ USB_DEVICE_INTERFACE_NUMBER(USB_CANNECTIVITY_VENDOR_ID,
-				      USB_CANNECTIVITY_PRODUCT_ID, 0) },
 	{} /* Terminating entry */
 };
 

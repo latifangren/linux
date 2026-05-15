@@ -37,9 +37,6 @@ PCI Support Library
 .. kernel-doc:: drivers/pci/slot.c
    :export:
 
-.. kernel-doc:: drivers/pci/rebar.c
-   :export:
-
 .. kernel-doc:: drivers/pci/rom.c
    :export:
 
@@ -48,9 +45,6 @@ PCI Support Library
 
 .. kernel-doc:: drivers/pci/pci-sysfs.c
    :internal:
-
-.. kernel-doc:: drivers/pci/tph.c
-   :export:
 
 PCI Hotplug Support Library
 ---------------------------

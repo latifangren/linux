@@ -19,14 +19,11 @@
 
 #define CHRDEV_REGION_SIZE 50
 
-static const struct class most_cdev_class = {
-	.name		= "most_cdev"
-};
-
 static struct cdev_component {
 	dev_t devno;
 	struct ida minor_id;
 	unsigned int major;
+	struct class *class;
 	struct most_component cc;
 } comp;
 
@@ -94,7 +91,7 @@ static void destroy_cdev(struct comp_channel *c)
 {
 	unsigned long flags;
 
-	device_destroy(&most_cdev_class, c->devno);
+	device_destroy(comp.class, c->devno);
 	cdev_del(&c->cdev);
 	spin_lock_irqsave(&ch_list_lock, flags);
 	list_del(&c->list);
@@ -432,7 +429,7 @@ static int comp_probe(struct most_interface *iface, int channel_id,
 	if (current_minor < 0)
 		return current_minor;
 
-	c = kzalloc_obj(*c);
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c) {
 		retval = -ENOMEM;
 		goto err_remove_ida;
@@ -458,7 +455,7 @@ static int comp_probe(struct most_interface *iface, int channel_id,
 	spin_lock_irqsave(&ch_list_lock, cl_flags);
 	list_add_tail(&c->list, &channel_list);
 	spin_unlock_irqrestore(&ch_list_lock, cl_flags);
-	c->dev = device_create(&most_cdev_class, NULL, c->devno, NULL, "%s", name);
+	c->dev = device_create(comp.class, NULL, c->devno, NULL, "%s", name);
 
 	if (IS_ERR(c->dev)) {
 		retval = PTR_ERR(c->dev);
@@ -490,14 +487,13 @@ static struct cdev_component comp = {
 	},
 };
 
-
 static int __init most_cdev_init(void)
 {
 	int err;
 
-	err = class_register(&most_cdev_class);
-	if (err)
-		return err;
+	comp.class = class_create("most_cdev");
+	if (IS_ERR(comp.class))
+		return PTR_ERR(comp.class);
 
 	ida_init(&comp.minor_id);
 
@@ -519,7 +515,7 @@ free_cdev:
 	unregister_chrdev_region(comp.devno, CHRDEV_REGION_SIZE);
 dest_ida:
 	ida_destroy(&comp.minor_id);
-	class_unregister(&most_cdev_class);
+	class_destroy(comp.class);
 	return err;
 }
 
@@ -536,7 +532,7 @@ static void __exit most_cdev_exit(void)
 	}
 	unregister_chrdev_region(comp.devno, CHRDEV_REGION_SIZE);
 	ida_destroy(&comp.minor_id);
-	class_unregister(&most_cdev_class);
+	class_destroy(comp.class);
 }
 
 module_init(most_cdev_init);

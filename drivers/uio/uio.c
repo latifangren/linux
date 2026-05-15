@@ -3,7 +3,7 @@
  * drivers/uio/uio.c
  *
  * Copyright(C) 2005, Benedikt Spranger <b.spranger@linutronix.de>
- * Copyright(C) 2005, Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
+ * Copyright(C) 2005, Thomas Gleixner <tglx@linutronix.de>
  * Copyright(C) 2006, Hans J. Koch <hjk@hansjkoch.de>
  * Copyright(C) 2006, Greg Kroah-Hartman <greg@kroah.com>
  *
@@ -306,7 +306,7 @@ static int uio_dev_add_attributes(struct uio_device *idev)
 				goto err_map;
 			}
 		}
-		map = kzalloc_obj(*map);
+		map = kzalloc(sizeof(*map), GFP_KERNEL);
 		if (!map) {
 			ret = -ENOMEM;
 			goto err_map;
@@ -335,7 +335,7 @@ static int uio_dev_add_attributes(struct uio_device *idev)
 				goto err_portio;
 			}
 		}
-		portio = kzalloc_obj(*portio);
+		portio = kzalloc(sizeof(*portio), GFP_KERNEL);
 		if (!portio) {
 			ret = -ENOMEM;
 			goto err_portio;
@@ -494,7 +494,7 @@ static int uio_open(struct inode *inode, struct file *filep)
 		goto err_module_get;
 	}
 
-	listener = kmalloc_obj(*listener);
+	listener = kmalloc(sizeof(*listener), GFP_KERNEL);
 	if (!listener) {
 		ret = -ENOMEM;
 		goto err_alloc_listener;
@@ -565,7 +565,7 @@ static __poll_t uio_poll(struct file *filep, poll_table *wait)
 
 	mutex_lock(&idev->info_lock);
 	if (!idev->info || !idev->info->irq)
-		ret = EPOLLERR;
+		ret = -EIO;
 	mutex_unlock(&idev->info_lock);
 
 	if (ret)
@@ -850,14 +850,8 @@ static int uio_mmap(struct file *filep, struct vm_area_struct *vma)
 		goto out;
 	}
 
-	if (idev->info->mmap_prepare) {
-		struct vm_area_desc desc;
-
-		compat_set_desc_from_vma(&desc, filep, vma);
-		ret = idev->info->mmap_prepare(idev->info, &desc);
-		if (ret)
-			goto out;
-		ret = __compat_vma_mmap(&desc, vma);
+	if (idev->info->mmap) {
+		ret = idev->info->mmap(idev->info, vma);
 		goto out;
 	}
 
@@ -997,7 +991,7 @@ int __uio_register_device(struct module *owner,
 
 	info->uio_dev = NULL;
 
-	idev = kzalloc_obj(*idev);
+	idev = kzalloc(sizeof(*idev), GFP_KERNEL);
 	if (!idev) {
 		return -ENOMEM;
 	}

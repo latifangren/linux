@@ -496,7 +496,7 @@ static int sp8870_set_frontend(struct dvb_frontend *fe)
 				dprintk("delay = %i usec\n", check_count * 10);
 				break;
 			}
-			usleep_range(10, 20);
+			udelay(10);
 		}
 		if (valid)
 			break;
@@ -563,7 +563,7 @@ struct dvb_frontend *sp8870_attach(const struct sp8870_config *config,
 	struct sp8870_state *state = NULL;
 
 	/* allocate memory for the internal state */
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (!state)
 		goto error;
 

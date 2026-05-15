@@ -40,15 +40,13 @@
 #include "orphan.h"
 #include "tree-checker.h"
 #include "raid-stripe-tree.h"
-#include "delayed-inode.h"
-#include "relocation.h"
 
 #undef SCRAMBLE_DELAYED_REFS
 
 
 static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			       struct btrfs_delayed_ref_head *href,
-			       const struct btrfs_delayed_ref_node *node,
+			       struct btrfs_delayed_ref_node *node,
 			       struct btrfs_delayed_extent_op *extra_op);
 static void __run_delayed_extent_op(struct btrfs_delayed_extent_op *extent_op,
 				    struct extent_buffer *leaf,
@@ -58,12 +56,12 @@ static int alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 				      u64 flags, u64 owner, u64 offset,
 				      struct btrfs_key *ins, int ref_mod, u64 oref_root);
 static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
-				     const struct btrfs_delayed_ref_node *node,
+				     struct btrfs_delayed_ref_node *node,
 				     struct btrfs_delayed_extent_op *extent_op);
-static int find_next_key(const struct btrfs_path *path, int level,
+static int find_next_key(struct btrfs_path *path, int level,
 			 struct btrfs_key *key);
 
-static int block_group_bits(const struct btrfs_block_group *cache, u64 bits)
+static int block_group_bits(struct btrfs_block_group *cache, u64 bits)
 {
 	return (cache->flags & bits) == bits;
 }
@@ -72,23 +70,20 @@ static int block_group_bits(const struct btrfs_block_group *cache, u64 bits)
 int btrfs_lookup_data_extent(struct btrfs_fs_info *fs_info, u64 start, u64 len)
 {
 	struct btrfs_root *root = btrfs_extent_root(fs_info, start);
+	int ret;
 	struct btrfs_key key;
-	BTRFS_PATH_AUTO_FREE(path);
-
-	if (unlikely(!root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu", start);
-		return -EUCLEAN;
-	}
+	struct btrfs_path *path;
 
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
 	key.objectid = start;
-	key.type = BTRFS_EXTENT_ITEM_KEY;
 	key.offset = len;
-	return btrfs_search_slot(NULL, root, &key, path, 0, 0);
+	key.type = BTRFS_EXTENT_ITEM_KEY;
+	ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
+	btrfs_free_path(path);
+	return ret;
 }
 
 /*
@@ -108,7 +103,7 @@ int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
 	struct btrfs_root *extent_root;
 	struct btrfs_delayed_ref_head *head;
 	struct btrfs_delayed_ref_root *delayed_refs;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_key key;
 	u64 num_refs;
 	u64 extent_flags;
@@ -130,22 +125,16 @@ int btrfs_lookup_extent_info(struct btrfs_trans_handle *trans,
 
 search_again:
 	key.objectid = bytenr;
+	key.offset = offset;
 	if (metadata)
 		key.type = BTRFS_METADATA_ITEM_KEY;
 	else
 		key.type = BTRFS_EXTENT_ITEM_KEY;
-	key.offset = offset;
 
 	extent_root = btrfs_extent_root(fs_info, bytenr);
-	if (unlikely(!extent_root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
-
 	ret = btrfs_search_slot(NULL, extent_root, &key, path, 0, 0);
 	if (ret < 0)
-		return ret;
+		goto out_free;
 
 	if (ret > 0 && key.type == BTRFS_METADATA_ITEM_KEY) {
 		if (path->slots[0]) {
@@ -170,7 +159,7 @@ search_again:
 			"unexpected extent item size, has %u expect >= %zu",
 				  item_size, sizeof(*ei));
 			btrfs_abort_transaction(trans, ret);
-			return ret;
+			goto out_free;
 		}
 
 		ei = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_extent_item);
@@ -178,10 +167,10 @@ search_again:
 		if (unlikely(num_refs == 0)) {
 			ret = -EUCLEAN;
 			btrfs_err(fs_info,
-		"unexpected zero reference count for extent item " BTRFS_KEY_FMT,
-				  BTRFS_KEY_FMT_VALUE(&key));
+		"unexpected zero reference count for extent item (%llu %u %llu)",
+				  key.objectid, key.type, key.offset);
 			btrfs_abort_transaction(trans, ret);
-			return ret;
+			goto out_free;
 		}
 		extent_flags = btrfs_extent_flags(leaf, ei);
 		owner = btrfs_get_extent_owner_root(fs_info, leaf, path->slots[0]);
@@ -193,7 +182,7 @@ search_again:
 
 	delayed_refs = &trans->transaction->delayed_refs;
 	spin_lock(&delayed_refs->lock);
-	head = btrfs_find_delayed_ref_head(fs_info, delayed_refs, bytenr);
+	head = btrfs_find_delayed_ref_head(delayed_refs, bytenr);
 	if (head) {
 		if (!mutex_trylock(&head->mutex)) {
 			refcount_inc(&head->refs);
@@ -227,7 +216,8 @@ search_again:
 		*flags = extent_flags;
 	if (owning_root)
 		*owning_root = owner;
-
+out_free:
+	btrfs_free_path(path);
 	return ret;
 }
 
@@ -339,11 +329,11 @@ search_again:
 
 /*
  * is_data == BTRFS_REF_TYPE_BLOCK, tree block type is required,
- * is_data == BTRFS_REF_TYPE_DATA, data type is required,
+ * is_data == BTRFS_REF_TYPE_DATA, data type is requiried,
  * is_data == BTRFS_REF_TYPE_ANY, either type is OK.
  */
 int btrfs_get_extent_inline_ref_type(const struct extent_buffer *eb,
-				     const struct btrfs_extent_inline_ref *iref,
+				     struct btrfs_extent_inline_ref *iref,
 				     enum btrfs_inline_ref_type is_data)
 {
 	struct btrfs_fs_info *fs_info = eb->fs_info;
@@ -415,23 +405,23 @@ u64 hash_extent_data_ref(u64 root_objectid, u64 owner, u64 offset)
 	return ((u64)high_crc << 31) ^ (u64)low_crc;
 }
 
-static u64 hash_extent_data_ref_item(const struct extent_buffer *leaf,
-				     const struct btrfs_extent_data_ref *ref)
+static u64 hash_extent_data_ref_item(struct extent_buffer *leaf,
+				     struct btrfs_extent_data_ref *ref)
 {
 	return hash_extent_data_ref(btrfs_extent_data_ref_root(leaf, ref),
 				    btrfs_extent_data_ref_objectid(leaf, ref),
 				    btrfs_extent_data_ref_offset(leaf, ref));
 }
 
-static bool match_extent_data_ref(const struct extent_buffer *leaf,
-				  const struct btrfs_extent_data_ref *ref,
-				  u64 root_objectid, u64 owner, u64 offset)
+static int match_extent_data_ref(struct extent_buffer *leaf,
+				 struct btrfs_extent_data_ref *ref,
+				 u64 root_objectid, u64 owner, u64 offset)
 {
 	if (btrfs_extent_data_ref_root(leaf, ref) != root_objectid ||
 	    btrfs_extent_data_ref_objectid(leaf, ref) != owner ||
 	    btrfs_extent_data_ref_offset(leaf, ref) != offset)
-		return false;
-	return true;
+		return 0;
+	return 1;
 }
 
 static noinline int lookup_extent_data_ref(struct btrfs_trans_handle *trans,
@@ -447,12 +437,6 @@ static noinline int lookup_extent_data_ref(struct btrfs_trans_handle *trans,
 	u32 nritems;
 	int recow;
 	int ret;
-
-	if (unlikely(!root)) {
-		btrfs_err(trans->fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
 
 	key.objectid = bytenr;
 	if (parent) {
@@ -516,7 +500,7 @@ again:
 
 static noinline int insert_extent_data_ref(struct btrfs_trans_handle *trans,
 					   struct btrfs_path *path,
-					   const struct btrfs_delayed_ref_node *node,
+					   struct btrfs_delayed_ref_node *node,
 					   u64 bytenr)
 {
 	struct btrfs_root *root = btrfs_extent_root(trans->fs_info, bytenr);
@@ -527,12 +511,6 @@ static noinline int insert_extent_data_ref(struct btrfs_trans_handle *trans,
 	u32 size;
 	u32 num_refs;
 	int ret;
-
-	if (unlikely(!root)) {
-		btrfs_err(trans->fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
 
 	key.objectid = bytenr;
 	if (node->parent) {
@@ -591,6 +569,7 @@ static noinline int insert_extent_data_ref(struct btrfs_trans_handle *trans,
 			btrfs_set_extent_data_ref_count(leaf, ref, num_refs);
 		}
 	}
+	btrfs_mark_buffer_dirty(trans, leaf);
 	ret = 0;
 fail:
 	btrfs_release_path(path);
@@ -622,8 +601,8 @@ static noinline int remove_extent_data_ref(struct btrfs_trans_handle *trans,
 		num_refs = btrfs_shared_data_ref_count(leaf, ref2);
 	} else {
 		btrfs_err(trans->fs_info,
-			  "unrecognized backref key " BTRFS_KEY_FMT,
-			  BTRFS_KEY_FMT_VALUE(&key));
+			  "unrecognized backref key (%llu %u %llu)",
+			  key.objectid, key.type, key.offset);
 		btrfs_abort_transaction(trans, -EUCLEAN);
 		return -EUCLEAN;
 	}
@@ -638,17 +617,18 @@ static noinline int remove_extent_data_ref(struct btrfs_trans_handle *trans,
 			btrfs_set_extent_data_ref_count(leaf, ref1, num_refs);
 		else if (key.type == BTRFS_SHARED_DATA_REF_KEY)
 			btrfs_set_shared_data_ref_count(leaf, ref2, num_refs);
+		btrfs_mark_buffer_dirty(trans, leaf);
 	}
 	return ret;
 }
 
-static noinline u32 extent_data_ref_count(const struct btrfs_path *path,
-					  const struct btrfs_extent_inline_ref *iref)
+static noinline u32 extent_data_ref_count(struct btrfs_path *path,
+					  struct btrfs_extent_inline_ref *iref)
 {
 	struct btrfs_key key;
 	struct extent_buffer *leaf;
-	const struct btrfs_extent_data_ref *ref1;
-	const struct btrfs_shared_data_ref *ref2;
+	struct btrfs_extent_data_ref *ref1;
+	struct btrfs_shared_data_ref *ref2;
 	u32 num_refs = 0;
 	int type;
 
@@ -663,10 +643,10 @@ static noinline u32 extent_data_ref_count(const struct btrfs_path *path,
 		type = btrfs_get_extent_inline_ref_type(leaf, iref, BTRFS_REF_TYPE_DATA);
 		ASSERT(type != BTRFS_REF_TYPE_INVALID);
 		if (type == BTRFS_EXTENT_DATA_REF_KEY) {
-			ref1 = (const struct btrfs_extent_data_ref *)(&iref->offset);
+			ref1 = (struct btrfs_extent_data_ref *)(&iref->offset);
 			num_refs = btrfs_extent_data_ref_count(leaf, ref1);
 		} else {
-			ref2 = (const struct btrfs_shared_data_ref *)(iref + 1);
+			ref2 = (struct btrfs_shared_data_ref *)(iref + 1);
 			num_refs = btrfs_shared_data_ref_count(leaf, ref2);
 		}
 	} else if (key.type == BTRFS_EXTENT_DATA_REF_KEY) {
@@ -692,12 +672,6 @@ static noinline int lookup_tree_block_ref(struct btrfs_trans_handle *trans,
 	struct btrfs_key key;
 	int ret;
 
-	if (unlikely(!root)) {
-		btrfs_err(trans->fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
-
 	key.objectid = bytenr;
 	if (parent) {
 		key.type = BTRFS_SHARED_BLOCK_REF_KEY;
@@ -715,18 +689,12 @@ static noinline int lookup_tree_block_ref(struct btrfs_trans_handle *trans,
 
 static noinline int insert_tree_block_ref(struct btrfs_trans_handle *trans,
 					  struct btrfs_path *path,
-					  const struct btrfs_delayed_ref_node *node,
+					  struct btrfs_delayed_ref_node *node,
 					  u64 bytenr)
 {
 	struct btrfs_root *root = btrfs_extent_root(trans->fs_info, bytenr);
 	struct btrfs_key key;
 	int ret;
-
-	if (unlikely(!root)) {
-		btrfs_err(trans->fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
 
 	key.objectid = bytenr;
 	if (node->parent) {
@@ -759,7 +727,7 @@ static inline int extent_ref_type(u64 parent, u64 owner)
 	return type;
 }
 
-static int find_next_key(const struct btrfs_path *path, int level,
+static int find_next_key(struct btrfs_path *path, int level,
 			 struct btrfs_key *key)
 
 {
@@ -818,12 +786,6 @@ int lookup_inline_extent_backref(struct btrfs_trans_handle *trans,
 	bool skinny_metadata = btrfs_fs_incompat(fs_info, SKINNY_METADATA);
 	int needed;
 
-	if (unlikely(!root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
-
 	key.objectid = bytenr;
 	key.type = BTRFS_EXTENT_ITEM_KEY;
 	key.offset = num_bytes;
@@ -831,7 +793,8 @@ int lookup_inline_extent_backref(struct btrfs_trans_handle *trans,
 	want = extent_ref_type(parent, owner);
 	if (insert) {
 		extra_size = btrfs_extent_inline_ref_size(want);
-		path->search_for_extension = true;
+		path->search_for_extension = 1;
+		path->keep_locks = 1;
 	} else
 		extra_size = -1;
 
@@ -922,7 +885,7 @@ again:
 			ptr += btrfs_extent_inline_ref_size(type);
 			continue;
 		}
-		if (unlikely(type == BTRFS_REF_TYPE_INVALID)) {
+		if (type == BTRFS_REF_TYPE_INVALID) {
 			ret = -EUCLEAN;
 			goto out;
 		}
@@ -982,25 +945,6 @@ again:
 			ret = -EAGAIN;
 			goto out;
 		}
-
-		if (path->slots[0] + 1 < btrfs_header_nritems(path->nodes[0])) {
-			struct btrfs_key tmp_key;
-
-			btrfs_item_key_to_cpu(path->nodes[0], &tmp_key, path->slots[0] + 1);
-			if (tmp_key.objectid == bytenr &&
-			    tmp_key.type < BTRFS_BLOCK_GROUP_ITEM_KEY) {
-				ret = -EAGAIN;
-				goto out;
-			}
-			goto out_no_entry;
-		}
-
-		if (!path->keep_locks) {
-			btrfs_release_path(path);
-			path->keep_locks = true;
-			goto again;
-		}
-
 		/*
 		 * To add new inline back ref, we have to make sure
 		 * there is no corresponding back ref item.
@@ -1014,15 +958,13 @@ again:
 			goto out;
 		}
 	}
-out_no_entry:
 	*ref_ret = (struct btrfs_extent_inline_ref *)ptr;
 out:
-	if (path->keep_locks) {
-		path->keep_locks = false;
+	if (insert) {
+		path->keep_locks = 0;
+		path->search_for_extension = 0;
 		btrfs_unlock_up_safe(path, 1);
 	}
-	if (insert)
-		path->search_for_extension = false;
 	return ret;
 }
 
@@ -1087,6 +1029,7 @@ void setup_inline_extent_backref(struct btrfs_trans_handle *trans,
 	} else {
 		btrfs_set_extent_inline_ref_offset(leaf, iref, root_objectid);
 	}
+	btrfs_mark_buffer_dirty(trans, leaf);
 }
 
 static int lookup_extent_backref(struct btrfs_trans_handle *trans,
@@ -1231,6 +1174,7 @@ static noinline_for_stack int update_inline_extent_backref(
 		item_size -= size;
 		btrfs_truncate_item(trans, path, item_size, 1);
 	}
+	btrfs_mark_buffer_dirty(trans, leaf);
 	return 0;
 }
 
@@ -1253,7 +1197,7 @@ int insert_inline_extent_backref(struct btrfs_trans_handle *trans,
 		 * We're adding refs to a tree block we already own, this
 		 * should not happen at all.
 		 */
-		if (unlikely(owner < BTRFS_FIRST_FREE_OBJECTID)) {
+		if (owner < BTRFS_FIRST_FREE_OBJECTID) {
 			btrfs_print_leaf(path->nodes[0]);
 			btrfs_crit(trans->fs_info,
 "adding refs to an existing tree ref, bytenr %llu num_bytes %llu root_objectid %llu slot %u",
@@ -1295,12 +1239,12 @@ static int btrfs_issue_discard(struct block_device *bdev, u64 start, u64 len,
 {
 	int j, ret = 0;
 	u64 bytes_left, end;
-	u64 aligned_start = ALIGN(start, SECTOR_SIZE);
+	u64 aligned_start = ALIGN(start, 1 << SECTOR_SHIFT);
 
 	/* Adjust the range to be aligned to 512B sectors if necessary. */
 	if (start != aligned_start) {
 		len -= aligned_start - start;
-		len = round_down(len, SECTOR_SIZE);
+		len = round_down(len, 1 << SECTOR_SHIFT);
 		start = aligned_start;
 	}
 
@@ -1422,7 +1366,7 @@ out:
 }
 
 int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
-			 u64 num_bytes, u64 *actual_bytes, bool do_remap)
+			 u64 num_bytes, u64 *actual_bytes)
 {
 	int ret = 0;
 	u64 discarded_bytes = 0;
@@ -1440,8 +1384,7 @@ int btrfs_discard_extent(struct btrfs_fs_info *fs_info, u64 bytenr,
 		int i;
 
 		num_bytes = end - cur;
-		stripes = btrfs_map_discard(fs_info, cur, &num_bytes, &num_stripes,
-					    do_remap);
+		stripes = btrfs_map_discard(fs_info, cur, &num_bytes, &num_stripes);
 		if (IS_ERR(stripes)) {
 			ret = PTR_ERR(stripes);
 			if (ret == -EOPNOTSUPP)
@@ -1524,10 +1467,10 @@ int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
  *
  */
 static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
-				  const struct btrfs_delayed_ref_node *node,
+				  struct btrfs_delayed_ref_node *node,
 				  struct btrfs_delayed_extent_op *extent_op)
 {
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct extent_buffer *leaf;
 	struct btrfs_extent_item *item;
 	struct btrfs_key key;
@@ -1548,7 +1491,7 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 					   node->parent, node->ref_root, owner,
 					   offset, refs_to_add, extent_op);
 	if ((ret < 0 && ret != -EAGAIN) || !ret)
-		return ret;
+		goto out;
 
 	/*
 	 * Ok we had -EAGAIN which means we didn't have space to insert and
@@ -1563,24 +1506,24 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 	if (extent_op)
 		__run_delayed_extent_op(extent_op, leaf, item);
 
+	btrfs_mark_buffer_dirty(trans, leaf);
 	btrfs_release_path(path);
 
 	/* now insert the actual backref */
-	if (owner < BTRFS_FIRST_FREE_OBJECTID) {
+	if (owner < BTRFS_FIRST_FREE_OBJECTID)
 		ret = insert_tree_block_ref(trans, path, node, bytenr);
-		if (ret)
-			btrfs_abort_transaction(trans, ret);
-	} else {
+	else
 		ret = insert_extent_data_ref(trans, path, node, bytenr);
-		if (ret)
-			btrfs_abort_transaction(trans, ret);
-	}
 
+	if (ret)
+		btrfs_abort_transaction(trans, ret);
+out:
+	btrfs_free_path(path);
 	return ret;
 }
 
 static void free_head_ref_squota_rsv(struct btrfs_fs_info *fs_info,
-				     const struct btrfs_delayed_ref_head *href)
+				     struct btrfs_delayed_ref_head *href)
 {
 	u64 root = href->owning_root;
 
@@ -1589,38 +1532,16 @@ static void free_head_ref_squota_rsv(struct btrfs_fs_info *fs_info,
 	 * where it has already been unset.
 	 */
 	if (btrfs_qgroup_mode(fs_info) != BTRFS_QGROUP_MODE_SIMPLE ||
-	    !href->is_data || !btrfs_is_fstree(root))
+	    !href->is_data || !is_fstree(root))
 		return;
 
 	btrfs_qgroup_free_refroot(fs_info, root, href->reserved_bytes,
 				  BTRFS_QGROUP_RSV_DATA);
 }
 
-static int drop_remap_tree_ref(struct btrfs_trans_handle *trans,
-			       const struct btrfs_delayed_ref_node *node)
-{
-	u64 bytenr = node->bytenr;
-	u64 num_bytes = node->num_bytes;
-	int ret;
-
-	ret = btrfs_add_to_free_space_tree(trans, bytenr, num_bytes);
-	if (unlikely(ret)) {
-		btrfs_abort_transaction(trans, ret);
-		return ret;
-	}
-
-	ret = btrfs_update_block_group(trans, bytenr, num_bytes, false);
-	if (unlikely(ret)) {
-		btrfs_abort_transaction(trans, ret);
-		return ret;
-	}
-
-	return 0;
-}
-
 static int run_delayed_data_ref(struct btrfs_trans_handle *trans,
 				struct btrfs_delayed_ref_head *href,
-				const struct btrfs_delayed_ref_node *node,
+				struct btrfs_delayed_ref_node *node,
 				struct btrfs_delayed_extent_op *extent_op,
 				bool insert_reserved)
 {
@@ -1688,13 +1609,13 @@ static void __run_delayed_extent_op(struct btrfs_delayed_extent_op *extent_op,
 }
 
 static int run_delayed_extent_op(struct btrfs_trans_handle *trans,
-				 const struct btrfs_delayed_ref_head *head,
+				 struct btrfs_delayed_ref_head *head,
 				 struct btrfs_delayed_extent_op *extent_op)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_root *root;
 	struct btrfs_key key;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_extent_item *ei;
 	struct extent_buffer *leaf;
 	u32 item_size;
@@ -1722,16 +1643,10 @@ static int run_delayed_extent_op(struct btrfs_trans_handle *trans,
 	}
 
 	root = btrfs_extent_root(fs_info, key.objectid);
-	if (unlikely(!root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu",
-			  key.objectid);
-		return -EUCLEAN;
-	}
 again:
 	ret = btrfs_search_slot(trans, root, &key, path, 0, 1);
 	if (ret < 0) {
-		return ret;
+		goto out;
 	} else if (ret > 0) {
 		if (metadata) {
 			if (path->slots[0] > 0) {
@@ -1748,8 +1663,8 @@ again:
 				metadata = 0;
 
 				key.objectid = head->bytenr;
-				key.type = BTRFS_EXTENT_ITEM_KEY;
 				key.offset = head->num_bytes;
+				key.type = BTRFS_EXTENT_ITEM_KEY;
 				goto again;
 			}
 		} else {
@@ -1757,7 +1672,7 @@ again:
 			btrfs_err(fs_info,
 		  "missing extent item for extent %llu num_bytes %llu level %d",
 				  head->bytenr, head->num_bytes, head->level);
-			return ret;
+			goto out;
 		}
 	}
 
@@ -1770,18 +1685,21 @@ again:
 			  "unexpected extent item size, has %u expect >= %zu",
 			  item_size, sizeof(*ei));
 		btrfs_abort_transaction(trans, ret);
-		return ret;
+		goto out;
 	}
 
 	ei = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_extent_item);
 	__run_delayed_extent_op(extent_op, leaf, ei);
 
+	btrfs_mark_buffer_dirty(trans, leaf);
+out:
+	btrfs_free_path(path);
 	return ret;
 }
 
 static int run_delayed_tree_ref(struct btrfs_trans_handle *trans,
 				struct btrfs_delayed_ref_head *href,
-				const struct btrfs_delayed_ref_node *node,
+				struct btrfs_delayed_ref_node *node,
 				struct btrfs_delayed_extent_op *extent_op,
 				bool insert_reserved)
 {
@@ -1818,10 +1736,7 @@ static int run_delayed_tree_ref(struct btrfs_trans_handle *trans,
 	} else if (node->action == BTRFS_ADD_DELAYED_REF) {
 		ret = __btrfs_inc_extent_ref(trans, node, extent_op);
 	} else if (node->action == BTRFS_DROP_DELAYED_REF) {
-		if (node->ref_root == BTRFS_REMAP_TREE_OBJECTID)
-			ret = drop_remap_tree_ref(trans, node);
-		else
-			ret = __btrfs_free_extent(trans, href, node, extent_op);
+		ret = __btrfs_free_extent(trans, href, node, extent_op);
 	} else {
 		BUG();
 	}
@@ -1831,44 +1746,74 @@ static int run_delayed_tree_ref(struct btrfs_trans_handle *trans,
 /* helper function to actually process a single delayed ref entry */
 static int run_one_delayed_ref(struct btrfs_trans_handle *trans,
 			       struct btrfs_delayed_ref_head *href,
-			       const struct btrfs_delayed_ref_node *node,
+			       struct btrfs_delayed_ref_node *node,
 			       struct btrfs_delayed_extent_op *extent_op,
 			       bool insert_reserved)
 {
-	struct btrfs_fs_info *fs_info = trans->fs_info;
 	int ret = 0;
 
 	if (TRANS_ABORTED(trans)) {
 		if (insert_reserved) {
-			btrfs_pin_extent(trans, node->bytenr, node->num_bytes);
-			free_head_ref_squota_rsv(fs_info, href);
+			btrfs_pin_extent(trans, node->bytenr, node->num_bytes, 1);
+			free_head_ref_squota_rsv(trans->fs_info, href);
 		}
 		return 0;
 	}
 
 	if (node->type == BTRFS_TREE_BLOCK_REF_KEY ||
-	    node->type == BTRFS_SHARED_BLOCK_REF_KEY) {
+	    node->type == BTRFS_SHARED_BLOCK_REF_KEY)
 		ret = run_delayed_tree_ref(trans, href, node, extent_op,
 					   insert_reserved);
-	} else if (node->type == BTRFS_EXTENT_DATA_REF_KEY ||
-		   node->type == BTRFS_SHARED_DATA_REF_KEY) {
+	else if (node->type == BTRFS_EXTENT_DATA_REF_KEY ||
+		 node->type == BTRFS_SHARED_DATA_REF_KEY)
 		ret = run_delayed_data_ref(trans, href, node, extent_op,
 					   insert_reserved);
-	} else if (unlikely(node->type != BTRFS_EXTENT_OWNER_REF_KEY)) {
-		ret = -EUCLEAN;
-		btrfs_err(fs_info, "unexpected delayed ref node type: %u", node->type);
-	}
-
-	if (unlikely(ret)) {
-		if (insert_reserved)
-			btrfs_pin_extent(trans, node->bytenr, node->num_bytes);
-		btrfs_err(fs_info,
+	else if (node->type == BTRFS_EXTENT_OWNER_REF_KEY)
+		ret = 0;
+	else
+		BUG();
+	if (ret && insert_reserved)
+		btrfs_pin_extent(trans, node->bytenr, node->num_bytes, 1);
+	if (ret < 0)
+		btrfs_err(trans->fs_info,
 "failed to run delayed ref for logical %llu num_bytes %llu type %u action %u ref_mod %d: %d",
 			  node->bytenr, node->num_bytes, node->type,
 			  node->action, node->ref_mod, ret);
-	}
-
 	return ret;
+}
+
+static inline struct btrfs_delayed_ref_node *
+select_delayed_ref(struct btrfs_delayed_ref_head *head)
+{
+	struct btrfs_delayed_ref_node *ref;
+
+	if (RB_EMPTY_ROOT(&head->ref_tree.rb_root))
+		return NULL;
+
+	/*
+	 * Select a delayed ref of type BTRFS_ADD_DELAYED_REF first.
+	 * This is to prevent a ref count from going down to zero, which deletes
+	 * the extent item from the extent tree, when there still are references
+	 * to add, which would fail because they would not find the extent item.
+	 */
+	if (!list_empty(&head->ref_add_list))
+		return list_first_entry(&head->ref_add_list,
+				struct btrfs_delayed_ref_node, add_list);
+
+	ref = rb_entry(rb_first_cached(&head->ref_tree),
+		       struct btrfs_delayed_ref_node, ref_node);
+	ASSERT(list_empty(&ref->add_list));
+	return ref;
+}
+
+static void unselect_delayed_ref_head(struct btrfs_delayed_ref_root *delayed_refs,
+				      struct btrfs_delayed_ref_head *head)
+{
+	spin_lock(&delayed_refs->lock);
+	head->processing = false;
+	delayed_refs->num_heads_ready++;
+	spin_unlock(&delayed_refs->lock);
+	btrfs_delayed_ref_unlock(head);
 }
 
 static struct btrfs_delayed_extent_op *cleanup_extent_op(
@@ -1945,7 +1890,7 @@ static int cleanup_ref_head(struct btrfs_trans_handle *trans,
 
 	ret = run_and_cleanup_extent_op(trans, head);
 	if (ret < 0) {
-		btrfs_unselect_ref_head(delayed_refs, head);
+		unselect_delayed_ref_head(delayed_refs, head);
 		btrfs_debug(fs_info, "run_delayed_extent_op returned %d", ret);
 		return ret;
 	} else if (ret) {
@@ -1964,25 +1909,18 @@ static int cleanup_ref_head(struct btrfs_trans_handle *trans,
 		spin_unlock(&delayed_refs->lock);
 		return 1;
 	}
-	btrfs_delete_ref_head(fs_info, delayed_refs, head);
+	btrfs_delete_ref_head(delayed_refs, head);
 	spin_unlock(&head->lock);
 	spin_unlock(&delayed_refs->lock);
 
 	if (head->must_insert_reserved) {
-		btrfs_pin_extent(trans, head->bytenr, head->num_bytes);
+		btrfs_pin_extent(trans, head->bytenr, head->num_bytes, 1);
 		if (head->is_data) {
 			struct btrfs_root *csum_root;
 
 			csum_root = btrfs_csum_root(fs_info, head->bytenr);
-			if (unlikely(!csum_root)) {
-				btrfs_err(fs_info,
-					  "missing csum root for extent at bytenr %llu",
-					  head->bytenr);
-				ret = -EUCLEAN;
-			} else {
-				ret = btrfs_del_csums(trans, csum_root, head->bytenr,
-						      head->num_bytes);
-			}
+			ret = btrfs_del_csums(trans, csum_root, head->bytenr,
+					      head->num_bytes);
 		}
 	}
 
@@ -1992,6 +1930,39 @@ static int cleanup_ref_head(struct btrfs_trans_handle *trans,
 	btrfs_delayed_ref_unlock(head);
 	btrfs_put_delayed_ref_head(head);
 	return ret;
+}
+
+static struct btrfs_delayed_ref_head *btrfs_obtain_ref_head(
+					struct btrfs_trans_handle *trans)
+{
+	struct btrfs_delayed_ref_root *delayed_refs =
+		&trans->transaction->delayed_refs;
+	struct btrfs_delayed_ref_head *head = NULL;
+	int ret;
+
+	spin_lock(&delayed_refs->lock);
+	head = btrfs_select_ref_head(delayed_refs);
+	if (!head) {
+		spin_unlock(&delayed_refs->lock);
+		return head;
+	}
+
+	/*
+	 * Grab the lock that says we are going to process all the refs for
+	 * this head
+	 */
+	ret = btrfs_delayed_ref_lock(delayed_refs, head);
+	spin_unlock(&delayed_refs->lock);
+
+	/*
+	 * We may have dropped the spin lock to get the head mutex lock, and
+	 * that might have given someone else time to free the head.  If that's
+	 * true, it has been removed from our list and we can move on.
+	 */
+	if (ret == -EAGAIN)
+		head = ERR_PTR(-EAGAIN);
+
+	return head;
 }
 
 static int btrfs_run_delayed_refs_for_head(struct btrfs_trans_handle *trans,
@@ -2010,11 +1981,11 @@ static int btrfs_run_delayed_refs_for_head(struct btrfs_trans_handle *trans,
 	lockdep_assert_held(&locked_ref->mutex);
 	lockdep_assert_held(&locked_ref->lock);
 
-	while ((ref = btrfs_select_delayed_ref(locked_ref))) {
+	while ((ref = select_delayed_ref(locked_ref))) {
 		if (ref->seq &&
 		    btrfs_check_delayed_seq(fs_info, ref->seq)) {
 			spin_unlock(&locked_ref->lock);
-			btrfs_unselect_ref_head(delayed_refs, locked_ref);
+			unselect_delayed_ref_head(delayed_refs, locked_ref);
 			return -EAGAIN;
 		}
 
@@ -2037,6 +2008,7 @@ static int btrfs_run_delayed_refs_for_head(struct btrfs_trans_handle *trans,
 		default:
 			WARN_ON(1);
 		}
+		atomic_dec(&delayed_refs->num_entries);
 
 		/*
 		 * Record the must_insert_reserved flag before we drop the
@@ -2062,7 +2034,7 @@ static int btrfs_run_delayed_refs_for_head(struct btrfs_trans_handle *trans,
 
 		btrfs_free_delayed_extent_op(extent_op);
 		if (ret) {
-			btrfs_unselect_ref_head(delayed_refs, locked_ref);
+			unselect_delayed_ref_head(delayed_refs, locked_ref);
 			btrfs_put_delayed_ref(ref);
 			return ret;
 		}
@@ -2094,18 +2066,13 @@ static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 
 	delayed_refs = &trans->transaction->delayed_refs;
 	if (min_bytes == 0) {
-		/*
-		 * We may be subject to a harmless race if some task is
-		 * concurrently adding or removing a delayed ref, so silence
-		 * KCSAN and similar tools.
-		 */
-		max_count = data_race(delayed_refs->num_heads_ready);
+		max_count = delayed_refs->num_heads_ready;
 		min_bytes = U64_MAX;
 	}
 
 	do {
 		if (!locked_ref) {
-			locked_ref = btrfs_select_ref_head(fs_info, delayed_refs);
+			locked_ref = btrfs_obtain_ref_head(trans);
 			if (IS_ERR_OR_NULL(locked_ref)) {
 				if (PTR_ERR(locked_ref) == -EAGAIN) {
 					continue;
@@ -2243,7 +2210,7 @@ again:
 	delayed_refs->run_delayed_start = find_middle(&delayed_refs->root);
 #endif
 	ret = __btrfs_run_delayed_refs(trans, min_bytes);
-	if (unlikely(ret < 0)) {
+	if (ret < 0) {
 		btrfs_abort_transaction(trans, ret);
 		return ret;
 	}
@@ -2252,7 +2219,7 @@ again:
 		btrfs_create_pending_block_groups(trans);
 
 		spin_lock(&delayed_refs->lock);
-		if (xa_empty(&delayed_refs->head_refs)) {
+		if (RB_EMPTY_ROOT(&delayed_refs->href_root.rb_root)) {
 			spin_unlock(&delayed_refs->lock);
 			return 0;
 		}
@@ -2286,11 +2253,10 @@ int btrfs_set_disk_extent_flags(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
-static noinline int check_delayed_ref(struct btrfs_inode *inode,
+static noinline int check_delayed_ref(struct btrfs_root *root,
 				      struct btrfs_path *path,
-				      u64 offset, u64 bytenr)
+				      u64 objectid, u64 offset, u64 bytenr)
 {
-	struct btrfs_root *root = inode->root;
 	struct btrfs_delayed_ref_head *head;
 	struct btrfs_delayed_ref_node *ref;
 	struct btrfs_delayed_ref_root *delayed_refs;
@@ -2308,7 +2274,7 @@ static noinline int check_delayed_ref(struct btrfs_inode *inode,
 
 	delayed_refs = &cur_trans->delayed_refs;
 	spin_lock(&delayed_refs->lock);
-	head = btrfs_find_delayed_ref_head(root->fs_info, delayed_refs, bytenr);
+	head = btrfs_find_delayed_ref_head(delayed_refs, bytenr);
 	if (!head) {
 		spin_unlock(&delayed_refs->lock);
 		btrfs_put_transaction(cur_trans);
@@ -2364,7 +2330,7 @@ static noinline int check_delayed_ref(struct btrfs_inode *inode,
 		 * then we have a cross reference.
 		 */
 		if (ref->ref_root != btrfs_root_id(root) ||
-		    ref_owner != btrfs_ino(inode) || ref_offset != offset) {
+		    ref_owner != objectid || ref_offset != offset) {
 			ret = 1;
 			break;
 		}
@@ -2375,53 +2341,11 @@ static noinline int check_delayed_ref(struct btrfs_inode *inode,
 	return ret;
 }
 
-/*
- * Check if there are references for a data extent other than the one belonging
- * to the given inode and offset.
- *
- * @inode:     The only inode we expect to find associated with the data extent.
- * @path:      A path to use for searching the extent tree.
- * @offset:    The only offset we expect to find associated with the data extent.
- * @bytenr:    The logical address of the data extent.
- *
- * When the extent does not have any other references other than the one we
- * expect to find, we always return a value of 0 with the path having a locked
- * leaf that contains the extent's extent item - this is necessary to ensure
- * we don't race with a task running delayed references, and our caller must
- * have such a path when calling check_delayed_ref() - it must lock a delayed
- * ref head while holding the leaf locked. In case the extent item is not found
- * in the extent tree, we return -ENOENT with the path having the leaf (locked)
- * where the extent item should be, in order to prevent races with another task
- * running delayed references, so that we don't miss any reference when calling
- * check_delayed_ref().
- *
- * Note: this may return false positives, and this is because we want to be
- *       quick here as we're called in write paths (when flushing delalloc and
- *       in the direct IO write path). For example we can have an extent with
- *       a single reference but that reference is not inlined, or we may have
- *       many references in the extent tree but we also have delayed references
- *       that cancel all the reference except the one for our inode and offset,
- *       but it would be expensive to do such checks and complex due to all
- *       locking to avoid races between the checks and flushing delayed refs,
- *       plus non-inline references may be located on leaves other than the one
- *       that contains the extent item in the extent tree. The important thing
- *       here is to not return false negatives and that the false positives are
- *       not very common.
- *
- * Returns: 0 if there are no cross references and with the path having a locked
- *          leaf from the extent tree that contains the extent's extent item.
- *
- *          1 if there are cross references (false positives can happen).
- *
- *          < 0 in case of an error. In case of -ENOENT the leaf in the extent
- *          tree where the extent item should be located at is read locked and
- *          accessible in the given path.
- */
-static noinline int check_committed_ref(struct btrfs_inode *inode,
+static noinline int check_committed_ref(struct btrfs_root *root,
 					struct btrfs_path *path,
-					u64 offset, u64 bytenr)
+					u64 objectid, u64 offset, u64 bytenr,
+					bool strict)
 {
-	struct btrfs_root *root = inode->root;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_root *extent_root = btrfs_extent_root(fs_info, bytenr);
 	struct extent_buffer *leaf;
@@ -2434,44 +2358,41 @@ static noinline int check_committed_ref(struct btrfs_inode *inode,
 	int type;
 	int ret;
 
-	if (unlikely(!extent_root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
-
 	key.objectid = bytenr;
-	key.type = BTRFS_EXTENT_ITEM_KEY;
 	key.offset = (u64)-1;
+	key.type = BTRFS_EXTENT_ITEM_KEY;
 
 	ret = btrfs_search_slot(NULL, extent_root, &key, path, 0, 0);
 	if (ret < 0)
-		return ret;
-	if (unlikely(ret == 0)) {
+		goto out;
+	if (ret == 0) {
 		/*
 		 * Key with offset -1 found, there would have to exist an extent
 		 * item with such offset, but this is out of the valid range.
 		 */
-		return -EUCLEAN;
+		ret = -EUCLEAN;
+		goto out;
 	}
 
+	ret = -ENOENT;
 	if (path->slots[0] == 0)
-		return -ENOENT;
+		goto out;
 
 	path->slots[0]--;
 	leaf = path->nodes[0];
 	btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
 
 	if (key.objectid != bytenr || key.type != BTRFS_EXTENT_ITEM_KEY)
-		return -ENOENT;
+		goto out;
 
+	ret = 1;
 	item_size = btrfs_item_size(leaf, path->slots[0]);
 	ei = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_extent_item);
 	expected_size = sizeof(*ei) + btrfs_extent_inline_ref_size(BTRFS_EXTENT_DATA_REF_KEY);
 
 	/* No inline refs; we need to bail before checking for owner ref. */
 	if (item_size == sizeof(*ei))
-		return 1;
+		goto out;
 
 	/* Check for an owner ref; skip over it to the real inline refs. */
 	iref = (struct btrfs_extent_inline_ref *)(ei + 1);
@@ -2479,69 +2400,56 @@ static noinline int check_committed_ref(struct btrfs_inode *inode,
 	if (btrfs_fs_incompat(fs_info, SIMPLE_QUOTA) && type == BTRFS_EXTENT_OWNER_REF_KEY) {
 		expected_size += btrfs_extent_inline_ref_size(BTRFS_EXTENT_OWNER_REF_KEY);
 		iref = (struct btrfs_extent_inline_ref *)(iref + 1);
-		type = btrfs_get_extent_inline_ref_type(leaf, iref, BTRFS_REF_TYPE_DATA);
 	}
 
 	/* If extent item has more than 1 inline ref then it's shared */
 	if (item_size != expected_size)
-		return 1;
+		goto out;
+
+	/*
+	 * If extent created before last snapshot => it's shared unless the
+	 * snapshot has been deleted. Use the heuristic if strict is false.
+	 */
+	if (!strict &&
+	    (btrfs_extent_generation(leaf, ei) <=
+	     btrfs_root_last_snapshot(&root->root_item)))
+		goto out;
 
 	/* If this extent has SHARED_DATA_REF then it's shared */
+	type = btrfs_get_extent_inline_ref_type(leaf, iref, BTRFS_REF_TYPE_DATA);
 	if (type != BTRFS_EXTENT_DATA_REF_KEY)
-		return 1;
+		goto out;
 
 	ref = (struct btrfs_extent_data_ref *)(&iref->offset);
 	if (btrfs_extent_refs(leaf, ei) !=
 	    btrfs_extent_data_ref_count(leaf, ref) ||
 	    btrfs_extent_data_ref_root(leaf, ref) != btrfs_root_id(root) ||
-	    btrfs_extent_data_ref_objectid(leaf, ref) != btrfs_ino(inode) ||
+	    btrfs_extent_data_ref_objectid(leaf, ref) != objectid ||
 	    btrfs_extent_data_ref_offset(leaf, ref) != offset)
-		return 1;
+		goto out;
 
-	return 0;
+	ret = 0;
+out:
+	return ret;
 }
 
-int btrfs_cross_ref_exist(struct btrfs_inode *inode, u64 offset,
-			  u64 bytenr, struct btrfs_path *path)
+int btrfs_cross_ref_exist(struct btrfs_root *root, u64 objectid, u64 offset,
+			  u64 bytenr, bool strict, struct btrfs_path *path)
 {
 	int ret;
 
 	do {
-		ret = check_committed_ref(inode, path, offset, bytenr);
+		ret = check_committed_ref(root, path, objectid,
+					  offset, bytenr, strict);
 		if (ret && ret != -ENOENT)
 			goto out;
 
-		/*
-		 * The path must have a locked leaf from the extent tree where
-		 * the extent item for our extent is located, in case it exists,
-		 * or where it should be located in case it doesn't exist yet
-		 * because it's new and its delayed ref was not yet flushed.
-		 * We need to lock the delayed ref head at check_delayed_ref(),
-		 * if one exists, while holding the leaf locked in order to not
-		 * race with delayed ref flushing, missing references and
-		 * incorrectly reporting that the extent is not shared.
-		 */
-		if (IS_ENABLED(CONFIG_BTRFS_ASSERT)) {
-			struct extent_buffer *leaf = path->nodes[0];
-
-			ASSERT(leaf != NULL);
-			btrfs_assert_tree_read_locked(leaf);
-
-			if (ret != -ENOENT) {
-				struct btrfs_key key;
-
-				btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
-				ASSERT(key.objectid == bytenr);
-				ASSERT(key.type == BTRFS_EXTENT_ITEM_KEY);
-			}
-		}
-
-		ret = check_delayed_ref(inode, path, offset, bytenr);
+		ret = check_delayed_ref(root, path, objectid, offset, bytenr);
 	} while (ret == -EAGAIN && !path->nowait);
 
 out:
 	btrfs_release_path(path);
-	if (btrfs_is_data_reloc_root(inode->root))
+	if (btrfs_is_data_reloc_root(root))
 		WARN_ON(ret > 0);
 	return ret;
 }
@@ -2549,7 +2457,7 @@ out:
 static int __btrfs_mod_ref(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   struct extent_buffer *buf,
-			   bool full_backref, bool inc)
+			   int full_backref, int inc)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	u64 parent;
@@ -2633,32 +2541,32 @@ static int __btrfs_mod_ref(struct btrfs_trans_handle *trans,
 }
 
 int btrfs_inc_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		  struct extent_buffer *buf, bool full_backref)
+		  struct extent_buffer *buf, int full_backref)
 {
-	return __btrfs_mod_ref(trans, root, buf, full_backref, true);
+	return __btrfs_mod_ref(trans, root, buf, full_backref, 1);
 }
 
 int btrfs_dec_ref(struct btrfs_trans_handle *trans, struct btrfs_root *root,
-		  struct extent_buffer *buf, bool full_backref)
+		  struct extent_buffer *buf, int full_backref)
 {
-	return __btrfs_mod_ref(trans, root, buf, full_backref, false);
+	return __btrfs_mod_ref(trans, root, buf, full_backref, 0);
 }
 
 static u64 get_alloc_profile_by_root(struct btrfs_root *root, int data)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	u64 flags;
+	u64 ret;
 
 	if (data)
 		flags = BTRFS_BLOCK_GROUP_DATA;
 	else if (root == fs_info->chunk_root)
 		flags = BTRFS_BLOCK_GROUP_SYSTEM;
-	else if (root == fs_info->remap_root)
-		flags = BTRFS_BLOCK_GROUP_METADATA_REMAP;
 	else
 		flags = BTRFS_BLOCK_GROUP_METADATA;
 
-	return btrfs_get_alloc_profile(fs_info, flags);
+	ret = btrfs_get_alloc_profile(fs_info, flags);
+	return ret;
 }
 
 static u64 first_logical_byte(struct btrfs_fs_info *fs_info)
@@ -2681,34 +2589,37 @@ static u64 first_logical_byte(struct btrfs_fs_info *fs_info)
 }
 
 static int pin_down_extent(struct btrfs_trans_handle *trans,
-			   struct btrfs_block_group *bg,
-			   u64 bytenr, u64 num_bytes, bool reserved)
+			   struct btrfs_block_group *cache,
+			   u64 bytenr, u64 num_bytes, int reserved)
 {
-	struct btrfs_space_info *space_info = bg->space_info;
-	const u64 reserved_bytes = (reserved ? num_bytes : 0);
+	struct btrfs_fs_info *fs_info = cache->fs_info;
 
-	spin_lock(&space_info->lock);
-	spin_lock(&bg->lock);
-	bg->pinned += num_bytes;
-	bg->reserved -= reserved_bytes;
-	spin_unlock(&bg->lock);
-	space_info->bytes_reserved -= reserved_bytes;
-	btrfs_space_info_update_bytes_pinned(space_info, num_bytes);
-	spin_unlock(&space_info->lock);
+	spin_lock(&cache->space_info->lock);
+	spin_lock(&cache->lock);
+	cache->pinned += num_bytes;
+	btrfs_space_info_update_bytes_pinned(fs_info, cache->space_info,
+					     num_bytes);
+	if (reserved) {
+		cache->reserved -= num_bytes;
+		cache->space_info->bytes_reserved -= num_bytes;
+	}
+	spin_unlock(&cache->lock);
+	spin_unlock(&cache->space_info->lock);
 
-	btrfs_set_extent_bit(&trans->transaction->pinned_extents, bytenr,
-			     bytenr + num_bytes - 1, EXTENT_DIRTY, NULL);
+	set_extent_bit(&trans->transaction->pinned_extents, bytenr,
+		       bytenr + num_bytes - 1, EXTENT_DIRTY, NULL);
 	return 0;
 }
 
-int btrfs_pin_extent(struct btrfs_trans_handle *trans, u64 bytenr, u64 num_bytes)
+int btrfs_pin_extent(struct btrfs_trans_handle *trans,
+		     u64 bytenr, u64 num_bytes, int reserved)
 {
 	struct btrfs_block_group *cache;
 
 	cache = btrfs_lookup_block_group(trans->fs_info, bytenr);
 	BUG_ON(!cache); /* Logic error */
 
-	pin_down_extent(trans, cache, bytenr, num_bytes, true);
+	pin_down_extent(trans, cache, bytenr, num_bytes, reserved);
 
 	btrfs_put_block_group(cache);
 	return 0;
@@ -2732,7 +2643,7 @@ int btrfs_pin_extent_for_log_replay(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto out;
 
-	pin_down_extent(trans, cache, eb->start, eb->len, false);
+	pin_down_extent(trans, cache, eb->start, eb->len, 0);
 
 	/* remove us from the free space cache (if we're there at all) */
 	ret = btrfs_remove_free_space(cache, eb->start, eb->len);
@@ -2834,22 +2745,26 @@ static int unpin_extent_range(struct btrfs_fs_info *fs_info,
 {
 	struct btrfs_block_group *cache = NULL;
 	struct btrfs_space_info *space_info;
+	struct btrfs_block_rsv *global_rsv = &fs_info->global_block_rsv;
 	struct btrfs_free_cluster *cluster = NULL;
+	u64 len;
 	u64 total_unpinned = 0;
 	u64 empty_cluster = 0;
+	bool readonly;
+	int ret = 0;
 
 	while (start <= end) {
-		u64 len;
-		bool readonly;
-
-		if (!cache || start >= btrfs_block_group_end(cache)) {
+		readonly = false;
+		if (!cache ||
+		    start >= cache->start + cache->length) {
 			if (cache)
 				btrfs_put_block_group(cache);
 			total_unpinned = 0;
 			cache = btrfs_lookup_block_group(fs_info, start);
-			if (unlikely(cache == NULL)) {
+			if (cache == NULL) {
 				/* Logic error, something removed the block group. */
-				return -EUCLEAN;
+				ret = -EUCLEAN;
+				goto out;
 			}
 
 			cluster = fetch_cluster_info(fs_info,
@@ -2858,7 +2773,7 @@ static int unpin_extent_range(struct btrfs_fs_info *fs_info,
 			empty_cluster <<= 1;
 		}
 
-		len = btrfs_block_group_end(cache) - start;
+		len = cache->start + cache->length - start;
 		len = min(len, end + 1 - start);
 
 		if (return_free_space)
@@ -2883,97 +2798,45 @@ static int unpin_extent_range(struct btrfs_fs_info *fs_info,
 
 		spin_lock(&space_info->lock);
 		spin_lock(&cache->lock);
-		readonly = cache->ro;
 		cache->pinned -= len;
-		spin_unlock(&cache->lock);
-
-		btrfs_space_info_update_bytes_pinned(space_info, -len);
+		btrfs_space_info_update_bytes_pinned(fs_info, space_info, -len);
 		space_info->max_extent_size = 0;
-
-		if (readonly) {
+		if (cache->ro) {
 			space_info->bytes_readonly += len;
+			readonly = true;
 		} else if (btrfs_is_zoned(fs_info)) {
 			/* Need reset before reusing in a zoned block group */
-			btrfs_space_info_update_bytes_zone_unusable(space_info, len);
-		} else if (return_free_space) {
-			btrfs_return_free_space(space_info, len);
+			btrfs_space_info_update_bytes_zone_unusable(fs_info, space_info,
+								    len);
+			readonly = true;
 		}
+		spin_unlock(&cache->lock);
+		if (!readonly && return_free_space &&
+		    global_rsv->space_info == space_info) {
+			spin_lock(&global_rsv->lock);
+			if (!global_rsv->full) {
+				u64 to_add = min(len, global_rsv->size -
+						      global_rsv->reserved);
+
+				global_rsv->reserved += to_add;
+				btrfs_space_info_update_bytes_may_use(fs_info,
+						space_info, to_add);
+				if (global_rsv->reserved >= global_rsv->size)
+					global_rsv->full = 1;
+				len -= to_add;
+			}
+			spin_unlock(&global_rsv->lock);
+		}
+		/* Add to any tickets we may have */
+		if (!readonly && return_free_space && len)
+			btrfs_try_granting_tickets(fs_info, space_info);
 		spin_unlock(&space_info->lock);
 	}
 
 	if (cache)
 		btrfs_put_block_group(cache);
-
-	return 0;
-}
-
-/*
- * Complete the remapping of a block group by removing its chunk stripes and
- * device extents, and adding it to the unused list if there's no longer any
- * extents nominally within it.
- */
-int btrfs_complete_bg_remapping(struct btrfs_block_group *bg)
-{
-	struct btrfs_fs_info *fs_info = bg->fs_info;
-	struct btrfs_chunk_map *map;
-	int ret;
-
-	map = btrfs_get_chunk_map(fs_info, bg->start, 1);
-	if (IS_ERR(map))
-		return PTR_ERR(map);
-
-	ret = btrfs_last_identity_remap_gone(map, bg);
-	if (ret) {
-		btrfs_free_chunk_map(map);
-		return ret;
-	}
-
-	/*
-	 * Set num_stripes to 0, so that btrfs_remove_dev_extents() won't run a
-	 * second time.
-	 */
-	map->num_stripes = 0;
-
-	btrfs_free_chunk_map(map);
-
-	if (bg->used == 0) {
-		spin_lock(&fs_info->unused_bgs_lock);
-		if (!list_empty(&bg->bg_list)) {
-			list_del_init(&bg->bg_list);
-			btrfs_put_block_group(bg);
-		}
-		spin_unlock(&fs_info->unused_bgs_lock);
-
-		btrfs_mark_bg_unused(bg);
-	}
-
-	return 0;
-}
-
-void btrfs_handle_fully_remapped_bgs(struct btrfs_fs_info *fs_info)
-{
-	struct btrfs_block_group *bg;
-	int ret;
-
-	spin_lock(&fs_info->unused_bgs_lock);
-	while (!list_empty(&fs_info->fully_remapped_bgs)) {
-		bg = list_first_entry(&fs_info->fully_remapped_bgs,
-				      struct btrfs_block_group, bg_list);
-		list_del_init(&bg->bg_list);
-		spin_unlock(&fs_info->unused_bgs_lock);
-
-		btrfs_discard_extent(fs_info, bg->start, bg->length, NULL, false);
-
-		ret = btrfs_complete_bg_remapping(bg);
-		if (ret) {
-			btrfs_put_block_group(bg);
-			return;
-		}
-
-		btrfs_put_block_group(bg);
-		spin_lock(&fs_info->unused_bgs_lock);
-	}
-	spin_unlock(&fs_info->unused_bgs_lock);
+out:
+	return ret;
 }
 
 int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
@@ -2981,69 +2844,34 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_block_group *block_group, *tmp;
 	struct list_head *deleted_bgs;
-	struct extent_io_tree *unpin = &trans->transaction->pinned_extents;
-	struct extent_state *cached_state = NULL;
+	struct extent_io_tree *unpin;
 	u64 start;
 	u64 end;
-	int unpin_error = 0;
 	int ret;
 
-	mutex_lock(&fs_info->unused_bg_unpin_mutex);
-	btrfs_find_first_extent_bit(unpin, 0, &start, &end, EXTENT_DIRTY, &cached_state);
+	unpin = &trans->transaction->pinned_extents;
 
-	while (!TRANS_ABORTED(trans) && cached_state) {
-		struct extent_state *next_state;
+	while (!TRANS_ABORTED(trans)) {
+		struct extent_state *cached_state = NULL;
 
-		if (btrfs_test_opt(fs_info, DISCARD_SYNC)) {
-			ret = btrfs_discard_extent(fs_info, start,
-						   end + 1 - start, NULL, true);
-			if (ret) {
-				btrfs_warn(fs_info,
-				"discard failed for extent [%llu, %llu]: errno=%d %s",
-					   start, end, ret, btrfs_decode_error(ret));
-			}
-		}
-
-		next_state = btrfs_next_extent_state(unpin, cached_state);
-		btrfs_clear_extent_dirty(unpin, start, end, &cached_state);
-		ret = unpin_extent_range(fs_info, start, end, true);
-		/*
-		 * If we get an error unpinning an extent range, store the first
-		 * error to return later after trying to unpin all ranges and do
-		 * the sync discards. Our caller will abort the transaction
-		 * (which already wrote new superblocks) and on the next mount
-		 * the space will be available as it was pinned by in-memory
-		 * only structures in this phase.
-		 */
-		if (ret) {
-			btrfs_err_rl(fs_info,
-"failed to unpin extent range [%llu, %llu] when committing transaction %llu: %s (%d)",
-				     start, end, trans->transid,
-				     btrfs_decode_error(ret), ret);
-			if (!unpin_error)
-				unpin_error = ret;
-		}
-
-		btrfs_free_extent_state(cached_state);
-
-		if (need_resched()) {
-			btrfs_free_extent_state(next_state);
+		mutex_lock(&fs_info->unused_bg_unpin_mutex);
+		if (!find_first_extent_bit(unpin, 0, &start, &end,
+					   EXTENT_DIRTY, &cached_state)) {
 			mutex_unlock(&fs_info->unused_bg_unpin_mutex);
-			cond_resched();
-			cached_state = NULL;
-			mutex_lock(&fs_info->unused_bg_unpin_mutex);
-			btrfs_find_first_extent_bit(unpin, 0, &start, &end,
-						    EXTENT_DIRTY, &cached_state);
-		} else {
-			cached_state = next_state;
-			if (cached_state) {
-				start = cached_state->start;
-				end = cached_state->end;
-			}
+			break;
 		}
+
+		if (btrfs_test_opt(fs_info, DISCARD_SYNC))
+			ret = btrfs_discard_extent(fs_info, start,
+						   end + 1 - start, NULL);
+
+		clear_extent_dirty(unpin, start, end, &cached_state);
+		ret = unpin_extent_range(fs_info, start, end, true);
+		BUG_ON(ret);
+		mutex_unlock(&fs_info->unused_bg_unpin_mutex);
+		free_extent_state(cached_state);
+		cond_resched();
 	}
-	mutex_unlock(&fs_info->unused_bg_unpin_mutex);
-	btrfs_free_extent_state(cached_state);
 
 	if (btrfs_test_opt(fs_info, DISCARD_ASYNC)) {
 		btrfs_discard_calc_delay(&fs_info->discard_ctl);
@@ -3057,10 +2885,14 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
 	 */
 	deleted_bgs = &trans->transaction->deleted_bgs;
 	list_for_each_entry_safe(block_group, tmp, deleted_bgs, bg_list) {
+		u64 trimmed = 0;
+
 		ret = -EROFS;
 		if (!TRANS_ABORTED(trans))
-			ret = btrfs_discard_extent(fs_info, block_group->start,
-						   block_group->length, NULL, true);
+			ret = btrfs_discard_extent(fs_info,
+						   block_group->start,
+						   block_group->length,
+						   &trimmed);
 
 		/*
 		 * Not strictly necessary to lock, as the block_group should be
@@ -3082,7 +2914,7 @@ int btrfs_finish_extent_commit(struct btrfs_trans_handle *trans)
 		}
 	}
 
-	return unpin_error;
+	return 0;
 }
 
 /*
@@ -3134,61 +2966,38 @@ u64 btrfs_get_extent_owner_root(struct btrfs_fs_info *fs_info,
 }
 
 static int do_free_extent_accounting(struct btrfs_trans_handle *trans,
-				     u64 bytenr, struct btrfs_squota_delta *delta,
-				     struct btrfs_path *path)
+				     u64 bytenr, struct btrfs_squota_delta *delta)
 {
 	int ret;
-	bool remapped = false;
 	u64 num_bytes = delta->num_bytes;
-
-	/* Returns 1 on success and 0 on no-op. */
-	ret = btrfs_remove_extent_from_remap_tree(trans, path, bytenr, num_bytes);
-	if (unlikely(ret < 0)) {
-		btrfs_abort_transaction(trans, ret);
-		return ret;
-	} else if (ret == 1) {
-		remapped = true;
-	}
 
 	if (delta->is_data) {
 		struct btrfs_root *csum_root;
 
 		csum_root = btrfs_csum_root(trans->fs_info, bytenr);
-		if (unlikely(!csum_root)) {
-			ret = -EUCLEAN;
-			btrfs_abort_transaction(trans, ret);
-			btrfs_err(trans->fs_info,
-				  "missing csum root for extent at bytenr %llu",
-				  bytenr);
-			return ret;
-		}
-
 		ret = btrfs_del_csums(trans, csum_root, bytenr, num_bytes);
-		if (unlikely(ret)) {
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
 
 		ret = btrfs_delete_raid_extent(trans, bytenr, num_bytes);
-		if (unlikely(ret)) {
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
 	}
 
 	ret = btrfs_record_squota_delta(trans->fs_info, delta);
-	if (unlikely(ret)) {
+	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		return ret;
 	}
 
-	/* If remapped, FST has already been taken care of in remove_range_from_remap_tree(). */
-	if (!remapped) {
-		ret = btrfs_add_to_free_space_tree(trans, bytenr, num_bytes);
-		if (unlikely(ret)) {
-			btrfs_abort_transaction(trans, ret);
-			return ret;
-		}
+	ret = add_to_free_space_tree(trans, bytenr, num_bytes);
+	if (ret) {
+		btrfs_abort_transaction(trans, ret);
+		return ret;
 	}
 
 	ret = btrfs_update_block_group(trans, bytenr, num_bytes, false);
@@ -3266,12 +3075,12 @@ static int do_free_extent_accounting(struct btrfs_trans_handle *trans,
  */
 static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			       struct btrfs_delayed_ref_head *href,
-			       const struct btrfs_delayed_ref_node *node,
+			       struct btrfs_delayed_ref_node *node,
 			       struct btrfs_delayed_extent_op *extent_op)
 {
 	struct btrfs_fs_info *info = trans->fs_info;
 	struct btrfs_key key;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_root *extent_root;
 	struct extent_buffer *leaf;
 	struct btrfs_extent_item *ei;
@@ -3292,11 +3101,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 	u64 delayed_ref_root = href->owning_root;
 
 	extent_root = btrfs_extent_root(info, bytenr);
-	if (unlikely(!extent_root)) {
-		btrfs_err(info,
-			  "missing extent root for extent at bytenr %llu", bytenr);
-		return -EUCLEAN;
-	}
+	ASSERT(extent_root);
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -3304,13 +3109,13 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 
 	is_data = owner_objectid >= BTRFS_FIRST_FREE_OBJECTID;
 
-	if (unlikely(!is_data && refs_to_drop != 1)) {
+	if (!is_data && refs_to_drop != 1) {
 		btrfs_crit(info,
 "invalid refs_to_drop, dropping more than 1 refs for tree block %llu refs_to_drop %u",
 			   node->bytenr, refs_to_drop);
 		ret = -EINVAL;
 		btrfs_abort_transaction(trans, ret);
-		return ret;
+		goto out;
 	}
 
 	if (is_data)
@@ -3344,25 +3149,26 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 				break;
 			}
 
-			/* Quick path didn't find the EXTENT/METADATA_ITEM */
+			/* Quick path didn't find the EXTEMT/METADATA_ITEM */
 			if (path->slots[0] - extent_slot > 5)
 				break;
 			extent_slot--;
 		}
 
 		if (!found_extent) {
-			if (unlikely(iref)) {
+			if (iref) {
 				abort_and_dump(trans, path,
 "invalid iref slot %u, no EXTENT/METADATA_ITEM found but has inline extent ref",
 					   path->slots[0]);
-				return -EUCLEAN;
+				ret = -EUCLEAN;
+				goto out;
 			}
 			/* Must be SHARED_* item, remove the backref first */
 			ret = remove_extent_backref(trans, extent_root, path,
 						    NULL, refs_to_drop, is_data);
-			if (unlikely(ret)) {
+			if (ret) {
 				btrfs_abort_transaction(trans, ret);
-				return ret;
+				goto out;
 			}
 			btrfs_release_path(path);
 
@@ -3409,9 +3215,9 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			"umm, got %d back from search, was looking for %llu, slot %d",
 					  ret, bytenr, path->slots[0]);
 			}
-			if (unlikely(ret < 0)) {
+			if (ret < 0) {
 				btrfs_abort_transaction(trans, ret);
-				return ret;
+				goto out;
 			}
 			extent_slot = path->slots[0];
 		}
@@ -3420,10 +3226,10 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 "unable to find ref byte nr %llu parent %llu root %llu owner %llu offset %llu slot %d",
 			       bytenr, node->parent, node->ref_root, owner_objectid,
 			       owner_offset, path->slots[0]);
-		return ret;
+		goto out;
 	} else {
 		btrfs_abort_transaction(trans, ret);
-		return ret;
+		goto out;
 	}
 
 	leaf = path->nodes[0];
@@ -3434,7 +3240,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 			  "unexpected extent item size, has %u expect >= %zu",
 			  item_size, sizeof(*ei));
 		btrfs_abort_transaction(trans, ret);
-		return ret;
+		goto out;
 	}
 	ei = btrfs_item_ptr(leaf, extent_slot,
 			    struct btrfs_extent_item);
@@ -3442,24 +3248,26 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 	    key.type == BTRFS_EXTENT_ITEM_KEY) {
 		struct btrfs_tree_block_info *bi;
 
-		if (unlikely(item_size < sizeof(*ei) + sizeof(*bi))) {
+		if (item_size < sizeof(*ei) + sizeof(*bi)) {
 			abort_and_dump(trans, path,
 "invalid extent item size for key (%llu, %u, %llu) slot %u owner %llu, has %u expect >= %zu",
 				       key.objectid, key.type, key.offset,
 				       path->slots[0], owner_objectid, item_size,
 				       sizeof(*ei) + sizeof(*bi));
-			return -EUCLEAN;
+			ret = -EUCLEAN;
+			goto out;
 		}
 		bi = (struct btrfs_tree_block_info *)(ei + 1);
 		WARN_ON(owner_objectid != btrfs_tree_block_level(leaf, bi));
 	}
 
 	refs = btrfs_extent_refs(leaf, ei);
-	if (unlikely(refs < refs_to_drop)) {
+	if (refs < refs_to_drop) {
 		abort_and_dump(trans, path,
 		"trying to drop %d refs but we only have %llu for bytenr %llu slot %u",
 			       refs_to_drop, refs, bytenr, path->slots[0]);
-		return -EUCLEAN;
+		ret = -EUCLEAN;
+		goto out;
 	}
 	refs -= refs_to_drop;
 
@@ -3471,21 +3279,23 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 		 * be updated by remove_extent_backref
 		 */
 		if (iref) {
-			if (unlikely(!found_extent)) {
+			if (!found_extent) {
 				abort_and_dump(trans, path,
 "invalid iref, got inlined extent ref but no EXTENT/METADATA_ITEM found, slot %u",
 					       path->slots[0]);
-				return -EUCLEAN;
+				ret = -EUCLEAN;
+				goto out;
 			}
 		} else {
 			btrfs_set_extent_refs(leaf, ei, refs);
+			btrfs_mark_buffer_dirty(trans, leaf);
 		}
 		if (found_extent) {
 			ret = remove_extent_backref(trans, extent_root, path,
 						    iref, refs_to_drop, is_data);
-			if (unlikely(ret)) {
+			if (ret) {
 				btrfs_abort_transaction(trans, ret);
-				return ret;
+				goto out;
 			}
 		}
 	} else {
@@ -3499,21 +3309,23 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 
 		/* In this branch refs == 1 */
 		if (found_extent) {
-			if (unlikely(is_data && refs_to_drop !=
-				     extent_data_ref_count(path, iref))) {
+			if (is_data && refs_to_drop !=
+			    extent_data_ref_count(path, iref)) {
 				abort_and_dump(trans, path,
 		"invalid refs_to_drop, current refs %u refs_to_drop %u slot %u",
 					       extent_data_ref_count(path, iref),
 					       refs_to_drop, path->slots[0]);
-				return -EUCLEAN;
+				ret = -EUCLEAN;
+				goto out;
 			}
 			if (iref) {
-				if (unlikely(path->slots[0] != extent_slot)) {
+				if (path->slots[0] != extent_slot) {
 					abort_and_dump(trans, path,
-"invalid iref, extent item key " BTRFS_KEY_FMT " slot %u doesn't have wanted iref",
-						       BTRFS_KEY_FMT_VALUE(&key),
-						       path->slots[0]);
-					return -EUCLEAN;
+"invalid iref, extent item key (%llu %u %llu) slot %u doesn't have wanted iref",
+						       key.objectid, key.type,
+						       key.offset, path->slots[0]);
+					ret = -EUCLEAN;
+					goto out;
 				}
 			} else {
 				/*
@@ -3522,11 +3334,12 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 				 * |	extent_slot	  ||extent_slot + 1|
 				 * [ EXTENT/METADATA_ITEM ][ SHARED_* ITEM ]
 				 */
-				if (unlikely(path->slots[0] != extent_slot + 1)) {
+				if (path->slots[0] != extent_slot + 1) {
 					abort_and_dump(trans, path,
 	"invalid SHARED_* item slot %u, previous item is not EXTENT/METADATA_ITEM",
 						       path->slots[0]);
-					return -EUCLEAN;
+					ret = -EUCLEAN;
+					goto out;
 				}
 				path->slots[0] = extent_slot;
 				num_to_del = 2;
@@ -3545,16 +3358,18 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 
 		ret = btrfs_del_items(trans, extent_root, path, path->slots[0],
 				      num_to_del);
-		if (unlikely(ret)) {
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
-			return ret;
+			goto out;
 		}
 		btrfs_release_path(path);
 
-		ret = do_free_extent_accounting(trans, bytenr, &delta, path);
+		ret = do_free_extent_accounting(trans, bytenr, &delta);
 	}
 	btrfs_release_path(path);
 
+out:
+	btrfs_free_path(path);
 	return ret;
 }
 
@@ -3567,14 +3382,13 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 static noinline int check_ref_cleanup(struct btrfs_trans_handle *trans,
 				      u64 bytenr)
 {
-	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_delayed_ref_head *head;
 	struct btrfs_delayed_ref_root *delayed_refs;
 	int ret = 0;
 
 	delayed_refs = &trans->transaction->delayed_refs;
 	spin_lock(&delayed_refs->lock);
-	head = btrfs_find_delayed_ref_head(fs_info, delayed_refs, bytenr);
+	head = btrfs_find_delayed_ref_head(delayed_refs, bytenr);
 	if (!head)
 		goto out_delayed_unlock;
 
@@ -3592,7 +3406,7 @@ static noinline int check_ref_cleanup(struct btrfs_trans_handle *trans,
 	if (!mutex_trylock(&head->mutex))
 		goto out;
 
-	btrfs_delete_ref_head(fs_info, delayed_refs, head);
+	btrfs_delete_ref_head(delayed_refs, head);
 	head->processing = false;
 
 	spin_unlock(&head->lock);
@@ -3602,7 +3416,7 @@ static noinline int check_ref_cleanup(struct btrfs_trans_handle *trans,
 	if (head->must_insert_reserved)
 		ret = 1;
 
-	btrfs_cleanup_ref_head_accounting(fs_info, delayed_refs, head);
+	btrfs_cleanup_ref_head_accounting(trans->fs_info, delayed_refs, head);
 	mutex_unlock(&head->mutex);
 	btrfs_put_delayed_ref_head(head);
 	return ret;
@@ -3663,7 +3477,7 @@ int btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 	bg = btrfs_lookup_block_group(fs_info, buf->start);
 
 	if (btrfs_header_flag(buf, BTRFS_HEADER_FLAG_WRITTEN)) {
-		pin_down_extent(trans, bg, buf->start, buf->len, true);
+		pin_down_extent(trans, bg, buf->start, buf->len, 1);
 		btrfs_put_block_group(bg);
 		return 0;
 	}
@@ -3687,7 +3501,7 @@ int btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 
 	if (test_bit(BTRFS_FS_TREE_MOD_LOG_USERS, &fs_info->flags)
 		     || btrfs_is_zoned(fs_info)) {
-		pin_down_extent(trans, bg, buf->start, buf->len, true);
+		pin_down_extent(trans, bg, buf->start, buf->len, 1);
 		btrfs_put_block_group(bg);
 		return 0;
 	}
@@ -3695,7 +3509,7 @@ int btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 	WARN_ON(test_bit(EXTENT_BUFFER_DIRTY, &buf->bflags));
 
 	btrfs_add_free_space(bg, buf->start, buf->len);
-	btrfs_free_reserved_bytes(bg, buf->len, false);
+	btrfs_free_reserved_bytes(bg, buf->len, 0);
 	btrfs_put_block_group(bg);
 	trace_btrfs_reserved_extent_free(fs_info, buf->start, buf->len);
 
@@ -3716,7 +3530,7 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans, struct btrfs_ref *ref)
 	 * tree, just update pinning info and exit early.
 	 */
 	if (ref->ref_root == BTRFS_TREE_LOG_OBJECTID) {
-		btrfs_pin_extent(trans, ref->bytenr, ref->num_bytes);
+		btrfs_pin_extent(trans, ref->bytenr, ref->num_bytes, 1);
 		ret = 0;
 	} else if (ref->type == BTRFS_REF_METADATA) {
 		ret = btrfs_add_delayed_tree_ref(trans, ref, NULL);
@@ -3767,14 +3581,15 @@ enum btrfs_loop_type {
 };
 
 static inline void
-btrfs_lock_block_group(struct btrfs_block_group *cache, bool delalloc)
+btrfs_lock_block_group(struct btrfs_block_group *cache,
+		       int delalloc)
 {
 	if (delalloc)
 		down_read(&cache->data_rwsem);
 }
 
 static inline void btrfs_grab_block_group(struct btrfs_block_group *cache,
-					  bool delalloc)
+		       int delalloc)
 {
 	btrfs_get_block_group(cache);
 	if (delalloc)
@@ -3784,7 +3599,7 @@ static inline void btrfs_grab_block_group(struct btrfs_block_group *cache,
 static struct btrfs_block_group *btrfs_lock_cluster(
 		   struct btrfs_block_group *block_group,
 		   struct btrfs_free_cluster *cluster,
-		   bool delalloc)
+		   int delalloc)
 	__acquires(&cluster->refill_lock)
 {
 	struct btrfs_block_group *used_bg = NULL;
@@ -3821,7 +3636,8 @@ static struct btrfs_block_group *btrfs_lock_cluster(
 }
 
 static inline void
-btrfs_release_block_group(struct btrfs_block_group *cache, bool delalloc)
+btrfs_release_block_group(struct btrfs_block_group *cache,
+			 int delalloc)
 {
 	if (delalloc)
 		up_read(&cache->data_rwsem);
@@ -4013,8 +3829,9 @@ static int do_allocation_clustered(struct btrfs_block_group *block_group,
  * Lock nesting
  * ============
  *
- * block_group::lock
- *   fs_info::treelog_bg_lock
+ * space_info::lock
+ *   block_group::lock
+ *     fs_info::treelog_bg_lock
  */
 
 /*
@@ -4027,6 +3844,7 @@ static int do_allocation_zoned(struct btrfs_block_group *block_group,
 			       struct btrfs_block_group **bg_ret)
 {
 	struct btrfs_fs_info *fs_info = block_group->fs_info;
+	struct btrfs_space_info *space_info = block_group->space_info;
 	struct btrfs_free_space_ctl *ctl = block_group->free_space_ctl;
 	u64 start = block_group->start;
 	u64 num_bytes = ffe_ctl->num_bytes;
@@ -4087,6 +3905,7 @@ static int do_allocation_zoned(struct btrfs_block_group *block_group,
 		 */
 	}
 
+	spin_lock(&space_info->lock);
 	spin_lock(&block_group->lock);
 	spin_lock(&fs_info->treelog_bg_lock);
 	spin_lock(&fs_info->relocation_bg_lock);
@@ -4188,6 +4007,7 @@ out:
 	spin_unlock(&fs_info->relocation_bg_lock);
 	spin_unlock(&fs_info->treelog_bg_lock);
 	spin_unlock(&block_group->lock);
+	spin_unlock(&space_info->lock);
 	return ret;
 }
 
@@ -4207,7 +4027,7 @@ static int do_allocation(struct btrfs_block_group *block_group,
 
 static void release_block_group(struct btrfs_block_group *block_group,
 				struct find_free_extent_ctl *ffe_ctl,
-				bool delalloc)
+				int delalloc)
 {
 	switch (ffe_ctl->policy) {
 	case BTRFS_EXTENT_ALLOC_CLUSTERED:
@@ -4326,7 +4146,6 @@ static int can_allocate_chunk(struct btrfs_fs_info *fs_info,
 static int find_free_extent_update_loop(struct btrfs_fs_info *fs_info,
 					struct btrfs_key *ins,
 					struct find_free_extent_ctl *ffe_ctl,
-					struct btrfs_space_info *space_info,
 					bool full_search)
 {
 	struct btrfs_root *root = fs_info->chunk_root;
@@ -4349,72 +4168,73 @@ static int find_free_extent_update_loop(struct btrfs_fs_info *fs_info,
 		return 1;
 
 	/* See the comments for btrfs_loop_type for an explanation of the phases. */
-	if (ffe_ctl->loop == LOOP_NO_EMPTY_SIZE)
-		return -ENOSPC;
-
-	ffe_ctl->index = 0;
-	/*
-	 * We want to skip the LOOP_CACHING_WAIT step if we don't have any
-	 * uncached bgs and we've already done a full search through.
-	 */
-	if (ffe_ctl->loop == LOOP_CACHING_NOWAIT &&
-	    (!ffe_ctl->orig_have_caching_bg && full_search))
-		ffe_ctl->loop++;
-	ffe_ctl->loop++;
-
-	if (ffe_ctl->loop == LOOP_ALLOC_CHUNK) {
-		struct btrfs_trans_handle *trans;
-		bool have_trans = false;
-
-		/* Check if allocation policy allows to create a new chunk. */
-		ret = can_allocate_chunk(fs_info, ffe_ctl);
-		if (ret)
-			return ret;
-
-		trans = current->journal_info;
-		if (trans)
-			have_trans = true;
-		else
-			trans = btrfs_join_transaction(root);
-
-		if (IS_ERR(trans))
-			return PTR_ERR(trans);
-
-		ret = btrfs_chunk_alloc(trans, space_info, ffe_ctl->flags,
-					CHUNK_ALLOC_FORCE_FOR_EXTENT);
-
-		/* Do not bail out on ENOSPC since we can do more. */
-		if (ret == -ENOSPC) {
-			ret = 0;
+	if (ffe_ctl->loop < LOOP_NO_EMPTY_SIZE) {
+		ffe_ctl->index = 0;
+		/*
+		 * We want to skip the LOOP_CACHING_WAIT step if we don't have
+		 * any uncached bgs and we've already done a full search
+		 * through.
+		 */
+		if (ffe_ctl->loop == LOOP_CACHING_NOWAIT &&
+		    (!ffe_ctl->orig_have_caching_bg && full_search))
 			ffe_ctl->loop++;
-		} else if (ret < 0) {
-			btrfs_abort_transaction(trans, ret);
-		} else {
-			ret = 0;
+		ffe_ctl->loop++;
+
+		if (ffe_ctl->loop == LOOP_ALLOC_CHUNK) {
+			struct btrfs_trans_handle *trans;
+			int exist = 0;
+
+			/* Check if allocation policy allows to create a new chunk */
+			ret = can_allocate_chunk(fs_info, ffe_ctl);
+			if (ret)
+				return ret;
+
+			trans = current->journal_info;
+			if (trans)
+				exist = 1;
+			else
+				trans = btrfs_join_transaction(root);
+
+			if (IS_ERR(trans)) {
+				ret = PTR_ERR(trans);
+				return ret;
+			}
+
+			ret = btrfs_chunk_alloc(trans, ffe_ctl->flags,
+						CHUNK_ALLOC_FORCE_FOR_EXTENT);
+
+			/* Do not bail out on ENOSPC since we can do more. */
+			if (ret == -ENOSPC) {
+				ret = 0;
+				ffe_ctl->loop++;
+			}
+			else if (ret < 0)
+				btrfs_abort_transaction(trans, ret);
+			else
+				ret = 0;
+			if (!exist)
+				btrfs_end_transaction(trans);
+			if (ret)
+				return ret;
 		}
 
-		if (!have_trans)
-			btrfs_end_transaction(trans);
+		if (ffe_ctl->loop == LOOP_NO_EMPTY_SIZE) {
+			if (ffe_ctl->policy != BTRFS_EXTENT_ALLOC_CLUSTERED)
+				return -ENOSPC;
 
-		if (ret)
-			return ret;
+			/*
+			 * Don't loop again if we already have no empty_size and
+			 * no empty_cluster.
+			 */
+			if (ffe_ctl->empty_size == 0 &&
+			    ffe_ctl->empty_cluster == 0)
+				return -ENOSPC;
+			ffe_ctl->empty_size = 0;
+			ffe_ctl->empty_cluster = 0;
+		}
+		return 1;
 	}
-
-	if (ffe_ctl->loop == LOOP_NO_EMPTY_SIZE) {
-		if (ffe_ctl->policy != BTRFS_EXTENT_ALLOC_CLUSTERED)
-			return -ENOSPC;
-
-		/*
-		 * Don't loop again if we already have no empty_size and
-		 * no empty_cluster.
-		 */
-		if (ffe_ctl->empty_size == 0 && ffe_ctl->empty_cluster == 0)
-			return -ENOSPC;
-		ffe_ctl->empty_size = 0;
-		ffe_ctl->empty_cluster = 0;
-	}
-
-	return 1;
+	return -ENOSPC;
 }
 
 static int prepare_allocation_clustered(struct btrfs_fs_info *fs_info,
@@ -4472,43 +4292,36 @@ static int prepare_allocation_zoned(struct btrfs_fs_info *fs_info,
 				    struct find_free_extent_ctl *ffe_ctl,
 				    struct btrfs_space_info *space_info)
 {
-	struct btrfs_block_group *block_group;
-
 	if (ffe_ctl->for_treelog) {
 		spin_lock(&fs_info->treelog_bg_lock);
 		if (fs_info->treelog_bg)
 			ffe_ctl->hint_byte = fs_info->treelog_bg;
 		spin_unlock(&fs_info->treelog_bg_lock);
-		return 0;
-	}
-
-	if (ffe_ctl->for_data_reloc) {
+	} else if (ffe_ctl->for_data_reloc) {
 		spin_lock(&fs_info->relocation_bg_lock);
 		if (fs_info->data_reloc_bg)
 			ffe_ctl->hint_byte = fs_info->data_reloc_bg;
 		spin_unlock(&fs_info->relocation_bg_lock);
-		return 0;
-	}
+	} else if (ffe_ctl->flags & BTRFS_BLOCK_GROUP_DATA) {
+		struct btrfs_block_group *block_group;
 
-	if (!(ffe_ctl->flags & BTRFS_BLOCK_GROUP_DATA))
-		return 0;
+		spin_lock(&fs_info->zone_active_bgs_lock);
+		list_for_each_entry(block_group, &fs_info->zone_active_bgs, active_bg_list) {
+			/*
+			 * No lock is OK here because avail is monotinically
+			 * decreasing, and this is just a hint.
+			 */
+			u64 avail = block_group->zone_capacity - block_group->alloc_offset;
 
-	spin_lock(&fs_info->zone_active_bgs_lock);
-	list_for_each_entry(block_group, &fs_info->zone_active_bgs, active_bg_list) {
-		/*
-		 * No lock is OK here because avail is monotonically
-		 * decreasing, and this is just a hint.
-		 */
-		u64 avail = block_group->zone_capacity - block_group->alloc_offset;
-
-		if (block_group_bits(block_group, ffe_ctl->flags) &&
-		    block_group->space_info == space_info &&
-		    avail >= ffe_ctl->num_bytes) {
-			ffe_ctl->hint_byte = block_group->start;
-			break;
+			if (block_group_bits(block_group, ffe_ctl->flags) &&
+			    block_group->space_info == space_info &&
+			    avail >= ffe_ctl->num_bytes) {
+				ffe_ctl->hint_byte = block_group->start;
+				break;
+			}
 		}
+		spin_unlock(&fs_info->zone_active_bgs_lock);
 	}
-	spin_unlock(&fs_info->zone_active_bgs_lock);
 
 	return 0;
 }
@@ -4591,22 +4404,11 @@ static noinline int find_free_extent(struct btrfs_root *root,
 	ins->objectid = 0;
 	ins->offset = 0;
 
-	trace_btrfs_find_free_extent(root, ffe_ctl);
+	trace_find_free_extent(root, ffe_ctl);
 
 	space_info = btrfs_find_space_info(fs_info, ffe_ctl->flags);
-	if (btrfs_is_zoned(fs_info) && space_info) {
-		/* Use dedicated sub-space_info for dedicated block group users. */
-		if (ffe_ctl->for_data_reloc) {
-			space_info = space_info->sub_group[0];
-			ASSERT(space_info->subgroup_id == BTRFS_SUB_GROUP_DATA_RELOC);
-		} else if (ffe_ctl->for_treelog) {
-			space_info = space_info->sub_group[0];
-			ASSERT(space_info->subgroup_id == BTRFS_SUB_GROUP_TREELOG);
-		}
-	}
 	if (!space_info) {
-		btrfs_err(fs_info, "no space info for %llu, tree-log %d, relocation %d",
-			  ffe_ctl->flags, ffe_ctl->for_treelog, ffe_ctl->for_data_reloc);
+		btrfs_err(fs_info, "No space info for %llu", ffe_ctl->flags);
 		return -ENOSPC;
 	}
 
@@ -4628,12 +4430,10 @@ static noinline int find_free_extent(struct btrfs_root *root,
 		 * picked out then we don't care that the block group is cached.
 		 */
 		if (block_group && block_group_bits(block_group, ffe_ctl->flags) &&
-		    block_group->space_info == space_info &&
 		    block_group->cached != BTRFS_CACHE_NO) {
 			down_read(&space_info->groups_sem);
 			if (list_empty(&block_group->list) ||
-			    block_group->ro ||
-			    (block_group->flags & BTRFS_BLOCK_GROUP_REMAPPED)) {
+			    block_group->ro) {
 				/*
 				 * someone is removing this block group,
 				 * we can't jump into the have_block_group
@@ -4655,7 +4455,7 @@ static noinline int find_free_extent(struct btrfs_root *root,
 		}
 	}
 search:
-	trace_btrfs_find_free_extent_search_loop(root, ffe_ctl);
+	trace_find_free_extent_search_loop(root, ffe_ctl);
 	ffe_ctl->have_caching_bg = false;
 	if (ffe_ctl->index == btrfs_bg_flags_to_raid_index(ffe_ctl->flags) ||
 	    ffe_ctl->index == 0)
@@ -4667,8 +4467,7 @@ search:
 
 		ffe_ctl->hinted = false;
 		/* If the block group is read-only, we can skip it entirely. */
-		if (unlikely(block_group->ro ||
-			     (block_group->flags & BTRFS_BLOCK_GROUP_REMAPPED))) {
+		if (unlikely(block_group->ro)) {
 			if (ffe_ctl->for_treelog)
 				btrfs_clear_treelog_bg(block_group);
 			if (ffe_ctl->for_data_reloc)
@@ -4708,7 +4507,7 @@ search:
 		}
 
 have_block_group:
-		trace_btrfs_find_free_extent_have_block_group(root, ffe_ctl, block_group);
+		trace_find_free_extent_have_block_group(root, ffe_ctl, block_group);
 		ffe_ctl->cached = btrfs_block_group_done(block_group);
 		if (unlikely(!ffe_ctl->cached)) {
 			ffe_ctl->have_caching_bg = true;
@@ -4755,7 +4554,7 @@ have_block_group:
 
 		/* move on to the next group */
 		if (ffe_ctl->search_start + ffe_ctl->num_bytes >
-		    btrfs_block_group_end(block_group)) {
+		    block_group->start + block_group->length) {
 			btrfs_add_free_space_unused(block_group,
 					    ffe_ctl->found_offset,
 					    ffe_ctl->num_bytes);
@@ -4801,8 +4600,7 @@ loop:
 	}
 	up_read(&space_info->groups_sem);
 
-	ret = find_free_extent_update_loop(fs_info, ins, ffe_ctl, space_info,
-					   full_search);
+	ret = find_free_extent_update_loop(fs_info, ins, ffe_ctl, full_search);
 	if (ret > 0)
 		goto search;
 
@@ -4871,7 +4669,7 @@ loop:
 int btrfs_reserve_extent(struct btrfs_root *root, u64 ram_bytes,
 			 u64 num_bytes, u64 min_alloc_size,
 			 u64 empty_size, u64 hint_byte,
-			 struct btrfs_key *ins, bool is_data, bool delalloc)
+			 struct btrfs_key *ins, int is_data, int delalloc)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct find_free_extent_ctl ffe_ctl = {};
@@ -4916,15 +4714,16 @@ again:
 	"allocation failed flags %llu, wanted %llu tree-log %d, relocation: %d",
 				  flags, num_bytes, for_treelog, for_data_reloc);
 			if (sinfo)
-				btrfs_dump_space_info(sinfo, num_bytes, 1);
+				btrfs_dump_space_info(fs_info, sinfo,
+						      num_bytes, 1);
 		}
 	}
 
 	return ret;
 }
 
-int btrfs_free_reserved_extent(struct btrfs_fs_info *fs_info, u64 start, u64 len,
-			       bool is_delalloc)
+int btrfs_free_reserved_extent(struct btrfs_fs_info *fs_info,
+			       u64 start, u64 len, int delalloc)
 {
 	struct btrfs_block_group *cache;
 
@@ -4936,7 +4735,7 @@ int btrfs_free_reserved_extent(struct btrfs_fs_info *fs_info, u64 start, u64 len
 	}
 
 	btrfs_add_free_space(cache, start, len);
-	btrfs_free_reserved_bytes(cache, len, is_delalloc);
+	btrfs_free_reserved_bytes(cache, len, delalloc);
 	trace_btrfs_reserved_extent_free(fs_info, start, len);
 
 	btrfs_put_block_group(cache);
@@ -4956,7 +4755,7 @@ int btrfs_pin_reserved_extent(struct btrfs_trans_handle *trans,
 		return -ENOSPC;
 	}
 
-	ret = pin_down_extent(trans, cache, eb->start, eb->len, true);
+	ret = pin_down_extent(trans, cache, eb->start, eb->len, 1);
 	btrfs_put_block_group(cache);
 	return ret;
 }
@@ -4967,7 +4766,7 @@ static int alloc_reserved_extent(struct btrfs_trans_handle *trans, u64 bytenr,
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	int ret;
 
-	ret = btrfs_remove_from_free_space_tree(trans, bytenr, num_bytes);
+	ret = remove_from_free_space_tree(trans, bytenr, num_bytes);
 	if (ret)
 		return ret;
 
@@ -5010,18 +4809,11 @@ static int alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 		size += btrfs_extent_inline_ref_size(BTRFS_EXTENT_OWNER_REF_KEY);
 	size += btrfs_extent_inline_ref_size(type);
 
-	extent_root = btrfs_extent_root(fs_info, ins->objectid);
-	if (unlikely(!extent_root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu",
-			  ins->objectid);
-		return -EUCLEAN;
-	}
-
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+	extent_root = btrfs_extent_root(fs_info, ins->objectid);
 	ret = btrfs_insert_empty_item(trans, extent_root, path, ins, size);
 	if (ret) {
 		btrfs_free_path(path);
@@ -5059,13 +4851,14 @@ static int alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 		btrfs_set_extent_data_ref_count(leaf, ref, ref_mod);
 	}
 
+	btrfs_mark_buffer_dirty(trans, path->nodes[0]);
 	btrfs_free_path(path);
 
 	return alloc_reserved_extent(trans, ins->objectid, ins->offset);
 }
 
 static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
-				     const struct btrfs_delayed_ref_node *node,
+				     struct btrfs_delayed_ref_node *node,
 				     struct btrfs_delayed_extent_op *extent_op)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
@@ -5083,9 +4876,6 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 	int level = btrfs_delayed_ref_owner(node);
 	bool skinny_metadata = btrfs_fs_incompat(fs_info, SKINNY_METADATA);
 
-	if (unlikely(node->ref_root == BTRFS_REMAP_TREE_OBJECTID))
-		goto skip;
-
 	extent_key.objectid = node->bytenr;
 	if (skinny_metadata) {
 		/* The owner of a tree block is the level. */
@@ -5097,18 +4887,11 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 		size += sizeof(*block_info);
 	}
 
-	extent_root = btrfs_extent_root(fs_info, extent_key.objectid);
-	if (unlikely(!extent_root)) {
-		btrfs_err(fs_info,
-			  "missing extent root for extent at bytenr %llu",
-			  extent_key.objectid);
-		return -EUCLEAN;
-	}
-
 	path = btrfs_alloc_path();
 	if (!path)
 		return -ENOMEM;
 
+	extent_root = btrfs_extent_root(fs_info, extent_key.objectid);
 	ret = btrfs_insert_empty_item(trans, extent_root, path, &extent_key,
 				      size);
 	if (ret) {
@@ -5143,9 +4926,9 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 		btrfs_set_extent_inline_ref_offset(leaf, iref, node->ref_root);
 	}
 
+	btrfs_mark_buffer_dirty(trans, leaf);
 	btrfs_free_path(path);
 
-skip:
 	return alloc_reserved_extent(trans, node->bytenr, fs_info->nodesize);
 }
 
@@ -5164,7 +4947,7 @@ int btrfs_alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 
 	ASSERT(generic_ref.ref_root != BTRFS_TREE_LOG_OBJECTID);
 
-	if (btrfs_is_data_reloc_root(root) && btrfs_is_fstree(root->relocation_src_root))
+	if (btrfs_is_data_reloc_root(root) && is_fstree(root->relocation_src_root))
 		generic_ref.owning_root = root->relocation_src_root;
 
 	btrfs_init_data_ref(&generic_ref, owner, offset, 0, false);
@@ -5186,7 +4969,7 @@ int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 	int ret;
 	struct btrfs_block_group *block_group;
 	struct btrfs_space_info *space_info;
-	const struct btrfs_squota_delta delta = {
+	struct btrfs_squota_delta delta = {
 		.root = root_objectid,
 		.num_bytes = ins->offset,
 		.generation = trans->transid,
@@ -5220,7 +5003,7 @@ int btrfs_alloc_logged_file_extent(struct btrfs_trans_handle *trans,
 	ret = alloc_reserved_file_extent(trans, 0, root_objectid, 0, owner,
 					 offset, ins, 1, root_objectid);
 	if (ret)
-		btrfs_pin_extent(trans, ins->objectid, ins->offset);
+		btrfs_pin_extent(trans, ins->objectid, ins->offset, 1);
 	ret = btrfs_record_squota_delta(fs_info, &delta);
 	btrfs_put_block_group(block_group);
 	return ret;
@@ -5261,7 +5044,7 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 	if (IS_ERR(buf))
 		return buf;
 
-	if (unlikely(check_eb_lock_owner(buf))) {
+	if (check_eb_lock_owner(buf)) {
 		free_extent_buffer(buf);
 		return ERR_PTR(-EUCLEAN);
 	}
@@ -5312,17 +5095,17 @@ btrfs_init_new_buffer(struct btrfs_trans_handle *trans, struct btrfs_root *root,
 		 * EXTENT bit to differentiate dirty pages.
 		 */
 		if (buf->log_index == 0)
-			btrfs_set_extent_bit(&root->dirty_log_pages, buf->start,
-					     buf->start + buf->len - 1,
-					     EXTENT_DIRTY_LOG1, NULL);
+			set_extent_bit(&root->dirty_log_pages, buf->start,
+				       buf->start + buf->len - 1,
+				       EXTENT_DIRTY, NULL);
 		else
-			btrfs_set_extent_bit(&root->dirty_log_pages, buf->start,
-					     buf->start + buf->len - 1,
-					     EXTENT_DIRTY_LOG2, NULL);
+			set_extent_bit(&root->dirty_log_pages, buf->start,
+				       buf->start + buf->len - 1,
+				       EXTENT_NEW, NULL);
 	} else {
 		buf->log_index = -1;
-		btrfs_set_extent_bit(&trans->transaction->dirty_pages, buf->start,
-				     buf->start + buf->len - 1, EXTENT_DIRTY, NULL);
+		set_extent_bit(&trans->transaction->dirty_pages, buf->start,
+			       buf->start + buf->len - 1, EXTENT_DIRTY, NULL);
 	}
 	/* this returns a buffer locked for blocking */
 	return buf;
@@ -5366,7 +5149,7 @@ struct extent_buffer *btrfs_alloc_tree_block(struct btrfs_trans_handle *trans,
 		return ERR_CAST(block_rsv);
 
 	ret = btrfs_reserve_extent(root, blocksize, blocksize, blocksize,
-				   empty_size, hint, &ins, false, false);
+				   empty_size, hint, &ins, 0, 0);
 	if (ret)
 		goto out_unuse;
 
@@ -5428,7 +5211,7 @@ out_free_buf:
 	btrfs_tree_unlock(buf);
 	free_extent_buffer(buf);
 out_free_reserved:
-	btrfs_free_reserved_extent(fs_info, ins.objectid, ins.offset, false);
+	btrfs_free_reserved_extent(fs_info, ins.objectid, ins.offset, 0);
 out_unuse:
 	btrfs_unuse_block_rsv(fs_info, block_rsv, blocksize);
 	return ERR_PTR(ret);
@@ -5474,6 +5257,7 @@ struct walk_control {
  * @root:	the root we are currently deleting
  * @wc:		the walk control for this deletion
  * @eb:		the parent eb that we're currently visiting
+ * @refs:	the number of refs for wc->level - 1
  * @flags:	the flags for wc->level - 1
  * @slot:	the slot in the eb that we're currently checking
  *
@@ -5487,7 +5271,7 @@ struct walk_control {
  * corrupted file systems must have been caught before calling this function.
  */
 static bool visit_node_for_delete(struct btrfs_root *root, struct walk_control *wc,
-				  struct extent_buffer *eb, u64 flags, int slot)
+				  struct extent_buffer *eb, u64 refs, u64 flags, int slot)
 {
 	struct btrfs_key key;
 	u64 generation;
@@ -5601,7 +5385,7 @@ static noinline void reada_walk_down(struct btrfs_trans_handle *trans,
 			continue;
 
 		/* If we don't need to visit this node don't reada. */
-		if (!visit_node_for_delete(root, wc, eb, flags, slot))
+		if (!visit_node_for_delete(root, wc, eb, refs, flags, slot))
 			continue;
 reada:
 		btrfs_readahead_node_child(eb, slot);
@@ -5668,18 +5452,18 @@ static noinline int walk_down_proc(struct btrfs_trans_handle *trans,
 	/* wc->stage == UPDATE_BACKREF */
 	if (!(wc->flags[level] & flag)) {
 		ASSERT(path->locks[level]);
-		ret = btrfs_inc_ref(trans, root, eb, true);
-		if (unlikely(ret)) {
+		ret = btrfs_inc_ref(trans, root, eb, 1);
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
-		ret = btrfs_dec_ref(trans, root, eb, false);
-		if (unlikely(ret)) {
+		ret = btrfs_dec_ref(trans, root, eb, 0);
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
 		ret = btrfs_set_disk_extent_flags(trans, eb, flag);
-		if (unlikely(ret)) {
+		if (ret) {
 			btrfs_abort_transaction(trans, ret);
 			return ret;
 		}
@@ -5707,7 +5491,7 @@ static int check_ref_exists(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_delayed_ref_root *delayed_refs;
 	struct btrfs_delayed_ref_head *head;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_extent_inline_ref *iref;
 	int ret;
 	bool exists = false;
@@ -5724,6 +5508,7 @@ again:
 		 * If we get 0 then we found our reference, return 1, else
 		 * return the error if it's not -ENOENT;
 		 */
+		btrfs_free_path(path);
 		return (ret < 0 ) ? ret : 1;
 	}
 
@@ -5734,7 +5519,7 @@ again:
 	 */
 	delayed_refs = &trans->transaction->delayed_refs;
 	spin_lock(&delayed_refs->lock);
-	head = btrfs_find_delayed_ref_head(root->fs_info, delayed_refs, bytenr);
+	head = btrfs_find_delayed_ref_head(delayed_refs, bytenr);
 	if (!head)
 		goto out;
 	if (!mutex_trylock(&head->mutex)) {
@@ -5754,10 +5539,11 @@ again:
 		goto again;
 	}
 
-	exists = btrfs_find_delayed_tree_ref(head, btrfs_root_id(root), parent);
+	exists = btrfs_find_delayed_tree_ref(head, root->root_key.objectid, parent);
 	mutex_unlock(&head->mutex);
 out:
 	spin_unlock(&delayed_refs->lock);
+	btrfs_free_path(path);
 	return exists ? 1 : 0;
 }
 
@@ -5781,7 +5567,7 @@ static int check_next_block_uptodate(struct btrfs_trans_handle *trans,
 
 	generation = btrfs_node_ptr_generation(path->nodes[level], path->slots[level]);
 
-	if (btrfs_buffer_uptodate(next, generation, NULL))
+	if (btrfs_buffer_uptodate(next, generation, 0))
 		return 0;
 
 	check.level = level - 1;
@@ -5810,7 +5596,7 @@ static int check_next_block_uptodate(struct btrfs_trans_handle *trans,
  * If we are UPDATE_BACKREF then we will not, we need to update our backrefs.
  *
  * If we are DROP_REFERENCE this will figure out if we need to drop our current
- * reference, skipping it if we dropped it from a previous uncompleted drop, or
+ * reference, skipping it if we dropped it from a previous incompleted drop, or
  * dropping it if we still have a reference to it.
  */
 static int maybe_drop_reference(struct btrfs_trans_handle *trans, struct btrfs_root *root,
@@ -5835,7 +5621,7 @@ static int maybe_drop_reference(struct btrfs_trans_handle *trans, struct btrfs_r
 		ref.parent = path->nodes[level]->start;
 	} else {
 		ASSERT(btrfs_root_id(root) == btrfs_header_owner(path->nodes[level]));
-		if (unlikely(btrfs_root_id(root) != btrfs_header_owner(path->nodes[level]))) {
+		if (btrfs_root_id(root) != btrfs_header_owner(path->nodes[level])) {
 			btrfs_err(root->fs_info, "mismatched block owner");
 			return -EIO;
 		}
@@ -5952,12 +5738,13 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 
 	/* If we don't have to walk into this node skip it. */
 	if (!visit_node_for_delete(root, wc, path->nodes[level],
-				   wc->flags[level - 1], path->slots[level]))
+				   wc->refs[level - 1], wc->flags[level - 1],
+				   path->slots[level]))
 		goto skip;
 
 	/*
 	 * We have to walk down into this node, and if we're currently at the
-	 * DROP_REFERENCE stage and this block is shared then we need to switch
+	 * DROP_REFERNCE stage and this block is shared then we need to switch
 	 * to the UPDATE_BACKREF stage in order to convert to FULL_BACKREF.
 	 */
 	if (wc->stage == DROP_REFERENCE && wc->refs[level - 1] > 1) {
@@ -5971,7 +5758,7 @@ static noinline int do_walk_down(struct btrfs_trans_handle *trans,
 
 	level--;
 	ASSERT(level == btrfs_header_level(next));
-	if (unlikely(level != btrfs_header_level(next))) {
+	if (level != btrfs_header_level(next)) {
 		btrfs_err(root->fs_info, "mismatched level");
 		ret = -EIO;
 		goto out_unlock;
@@ -6074,14 +5861,15 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
 
 	if (wc->refs[level] == 1) {
 		if (level == 0) {
-			const bool full_backref = (wc->flags[level] & BTRFS_BLOCK_FLAG_FULL_BACKREF);
-
-			ret = btrfs_dec_ref(trans, root, eb, full_backref);
-			if (unlikely(ret)) {
+			if (wc->flags[level] & BTRFS_BLOCK_FLAG_FULL_BACKREF)
+				ret = btrfs_dec_ref(trans, root, eb, 1);
+			else
+				ret = btrfs_dec_ref(trans, root, eb, 0);
+			if (ret) {
 				btrfs_abort_transaction(trans, ret);
 				return ret;
 			}
-			if (btrfs_is_fstree(btrfs_root_id(root))) {
+			if (is_fstree(btrfs_root_id(root))) {
 				ret = btrfs_qgroup_trace_leaf_items(trans, eb);
 				if (ret) {
 					btrfs_err_rl(fs_info,
@@ -6101,13 +5889,13 @@ static noinline int walk_up_proc(struct btrfs_trans_handle *trans,
 	if (eb == root->node) {
 		if (wc->flags[level] & BTRFS_BLOCK_FLAG_FULL_BACKREF)
 			parent = eb->start;
-		else if (unlikely(btrfs_root_id(root) != btrfs_header_owner(eb)))
+		else if (btrfs_root_id(root) != btrfs_header_owner(eb))
 			goto owner_mismatch;
 	} else {
 		if (wc->flags[level + 1] & BTRFS_BLOCK_FLAG_FULL_BACKREF)
 			parent = path->nodes[level + 1]->start;
-		else if (unlikely(btrfs_root_id(root) !=
-				  btrfs_header_owner(path->nodes[level + 1])))
+		else if (btrfs_root_id(root) !=
+			 btrfs_header_owner(path->nodes[level + 1]))
 			goto owner_mismatch;
 	}
 
@@ -6242,9 +6030,9 @@ static noinline int walk_up_tree(struct btrfs_trans_handle *trans,
  * also make sure backrefs for the shared block and all lower level
  * blocks are properly updated.
  *
- * If called with for_reloc set, may exit early with -EAGAIN
+ * If called with for_reloc == 0, may exit early with -EAGAIN
  */
-int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc)
+int btrfs_drop_snapshot(struct btrfs_root *root, int update_ref, int for_reloc)
 {
 	const bool is_reloc_root = (btrfs_root_id(root) == BTRFS_TREE_RELOC_OBJECTID);
 	struct btrfs_fs_info *fs_info = root->fs_info;
@@ -6252,7 +6040,7 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 	struct btrfs_trans_handle *trans;
 	struct btrfs_root *tree_root = fs_info->tree_root;
 	struct btrfs_root_item *root_item = &root->root_item;
-	struct walk_control AUTO_KFREE(wc);
+	struct walk_control *wc;
 	struct btrfs_key key;
 	const u64 rootid = btrfs_root_id(root);
 	int ret = 0;
@@ -6270,8 +6058,9 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 
 	wc = kzalloc(sizeof(*wc), GFP_NOFS);
 	if (!wc) {
+		btrfs_free_path(path);
 		ret = -ENOMEM;
-		goto out_free;
+		goto out;
 	}
 
 	/*
@@ -6370,13 +6159,13 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 	while (1) {
 
 		ret = walk_down_tree(trans, root, path, wc);
-		if (unlikely(ret < 0)) {
+		if (ret < 0) {
 			btrfs_abort_transaction(trans, ret);
 			break;
 		}
 
 		ret = walk_up_tree(trans, root, path, wc, BTRFS_MAX_LEVEL);
-		if (unlikely(ret < 0)) {
+		if (ret < 0) {
 			btrfs_abort_transaction(trans, ret);
 			break;
 		}
@@ -6403,7 +6192,7 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 			ret = btrfs_update_root(trans, tree_root,
 						&root->root_key,
 						root_item);
-			if (unlikely(ret)) {
+			if (ret) {
 				btrfs_abort_transaction(trans, ret);
 				goto out_end_trans;
 			}
@@ -6439,7 +6228,7 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 		goto out_end_trans;
 
 	ret = btrfs_del_root(trans, &root->root_key);
-	if (unlikely(ret)) {
+	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto out_end_trans;
 	}
@@ -6447,7 +6236,7 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
 	if (!is_reloc_root) {
 		ret = btrfs_find_root(tree_root, &root->root_key, path,
 				      NULL, NULL);
-		if (unlikely(ret < 0)) {
+		if (ret < 0) {
 			btrfs_abort_transaction(trans, ret);
 			goto out_end_trans;
 		} else if (ret > 0) {
@@ -6481,6 +6270,7 @@ out_end_trans:
 
 	btrfs_end_transaction_throttle(trans);
 out_free:
+	kfree(wc);
 	btrfs_free_path(path);
 out:
 	if (!ret && root_dropped) {
@@ -6522,8 +6312,8 @@ int btrfs_drop_subtree(struct btrfs_trans_handle *trans,
 			struct extent_buffer *parent)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
-	BTRFS_PATH_AUTO_FREE(path);
-	struct walk_control AUTO_KFREE(wc);
+	struct btrfs_path *path;
+	struct walk_control *wc;
 	int level;
 	int parent_level;
 	int ret = 0;
@@ -6535,12 +6325,14 @@ int btrfs_drop_subtree(struct btrfs_trans_handle *trans,
 		return -ENOMEM;
 
 	wc = kzalloc(sizeof(*wc), GFP_NOFS);
-	if (!wc)
+	if (!wc) {
+		btrfs_free_path(path);
 		return -ENOMEM;
+	}
 
 	btrfs_assert_tree_write_locked(parent);
 	parent_level = btrfs_header_level(parent);
-	refcount_inc(&parent->refs);
+	atomic_inc(&parent->refs);
 	path->nodes[parent_level] = parent;
 	path->slots[parent_level] = btrfs_header_nritems(parent);
 
@@ -6562,17 +6354,19 @@ int btrfs_drop_subtree(struct btrfs_trans_handle *trans,
 	while (1) {
 		ret = walk_down_tree(trans, root, path, wc);
 		if (ret < 0)
-			return ret;
+			break;
 
 		ret = walk_up_tree(trans, root, path, wc, parent_level);
 		if (ret) {
-			if (ret < 0)
-				return ret;
+			if (ret > 0)
+				ret = 0;
 			break;
 		}
 	}
 
-	return 0;
+	kfree(wc);
+	btrfs_free_path(path);
+	return ret;
 }
 
 /*
@@ -6604,12 +6398,10 @@ void btrfs_error_unpin_extent_range(struct btrfs_fs_info *fs_info, u64 start, u6
  * it while performing the free space search since we have already
  * held back allocations.
  */
-static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
-					    u64 *trimmed, u64 pos, u64 *ret_next_pos)
+static int btrfs_trim_free_extents(struct btrfs_device *device, u64 *trimmed)
 {
+	u64 start = BTRFS_DEVICE_RANGE_RESERVED, len = 0, end = 0;
 	int ret;
-	u64 start = pos;
-	u64 trim_len = 0;
 
 	*trimmed = 0;
 
@@ -6629,25 +6421,20 @@ static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
 
 	while (1) {
 		struct btrfs_fs_info *fs_info = device->fs_info;
-		u64 cur_start;
-		u64 end;
-		u64 len;
 		u64 bytes;
 
 		ret = mutex_lock_interruptible(&fs_info->chunk_mutex);
 		if (ret)
 			break;
 
-		cur_start = start;
-		btrfs_find_first_clear_extent_bit(&device->alloc_state, start,
-						  &start, &end,
-						  CHUNK_TRIMMED | CHUNK_ALLOCATED);
-		start = max(start, cur_start);
+		find_first_clear_extent_bit(&device->alloc_state, start,
+					    &start, &end,
+					    CHUNK_TRIMMED | CHUNK_ALLOCATED);
 
 		/* Check if there are any CHUNK_* bits left */
 		if (start > device->total_bytes) {
-			DEBUG_WARN();
-			btrfs_warn(fs_info,
+			WARN_ON(IS_ENABLED(CONFIG_BTRFS_DEBUG));
+			btrfs_warn_in_rcu(fs_info,
 "ignoring attempt to trim beyond device size: offset %llu length %llu device %s device size %llu",
 					  start, end - start + 1,
 					  btrfs_dev_name(device),
@@ -6668,7 +6455,6 @@ static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
 		end = min(end, device->total_bytes - 1);
 
 		len = end - start + 1;
-		len = min(len, BTRFS_MAX_TRIM_LENGTH);
 
 		/* We didn't find any extents */
 		if (!len) {
@@ -6680,8 +6466,8 @@ static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
 		ret = btrfs_issue_discard(device->bdev, start, len,
 					  &bytes);
 		if (!ret)
-			btrfs_set_extent_bit(&device->alloc_state, start,
-					     start + bytes - 1, CHUNK_TRIMMED, NULL);
+			set_extent_bit(&device->alloc_state, start,
+				       start + bytes - 1, CHUNK_TRIMMED, NULL);
 		mutex_unlock(&fs_info->chunk_mutex);
 
 		if (ret)
@@ -6689,12 +6475,6 @@ static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
 
 		start += len;
 		*trimmed += bytes;
-		trim_len += len;
-		if (trim_len >= BTRFS_MAX_TRIM_LENGTH) {
-			*ret_next_pos = start;
-			ret = -EAGAIN;
-			break;
-		}
 
 		if (btrfs_trim_interrupted()) {
 			ret = -ERESTARTSYS;
@@ -6707,134 +6487,20 @@ static int btrfs_trim_free_extents_throttle(struct btrfs_device *device,
 	return ret;
 }
 
-static int btrfs_trim_free_extents(struct btrfs_fs_info *fs_info, u64 *trimmed,
-				   u64 *dev_failed, int *dev_ret)
-{
-	struct btrfs_device *dev;
-	struct btrfs_device *working_dev = NULL;
-	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
-	u8 uuid[BTRFS_UUID_SIZE];
-	u64 start = BTRFS_DEVICE_RANGE_RESERVED;
-
-	*trimmed = 0;
-	*dev_failed = 0;
-	*dev_ret = 0;
-
-	/* Find the device with the smallest UUID to start. */
-	mutex_lock(&fs_devices->device_list_mutex);
-	list_for_each_entry(dev, &fs_devices->devices, dev_list) {
-		if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
-			continue;
-		if (!working_dev ||
-		    memcmp(dev->uuid, working_dev->uuid, BTRFS_UUID_SIZE) < 0)
-			working_dev = dev;
-	}
-	if (working_dev)
-		memcpy(uuid, working_dev->uuid, BTRFS_UUID_SIZE);
-	mutex_unlock(&fs_devices->device_list_mutex);
-
-	if (!working_dev)
-		return 0;
-
-	while (1) {
-		u64 group_trimmed = 0;
-		u64 next_pos = 0;
-		int ret = 0;
-
-		mutex_lock(&fs_devices->device_list_mutex);
-
-		/* Find and trim the current device. */
-		list_for_each_entry(dev, &fs_devices->devices, dev_list) {
-			if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
-				continue;
-			if (dev == working_dev) {
-				ret = btrfs_trim_free_extents_throttle(working_dev,
-						&group_trimmed, start, &next_pos);
-				break;
-			}
-		}
-
-		/* Throttle: continue the same device from the new position. */
-		if (ret == -EAGAIN && next_pos > start) {
-			mutex_unlock(&fs_devices->device_list_mutex);
-			*trimmed += group_trimmed;
-			start = next_pos;
-			cond_resched();
-			continue;
-		}
-
-		/* User interrupted. */
-		if (ret == -ERESTARTSYS || ret == -EINTR) {
-			mutex_unlock(&fs_devices->device_list_mutex);
-			*trimmed += group_trimmed;
-			return ret;
-		}
-
-		/*
-		 * Device completed (ret == 0), failed, or EAGAIN with no progress.
-		 * Record error if any, then move to next device.
-		 */
-		if (ret == -EAGAIN) {
-			/* No progress - log and skip device. */
-			btrfs_warn(fs_info,
-				   "trim throttle: no progress, offset=%llu device %s, skipping",
-				   start, btrfs_dev_name(working_dev));
-			(*dev_failed)++;
-			if (!*dev_ret)
-				*dev_ret = ret;
-		} else if (ret) {
-			/* Device failed with error. */
-			(*dev_failed)++;
-			if (!*dev_ret)
-				*dev_ret = ret;
-		}
-
-		/*
-		 * Find next device: smallest UUID larger than current.
-		 * Devices added during trim with smaller UUID will be skipped.
-		 */
-		working_dev = NULL;
-		list_for_each_entry(dev, &fs_devices->devices, dev_list) {
-			if (test_bit(BTRFS_DEV_STATE_MISSING, &dev->dev_state))
-				continue;
-			/* Must larger than current UUID. */
-			if (memcmp(dev->uuid, uuid, BTRFS_UUID_SIZE) <= 0)
-				continue;
-			/* Find the smallest. */
-			if (!working_dev ||
-			    memcmp(dev->uuid, working_dev->uuid, BTRFS_UUID_SIZE) < 0)
-				working_dev = dev;
-		}
-		if (working_dev)
-			memcpy(uuid, working_dev->uuid, BTRFS_UUID_SIZE);
-
-		mutex_unlock(&fs_devices->device_list_mutex);
-
-		*trimmed += group_trimmed;
-		start = BTRFS_DEVICE_RANGE_RESERVED;
-
-		/* No more devices. */
-		if (!working_dev)
-			break;
-
-		cond_resched();
-	}
-
-	return 0;
-}
-
 /*
  * Trim the whole filesystem by:
  * 1) trimming the free space in each block group
  * 2) trimming the unallocated space on each device
  *
  * This will also continue trimming even if a block group or device encounters
- * an error.  The return value will be the first error, or 0 if nothing bad
+ * an error.  The return value will be the last error, or 0 if nothing bad
  * happens.
  */
 int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 {
+	struct btrfs_fs_devices *fs_devices = fs_info->fs_devices;
 	struct btrfs_block_group *cache = NULL;
+	struct btrfs_device *device;
 	u64 group_trimmed;
 	u64 range_end = U64_MAX;
 	u64 start;
@@ -6865,15 +6531,14 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 		}
 
 		start = max(range->start, cache->start);
-		end = min(range_end, btrfs_block_group_end(cache));
+		end = min(range_end, cache->start + cache->length);
 
 		if (end - start >= range->minlen) {
 			if (!btrfs_block_group_done(cache)) {
 				ret = btrfs_cache_block_group(cache, true);
 				if (ret) {
 					bg_failed++;
-					if (!bg_ret)
-						bg_ret = ret;
+					bg_ret = ret;
 					continue;
 				}
 			}
@@ -6890,8 +6555,7 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 			}
 			if (ret) {
 				bg_failed++;
-				if (!bg_ret)
-					bg_ret = ret;
+				bg_ret = ret;
 				continue;
 			}
 		}
@@ -6899,18 +6563,33 @@ int btrfs_trim_fs(struct btrfs_fs_info *fs_info, struct fstrim_range *range)
 
 	if (bg_failed)
 		btrfs_warn(fs_info,
-			"failed to trim %llu block group(s), first error %d",
+			"failed to trim %llu block group(s), last error %d",
 			bg_failed, bg_ret);
 
 	if (ret == -ERESTARTSYS || ret == -EINTR)
 		return ret;
 
-	ret = btrfs_trim_free_extents(fs_info, &group_trimmed, &dev_failed, &dev_ret);
-	trimmed += group_trimmed;
+	mutex_lock(&fs_devices->device_list_mutex);
+	list_for_each_entry(device, &fs_devices->devices, dev_list) {
+		if (test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state))
+			continue;
+
+		ret = btrfs_trim_free_extents(device, &group_trimmed);
+
+		trimmed += group_trimmed;
+		if (ret == -ERESTARTSYS || ret == -EINTR)
+			break;
+		if (ret) {
+			dev_failed++;
+			dev_ret = ret;
+			continue;
+		}
+	}
+	mutex_unlock(&fs_devices->device_list_mutex);
 
 	if (dev_failed)
 		btrfs_warn(fs_info,
-			"failed to trim %llu device(s), first error %d",
+			"failed to trim %llu device(s), last error %d",
 			dev_failed, dev_ret);
 	range->len = trimmed;
 	if (ret == -ERESTARTSYS || ret == -EINTR)

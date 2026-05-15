@@ -37,7 +37,6 @@ struct pef2256 {
 	struct device *dev;
 	struct regmap *regmap;
 	enum pef2256_version version;
-	const char *version_txt;
 	struct clk *mclk;
 	struct clk *sclkr;
 	struct clk *sclkx;
@@ -114,16 +113,6 @@ enum pef2256_version pef2256_get_version(struct pef2256 *pef2256)
 	return version;
 }
 EXPORT_SYMBOL_GPL(pef2256_get_version);
-
-static ssize_t version_show(struct device *dev, struct device_attribute *attr,
-			    char *buf)
-{
-	struct pef2256 *pef2256 = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%s\n", pef2256->version_txt);
-}
-
-static DEVICE_ATTR_RO(version);
 
 enum pef2256_gcm_config_item {
 	PEF2256_GCM_CONFIG_1544000 = 0,
@@ -638,7 +627,7 @@ static int pef2256_add_audio_devices(struct pef2256 *pef2256)
 	if (!count)
 		return 0;
 
-	audio_devs = kzalloc_objs(*audio_devs, count);
+	audio_devs = kcalloc(count, sizeof(*audio_devs), GFP_KERNEL);
 	if (!audio_devs)
 		return -ENOMEM;
 
@@ -709,6 +698,7 @@ static int pef2256_probe(struct platform_device *pdev)
 	unsigned long sclkr_rate, sclkx_rate;
 	struct framer_provider *framer_provider;
 	struct pef2256 *pef2256;
+	const char *version_txt;
 	void __iomem *iomem;
 	int ret;
 	int irq;
@@ -730,8 +720,8 @@ static int pef2256_probe(struct platform_device *pdev)
 	pef2256->regmap = devm_regmap_init_mmio(&pdev->dev, iomem,
 						&pef2256_regmap_config);
 	if (IS_ERR(pef2256->regmap)) {
-		dev_err(&pdev->dev, "Failed to initialise Regmap (%pe)\n",
-			pef2256->regmap);
+		dev_err(&pdev->dev, "Failed to initialise Regmap (%ld)\n",
+			PTR_ERR(pef2256->regmap));
 		return PTR_ERR(pef2256->regmap);
 	}
 
@@ -774,18 +764,18 @@ static int pef2256_probe(struct platform_device *pdev)
 	pef2256->version = pef2256_get_version(pef2256);
 	switch (pef2256->version) {
 	case PEF2256_VERSION_1_2:
-		pef2256->version_txt = "1.2";
+		version_txt = "1.2";
 		break;
 	case PEF2256_VERSION_2_1:
-		pef2256->version_txt = "2.1";
+		version_txt = "2.1";
 		break;
 	case PEF2256_VERSION_2_2:
-		pef2256->version_txt = "2.2";
+		version_txt = "2.2";
 		break;
 	default:
 		return -ENODEV;
 	}
-	dev_info(pef2256->dev, "Version %s detected\n", pef2256->version_txt);
+	dev_info(pef2256->dev, "Version %s detected\n", version_txt);
 
 	ret = pef2556_of_parse(pef2256, np);
 	if (ret)
@@ -846,8 +836,6 @@ static int pef2256_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	device_create_file(pef2256->dev, &dev_attr_version);
-
 	return 0;
 }
 
@@ -862,8 +850,6 @@ static void pef2256_remove(struct platform_device *pdev)
 	pef2256_write8(pef2256, PEF2256_IMR3, 0xff);
 	pef2256_write8(pef2256, PEF2256_IMR4, 0xff);
 	pef2256_write8(pef2256, PEF2256_IMR5, 0xff);
-
-	device_remove_file(pef2256->dev, &dev_attr_version);
 }
 
 static const struct of_device_id pef2256_id_table[] = {
@@ -878,7 +864,7 @@ static struct platform_driver pef2256_driver = {
 		.of_match_table = pef2256_id_table,
 	},
 	.probe = pef2256_probe,
-	.remove = pef2256_remove,
+	.remove_new = pef2256_remove,
 };
 module_platform_driver(pef2256_driver);
 

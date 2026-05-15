@@ -42,6 +42,8 @@ static BLOCKING_NOTIFIER_HEAD(wbrf_chain_head);
 static int wbrf_record(struct acpi_device *adev, uint8_t action, struct wbrf_ranges_in_out *in)
 {
 	union acpi_object argv4;
+	union acpi_object *tmp;
+	union acpi_object *obj;
 	u32 num_of_ranges = 0;
 	u32 num_of_elements;
 	u32 arg_idx = 0;
@@ -72,8 +74,7 @@ static int wbrf_record(struct acpi_device *adev, uint8_t action, struct wbrf_ran
 	 */
 	num_of_elements = 2 * num_of_ranges + 2;
 
-	union acpi_object *tmp __free(kfree) = kzalloc_objs(*tmp,
-							    num_of_elements);
+	tmp = kcalloc(num_of_elements, sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
@@ -100,19 +101,26 @@ static int wbrf_record(struct acpi_device *adev, uint8_t action, struct wbrf_ran
 		tmp[arg_idx++].integer.value = in->band_list[i].end;
 	}
 
-	union acpi_object *obj __free(kfree) =
-		acpi_evaluate_dsm(adev->handle, &wifi_acpi_dsm_guid,
-				  WBRF_REVISION, WBRF_RECORD, &argv4);
+	obj = acpi_evaluate_dsm(adev->handle, &wifi_acpi_dsm_guid,
+				WBRF_REVISION, WBRF_RECORD, &argv4);
 
-	if (!obj)
+	if (!obj) {
+		kfree(tmp);
 		return -EINVAL;
+	}
 
-	if (obj->type != ACPI_TYPE_INTEGER)
-		return -EINVAL;
+	if (obj->type != ACPI_TYPE_INTEGER) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	ret = obj->integer.value;
 	if (ret)
-		return -EINVAL;
+		ret = -EINVAL;
+
+out:
+	ACPI_FREE(obj);
+	kfree(tmp);
 
 	return ret;
 }

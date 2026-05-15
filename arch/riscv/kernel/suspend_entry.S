@@ -10,6 +10,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/assembler.h>
 #include <asm/csr.h>
+#include <asm/xip_fixup.h>
 
 	.text
 	.altmacro
@@ -69,6 +70,7 @@ SYM_TYPED_FUNC_START(__cpu_resume_enter)
 
 	/* Enable MMU */
 	la	a0, swapper_pg_dir
+	XIP_FIXUP_OFFSET a0
 	call	relocate_enable_mmu
 
 	/* Restore A0 and A1 */

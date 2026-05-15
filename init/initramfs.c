@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
 #include <linux/async.h>
-#include <linux/export.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -19,10 +18,8 @@
 #include <linux/init_syscalls.h>
 #include <linux/umh.h>
 #include <linux/security.h>
-#include <linux/overflow.h>
 
 #include "do_mounts.h"
-#include "initramfs_internal.h"
 
 static __initdata bool csum_present;
 static __initdata u32 io_csum;
@@ -78,7 +75,6 @@ static __initdata struct hash {
 	struct hash *next;
 	char name[N_ALIGN(PATH_MAX)];
 } *head[32];
-static __initdata bool hardlink_seen;
 
 static inline int hash(int major, int minor, int ino)
 {
@@ -102,31 +98,29 @@ static char __init *find_link(int major, int minor, int ino,
 			continue;
 		return (*p)->name;
 	}
-	q = kmalloc_obj(struct hash);
+	q = kmalloc(sizeof(struct hash), GFP_KERNEL);
 	if (!q)
 		panic_show_mem("can't allocate link hash entry");
 	q->major = major;
 	q->minor = minor;
 	q->ino = ino;
 	q->mode = mode;
-	strscpy(q->name, name);
+	strcpy(q->name, name);
 	q->next = NULL;
 	*p = q;
-	hardlink_seen = true;
 	return NULL;
 }
 
 static void __init free_hash(void)
 {
 	struct hash **p, *q;
-	for (p = head; hardlink_seen && p < head + 32; p++) {
+	for (p = head; p < head + 32; p++) {
 		while (*p) {
 			q = *p;
 			*p = q->next;
 			kfree(q);
 		}
 	}
-	hardlink_seen = false;
 }
 
 #ifdef CONFIG_INITRAMFS_PRESERVE_MTIME
@@ -149,11 +143,12 @@ struct dir_entry {
 	char name[];
 };
 
-static void __init dir_add(const char *name, size_t nlen, time64_t mtime)
+static void __init dir_add(const char *name, time64_t mtime)
 {
+	size_t nlen = strlen(name) + 1;
 	struct dir_entry *de;
 
-	de = kmalloc_flex(*de, name, nlen);
+	de = kmalloc(sizeof(struct dir_entry) + nlen, GFP_KERNEL);
 	if (!de)
 		panic_show_mem("can't allocate dir_entry buffer");
 	INIT_LIST_HEAD(&de->list);
@@ -174,7 +169,7 @@ static void __init dir_utime(void)
 #else
 static void __init do_utime(char *filename, time64_t mtime) {}
 static void __init do_utime_path(const struct path *path, time64_t mtime) {}
-static void __init dir_add(const char *name, size_t nlen, time64_t mtime) {}
+static void __init dir_add(const char *name, time64_t mtime) {}
 static void __init dir_utime(void) {}
 #endif
 
@@ -193,11 +188,14 @@ static __initdata u32 hdr_csum;
 static void __init parse_header(char *s)
 {
 	unsigned long parsed[13];
+	char buf[9];
 	int i;
 
-	for (i = 0, s += 6; i < 13; i++, s += 8)
-		parsed[i] = simple_strntoul(s, NULL, 16, 8);
-
+	buf[8] = '\0';
+	for (i = 0, s += 6; i < 13; i++, s += 8) {
+		memcpy(buf, s, 8);
+		parsed[i] = simple_strtoul(buf, NULL, 16);
+	}
 	ino = parsed[0];
 	mode = parsed[1];
 	uid = parsed[2];
@@ -212,7 +210,7 @@ static void __init parse_header(char *s)
 	hdr_csum = parsed[12];
 }
 
-/* Finite-state machine */
+/* FSM */
 
 static __initdata enum state {
 	Start,
@@ -258,7 +256,7 @@ static __initdata char *header_buf, *symlink_buf, *name_buf;
 
 static int __init do_start(void)
 {
-	read_into(header_buf, CPIO_HDRLEN, GotHeader);
+	read_into(header_buf, 110, GotHeader);
 	return 0;
 }
 
@@ -398,7 +396,7 @@ static int __init do_name(void)
 		init_mkdir(collected, mode);
 		init_chown(collected, uid, gid, 0);
 		init_chmod(collected, mode);
-		dir_add(collected, name_len, mtime);
+		dir_add(collected, mtime);
 	} else if (S_ISBLK(mode) || S_ISCHR(mode) ||
 		   S_ISFIFO(mode) || S_ISSOCK(mode)) {
 		if (maybe_link() == 0) {
@@ -499,32 +497,19 @@ static unsigned long my_inptr __initdata; /* index of next byte to be processed 
 
 #include <linux/decompress/generic.h>
 
-/**
- * unpack_to_rootfs - decompress and extract an initramfs archive
- * @buf: input initramfs archive to extract
- * @len: length of initramfs data to process
- *
- * Returns: NULL for success or an error message string
- *
- * This symbol shouldn't be used externally. It's available for unit tests.
- */
-char * __init unpack_to_rootfs(char *buf, unsigned long len)
+static char * __init unpack_to_rootfs(char *buf, unsigned long len)
 {
 	long written;
 	decompress_fn decompress;
 	const char *compress_name;
-	struct {
-		char header[CPIO_HDRLEN];
-		char symlink[PATH_MAX + N_ALIGN(PATH_MAX) + 1];
-		char name[N_ALIGN(PATH_MAX)];
-	} *bufs = kmalloc_obj(*bufs);
+	static __initdata char msg_buf[64];
 
-	if (!bufs)
+	header_buf = kmalloc(110, GFP_KERNEL);
+	symlink_buf = kmalloc(PATH_MAX + N_ALIGN(PATH_MAX) + 1, GFP_KERNEL);
+	name_buf = kmalloc(N_ALIGN(PATH_MAX), GFP_KERNEL);
+
+	if (!header_buf || !symlink_buf || !name_buf)
 		panic_show_mem("can't allocate buffers");
-
-	header_buf = bufs->header;
-	symlink_buf = bufs->symlink;
-	name_buf = bufs->name;
 
 	state = Start;
 	this_header = 0;
@@ -553,9 +538,12 @@ char * __init unpack_to_rootfs(char *buf, unsigned long len)
 			if (res)
 				error("decompressor failed");
 		} else if (compress_name) {
-			pr_err("compression method %s not configured\n",
-			       compress_name);
-			error("decompressor failed");
+			if (!message) {
+				snprintf(msg_buf, sizeof msg_buf,
+					 "compression method %s not configured",
+					 compress_name);
+				message = msg_buf;
+			}
 		} else
 			error("invalid magic at start of compressed archive");
 		if (state != Reset)
@@ -565,9 +553,9 @@ char * __init unpack_to_rootfs(char *buf, unsigned long len)
 		len -= my_inptr;
 	}
 	dir_utime();
-	/* free any hardlink state collected without optional TRAILER!!! */
-	free_hash();
-	kfree(bufs);
+	kfree(name_buf);
+	kfree(symlink_buf);
+	kfree(header_buf);
 	return message;
 }
 
@@ -652,6 +640,13 @@ disable:
 
 void __weak __init free_initrd_mem(unsigned long start, unsigned long end)
 {
+#ifdef CONFIG_ARCH_KEEP_MEMBLOCK
+	unsigned long aligned_start = ALIGN_DOWN(start, PAGE_SIZE);
+	unsigned long aligned_end = ALIGN(end, PAGE_SIZE);
+
+	memblock_free((void *)aligned_start, aligned_end - aligned_start);
+#endif
+
 	free_reserved_area((void *)start, (void *)end, POISON_FREE_INITMEM,
 			"initrd");
 }

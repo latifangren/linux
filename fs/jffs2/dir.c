@@ -15,7 +15,6 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
-#include <linux/filelock.h>
 #include <linux/crc32.h>
 #include <linux/jffs2.h>
 #include "jffs2_fs_i.h"
@@ -33,8 +32,8 @@ static int jffs2_link (struct dentry *,struct inode *,struct dentry *);
 static int jffs2_unlink (struct inode *,struct dentry *);
 static int jffs2_symlink (struct mnt_idmap *, struct inode *,
 			  struct dentry *, const char *);
-static struct dentry *jffs2_mkdir (struct mnt_idmap *, struct inode *,struct dentry *,
-				   umode_t);
+static int jffs2_mkdir (struct mnt_idmap *, struct inode *,struct dentry *,
+			umode_t);
 static int jffs2_rmdir (struct inode *,struct dentry *);
 static int jffs2_mknod (struct mnt_idmap *, struct inode *,struct dentry *,
 			umode_t,dev_t);
@@ -49,7 +48,6 @@ const struct file_operations jffs2_dir_operations =
 	.unlocked_ioctl=jffs2_ioctl,
 	.fsync =	jffs2_fsync,
 	.llseek =	generic_file_llseek,
-	.setlease =	generic_setlease,
 };
 
 
@@ -129,7 +127,7 @@ static int jffs2_readdir(struct file *file, struct dir_context *ctx)
 	struct jffs2_full_dirent *fd;
 	unsigned long curofs = 1;
 
-	jffs2_dbg(1, "jffs2_readdir() for dir_i #%llu\n", inode->i_ino);
+	jffs2_dbg(1, "jffs2_readdir() for dir_i #%lu\n", inode->i_ino);
 
 	if (!dir_emit_dots(file, ctx))
 		return 0;
@@ -211,7 +209,7 @@ static int jffs2_create(struct mnt_idmap *idmap, struct inode *dir_i,
 
 	jffs2_free_raw_inode(ri);
 
-	jffs2_dbg(1, "%s(): Created ino #%llu with mode %o, nlink %d(%d). nrpages %ld\n",
+	jffs2_dbg(1, "%s(): Created ino #%lu with mode %o, nlink %d(%d). nrpages %ld\n",
 		  __func__, inode->i_ino, inode->i_mode, inode->i_nlink,
 		  f->inocache->pino_nlink, inode->i_mapping->nrpages);
 
@@ -448,8 +446,8 @@ static int jffs2_symlink (struct mnt_idmap *idmap, struct inode *dir_i,
 }
 
 
-static struct dentry *jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
-				   struct dentry *dentry, umode_t mode)
+static int jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
+		        struct dentry *dentry, umode_t mode)
 {
 	struct jffs2_inode_info *f, *dir_f;
 	struct jffs2_sb_info *c;
@@ -466,7 +464,7 @@ static struct dentry *jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
 
 	ri = jffs2_alloc_raw_inode();
 	if (!ri)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	c = JFFS2_SB_INFO(dir_i->i_sb);
 
@@ -479,7 +477,7 @@ static struct dentry *jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
 
 	if (ret) {
 		jffs2_free_raw_inode(ri);
-		return ERR_PTR(ret);
+		return ret;
 	}
 
 	inode = jffs2_new_inode(dir_i, mode, ri);
@@ -487,7 +485,7 @@ static struct dentry *jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
 	if (IS_ERR(inode)) {
 		jffs2_free_raw_inode(ri);
 		jffs2_complete_reservation(c);
-		return ERR_CAST(inode);
+		return PTR_ERR(inode);
 	}
 
 	inode->i_op = &jffs2_dir_inode_operations;
@@ -586,11 +584,11 @@ static struct dentry *jffs2_mkdir (struct mnt_idmap *idmap, struct inode *dir_i,
 	jffs2_complete_reservation(c);
 
 	d_instantiate_new(dentry, inode);
-	return NULL;
+	return 0;
 
  fail:
 	iget_failed(inode);
-	return ERR_PTR(ret);
+	return ret;
 }
 
 static int jffs2_rmdir (struct inode *dir_i, struct dentry *dentry)

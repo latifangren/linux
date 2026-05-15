@@ -77,7 +77,7 @@ static int transient_ctr(struct dm_exception_store *store, char *options)
 {
 	struct transient_c *tc;
 
-	tc = kmalloc_obj(struct transient_c);
+	tc = kmalloc(sizeof(struct transient_c), GFP_KERNEL);
 	if (!tc)
 		return -ENOMEM;
 

@@ -19,10 +19,6 @@ allOf:
 properties:
   compatible:
     oneOf:
-      - items:
-          - enum:
-              - amlogic,t7-mmc
-          - const: amlogic,meson-axg-mmc
       - const: amlogic,meson-axg-mmc
       - items:
           - const: amlogic,meson-gx-mmc

@@ -5,7 +5,6 @@
  */
 
 #include <linux/bitfield.h>
-#include <linux/clk.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -53,27 +52,18 @@
 #define to_ddr_pmu(p)		container_of(p, struct ddr_pmu, pmu)
 
 #define DDR_PERF_DEV_NAME	"imx8_ddr"
-#define DB_PERF_DEV_NAME	"imx8_db"
 #define DDR_CPUHP_CB_NAME	DDR_PERF_DEV_NAME "_perf_pmu"
 
 static DEFINE_IDA(ddr_ida);
-static DEFINE_IDA(db_ida);
 
 /* DDR Perf hardware feature */
 #define DDR_CAP_AXI_ID_FILTER			0x1     /* support AXI ID filter */
 #define DDR_CAP_AXI_ID_FILTER_ENHANCED		0x3     /* support enhanced AXI ID filter */
 #define DDR_CAP_AXI_ID_PORT_CHANNEL_FILTER	0x4	/* support AXI ID PORT CHANNEL filter */
 
-/* Perf type */
-enum fsl_ddr_type {
-	DDR_PERF_TYPE = 0,	/* ddr Perf (default) */
-	DB_PERF_TYPE,		/* db Perf */
-};
-
 struct fsl_ddr_devtype_data {
 	unsigned int quirks;    /* quirks needed for different DDR Perf core */
 	const char *identifier;	/* system PMU identifier for userspace */
-	enum fsl_ddr_type type;	/* types of Perf, ddr or db */
 };
 
 static const struct fsl_ddr_devtype_data imx8_devtype_data;
@@ -107,12 +97,6 @@ static const struct fsl_ddr_devtype_data imx8dxl_devtype_data = {
 	.identifier = "i.MX8DXL",
 };
 
-static const struct fsl_ddr_devtype_data imx8dxl_db_devtype_data = {
-	.quirks = DDR_CAP_AXI_ID_PORT_CHANNEL_FILTER,
-	.identifier = "i.MX8DXL",
-	.type = DB_PERF_TYPE,
-};
-
 static const struct of_device_id imx_ddr_pmu_dt_ids[] = {
 	{ .compatible = "fsl,imx8-ddr-pmu", .data = &imx8_devtype_data},
 	{ .compatible = "fsl,imx8m-ddr-pmu", .data = &imx8m_devtype_data},
@@ -121,7 +105,6 @@ static const struct of_device_id imx_ddr_pmu_dt_ids[] = {
 	{ .compatible = "fsl,imx8mn-ddr-pmu", .data = &imx8mn_devtype_data},
 	{ .compatible = "fsl,imx8mp-ddr-pmu", .data = &imx8mp_devtype_data},
 	{ .compatible = "fsl,imx8dxl-ddr-pmu", .data = &imx8dxl_devtype_data},
-	{ .compatible = "fsl,imx8dxl-db-pmu", .data = &imx8dxl_db_devtype_data},
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx_ddr_pmu_dt_ids);
@@ -301,37 +284,9 @@ static struct attribute *ddr_perf_events_attrs[] = {
 	NULL,
 };
 
-static const int ddr_perf_db_visible_event_list[] = {
-	EVENT_CYCLES_ID,
-	0x41,
-	0x42,
-};
-
-static umode_t ddr_perf_events_attrs_is_visible(struct kobject *kobj,
-						struct attribute *attr, int n)
-{
-	struct device *dev = kobj_to_dev(kobj);
-	struct ddr_pmu *pmu = dev_get_drvdata(dev);
-	struct perf_pmu_events_attr *pmu_attr;
-	unsigned int i;
-
-	pmu_attr = container_of(attr, struct perf_pmu_events_attr, attr.attr);
-
-	if (pmu->devtype_data->type == DDR_PERF_TYPE)
-		return attr->mode;
-
-	/* DB Type */
-	for (i = 0; i < ARRAY_SIZE(ddr_perf_db_visible_event_list); i++)
-		if (pmu_attr->id == ddr_perf_db_visible_event_list[i])
-			return attr->mode;
-
-	return 0;
-}
-
 static const struct attribute_group ddr_perf_events_attr_group = {
 	.name = "events",
 	.attrs = ddr_perf_events_attrs,
-	.is_visible = ddr_perf_events_attrs_is_visible,
 };
 
 PMU_FORMAT_ATTR(event, "config:0-7");
@@ -690,8 +645,8 @@ static void ddr_perf_pmu_disable(struct pmu *pmu)
 {
 }
 
-static void ddr_perf_init(struct ddr_pmu *pmu, void __iomem *base,
-			  struct device *dev)
+static int ddr_perf_init(struct ddr_pmu *pmu, void __iomem *base,
+			 struct device *dev)
 {
 	*pmu = (struct ddr_pmu) {
 		.pmu = (struct pmu) {
@@ -712,6 +667,9 @@ static void ddr_perf_init(struct ddr_pmu *pmu, void __iomem *base,
 		.base = base,
 		.dev = dev,
 	};
+
+	pmu->id = ida_alloc(&ddr_ida, GFP_KERNEL);
+	return pmu->id;
 }
 
 static irqreturn_t ddr_perf_irq_handler(int irq, void *p)
@@ -777,13 +735,10 @@ static int ddr_perf_offline_cpu(unsigned int cpu, struct hlist_node *node)
 
 static int ddr_perf_probe(struct platform_device *pdev)
 {
-	struct clk_bulk_data *clks;
 	struct ddr_pmu *pmu;
 	struct device_node *np;
 	void __iomem *base;
-	struct ida *ida;
 	char *name;
-	int nclks;
 	int num;
 	int ret;
 	int irq;
@@ -798,32 +753,18 @@ static int ddr_perf_probe(struct platform_device *pdev)
 	if (!pmu)
 		return -ENOMEM;
 
-	ddr_perf_init(pmu, base, &pdev->dev);
+	num = ddr_perf_init(pmu, base, &pdev->dev);
 
 	platform_set_drvdata(pdev, pmu);
 
-	nclks = devm_clk_bulk_get_all_enabled(&pdev->dev, &clks);
-	if (nclks < 0)
-		return dev_err_probe(&pdev->dev, nclks, "Failure get clks\n");
-
-	pmu->devtype_data = of_device_get_match_data(&pdev->dev);
-
-	ida = pmu->devtype_data->type == DDR_PERF_TYPE ? &ddr_ida : &db_ida;
-	num = ida_alloc(ida, GFP_KERNEL);
-	if (num < 0)
-		return num;
-
-	pmu->id = num;
-
-	if (pmu->devtype_data->type == DDR_PERF_TYPE)
-		name = devm_kasprintf(&pdev->dev, GFP_KERNEL, DDR_PERF_DEV_NAME "%d", num);
-	else
-		name = devm_kasprintf(&pdev->dev, GFP_KERNEL, DB_PERF_DEV_NAME "%d", num);
-
+	name = devm_kasprintf(&pdev->dev, GFP_KERNEL, DDR_PERF_DEV_NAME "%d",
+			      num);
 	if (!name) {
 		ret = -ENOMEM;
-		goto idr_free;
+		goto cpuhp_state_err;
 	}
+
+	pmu->devtype_data = of_device_get_match_data(&pdev->dev);
 
 	pmu->cpu = raw_smp_processor_id();
 	ret = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN,
@@ -833,7 +774,7 @@ static int ddr_perf_probe(struct platform_device *pdev)
 
 	if (ret < 0) {
 		dev_err(&pdev->dev, "cpuhp_setup_state_multi failed\n");
-		goto idr_free;
+		goto cpuhp_state_err;
 	}
 
 	pmu->cpuhp_state = ret;
@@ -880,8 +821,8 @@ ddr_perf_err:
 	cpuhp_state_remove_instance_nocalls(pmu->cpuhp_state, &pmu->node);
 cpuhp_instance_err:
 	cpuhp_remove_multi_state(pmu->cpuhp_state);
-idr_free:
-	ida_free(ida, pmu->id);
+cpuhp_state_err:
+	ida_free(&ddr_ida, pmu->id);
 	dev_warn(&pdev->dev, "i.MX8 DDR Perf PMU failed (%d), disabled\n", ret);
 	return ret;
 }
@@ -895,11 +836,7 @@ static void ddr_perf_remove(struct platform_device *pdev)
 
 	perf_pmu_unregister(&pmu->pmu);
 
-	if (pmu->devtype_data->type == DDR_PERF_TYPE)
-		ida_free(&ddr_ida, pmu->id);
-	else
-		ida_free(&db_ida, pmu->id);
-
+	ida_free(&ddr_ida, pmu->id);
 }
 
 static struct platform_driver imx_ddr_pmu_driver = {
@@ -909,7 +846,7 @@ static struct platform_driver imx_ddr_pmu_driver = {
 		.suppress_bind_attrs = true,
 	},
 	.probe          = ddr_perf_probe,
-	.remove         = ddr_perf_remove,
+	.remove_new     = ddr_perf_remove,
 };
 
 module_platform_driver(imx_ddr_pmu_driver);

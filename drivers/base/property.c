@@ -38,8 +38,6 @@ EXPORT_SYMBOL_GPL(__dev_fwnode_const);
  * @propname: Name of the property
  *
  * Check if property @propname is present in the device firmware description.
- * This function is the unambiguous way to check that given property is present
- * in the device firmware description.
  *
  * Return: true if property @propname is present. Otherwise, returns false.
  */
@@ -53,10 +51,6 @@ EXPORT_SYMBOL_GPL(device_property_present);
  * fwnode_property_present - check if a property of a firmware node is present
  * @fwnode: Firmware node whose property to check
  * @propname: Name of the property
- *
- * Check if property @propname is present in the firmware node description.
- * This function is the unambiguous way to check that given property is present
- * in the firmware node description.
  *
  * Return: true if property @propname is present. Otherwise, returns false.
  */
@@ -75,46 +69,6 @@ bool fwnode_property_present(const struct fwnode_handle *fwnode,
 	return fwnode_call_bool_op(fwnode->secondary, property_present, propname);
 }
 EXPORT_SYMBOL_GPL(fwnode_property_present);
-
-/**
- * device_property_read_bool - Return the value for a boolean property of a device
- * @dev: Device whose property is being checked
- * @propname: Name of the property
- *
- * Use device_property_present() to check for the property presence.
- *
- * Return: if property @propname is true or false in the device firmware description.
- */
-bool device_property_read_bool(const struct device *dev, const char *propname)
-{
-	return fwnode_property_read_bool(dev_fwnode(dev), propname);
-}
-EXPORT_SYMBOL_GPL(device_property_read_bool);
-
-/**
- * fwnode_property_read_bool - Return the value for a boolean property of a firmware node
- * @fwnode: Firmware node whose property to check
- * @propname: Name of the property
- *
- * Use fwnode_property_present() to check for the property presence.
- *
- * Return: if property @propname is true or false in the firmware node description.
- */
-bool fwnode_property_read_bool(const struct fwnode_handle *fwnode,
-			     const char *propname)
-{
-	bool ret;
-
-	if (IS_ERR_OR_NULL(fwnode))
-		return false;
-
-	ret = fwnode_call_bool_op(fwnode, property_read_bool, propname);
-	if (ret)
-		return ret;
-
-	return fwnode_call_bool_op(fwnode->secondary, property_read_bool, propname);
-}
-EXPORT_SYMBOL_GPL(fwnode_property_read_bool);
 
 /**
  * device_property_read_u8_array - return a u8 array property of a device
@@ -586,7 +540,7 @@ EXPORT_SYMBOL_GPL(fwnode_property_match_property_string);
  * @prop:	The name of the property
  * @nargs_prop:	The name of the property telling the number of
  *		arguments in the referred node. NULL if @nargs is known,
- *		otherwise @nargs is ignored.
+ *		otherwise @nargs is ignored. Only relevant on OF.
  * @nargs:	Number of arguments. Ignored if @nargs_prop is non-NULL.
  * @index:	Index of the reference, from zero onwards.
  * @args:	Result structure with reference and integer arguments.
@@ -602,8 +556,6 @@ EXPORT_SYMBOL_GPL(fwnode_property_match_property_string);
  *	    %-ENOENT when the index is out of bounds, the index has an empty
  *		     reference or the property was not found
  *	    %-EINVAL on parse error
- *	    %-ENOTCONN when the remote firmware node exists but has not been
- *		       registered yet
  */
 int fwnode_property_get_reference_args(const struct fwnode_handle *fwnode,
 				       const char *prop, const char *nargs_prop,
@@ -937,49 +889,22 @@ bool fwnode_device_is_available(const struct fwnode_handle *fwnode)
 EXPORT_SYMBOL_GPL(fwnode_device_is_available);
 
 /**
- * fwnode_get_child_node_count - return the number of child nodes for a given firmware node
- * @fwnode: Pointer to the parent firmware node
+ * device_get_child_node_count - return the number of child nodes for device
+ * @dev: Device to count the child nodes for
  *
- * Return: the number of child nodes for a given firmware node.
+ * Return: the number of child nodes for a given device.
  */
-unsigned int fwnode_get_child_node_count(const struct fwnode_handle *fwnode)
+unsigned int device_get_child_node_count(const struct device *dev)
 {
 	struct fwnode_handle *child;
 	unsigned int count = 0;
 
-	fwnode_for_each_child_node(fwnode, child)
+	device_for_each_child_node(dev, child)
 		count++;
 
 	return count;
 }
-EXPORT_SYMBOL_GPL(fwnode_get_child_node_count);
-
-/**
- * fwnode_get_named_child_node_count - number of child nodes with given name
- * @fwnode: Node which child nodes are counted.
- * @name: String to match child node name against.
- *
- * Scan child nodes and count all the nodes with a specific name. Potential
- * 'number' -ending after the 'at sign' for scanned names is ignored.
- * E.g.::
- *   fwnode_get_named_child_node_count(fwnode, "channel");
- * would match all the nodes::
- *   channel { }, channel@0 {}, channel@0xabba {}...
- *
- * Return: the number of child nodes with a matching name for a given device.
- */
-unsigned int fwnode_get_named_child_node_count(const struct fwnode_handle *fwnode,
-					       const char *name)
-{
-	struct fwnode_handle *child;
-	unsigned int count = 0;
-
-	fwnode_for_each_named_child_node(fwnode, child, name)
-		count++;
-
-	return count;
-}
-EXPORT_SYMBOL_GPL(fwnode_get_named_child_node_count);
+EXPORT_SYMBOL_GPL(device_get_child_node_count);
 
 bool device_dma_supported(const struct device *dev)
 {

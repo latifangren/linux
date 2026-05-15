@@ -272,7 +272,7 @@ char *prom_nextprop(phandle node, const char *oprop, char *buffer)
 		return buffer;
 	}
 	if (oprop == buffer) {
-		strscpy(buf, oprop);
+		strcpy (buf, oprop);
 		oprop = buf;
 	}
 

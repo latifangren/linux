@@ -91,7 +91,8 @@ static acpi_status parse_csi2_resource(struct acpi_resource *res, void *context)
 		return AE_OK;
 	}
 
-	conn = kmalloc_flex(*conn, remote_name, csi2_res_src_length + 1);
+	conn = kmalloc(struct_size(conn, remote_name, csi2_res_src_length + 1),
+		       GFP_KERNEL);
 	if (!conn)
 		return AE_OK;
 
@@ -110,7 +111,7 @@ static struct crs_csi2 *acpi_mipi_add_crs_csi2(acpi_handle handle,
 {
 	struct crs_csi2 *csi2;
 
-	csi2 = kzalloc_obj(*csi2);
+	csi2 = kzalloc(sizeof(*csi2), GFP_KERNEL);
 	if (!csi2)
 		return NULL;
 
@@ -623,7 +624,8 @@ static void init_crs_csi2_swnodes(struct crs_csi2 *csi2)
 	if (!fwnode_property_present(adev_fwnode, "rotation")) {
 		struct acpi_pld_info *pld;
 
-		if (acpi_get_physical_device_location(handle, &pld)) {
+		status = acpi_get_physical_device_location(handle, &pld);
+		if (ACPI_SUCCESS(status)) {
 			swnodes->dev_props[NEXT_PROPERTY(prop_index, DEV_ROTATION)] =
 					PROPERTY_ENTRY_U32("rotation",
 							   pld->rotation * 45U);

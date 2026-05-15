@@ -2,7 +2,6 @@
 
 #include <linux/dma-resv.h>
 #include <linux/dma-fence-chain.h>
-#include <linux/export.h>
 
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_atomic_uapi.h>
@@ -87,6 +86,28 @@
  * A mapping address for each of the framebuffer's buffer object is stored in
  * struct &drm_shadow_plane_state.map. The mappings are valid while the state
  * is being used.
+ *
+ * Drivers that use struct drm_simple_display_pipe can use
+ * %DRM_GEM_SIMPLE_DISPLAY_PIPE_SHADOW_PLANE_FUNCS to initialize the rsp
+ * callbacks. Access to shadow-buffer mappings is similar to regular
+ * atomic_update.
+ *
+ * .. code-block:: c
+ *
+ *	struct drm_simple_display_pipe_funcs driver_pipe_funcs = {
+ *		...,
+ *		DRM_GEM_SIMPLE_DISPLAY_PIPE_SHADOW_PLANE_FUNCS,
+ *	};
+ *
+ *	void driver_pipe_enable(struct drm_simple_display_pipe *pipe,
+ *				struct drm_crtc_state *crtc_state,
+ *				struct drm_plane_state *plane_state)
+ *	{
+ *		struct drm_shadow_plane_state *shadow_plane_state =
+ *			to_drm_shadow_plane_state(plane_state);
+ *
+ *		// access shadow buffer via shadow_plane_state->map
+ *	}
  */
 
 /*
@@ -234,7 +255,7 @@ drm_gem_duplicate_shadow_plane_state(struct drm_plane *plane)
 	if (!plane_state)
 		return NULL;
 
-	new_shadow_plane_state = kzalloc_obj(*new_shadow_plane_state);
+	new_shadow_plane_state = kzalloc(sizeof(*new_shadow_plane_state), GFP_KERNEL);
 	if (!new_shadow_plane_state)
 		return NULL;
 	__drm_gem_duplicate_shadow_plane_state(plane, new_shadow_plane_state);
@@ -315,7 +336,9 @@ void drm_gem_reset_shadow_plane(struct drm_plane *plane)
 		plane->state = NULL; /* must be set to NULL here */
 	}
 
-	shadow_plane_state = kzalloc_obj(*shadow_plane_state);
+	shadow_plane_state = kzalloc(sizeof(*shadow_plane_state), GFP_KERNEL);
+	if (!shadow_plane_state)
+		return;
 	__drm_gem_reset_shadow_plane(plane, shadow_plane_state);
 }
 EXPORT_SYMBOL(drm_gem_reset_shadow_plane);

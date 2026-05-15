@@ -60,7 +60,6 @@ required:
 
 allOf:
   - $ref: usb-switch.yaml#
-  - $ref: usb-switch-ports.yaml#
 
 additionalProperties: false
 

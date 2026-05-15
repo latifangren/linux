@@ -14,7 +14,6 @@
 #define rts5264_reg_to_aspm(reg) \
 	(((~(reg) >> 28) & 0x02) | (((reg) >> 28) & 0x01))
 #define rts5264_reg_check_reverse_socket(reg)	((reg) & 0x04)
-#define rts5264_reg_check_wp_reverse(reg)		((reg) & 0x8000)
 #define rts5264_reg_to_sd30_drive_sel_1v8(reg)	(((reg) >> 22) & 0x03)
 #define rts5264_reg_to_sd30_drive_sel_3v3(reg)	(((reg) >> 16) & 0x03)
 #define rts5264_reg_to_rtd3(reg)		((reg) & 0x08)
@@ -61,8 +60,6 @@
 
 /* DMACTL 0xFE2C */
 #define RTS5264_DMA_PACK_SIZE_MASK	0x70
-
-#define RTS5264_FW_CFG_INFO2	0xFF52
 
 #define RTS5264_FW_CFG1			0xFF55
 #define RTS5264_SYS_CLK_SEL_MCU_CLK	(0x01<<7)
@@ -274,10 +271,6 @@
 #define DEFAULT_SINGLE		0
 #define SD_LUN			1
 #define SD_EXPRESS_LUN		2
-
-#define RTS5264_IC_VER_A		0
-#define RTS5264_IC_VER_B		2
-#define RTS5264_IC_VER_C		3
 
 int rts5264_pci_switch_clock(struct rtsx_pcr *pcr, unsigned int card_clock,
 		u8 ssc_depth, bool initial_mode, bool double_clk, bool vpclk);

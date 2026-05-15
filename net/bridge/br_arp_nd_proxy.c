@@ -17,6 +17,7 @@
 #include <linux/if_vlan.h>
 #include <linux/inetdevice.h>
 #include <net/addrconf.h>
+#include <net/ipv6_stubs.h>
 #if IS_ENABLED(CONFIG_IPV6)
 #include <net/ip6_checksum.h>
 #endif
@@ -159,9 +160,6 @@ void br_do_proxy_suppress_arp(struct sk_buff *skb, struct net_bridge *br,
 	if (br_opt_get(br, BROPT_NEIGH_SUPPRESS_ENABLED)) {
 		if (br_is_neigh_suppress_enabled(p, vid))
 			return;
-		if (is_unicast_ether_addr(eth_hdr(skb)->h_dest) &&
-		    parp->ar_op == htons(ARPOP_REQUEST))
-			return;
 		if (parp->ar_op != htons(ARPOP_RREQUEST) &&
 		    parp->ar_op != htons(ARPOP_RREPLY) &&
 		    (ipv4_is_zeronet(sip) || sip == tip)) {
@@ -201,13 +199,15 @@ void br_do_proxy_suppress_arp(struct sk_buff *skb, struct net_bridge *br,
 
 		f = br_fdb_find_rcu(br, n->ha, vid);
 		if (f) {
-			const struct net_bridge_port *dst = READ_ONCE(f->dst);
 			bool replied = false;
 
 			if ((p && (p->flags & BR_PROXYARP)) ||
-			    (dst && (dst->flags & BR_PROXYARP_WIFI)) ||
-			    br_is_neigh_suppress_enabled(dst, vid)) {
-				if (!vid)
+			    (f->dst && (f->dst->flags & BR_PROXYARP_WIFI)) ||
+			    br_is_neigh_suppress_enabled(f->dst, vid)) {
+				replied = true;
+				if (!memcmp(n->ha, sha, dev->addr_len))
+					replied = false;
+				else if (!vid)
 					br_arp_send(br, p, skb->dev, sip, tip,
 						    sha, n->ha, sha, 0, 0);
 				else
@@ -215,7 +215,6 @@ void br_do_proxy_suppress_arp(struct sk_buff *skb, struct net_bridge *br,
 						    sha, n->ha, sha,
 						    skb->vlan_proto,
 						    skb_vlan_tag_get(skb));
-				replied = true;
 			}
 
 			/* If we have replied or as long as we know the
@@ -232,7 +231,7 @@ void br_do_proxy_suppress_arp(struct sk_buff *skb, struct net_bridge *br,
 #endif
 
 #if IS_ENABLED(CONFIG_IPV6)
-struct nd_msg *br_is_nd_neigh_msg(const struct sk_buff *skb, struct nd_msg *msg)
+struct nd_msg *br_is_nd_neigh_msg(struct sk_buff *skb, struct nd_msg *msg)
 {
 	struct nd_msg *m;
 
@@ -417,10 +416,6 @@ void br_do_suppress_nd(struct sk_buff *skb, struct net_bridge *br,
 	if (br_is_neigh_suppress_enabled(p, vid))
 		return;
 
-	if (is_unicast_ether_addr(eth_hdr(skb)->h_dest) &&
-	    msg->icmph.icmp6_type == NDISC_NEIGHBOUR_SOLICITATION)
-		return;
-
 	if (msg->icmph.icmp6_type == NDISC_NEIGHBOUR_ADVERTISEMENT &&
 	    !msg->icmph.icmp6_solicited) {
 		/* prevent flooding to neigh suppress ports */
@@ -459,7 +454,7 @@ void br_do_suppress_nd(struct sk_buff *skb, struct net_bridge *br,
 		return;
 	}
 
-	n = neigh_lookup(&nd_tbl, &msg->target, vlandev);
+	n = neigh_lookup(ipv6_stub->nd_tbl, &msg->target, vlandev);
 	if (n) {
 		struct net_bridge_fdb_entry *f;
 
@@ -470,10 +465,9 @@ void br_do_suppress_nd(struct sk_buff *skb, struct net_bridge *br,
 
 		f = br_fdb_find_rcu(br, n->ha, vid);
 		if (f) {
-			const struct net_bridge_port *dst = READ_ONCE(f->dst);
 			bool replied = false;
 
-			if (br_is_neigh_suppress_enabled(dst, vid)) {
+			if (br_is_neigh_suppress_enabled(f->dst, vid)) {
 				if (vid != 0)
 					br_nd_send(br, p, skb, n,
 						   skb->vlan_proto,

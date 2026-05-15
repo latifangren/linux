@@ -186,17 +186,12 @@ static struct kobj_type dlm_ktype = {
 
 static struct kset *dlm_kset;
 
-static int do_uevent(struct dlm_ls *ls, int in, unsigned int release_recover)
+static int do_uevent(struct dlm_ls *ls, int in)
 {
-	char message[512] = {};
-	char *envp[] = { message, NULL };
-
-	if (in) {
+	if (in)
 		kobject_uevent(&ls->ls_kobj, KOBJ_ONLINE);
-	} else {
-		snprintf(message, 511, "RELEASE_RECOVER=%u", release_recover);
-		kobject_uevent_env(&ls->ls_kobj, KOBJ_OFFLINE, envp);
-	}
+	else
+		kobject_uevent(&ls->ls_kobj, KOBJ_OFFLINE);
 
 	log_rinfo(ls, "%s the lockspace group...", in ? "joining" : "leaving");
 
@@ -427,7 +422,7 @@ static int new_lockspace(const char *name, const char *cluster,
 
 	error = -ENOMEM;
 
-	ls = kzalloc_obj(*ls, GFP_NOFS);
+	ls = kzalloc(sizeof(*ls), GFP_NOFS);
 	if (!ls)
 		goto out;
 	memcpy(ls->ls_name, name, namelen);
@@ -580,8 +575,8 @@ static int new_lockspace(const char *name, const char *cluster,
 	   current lockspace members are (via configfs) and then tells the
 	   lockspace to start running (via sysfs) in dlm_ls_start(). */
 
-	error = do_uevent(ls, 1, 0);
-	if (error < 0)
+	error = do_uevent(ls, 1);
+	if (error)
 		goto out_recoverd;
 
 	/* wait until recovery is successful or failed */
@@ -597,7 +592,7 @@ static int new_lockspace(const char *name, const char *cluster,
 	return 0;
 
  out_members:
-	do_uevent(ls, 0, 0);
+	do_uevent(ls, 0);
 	dlm_clear_members(ls);
 	kfree(ls->ls_node_array);
  out_recoverd:
@@ -676,20 +671,19 @@ int dlm_new_user_lockspace(const char *name, const char *cluster,
    This is because there may be LKBs queued as ASTs that have been unlinked
    from their RSBs and are pending deletion once the AST has been delivered */
 
-static int lockspace_busy(struct dlm_ls *ls, unsigned int release_option)
+static int lockspace_busy(struct dlm_ls *ls, int force)
 {
 	struct dlm_lkb *lkb;
 	unsigned long id;
 	int rv = 0;
 
 	read_lock_bh(&ls->ls_lkbxa_lock);
-	if (release_option == DLM_RELEASE_NO_LOCKS) {
+	if (force == 0) {
 		xa_for_each(&ls->ls_lkbxa, id, lkb) {
 			rv = 1;
 			break;
 		}
-	} else if (release_option == DLM_RELEASE_UNUSED) {
-		/* TODO: handle this UNUSED option as NO_LOCKS in later patch */
+	} else if (force == 1) {
 		xa_for_each(&ls->ls_lkbxa, id, lkb) {
 			if (lkb->lkb_nodeid == 0 &&
 			    lkb->lkb_grmode != DLM_LOCK_IV) {
@@ -704,11 +698,11 @@ static int lockspace_busy(struct dlm_ls *ls, unsigned int release_option)
 	return rv;
 }
 
-static int release_lockspace(struct dlm_ls *ls, unsigned int release_option)
+static int release_lockspace(struct dlm_ls *ls, int force)
 {
 	int busy, rv;
 
-	busy = lockspace_busy(ls, release_option);
+	busy = lockspace_busy(ls, force);
 
 	spin_lock_bh(&lslist_lock);
 	if (ls->ls_create_count == 1) {
@@ -736,9 +730,8 @@ static int release_lockspace(struct dlm_ls *ls, unsigned int release_option)
 
 	dlm_device_deregister(ls);
 
-	if (release_option != DLM_RELEASE_NO_EVENT &&
-	    dlm_user_daemon_available())
-		do_uevent(ls, 0, (release_option == DLM_RELEASE_RECOVER));
+	if (force != 3 && dlm_user_daemon_available())
+		do_uevent(ls, 0);
 
 	dlm_recoverd_stop(ls);
 
@@ -789,16 +782,17 @@ static int release_lockspace(struct dlm_ls *ls, unsigned int release_option)
  * lockspace must continue to function as usual, participating in recoveries,
  * until this returns.
  *
- * See DLM_RELEASE defines for release_option values and their meaning.
+ * Force has 4 possible values:
+ * 0 - don't destroy lockspace if it has any LKBs
+ * 1 - destroy lockspace if it has remote LKBs but not if it has local LKBs
+ * 2 - destroy lockspace regardless of LKBs
+ * 3 - destroy lockspace as part of a forced shutdown
  */
 
-int dlm_release_lockspace(void *lockspace, unsigned int release_option)
+int dlm_release_lockspace(void *lockspace, int force)
 {
 	struct dlm_ls *ls;
 	int error;
-
-	if (release_option > __DLM_RELEASE_MAX)
-		return -EINVAL;
 
 	ls = dlm_find_lockspace_local(lockspace);
 	if (!ls)
@@ -806,7 +800,7 @@ int dlm_release_lockspace(void *lockspace, unsigned int release_option)
 	dlm_put_lockspace(ls);
 
 	mutex_lock(&ls_lock);
-	error = release_lockspace(ls, release_option);
+	error = release_lockspace(ls, force);
 	if (!error)
 		ls_count--;
 	if (!ls_count)

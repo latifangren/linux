@@ -102,7 +102,7 @@ static int fscontext_create_fd(struct fs_context *fc, unsigned int o_flags)
 
 static int fscontext_alloc_log(struct fs_context *fc)
 {
-	fc->log.log = kzalloc_obj(*fc->log.log);
+	fc->log.log = kzalloc(sizeof(*fc->log.log), GFP_KERNEL);
 	if (!fc->log.log)
 		return -ENOMEM;
 	refcount_set(&fc->log.log->usage, 1);
@@ -181,9 +181,9 @@ SYSCALL_DEFINE3(fspick, int, dfd, const char __user *, path, unsigned int, flags
 		lookup_flags &= ~LOOKUP_FOLLOW;
 	if (flags & FSPICK_NO_AUTOMOUNT)
 		lookup_flags &= ~LOOKUP_AUTOMOUNT;
-	CLASS(filename_flags, filename)(path,
-			 (flags & FSPICK_EMPTY_PATH) ? LOOKUP_EMPTY : 0);
-	ret = filename_lookup(dfd, filename, lookup_flags, &target, NULL);
+	if (flags & FSPICK_EMPTY_PATH)
+		lookup_flags |= LOOKUP_EMPTY;
+	ret = user_path_at(dfd, path, lookup_flags, &target);
 	if (ret < 0)
 		goto err;
 
@@ -355,6 +355,7 @@ SYSCALL_DEFINE5(fsconfig,
 		int, aux)
 {
 	struct fs_context *fc;
+	struct fd f;
 	int ret;
 	int lookup_flags = 0;
 
@@ -397,18 +398,32 @@ SYSCALL_DEFINE5(fsconfig,
 		return -EOPNOTSUPP;
 	}
 
-	CLASS(fd, f)(fd);
-	if (fd_empty(f))
+	f = fdget(fd);
+	if (!fd_file(f))
 		return -EBADF;
+	ret = -EINVAL;
 	if (fd_file(f)->f_op != &fscontext_fops)
-		return -EINVAL;
+		goto out_f;
 
 	fc = fd_file(f)->private_data;
+	if (fc->ops == &legacy_fs_context_ops) {
+		switch (cmd) {
+		case FSCONFIG_SET_BINARY:
+		case FSCONFIG_SET_PATH:
+		case FSCONFIG_SET_PATH_EMPTY:
+		case FSCONFIG_SET_FD:
+		case FSCONFIG_CMD_CREATE_EXCL:
+			ret = -EOPNOTSUPP;
+			goto out_f;
+		}
+	}
 
 	if (_key) {
 		param.key = strndup_user(_key, 256);
-		if (IS_ERR(param.key))
-			return PTR_ERR(param.key);
+		if (IS_ERR(param.key)) {
+			ret = PTR_ERR(param.key);
+			goto out_f;
+		}
 	}
 
 	switch (cmd) {
@@ -449,7 +464,7 @@ SYSCALL_DEFINE5(fsconfig,
 	case FSCONFIG_SET_FD:
 		param.type = fs_value_is_file;
 		ret = -EBADF;
-		param.file = fget_raw(aux);
+		param.file = fget(aux);
 		if (!param.file)
 			goto out_key;
 		param.dirfd = aux;
@@ -487,5 +502,7 @@ SYSCALL_DEFINE5(fsconfig,
 	}
 out_key:
 	kfree(param.key);
+out_f:
+	fdput(f);
 	return ret;
 }

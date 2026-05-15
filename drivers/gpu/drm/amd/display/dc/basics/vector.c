@@ -56,7 +56,6 @@ static bool dal_vector_presized_costruct(struct vector *vector,
 					 void *initial_value,
 					 uint32_t struct_size)
 {
-	(void)ctx;
 	uint32_t i;
 
 	vector->container = NULL;
@@ -95,7 +94,7 @@ struct vector *dal_vector_presized_create(
 	void *initial_value,
 	uint32_t struct_size)
 {
-	struct vector *vector = kzalloc_obj(struct vector);
+	struct vector *vector = kzalloc(sizeof(struct vector), GFP_KERNEL);
 
 	if (vector == NULL)
 		return NULL;
@@ -114,7 +113,7 @@ struct vector *dal_vector_create(
 	uint32_t capacity,
 	uint32_t struct_size)
 {
-	struct vector *vector = kzalloc_obj(struct vector);
+	struct vector *vector = kzalloc(sizeof(struct vector), GFP_KERNEL);
 
 	if (vector == NULL)
 		return NULL;
@@ -171,7 +170,7 @@ bool dal_vector_remove_at_index(
 		memmove(
 			vector->container + (index * vector->struct_size),
 			vector->container + ((index + 1) * vector->struct_size),
-			(size_t)(vector->count - index - 1) * vector->struct_size);
+			(vector->count - index - 1) * vector->struct_size);
 	vector->count -= 1;
 
 	return true;
@@ -220,7 +219,7 @@ bool dal_vector_insert_at(
 		memmove(
 			insert_address + vector->struct_size,
 			insert_address,
-			(size_t)vector->struct_size * (vector->count - position));
+			vector->struct_size * (vector->count - position));
 
 	memmove(
 		insert_address,
@@ -272,7 +271,7 @@ struct vector *dal_vector_clone(
 
 	/* copy vector's data */
 	memmove(vec_cloned->container, vector->container,
-			(size_t)vec_cloned->struct_size * vec_cloned->capacity);
+			vec_cloned->struct_size * vec_cloned->capacity);
 
 	return vec_cloned;
 }

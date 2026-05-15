@@ -66,22 +66,18 @@ struct regmap *__regmap_init_ram(struct device *dev,
 		return ERR_PTR(-EINVAL);
 	}
 
-	data->read = kzalloc_objs(bool, config->max_register + 1);
+	data->read = kcalloc(config->max_register + 1, sizeof(bool),
+			     GFP_KERNEL);
 	if (!data->read)
 		return ERR_PTR(-ENOMEM);
 
-	data->written = kzalloc_objs(bool, config->max_register + 1);
-	if (!data->written) {
-		kfree(data->read);
+	data->written = kcalloc(config->max_register + 1, sizeof(bool),
+				GFP_KERNEL);
+	if (!data->written)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	map = __regmap_init(dev, &regmap_ram, data, config,
 			    lock_key, lock_name);
-	if (IS_ERR(map)) {
-		kfree(data->read);
-		kfree(data->written);
-	}
 
 	return map;
 }

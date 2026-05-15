@@ -7,12 +7,12 @@
  * a histogram of results, along various sorting keys.
  */
 #include "builtin.h"
-#include "perf.h"
 
 #include "util/color.h"
 #include <linux/list.h>
 #include "util/cache.h"
 #include <linux/rbtree.h>
+#include <linux/zalloc.h>
 #include "util/symbol.h"
 
 #include "util/debug.h"
@@ -312,14 +312,22 @@ out_put:
 	return ret;
 }
 
-static int hist_entry__stdio_annotate(struct hist_entry *he,
+static int process_feature_event(struct perf_session *session,
+				 union perf_event *event)
+{
+	if (event->feat.feat_id < HEADER_LAST_FEATURE)
+		return perf_event__process_feature(session, event);
+	return 0;
+}
+
+static int hist_entry__tty_annotate(struct hist_entry *he,
 				    struct evsel *evsel,
 				    struct perf_annotate *ann)
 {
-	if (ann->use_stdio2)
-		return hist_entry__tty_annotate2(he, evsel);
+	if (!ann->use_stdio2)
+		return symbol__tty_annotate(&he->ms, evsel);
 
-	return hist_entry__tty_annotate(he, evsel);
+	return symbol__tty_annotate2(&he->ms, evsel);
 }
 
 static void print_annotate_data_stat(struct annotated_data_stat *s)
@@ -510,7 +518,7 @@ find_next:
 			/* skip missing symbols */
 			nd = rb_next(nd);
 		} else if (use_browser == 1) {
-			key = hist_entry__tui_annotate(he, evsel, NULL, NO_ADDR);
+			key = hist_entry__tui_annotate(he, evsel, NULL);
 
 			switch (key) {
 			case -1:
@@ -532,7 +540,7 @@ find_next:
 			if (next != NULL)
 				nd = next;
 		} else {
-			hist_entry__stdio_annotate(he, evsel, ann);
+			hist_entry__tty_annotate(he, evsel, ann);
 			nd = rb_next(nd);
 		}
 	}
@@ -553,7 +561,7 @@ static int __cmd_annotate(struct perf_annotate *ann)
 	}
 
 	if (!annotate_opts.objdump_path) {
-		ret = perf_env__lookup_objdump(perf_session__env(session),
+		ret = perf_env__lookup_objdump(&session->header.env,
 					       &annotate_opts.objdump_path);
 		if (ret)
 			goto out;
@@ -734,7 +742,8 @@ int cmd_annotate(int argc, const char **argv)
 			&annotate.group_set,
 			"Show event group information together"),
 	OPT_STRING('C', "cpu", &annotate.cpu_list, "cpu", "list of cpus to profile"),
-	OPT_CALLBACK(0, "symfs", NULL, "directory[,layout]", SYMFS_HELP,
+	OPT_CALLBACK(0, "symfs", NULL, "directory",
+		     "Look for files with symbols relative to this directory",
 		     symbol__config_symfs),
 	OPT_BOOLEAN(0, "source", &annotate_opts.annotate_src,
 		    "Interleave source code with assembly code (default)"),
@@ -778,8 +787,6 @@ int cmd_annotate(int argc, const char **argv)
 		    "Show instruction stats for the data type annotation"),
 	OPT_BOOLEAN(0, "skip-empty", &symbol_conf.skip_empty,
 		    "Do not display empty (or dummy) events in the output"),
-	OPT_BOOLEAN(0, "code-with-type", &annotate_opts.code_with_type,
-		    "Show data type info in code annotation (memory instructions only)"),
 	OPT_END()
 	};
 	int ret;
@@ -833,7 +840,7 @@ int cmd_annotate(int argc, const char **argv)
 	}
 #endif
 
-#ifndef HAVE_LIBDW_SUPPORT
+#ifndef HAVE_DWARF_GETLOCATIONS_SUPPORT
 	if (annotate.data_type) {
 		pr_err("Error: Data type profiling is disabled due to missing DWARF support\n");
 		return -ENOTSUP;
@@ -865,7 +872,7 @@ int cmd_annotate(int argc, const char **argv)
 	annotate.tool.id_index	= perf_event__process_id_index;
 	annotate.tool.auxtrace_info	= perf_event__process_auxtrace_info;
 	annotate.tool.auxtrace	= perf_event__process_auxtrace;
-	annotate.tool.feature	= perf_event__process_feature;
+	annotate.tool.feature	= process_feature_event;
 	annotate.tool.ordering_requires_timestamps = true;
 
 	annotate.session = perf_session__new(&data, &annotate.tool);
@@ -886,7 +893,7 @@ int cmd_annotate(int argc, const char **argv)
 
 	symbol_conf.try_vmlinux_path = true;
 
-	ret = symbol__init(perf_session__env(annotate.session));
+	ret = symbol__init(&annotate.session->header.env);
 	if (ret < 0)
 		goto out_delete;
 
@@ -905,8 +912,6 @@ int cmd_annotate(int argc, const char **argv)
 		annotate_opts.annotate_src = false;
 		symbol_conf.annotate_data_member = true;
 		symbol_conf.annotate_data_sample = true;
-	} else if (annotate_opts.code_with_type) {
-		symbol_conf.annotate_data_member = true;
 	}
 
 	setup_browser(true);
@@ -932,7 +937,7 @@ int cmd_annotate(int argc, const char **argv)
 			annotate_opts.show_br_cntr = true;
 	}
 
-	if (setup_sorting(/*evlist=*/NULL, perf_session__env(annotate.session)) < 0)
+	if (setup_sorting(NULL) < 0)
 		usage_with_options(annotate_usage, options);
 
 	ret = __cmd_annotate(&annotate);

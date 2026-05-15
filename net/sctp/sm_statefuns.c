@@ -1556,12 +1556,6 @@ static enum sctp_disposition sctp_sf_do_unexpected_init(
 	/* Tag the variable length parameters.  */
 	chunk->param_hdr.v = skb_pull(chunk->skb, sizeof(struct sctp_inithdr));
 
-	if (asoc->state >= SCTP_STATE_ESTABLISHED) {
-		/* Discard INIT matching peer vtag after handshake completion (stale INIT). */
-		if (ntohl(chunk->subh.init_hdr->init_tag) == asoc->peer.i.init_tag)
-			return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
-	}
-
 	/* Verify the INIT chunk before processing it. */
 	err_chunk = NULL;
 	if (!sctp_verify_init(net, ep, asoc, chunk->chunk_hdr->type,
@@ -4369,7 +4363,7 @@ static enum sctp_ierror sctp_sf_authenticate(
 	struct sctp_shared_key *sh_key = NULL;
 	struct sctp_authhdr *auth_hdr;
 	__u8 *save_digest, *digest;
-	const struct sctp_hmac *hmac;
+	struct sctp_hmac *hmac;
 	unsigned int sig_len;
 	__u16 key_id;
 

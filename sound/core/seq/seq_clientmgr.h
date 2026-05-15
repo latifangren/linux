@@ -14,9 +14,6 @@
 
 /* client manager */
 
-#define SND_SEQ_GROUP_FILTER_MASK	GENMASK(SNDRV_UMP_MAX_GROUPS, 0)
-#define SND_SEQ_GROUP_FILTER_GROUPS	GENMASK(SNDRV_UMP_MAX_GROUPS, 1)
-
 struct snd_seq_user_client {
 	struct file *file;	/* file struct of client */
 	/* ... */
@@ -43,7 +40,7 @@ struct snd_seq_client {
 	int number;		/* client number */
 	unsigned int filter;	/* filter flags */
 	DECLARE_BITMAP(event_filter, 256);
-	unsigned int group_filter;
+	unsigned short group_filter;
 	snd_use_lock_t use_lock;
 	int event_lost;
 	/* ports */
@@ -81,20 +78,8 @@ void snd_sequencer_device_done(void);
 /* get locked pointer to client */
 struct snd_seq_client *snd_seq_client_use_ptr(int clientid);
 
-static inline struct snd_seq_client *
-snd_seq_client_ref(struct snd_seq_client *client)
-{
-	snd_use_lock_use(&client->use_lock);
-	return client;
-}
-
 /* unlock pointer to client */
-static inline void snd_seq_client_unref(struct snd_seq_client *client)
-{
-	snd_use_lock_free(&client->use_lock);
-}
-
-DEFINE_FREE(snd_seq_client, struct snd_seq_client *, if (!IS_ERR_OR_NULL(_T)) snd_seq_client_unref(_T))
+#define snd_seq_client_unlock(client) snd_use_lock_free(&(client)->use_lock)
 
 /* dispatch event to client(s) */
 int snd_seq_dispatch_event(struct snd_seq_event_cell *cell, int atomic, int hop);
@@ -109,7 +94,8 @@ int __snd_seq_deliver_single_event(struct snd_seq_client *dest,
 				   int atomic, int hop);
 
 /* only for OSS sequencer */
-int snd_seq_kernel_client_ioctl(int clientid, unsigned int cmd, void *arg);
+bool snd_seq_client_ioctl_lock(int clientid);
+void snd_seq_client_ioctl_unlock(int clientid);
 
 extern int seq_client_load[15];
 

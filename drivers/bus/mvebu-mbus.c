@@ -1006,7 +1006,7 @@ static __init int mvebu_mbus_debugfs_init(void)
 }
 fs_initcall(mvebu_mbus_debugfs_init);
 
-static int mvebu_mbus_suspend(void *data)
+static int mvebu_mbus_suspend(void)
 {
 	struct mvebu_mbus_state *s = &mbus_state;
 	int win;
@@ -1040,7 +1040,7 @@ static int mvebu_mbus_suspend(void *data)
 	return 0;
 }
 
-static void mvebu_mbus_resume(void *data)
+static void mvebu_mbus_resume(void)
 {
 	struct mvebu_mbus_state *s = &mbus_state;
 	int win;
@@ -1069,13 +1069,9 @@ static void mvebu_mbus_resume(void *data)
 	}
 }
 
-static const struct syscore_ops mvebu_mbus_syscore_ops = {
-	.suspend = mvebu_mbus_suspend,
-	.resume = mvebu_mbus_resume,
-};
-
-static struct syscore mvebu_mbus_syscore = {
-	.ops = &mvebu_mbus_syscore_ops,
+static struct syscore_ops mvebu_mbus_syscore_ops = {
+	.suspend	= mvebu_mbus_suspend,
+	.resume		= mvebu_mbus_resume,
 };
 
 static int __init mvebu_mbus_common_init(struct mvebu_mbus_state *mbus,
@@ -1122,7 +1118,7 @@ static int __init mvebu_mbus_common_init(struct mvebu_mbus_state *mbus,
 		writel(UNIT_SYNC_BARRIER_ALL,
 		       mbus->mbuswins_base + UNIT_SYNC_BARRIER_OFF);
 
-	register_syscore(&mvebu_mbus_syscore);
+	register_syscore_ops(&mvebu_mbus_syscore_ops);
 
 	return 0;
 }

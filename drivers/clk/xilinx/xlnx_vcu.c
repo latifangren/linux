@@ -11,7 +11,6 @@
 #include <linux/clk-provider.h>
 #include <linux/device.h>
 #include <linux/errno.h>
-#include <linux/gpio/consumer.h>
 #include <linux/io.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mfd/syscon/xlnx-vcu.h>
@@ -52,7 +51,6 @@
  * @dev: Platform device
  * @pll_ref: pll ref clock source
  * @aclk: axi clock source
- * @reset_gpio: vcu reset gpio
  * @logicore_reg_ba: logicore reg base address
  * @vcu_slcr_ba: vcu_slcr Register base address
  * @pll: handle for the VCU PLL
@@ -63,7 +61,6 @@ struct xvcu_device {
 	struct device *dev;
 	struct clk *pll_ref;
 	struct clk *aclk;
-	struct gpio_desc *reset_gpio;
 	struct regmap *logicore_reg_ba;
 	void __iomem *vcu_slcr_ba;
 	struct clk_hw *pll;
@@ -311,21 +308,18 @@ static int xvcu_pll_set_div(struct vcu_pll *pll, int div)
 	return 0;
 }
 
-static int xvcu_pll_determine_rate(struct clk_hw *hw,
-				   struct clk_rate_request *req)
+static long xvcu_pll_round_rate(struct clk_hw *hw,
+				unsigned long rate, unsigned long *parent_rate)
 {
 	struct vcu_pll *pll = to_vcu_pll(hw);
 	unsigned int feedback_div;
 
-	req->rate = clamp_t(unsigned long, req->rate, pll->fvco_min,
-			    pll->fvco_max);
+	rate = clamp_t(unsigned long, rate, pll->fvco_min, pll->fvco_max);
 
-	feedback_div = DIV_ROUND_CLOSEST_ULL(req->rate, req->best_parent_rate);
+	feedback_div = DIV_ROUND_CLOSEST_ULL(rate, *parent_rate);
 	feedback_div = clamp_t(unsigned int, feedback_div, 25, 125);
 
-	req->rate = req->best_parent_rate * feedback_div;
-
-	return 0;
+	return *parent_rate * feedback_div;
 }
 
 static unsigned long xvcu_pll_recalc_rate(struct clk_hw *hw,
@@ -397,7 +391,7 @@ static void xvcu_pll_disable(struct clk_hw *hw)
 static const struct clk_ops vcu_pll_ops = {
 	.enable = xvcu_pll_enable,
 	.disable = xvcu_pll_disable,
-	.determine_rate = xvcu_pll_determine_rate,
+	.round_rate = xvcu_pll_round_rate,
 	.recalc_rate = xvcu_pll_recalc_rate,
 	.set_rate = xvcu_pll_set_rate,
 };
@@ -682,24 +676,6 @@ static int xvcu_probe(struct platform_device *pdev)
 	 * Bit 0 : Gasket isolation
 	 * Bit 1 : put VCU out of reset
 	 */
-	xvcu->reset_gpio = devm_gpiod_get_optional(&pdev->dev, "reset",
-						   GPIOD_OUT_LOW);
-	if (IS_ERR(xvcu->reset_gpio)) {
-		ret = PTR_ERR(xvcu->reset_gpio);
-		dev_err_probe(&pdev->dev, ret, "failed to get reset gpio for vcu.\n");
-		goto error_get_gpio;
-	}
-
-	if (xvcu->reset_gpio) {
-		gpiod_set_value(xvcu->reset_gpio, 0);
-		/* min 2 clock cycle of vcu pll_ref, slowest freq is 33.33KHz */
-		usleep_range(60, 120);
-		gpiod_set_value(xvcu->reset_gpio, 1);
-		usleep_range(60, 120);
-	} else {
-		dev_dbg(&pdev->dev, "No reset gpio info found in dts for VCU. This may result in incorrect functionality if VCU isolation is removed after initialization in designs where the VCU reset is driven by gpio.\n");
-	}
-
 	regmap_write(xvcu->logicore_reg_ba, VCU_GASKET_INIT, VCU_GASKET_VALUE);
 
 	ret = xvcu_register_clock_provider(xvcu);
@@ -714,7 +690,6 @@ static int xvcu_probe(struct platform_device *pdev)
 
 error_clk_provider:
 	xvcu_unregister_clock_provider(xvcu);
-error_get_gpio:
 	clk_disable_unprepare(xvcu->aclk);
 	return ret;
 }
@@ -736,13 +711,6 @@ static void xvcu_remove(struct platform_device *pdev)
 	xvcu_unregister_clock_provider(xvcu);
 
 	/* Add the Gasket isolation and put the VCU in reset. */
-	if (xvcu->reset_gpio) {
-		gpiod_set_value(xvcu->reset_gpio, 0);
-		/* min 2 clock cycle of vcu pll_ref, slowest freq is 33.33KHz */
-		usleep_range(60, 120);
-		gpiod_set_value(xvcu->reset_gpio, 1);
-		usleep_range(60, 120);
-	}
 	regmap_write(xvcu->logicore_reg_ba, VCU_GASKET_INIT, 0);
 
 	clk_disable_unprepare(xvcu->aclk);

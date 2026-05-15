@@ -3,7 +3,7 @@
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * All Rights Reserved.
  */
-#include "xfs_platform.h"
+#include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -37,15 +37,9 @@
 #include "xfs_ioctl.h"
 #include "xfs_xattr.h"
 #include "xfs_rtbitmap.h"
-#include "xfs_rtrmap_btree.h"
 #include "xfs_file.h"
 #include "xfs_exchrange.h"
 #include "xfs_handle.h"
-#include "xfs_rtgroup.h"
-#include "xfs_healthmon.h"
-#include "xfs_verify_media.h"
-#include "xfs_zone_priv.h"
-#include "xfs_zone_alloc.h"
 
 #include <linux/mount.h>
 #include <linux/fileattr.h>
@@ -224,7 +218,7 @@ xfs_bulk_ireq_setup(
 		else if (XFS_INO_TO_AGNO(mp, breq->startino) < hdr->agno)
 			return -EINVAL;
 
-		breq->iwalk_flags |= XFS_IWALK_SAME_AG;
+		breq->flags |= XFS_IBULK_SAME_AG;
 
 		/* Asking for an inode past the end of the AG?  We're done! */
 		if (XFS_INO_TO_AGNO(mp, breq->startino) > hdr->agno)
@@ -238,10 +232,6 @@ xfs_bulk_ireq_setup(
 
 	if (hdr->flags & XFS_BULK_IREQ_NREXT64)
 		breq->flags |= XFS_IBULK_NREXT64;
-
-	/* Caller wants to see metadata directories in bulkstat output. */
-	if (hdr->flags & XFS_BULK_IREQ_METADIR)
-		breq->flags |= XFS_IBULK_METADIR;
 
 	return 0;
 }
@@ -333,9 +323,6 @@ xfs_ioc_inumbers(
 	if (copy_from_user(&hdr, &arg->hdr, sizeof(hdr)))
 		return -EFAULT;
 
-	if (hdr.flags & XFS_BULK_IREQ_METADIR)
-		return -EINVAL;
-
 	error = xfs_bulk_ireq_setup(mp, &hdr, &breq, arg->inumbers);
 	if (error == -ECANCELED)
 		goto out_teardown;
@@ -409,54 +396,6 @@ xfs_ioc_ag_geometry(
 	return 0;
 }
 
-STATIC int
-xfs_ioc_rtgroup_geometry(
-	struct xfs_mount	*mp,
-	void			__user *arg)
-{
-	struct xfs_rtgroup	*rtg;
-	struct xfs_rtgroup_geometry rgeo;
-	xfs_rgblock_t		highest_rgbno;
-	int			error;
-
-	if (copy_from_user(&rgeo, arg, sizeof(rgeo)))
-		return -EFAULT;
-	if (rgeo.rg_flags)
-		return -EINVAL;
-	if (memchr_inv(&rgeo.rg_reserved, 0, sizeof(rgeo.rg_reserved)))
-		return -EINVAL;
-	if (!xfs_has_rtgroups(mp))
-		return -EINVAL;
-
-	rtg = xfs_rtgroup_get(mp, rgeo.rg_number);
-	if (!rtg)
-		return -EINVAL;
-
-	error = xfs_rtgroup_get_geometry(rtg, &rgeo);
-	xfs_rtgroup_put(rtg);
-	if (error)
-		return error;
-
-	if (xfs_has_zoned(mp)) {
-		xfs_rtgroup_lock(rtg, XFS_RTGLOCK_RMAP);
-		if (rtg->rtg_open_zone) {
-			rgeo.rg_writepointer = rtg->rtg_open_zone->oz_allocated;
-		} else {
-			highest_rgbno = xfs_rtrmap_highest_rgbno(rtg);
-			if (highest_rgbno == NULLRGBLOCK)
-				rgeo.rg_writepointer = 0;
-			else
-				rgeo.rg_writepointer = highest_rgbno + 1;
-		}
-		xfs_rtgroup_unlock(rtg, XFS_RTGLOCK_RMAP);
-		rgeo.rg_flags |= XFS_RTGROUP_GEOM_WRITEPOINTER;
-	}
-
-	if (copy_to_user(arg, &rgeo, sizeof(rgeo)))
-		return -EFAULT;
-	return 0;
-}
-
 /*
  * Linux extended inode flags interface.
  */
@@ -465,7 +404,7 @@ static void
 xfs_fill_fsxattr(
 	struct xfs_inode	*ip,
 	int			whichfork,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_ifork	*ifp = xfs_ifork_ptr(ip, whichfork);
@@ -490,21 +429,8 @@ xfs_fill_fsxattr(
 		}
 	}
 
-	if (ip->i_diflags2 & XFS_DIFLAG2_COWEXTSIZE) {
-		/*
-		 * Don't let a misaligned CoW extent size hint on a directory
-		 * escape to userspace if it won't pass the setattr checks
-		 * later.
-		 */
-		if ((ip->i_diflags & XFS_DIFLAG_RTINHERIT) &&
-		    ip->i_cowextsize % mp->m_sb.sb_rextsize > 0) {
-			fa->fsx_xflags &= ~FS_XFLAG_COWEXTSIZE;
-			fa->fsx_cowextsize = 0;
-		} else {
-			fa->fsx_cowextsize = XFS_FSB_TO_B(mp, ip->i_cowextsize);
-		}
-	}
-
+	if (ip->i_diflags2 & XFS_DIFLAG2_COWEXTSIZE)
+		fa->fsx_cowextsize = XFS_FSB_TO_B(mp, ip->i_cowextsize);
 	fa->fsx_projid = ip->i_projid;
 	if (ifp && !xfs_need_iread_extents(ifp))
 		fa->fsx_nextents = xfs_iext_count(ifp);
@@ -517,7 +443,7 @@ xfs_ioc_fsgetxattra(
 	xfs_inode_t		*ip,
 	void			__user *arg)
 {
-	struct file_kattr	fa;
+	struct fileattr		fa;
 
 	xfs_ilock(ip, XFS_ILOCK_SHARED);
 	xfs_fill_fsxattr(ip, XFS_ATTR_FORK, &fa);
@@ -529,9 +455,12 @@ xfs_ioc_fsgetxattra(
 int
 xfs_fileattr_get(
 	struct dentry		*dentry,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_inode	*ip = XFS_I(d_inode(dentry));
+
+	if (d_is_special(dentry))
+		return -ENOTTY;
 
 	xfs_ilock(ip, XFS_ILOCK_SHARED);
 	xfs_fill_fsxattr(ip, XFS_DATA_FORK, fa);
@@ -544,7 +473,7 @@ static int
 xfs_ioctl_setattr_xflags(
 	struct xfs_trans	*tp,
 	struct xfs_inode	*ip,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	bool			rtflag = (fa->fsx_xflags & FS_XFLAG_REALTIME);
@@ -572,6 +501,10 @@ xfs_ioctl_setattr_xflags(
 		if (mp->m_sb.sb_rblocks == 0 || mp->m_sb.sb_rextsize == 0 ||
 		    xfs_extlen_to_rtxmod(mp, ip->i_extsize))
 			return -EINVAL;
+
+		/* Clear reflink if we are actually able to set the rt flag. */
+		if (xfs_is_reflink_inode(ip))
+			ip->i_diflags2 &= ~XFS_DIFLAG2_REFLINK;
 	}
 
 	/* diflags2 only valid for v3 inodes. */
@@ -600,7 +533,7 @@ xfs_ioctl_setattr_xflags(
 static void
 xfs_ioctl_setattr_prepare_dax(
 	struct xfs_inode	*ip,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	struct inode            *inode = VFS_I(ip);
@@ -660,7 +593,7 @@ out_error:
 static int
 xfs_ioctl_setattr_check_extsize(
 	struct xfs_inode	*ip,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	xfs_failaddr_t		failaddr;
@@ -702,7 +635,7 @@ xfs_ioctl_setattr_check_extsize(
 static int
 xfs_ioctl_setattr_check_cowextsize(
 	struct xfs_inode	*ip,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_mount	*mp = ip->i_mount;
 	xfs_failaddr_t		failaddr;
@@ -727,7 +660,7 @@ xfs_ioctl_setattr_check_cowextsize(
 static int
 xfs_ioctl_setattr_check_projid(
 	struct xfs_inode	*ip,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	if (!fa->fsx_valid)
 		return 0;
@@ -743,7 +676,7 @@ int
 xfs_fileattr_set(
 	struct mnt_idmap	*idmap,
 	struct dentry		*dentry,
-	struct file_kattr	*fa)
+	struct fileattr		*fa)
 {
 	struct xfs_inode	*ip = XFS_I(d_inode(dentry));
 	struct xfs_mount	*mp = ip->i_mount;
@@ -753,6 +686,9 @@ xfs_fileattr_set(
 	int			error;
 
 	trace_xfs_ioctl_setattr(ip);
+
+	if (d_is_special(dentry))
+		return -ENOTTY;
 
 	if (!fa->fsx_valid) {
 		if (fa->flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL |
@@ -915,7 +851,7 @@ xfs_ioc_getbmap(
 	if (bmx.bmv_count >= INT_MAX / recsize)
 		return -ENOMEM;
 
-	buf = kvzalloc_objs(*buf, bmx.bmv_count);
+	buf = kvcalloc(bmx.bmv_count, sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -945,29 +881,41 @@ xfs_ioc_swapext(
 	xfs_swapext_t	*sxp)
 {
 	xfs_inode_t     *ip, *tip;
+	struct fd	f, tmp;
+	int		error = 0;
 
 	/* Pull information for the target fd */
-	CLASS(fd, f)((int)sxp->sx_fdtarget);
-	if (fd_empty(f))
-		return -EINVAL;
+	f = fdget((int)sxp->sx_fdtarget);
+	if (!fd_file(f)) {
+		error = -EINVAL;
+		goto out;
+	}
 
 	if (!(fd_file(f)->f_mode & FMODE_WRITE) ||
 	    !(fd_file(f)->f_mode & FMODE_READ) ||
-	    (fd_file(f)->f_flags & O_APPEND))
-		return -EBADF;
+	    (fd_file(f)->f_flags & O_APPEND)) {
+		error = -EBADF;
+		goto out_put_file;
+	}
 
-	CLASS(fd, tmp)((int)sxp->sx_fdtmp);
-	if (fd_empty(tmp))
-		return -EINVAL;
+	tmp = fdget((int)sxp->sx_fdtmp);
+	if (!fd_file(tmp)) {
+		error = -EINVAL;
+		goto out_put_file;
+	}
 
 	if (!(fd_file(tmp)->f_mode & FMODE_WRITE) ||
 	    !(fd_file(tmp)->f_mode & FMODE_READ) ||
-	    (fd_file(tmp)->f_flags & O_APPEND))
-		return -EBADF;
+	    (fd_file(tmp)->f_flags & O_APPEND)) {
+		error = -EBADF;
+		goto out_put_tmp_file;
+	}
 
 	if (IS_SWAPFILE(file_inode(fd_file(f))) ||
-	    IS_SWAPFILE(file_inode(fd_file(tmp))))
-		return -EINVAL;
+	    IS_SWAPFILE(file_inode(fd_file(tmp)))) {
+		error = -EINVAL;
+		goto out_put_tmp_file;
+	}
 
 	/*
 	 * We need to ensure that the fds passed in point to XFS inodes
@@ -975,22 +923,37 @@ xfs_ioc_swapext(
 	 * control over what the user passes us here.
 	 */
 	if (fd_file(f)->f_op != &xfs_file_operations ||
-	    fd_file(tmp)->f_op != &xfs_file_operations)
-		return -EINVAL;
+	    fd_file(tmp)->f_op != &xfs_file_operations) {
+		error = -EINVAL;
+		goto out_put_tmp_file;
+	}
 
 	ip = XFS_I(file_inode(fd_file(f)));
 	tip = XFS_I(file_inode(fd_file(tmp)));
 
-	if (ip->i_mount != tip->i_mount)
-		return -EINVAL;
+	if (ip->i_mount != tip->i_mount) {
+		error = -EINVAL;
+		goto out_put_tmp_file;
+	}
 
-	if (ip->i_ino == tip->i_ino)
-		return -EINVAL;
+	if (ip->i_ino == tip->i_ino) {
+		error = -EINVAL;
+		goto out_put_tmp_file;
+	}
 
-	if (xfs_is_shutdown(ip->i_mount))
-		return -EIO;
+	if (xfs_is_shutdown(ip->i_mount)) {
+		error = -EIO;
+		goto out_put_tmp_file;
+	}
 
-	return xfs_swap_extents(ip, tip, sxp);
+	error = xfs_swap_extents(ip, tip, sxp);
+
+ out_put_tmp_file:
+	fdput(tmp);
+ out_put_file:
+	fdput(f);
+ out:
+	return error;
 }
 
 static int
@@ -1005,8 +968,9 @@ xfs_ioc_getlabel(
 	BUILD_BUG_ON(sizeof(sbp->sb_fname) > FSLABEL_MAX);
 
 	/* 1 larger than sb_fname, so this ensures a trailing NUL char */
+	memset(label, 0, sizeof(label));
 	spin_lock(&mp->m_sb_lock);
-	memtostr_pad(label, sbp->sb_fname);
+	strncpy(label, sbp->sb_fname, XFSLABEL_MAX);
 	spin_unlock(&mp->m_sb_lock);
 
 	if (copy_to_user(user_label, label, sizeof(label)))
@@ -1057,7 +1021,7 @@ xfs_ioc_setlabel(
 	 * buffered reads from userspace (i.e. from blkid) are invalidated,
 	 * and userspace will see the newly-written label.
 	 */
-	error = xfs_sync_sb_buf(mp, true);
+	error = xfs_sync_sb_buf(mp);
 	if (error)
 		goto out;
 	/*
@@ -1068,8 +1032,6 @@ xfs_ioc_setlabel(
 	mutex_unlock(&mp->m_growlock);
 
 	invalidate_bdev(mp->m_ddev_targp->bt_bdev);
-	if (xfs_has_rtsb(mp) && mp->m_rtdev_targp)
-		invalidate_bdev(mp->m_rtdev_targp->bt_bdev);
 
 out:
 	mnt_drop_write_file(filp);
@@ -1145,15 +1107,15 @@ xfs_ioctl_getset_resblocks(
 		error = mnt_want_write_file(filp);
 		if (error)
 			return error;
-		error = xfs_reserve_blocks(mp, XC_FREE_BLOCKS, fsop.resblks);
+		error = xfs_reserve_blocks(mp, fsop.resblks);
 		mnt_drop_write_file(filp);
 		if (error)
 			return error;
 	}
 
 	spin_lock(&mp->m_sb_lock);
-	fsop.resblks = mp->m_free[XC_FREE_BLOCKS].res_total;
-	fsop.resblks_avail = mp->m_free[XC_FREE_BLOCKS].res_avail;
+	fsop.resblks = mp->m_resblks;
+	fsop.resblks_avail = mp->m_resblks_avail;
 	spin_unlock(&mp->m_sb_lock);
 
 	if (copy_to_user(arg, &fsop, sizeof(fsop)))
@@ -1169,9 +1131,9 @@ xfs_ioctl_fs_counts(
 	struct xfs_fsop_counts	out = {
 		.allocino = percpu_counter_read_positive(&mp->m_icount),
 		.freeino  = percpu_counter_read_positive(&mp->m_ifree),
-		.freedata = xfs_estimate_freecounter(mp, XC_FREE_BLOCKS) -
-				xfs_freecounter_unavailable(mp, XC_FREE_BLOCKS),
-		.freertx  = xfs_estimate_freecounter(mp, XC_FREE_RTEXTENTS),
+		.freedata = percpu_counter_read_positive(&mp->m_fdblocks) -
+				xfs_fdblocks_unavailable(mp),
+		.freertx  = percpu_counter_read_positive(&mp->m_frextents),
 	};
 
 	if (copy_to_user(uarg, &out, sizeof(out)))
@@ -1224,21 +1186,12 @@ xfs_file_ioctl(
 				current->comm);
 		return -ENOTTY;
 	case XFS_IOC_DIOINFO: {
-		struct kstat		st;
+		struct xfs_buftarg	*target = xfs_inode_buftarg(ip);
 		struct dioattr		da;
 
-		error = vfs_getattr(&filp->f_path, &st, STATX_DIOALIGN, 0);
-		if (error)
-			return error;
-
-		/*
-		 * Some userspace directly feeds the return value to
-		 * posix_memalign, which fails for values that are smaller than
-		 * the pointer size.  Round up the value to not break userspace.
-		 */
-		da.d_mem = roundup(st.dio_mem_align, sizeof(void *));
-		da.d_miniosz = st.dio_offset_align;
+		da.d_mem =  da.d_miniosz = target->bt_logical_sectorsize;
 		da.d_maxiosz = INT_MAX & ~(da.d_miniosz - 1);
+
 		if (copy_to_user(arg, &da, sizeof(da)))
 			return -EFAULT;
 		return 0;
@@ -1263,8 +1216,6 @@ xfs_file_ioctl(
 
 	case XFS_IOC_AG_GEOMETRY:
 		return xfs_ioc_ag_geometry(mp, arg);
-	case XFS_IOC_RTGROUP_GEOMETRY:
-		return xfs_ioc_rtgroup_geometry(mp, arg);
 
 	case XFS_IOC_GETVERSION:
 		return put_user(inode->i_generation, (int __user *)arg);
@@ -1429,8 +1380,10 @@ xfs_file_ioctl(
 
 		trace_xfs_ioc_free_eofblocks(mp, &icw, _RET_IP_);
 
-		guard(super_write)(mp->m_super);
-		return xfs_blockgc_free_space(mp, &icw);
+		sb_start_write(mp->m_super);
+		error = xfs_blockgc_free_space(mp, &icw);
+		sb_end_write(mp->m_super);
+		return error;
 	}
 
 	case XFS_IOC_EXCHANGE_RANGE:
@@ -1439,11 +1392,6 @@ xfs_file_ioctl(
 		return xfs_ioc_start_commit(filp, arg);
 	case XFS_IOC_COMMIT_RANGE:
 		return xfs_ioc_commit_range(filp, arg);
-
-	case XFS_IOC_HEALTH_MONITOR:
-		return xfs_ioc_health_monitor(filp, arg);
-	case XFS_IOC_VERIFY_MEDIA:
-		return xfs_ioc_verify_media(filp, arg);
 
 	default:
 		return -ENOTTY;

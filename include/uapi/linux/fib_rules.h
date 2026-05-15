@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
-#ifndef _UAPI__LINUX_FIB_RULES_H
-#define _UAPI__LINUX_FIB_RULES_H
+#ifndef __LINUX_FIB_RULES_H
+#define __LINUX_FIB_RULES_H
 
 #include <linux/types.h>
 #include <linux/rtnetlink.h>
@@ -68,11 +68,6 @@ enum {
 	FRA_SPORT_RANGE, /* sport */
 	FRA_DPORT_RANGE, /* dport */
 	FRA_DSCP,	/* dscp */
-	FRA_FLOWLABEL,	/* flowlabel */
-	FRA_FLOWLABEL_MASK,	/* flowlabel mask */
-	FRA_SPORT_MASK,	/* sport mask */
-	FRA_DPORT_MASK,	/* dport mask */
-	FRA_DSCP_MASK,	/* dscp mask */
 	__FRA_MAX
 };
 
@@ -88,8 +83,14 @@ enum {
 	FR_ACT_BLACKHOLE,	/* Drop without notification */
 	FR_ACT_UNREACHABLE,	/* Drop with ENETUNREACH */
 	FR_ACT_PROHIBIT,	/* Drop with EACCES */
+	FR_ACT_RES9,
+	FR_ACT_RES10,
+	FR_ACT_RES11,
+	FR_ACT_POLICY_FAILED,	/* Drop with EACCES */
 	__FR_ACT_MAX,
 };
+
+#define FR_ACT_FAILED_POLICY FR_ACT_POLICY_FAILED
 
 #define FR_ACT_MAX (__FR_ACT_MAX - 1)
 

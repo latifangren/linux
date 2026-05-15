@@ -9,7 +9,6 @@
 //                         Oleksij Rempel <kernel@pengutronix.de>
 
 #include <linux/can/skb.h>
-#include <net/can.h>
 
 #include "j1939-priv.h"
 
@@ -592,21 +591,17 @@ sk_buff *j1939_tp_tx_dat_new(struct j1939_priv *priv,
 			     bool swap_src_dst)
 {
 	struct sk_buff *skb;
-	struct can_skb_ext *csx;
 	struct j1939_sk_buff_cb *skcb;
 
-	skb = alloc_skb(sizeof(struct can_frame), GFP_ATOMIC);
+	skb = alloc_skb(sizeof(struct can_frame) + sizeof(struct can_skb_priv),
+			GFP_ATOMIC);
 	if (unlikely(!skb))
 		return ERR_PTR(-ENOMEM);
 
-	csx = can_skb_ext_add(skb);
-	if (!csx) {
-		kfree_skb(skb);
-		return ERR_PTR(-ENOMEM);
-	}
-
 	skb->dev = priv->ndev;
-	csx->can_iif = priv->ndev->ifindex;
+	can_skb_reserve(skb);
+	can_skb_prv(skb)->ifindex = priv->ndev->ifindex;
+	can_skb_prv(skb)->skbcnt = 0;
 	/* reserve CAN header */
 	skb_reserve(skb, offsetof(struct can_frame, data));
 
@@ -1057,17 +1052,6 @@ static int j1939_simple_txnext(struct j1939_session *session)
 		goto out_free;
 	}
 
-	/* the cloned skb points to the skb extension of the original se_skb
-	 * with an increased refcount. skb_ext_add() creates a copy to
-	 * separate the skb extension data which is needed to modify the
-	 * can_framelen in can_put_echo_skb().
-	 */
-	if (!skb_ext_add(skb, SKB_EXT_CAN)) {
-		kfree_skb(skb);
-		ret = -ENOMEM;
-		goto out_free;
-	}
-
 	can_skb_set_owner(skb, se_skb->sk);
 
 	j1939_tp_set_rxtimeout(session, J1939_SIMPLE_ECHO_TIMEOUT_MS);
@@ -1508,7 +1492,7 @@ static struct j1939_session *j1939_session_new(struct j1939_priv *priv,
 	struct j1939_session *session;
 	struct j1939_sk_buff_cb *skcb;
 
-	session = kzalloc_obj(*session, gfp_any());
+	session = kzalloc(sizeof(*session), gfp_any());
 	if (!session)
 		return NULL;
 
@@ -1527,8 +1511,12 @@ static struct j1939_session *j1939_session_new(struct j1939_priv *priv,
 	skcb = j1939_skb_to_cb(skb);
 	memcpy(&session->skcb, skcb, sizeof(session->skcb));
 
-	hrtimer_setup(&session->txtimer, j1939_tp_txtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
-	hrtimer_setup(&session->rxtimer, j1939_tp_rxtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+	hrtimer_init(&session->txtimer, CLOCK_MONOTONIC,
+		     HRTIMER_MODE_REL_SOFT);
+	session->txtimer.function = j1939_tp_txtimer;
+	hrtimer_init(&session->rxtimer, CLOCK_MONOTONIC,
+		     HRTIMER_MODE_REL_SOFT);
+	session->rxtimer.function = j1939_tp_rxtimer;
 
 	netdev_dbg(priv->ndev, "%s: 0x%p: sa: %02x, da: %02x\n",
 		   __func__, session, skcb->addr.sa, skcb->addr.da);
@@ -1542,22 +1530,17 @@ j1939_session *j1939_session_fresh_new(struct j1939_priv *priv,
 				       const struct j1939_sk_buff_cb *rel_skcb)
 {
 	struct sk_buff *skb;
-	struct can_skb_ext *csx;
 	struct j1939_sk_buff_cb *skcb;
 	struct j1939_session *session;
 
-	skb = alloc_skb(size, GFP_ATOMIC);
+	skb = alloc_skb(size + sizeof(struct can_skb_priv), GFP_ATOMIC);
 	if (unlikely(!skb))
 		return NULL;
 
-	csx = can_skb_ext_add(skb);
-	if (!csx) {
-		kfree_skb(skb);
-		return NULL;
-	}
-
 	skb->dev = priv->ndev;
-	csx->can_iif = priv->ndev->ifindex;
+	can_skb_reserve(skb);
+	can_skb_prv(skb)->ifindex = priv->ndev->ifindex;
+	can_skb_prv(skb)->skbcnt = 0;
 	skcb = j1939_skb_to_cb(skb);
 	memcpy(skcb, rel_skcb, sizeof(*skcb));
 

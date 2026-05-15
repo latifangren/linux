@@ -64,11 +64,7 @@ struct vers_iter {
 static struct rb_root name_rb_tree = RB_ROOT;
 static struct rb_root uuid_rb_tree = RB_ROOT;
 
-#define DM_REMOVE_KEEP_OPEN_DEVICES	1
-#define DM_REMOVE_MARK_DEFERRED		2
-#define DM_REMOVE_ONLY_DEFERRED		4
-#define DM_REMOVE_INTERRUPTIBLE		8
-static int dm_hash_remove_all(unsigned flags);
+static void dm_hash_remove_all(bool keep_open_devices, bool mark_deferred, bool only_deferred);
 
 /*
  * Guards access to both hash tables.
@@ -82,7 +78,7 @@ static DEFINE_MUTEX(dm_hash_cells_mutex);
 
 static void dm_hash_exit(void)
 {
-	dm_hash_remove_all(0);
+	dm_hash_remove_all(false, false, false);
 }
 
 /*
@@ -222,7 +218,7 @@ static struct hash_cell *alloc_cell(const char *name, const char *uuid,
 {
 	struct hash_cell *hc;
 
-	hc = kmalloc_obj(*hc);
+	hc = kmalloc(sizeof(*hc), GFP_KERNEL);
 	if (!hc)
 		return NULL;
 
@@ -337,7 +333,7 @@ static struct dm_table *__hash_remove(struct hash_cell *hc)
 	return table;
 }
 
-static int dm_hash_remove_all(unsigned flags)
+static void dm_hash_remove_all(bool keep_open_devices, bool mark_deferred, bool only_deferred)
 {
 	int dev_skipped;
 	struct rb_node *n;
@@ -351,17 +347,12 @@ retry:
 	down_write(&_hash_lock);
 
 	for (n = rb_first(&name_rb_tree); n; n = rb_next(n)) {
-		if (flags & DM_REMOVE_INTERRUPTIBLE && fatal_signal_pending(current)) {
-			up_write(&_hash_lock);
-			return -EINTR;
-		}
-
 		hc = container_of(n, struct hash_cell, name_node);
 		md = hc->md;
 		dm_get(md);
 
-		if (flags & DM_REMOVE_KEEP_OPEN_DEVICES &&
-		    dm_lock_for_deletion(md, !!(flags & DM_REMOVE_MARK_DEFERRED), !!(flags & DM_REMOVE_ONLY_DEFERRED))) {
+		if (keep_open_devices &&
+		    dm_lock_for_deletion(md, mark_deferred, only_deferred)) {
 			dm_put(md);
 			dev_skipped++;
 			continue;
@@ -377,7 +368,7 @@ retry:
 		}
 		dm_ima_measure_on_device_remove(md, true);
 		dm_put(md);
-		if (likely(flags & DM_REMOVE_KEEP_OPEN_DEVICES))
+		if (likely(keep_open_devices))
 			dm_destroy(md);
 		else
 			dm_destroy_immediate(md);
@@ -393,10 +384,8 @@ retry:
 
 	up_write(&_hash_lock);
 
-	if (dev_skipped && !(flags & DM_REMOVE_ONLY_DEFERRED))
+	if (dev_skipped)
 		DMWARN("remove_all left %d open device(s)", dev_skipped);
-
-	return 0;
 }
 
 /*
@@ -524,7 +513,7 @@ static struct mapped_device *dm_hash_rename(struct dm_ioctl *param,
 
 void dm_deferred_remove(void)
 {
-	dm_hash_remove_all(DM_REMOVE_KEEP_OPEN_DEVICES | DM_REMOVE_ONLY_DEFERRED);
+	dm_hash_remove_all(true, false, true);
 }
 
 /*
@@ -540,13 +529,9 @@ typedef int (*ioctl_fn)(struct file *filp, struct dm_ioctl *param, size_t param_
 
 static int remove_all(struct file *filp, struct dm_ioctl *param, size_t param_size)
 {
-	int r;
-	int flags = DM_REMOVE_KEEP_OPEN_DEVICES | DM_REMOVE_INTERRUPTIBLE;
-	if (param->flags & DM_DEFERRED_REMOVE)
-		flags |= DM_REMOVE_MARK_DEFERRED;
-	r = dm_hash_remove_all(flags);
+	dm_hash_remove_all(true, !!(param->flags & DM_DEFERRED_REMOVE), false);
 	param->data_size = 0;
-	return r;
+	return 0;
 }
 
 /*
@@ -1356,10 +1341,6 @@ static void retrieve_status(struct dm_table *table,
 		used = param->data_start + (outptr - outbuf);
 
 		outptr = align_ptr(outptr);
-		if (!outptr || outptr > outbuf + len) {
-			param->flags |= DM_BUFFER_FULL_FLAG;
-			break;
-		}
 		spec->next = outptr - outbuf;
 	}
 
@@ -1667,6 +1648,8 @@ static void retrieve_deps(struct dm_table *table,
 	struct dm_dev_internal *dd;
 	struct dm_target_deps *deps;
 
+	down_read(&table->devices_lock);
+
 	deps = get_result_buffer(param, param_size, &len);
 
 	/*
@@ -1681,7 +1664,7 @@ static void retrieve_deps(struct dm_table *table,
 	needed = struct_size(deps, dev, count);
 	if (len < needed) {
 		param->flags |= DM_BUFFER_FULL_FLAG;
-		return;
+		goto out;
 	}
 
 	/*
@@ -1693,6 +1676,9 @@ static void retrieve_deps(struct dm_table *table,
 		deps->dev[count++] = huge_encode_dev(dd->dm_dev->bdev->bd_dev);
 
 	param->data_size = param->data_start + needed;
+
+out:
+	up_read(&table->devices_lock);
 }
 
 static int table_deps(struct file *filp, struct dm_ioctl *param, size_t param_size)
@@ -1899,7 +1885,6 @@ static ioctl_fn lookup_ioctl(unsigned int cmd, int *ioctl_flags)
 		{DM_DEV_SET_GEOMETRY_CMD, 0, dev_set_geometry},
 		{DM_DEV_ARM_POLL_CMD, IOCTL_FLAGS_NO_PARAMS, dev_arm_poll},
 		{DM_GET_TARGET_VERSION_CMD, 0, get_target_version},
-		{DM_MPATH_PROBE_PATHS_CMD, 0, NULL}, /* block device ioctl */
 	};
 
 	if (unlikely(cmd >= ARRAY_SIZE(_ioctls)))
@@ -1927,7 +1912,7 @@ static int check_version(unsigned int cmd, struct dm_ioctl __user *user,
 
 	if ((kernel_params->version[0] != DM_VERSION_MAJOR) ||
 	    (kernel_params->version[1] > DM_VERSION_MINOR)) {
-		DMERR_LIMIT("ioctl interface mismatch: kernel(%u.%u.%u), user(%u.%u.%u), cmd(%d)",
+		DMERR("ioctl interface mismatch: kernel(%u.%u.%u), user(%u.%u.%u), cmd(%d)",
 		      DM_VERSION_MAJOR, DM_VERSION_MINOR,
 		      DM_VERSION_PATCHLEVEL,
 		      kernel_params->version[0],
@@ -1976,7 +1961,7 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kern
 
 	if (unlikely(param_kernel->data_size < minimum_data_size) ||
 	    unlikely(param_kernel->data_size > DM_MAX_TARGETS * DM_MAX_TARGET_PARAMS)) {
-		DMERR_LIMIT("Invalid data size in the ioctl structure: %u",
+		DMERR("Invalid data size in the ioctl structure: %u",
 		      param_kernel->data_size);
 		return -EINVAL;
 	}
@@ -2155,7 +2140,7 @@ static int dm_open(struct inode *inode, struct file *filp)
 	if (unlikely(r))
 		return r;
 
-	priv = filp->private_data = kmalloc_obj(struct dm_file);
+	priv = filp->private_data = kmalloc(sizeof(struct dm_file), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 

@@ -503,7 +503,7 @@ void dt_to_asm(FILE *f, struct dt_info *dti, int version)
 	 * Reserve map entries.
 	 * Align the reserve map to a doubleword boundary.
 	 * Each entry is an (address, size) pair of u64 values.
-	 * Always supply a zero-sized termination entry.
+	 * Always supply a zero-sized temination entry.
 	 */
 	asm_emit_align(f, 8);
 	emit_label(f, symprefix, "reserve_map");
@@ -807,7 +807,6 @@ struct dt_info *dt_from_blob(const char *fname)
 	struct node *tree;
 	uint32_t val;
 	int flags = 0;
-	unsigned int dtsflags = DTSF_V1;
 
 	f = srcfile_relative_open(fname, NULL);
 
@@ -920,8 +919,5 @@ struct dt_info *dt_from_blob(const char *fname)
 
 	fclose(f);
 
-	if (get_subnode(tree, "__fixups__") || get_subnode(tree, "__local_fixups__"))
-		dtsflags |= DTSF_PLUGIN;
-
-	return build_dt_info(dtsflags, reservelist, tree, boot_cpuid_phys);
+	return build_dt_info(DTSF_V1, reservelist, tree, boot_cpuid_phys);
 }

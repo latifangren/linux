@@ -627,7 +627,7 @@ static int dvb_init(struct cx231xx *dev)
 		return 0;
 	}
 
-	dvb = kzalloc_obj(struct cx231xx_dvb);
+	dvb = kzalloc(sizeof(struct cx231xx_dvb), GFP_KERNEL);
 
 	if (dvb == NULL) {
 		dev_info(dev->dev,

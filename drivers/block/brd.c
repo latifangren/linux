@@ -44,74 +44,42 @@ struct brd_device {
 };
 
 /*
- * Look up and return a brd's page with reference grabbed for a given sector.
+ * Look up and return a brd's page for a given sector.
  */
 static struct page *brd_lookup_page(struct brd_device *brd, sector_t sector)
 {
-	struct page *page;
-	XA_STATE(xas, &brd->brd_pages, sector >> PAGE_SECTORS_SHIFT);
-
-	rcu_read_lock();
-repeat:
-	page = xas_load(&xas);
-	if (xas_retry(&xas, page)) {
-		xas_reset(&xas);
-		goto repeat;
-	}
-
-	if (!page)
-		goto out;
-
-	if (!get_page_unless_zero(page)) {
-		xas_reset(&xas);
-		goto repeat;
-	}
-
-	if (unlikely(page != xas_reload(&xas))) {
-		put_page(page);
-		xas_reset(&xas);
-		goto repeat;
-	}
-out:
-	rcu_read_unlock();
-
-	return page;
+	return xa_load(&brd->brd_pages, sector >> PAGE_SECTORS_SHIFT);
 }
 
 /*
  * Insert a new page for a given sector, if one does not already exist.
- * The returned page will grab reference.
  */
-static struct page *brd_insert_page(struct brd_device *brd, sector_t sector,
-		blk_opf_t opf)
+static int brd_insert_page(struct brd_device *brd, sector_t sector, gfp_t gfp)
 {
-	gfp_t gfp = (opf & REQ_NOWAIT) ? GFP_NOWAIT : GFP_NOIO;
-	struct page *page, *ret;
+	pgoff_t idx = sector >> PAGE_SECTORS_SHIFT;
+	struct page *page;
+	int ret = 0;
+
+	page = brd_lookup_page(brd, sector);
+	if (page)
+		return 0;
 
 	page = alloc_page(gfp | __GFP_ZERO | __GFP_HIGHMEM);
 	if (!page)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	xa_lock(&brd->brd_pages);
-	ret = __xa_cmpxchg(&brd->brd_pages, sector >> PAGE_SECTORS_SHIFT, NULL,
-			page, gfp);
-	if (!ret) {
+	ret = __xa_insert(&brd->brd_pages, idx, page, gfp);
+	if (!ret)
 		brd->brd_nr_pages++;
-		get_page(page);
-		xa_unlock(&brd->brd_pages);
-		return page;
-	}
-
-	if (!xa_is_err(ret)) {
-		get_page(ret);
-		xa_unlock(&brd->brd_pages);
-		put_page(page);
-		return ret;
-	}
-
 	xa_unlock(&brd->brd_pages);
-	put_page(page);
-	return ERR_PTR(xa_err(ret));
+
+	if (ret < 0) {
+		__free_page(page);
+		if (ret == -EBUSY)
+			ret = 0;
+	}
+	return ret;
 }
 
 /*
@@ -124,7 +92,7 @@ static void brd_free_pages(struct brd_device *brd)
 	pgoff_t idx;
 
 	xa_for_each(&brd->brd_pages, idx, page) {
-		put_page(page);
+		__free_page(page);
 		cond_resched();
 	}
 
@@ -132,49 +100,126 @@ static void brd_free_pages(struct brd_device *brd)
 }
 
 /*
- * Process a single segment.  The segment is capped to not cross page boundaries
- * in both the bio and the brd backing memory.
+ * copy_to_brd_setup must be called before copy_to_brd. It may sleep.
  */
-static bool brd_rw_bvec(struct brd_device *brd, struct bio *bio)
+static int copy_to_brd_setup(struct brd_device *brd, sector_t sector, size_t n,
+			     gfp_t gfp)
 {
-	struct bio_vec bv = bio_iter_iovec(bio, bio->bi_iter);
-	sector_t sector = bio->bi_iter.bi_sector;
-	u32 offset = (sector & (PAGE_SECTORS - 1)) << SECTOR_SHIFT;
-	blk_opf_t opf = bio->bi_opf;
+	unsigned int offset = (sector & (PAGE_SECTORS-1)) << SECTOR_SHIFT;
+	size_t copy;
+	int ret;
+
+	copy = min_t(size_t, n, PAGE_SIZE - offset);
+	ret = brd_insert_page(brd, sector, gfp);
+	if (ret)
+		return ret;
+	if (copy < n) {
+		sector += copy >> SECTOR_SHIFT;
+		ret = brd_insert_page(brd, sector, gfp);
+	}
+	return ret;
+}
+
+/*
+ * Copy n bytes from src to the brd starting at sector. Does not sleep.
+ */
+static void copy_to_brd(struct brd_device *brd, const void *src,
+			sector_t sector, size_t n)
+{
 	struct page *page;
-	void *kaddr;
+	void *dst;
+	unsigned int offset = (sector & (PAGE_SECTORS-1)) << SECTOR_SHIFT;
+	size_t copy;
 
-	bv.bv_len = min_t(u32, bv.bv_len, PAGE_SIZE - offset);
-
+	copy = min_t(size_t, n, PAGE_SIZE - offset);
 	page = brd_lookup_page(brd, sector);
-	if (!page && op_is_write(opf)) {
-		page = brd_insert_page(brd, sector, opf);
-		if (IS_ERR(page))
-			goto out_error;
-	}
+	BUG_ON(!page);
 
-	kaddr = bvec_kmap_local(&bv);
+	dst = kmap_atomic(page);
+	memcpy(dst + offset, src, copy);
+	kunmap_atomic(dst);
+
+	if (copy < n) {
+		src += copy;
+		sector += copy >> SECTOR_SHIFT;
+		copy = n - copy;
+		page = brd_lookup_page(brd, sector);
+		BUG_ON(!page);
+
+		dst = kmap_atomic(page);
+		memcpy(dst, src, copy);
+		kunmap_atomic(dst);
+	}
+}
+
+/*
+ * Copy n bytes to dst from the brd starting at sector. Does not sleep.
+ */
+static void copy_from_brd(void *dst, struct brd_device *brd,
+			sector_t sector, size_t n)
+{
+	struct page *page;
+	void *src;
+	unsigned int offset = (sector & (PAGE_SECTORS-1)) << SECTOR_SHIFT;
+	size_t copy;
+
+	copy = min_t(size_t, n, PAGE_SIZE - offset);
+	page = brd_lookup_page(brd, sector);
+	if (page) {
+		src = kmap_atomic(page);
+		memcpy(dst, src + offset, copy);
+		kunmap_atomic(src);
+	} else
+		memset(dst, 0, copy);
+
+	if (copy < n) {
+		dst += copy;
+		sector += copy >> SECTOR_SHIFT;
+		copy = n - copy;
+		page = brd_lookup_page(brd, sector);
+		if (page) {
+			src = kmap_atomic(page);
+			memcpy(dst, src, copy);
+			kunmap_atomic(src);
+		} else
+			memset(dst, 0, copy);
+	}
+}
+
+/*
+ * Process a single bvec of a bio.
+ */
+static int brd_do_bvec(struct brd_device *brd, struct page *page,
+			unsigned int len, unsigned int off, blk_opf_t opf,
+			sector_t sector)
+{
+	void *mem;
+	int err = 0;
+
 	if (op_is_write(opf)) {
-		memcpy_to_page(page, offset, kaddr, bv.bv_len);
-	} else {
-		if (page)
-			memcpy_from_page(kaddr, page, offset, bv.bv_len);
-		else
-			memset(kaddr, 0, bv.bv_len);
+		/*
+		 * Must use NOIO because we don't want to recurse back into the
+		 * block or filesystem layers from page reclaim.
+		 */
+		gfp_t gfp = opf & REQ_NOWAIT ? GFP_NOWAIT : GFP_NOIO;
+
+		err = copy_to_brd_setup(brd, sector, len, gfp);
+		if (err)
+			goto out;
 	}
-	kunmap_local(kaddr);
 
-	bio_advance_iter_single(bio, &bio->bi_iter, bv.bv_len);
-	if (page)
-		put_page(page);
-	return true;
+	mem = kmap_atomic(page);
+	if (!op_is_write(opf)) {
+		copy_from_brd(mem + off, brd, sector, len);
+		flush_dcache_page(page);
+	} else {
+		flush_dcache_page(page);
+		copy_to_brd(brd, mem + off, sector, len);
+	}
+	kunmap_atomic(mem);
 
-out_error:
-	if (PTR_ERR(page) == -ENOMEM && (opf & REQ_NOWAIT))
-		bio_wouldblock_error(bio);
-	else
-		bio_io_error(bio);
-	return false;
+out:
+	return err;
 }
 
 static void brd_do_discard(struct brd_device *brd, sector_t sector, u32 size)
@@ -191,7 +236,7 @@ static void brd_do_discard(struct brd_device *brd, sector_t sector, u32 size)
 	while (aligned_sector < aligned_end && aligned_sector < rd_size * 2) {
 		page = __xa_erase(&brd->brd_pages, aligned_sector >> PAGE_SECTORS_SHIFT);
 		if (page) {
-			put_page(page);
+			__free_page(page);
 			brd->brd_nr_pages--;
 		}
 		aligned_sector += PAGE_SECTORS;
@@ -202,18 +247,36 @@ static void brd_do_discard(struct brd_device *brd, sector_t sector, u32 size)
 static void brd_submit_bio(struct bio *bio)
 {
 	struct brd_device *brd = bio->bi_bdev->bd_disk->private_data;
+	sector_t sector = bio->bi_iter.bi_sector;
+	struct bio_vec bvec;
+	struct bvec_iter iter;
 
 	if (unlikely(op_is_discard(bio->bi_opf))) {
-		brd_do_discard(brd, bio->bi_iter.bi_sector,
-				bio->bi_iter.bi_size);
+		brd_do_discard(brd, sector, bio->bi_iter.bi_size);
 		bio_endio(bio);
 		return;
 	}
 
-	do {
-		if (!brd_rw_bvec(brd, bio))
+	bio_for_each_segment(bvec, bio, iter) {
+		unsigned int len = bvec.bv_len;
+		int err;
+
+		/* Don't support un-aligned buffer */
+		WARN_ON_ONCE((bvec.bv_offset & (SECTOR_SIZE - 1)) ||
+				(len & (SECTOR_SIZE - 1)));
+
+		err = brd_do_bvec(brd, bvec.bv_page, len, bvec.bv_offset,
+				  bio->bi_opf, sector);
+		if (err) {
+			if (err == -ENOMEM && bio->bi_opf & REQ_NOWAIT) {
+				bio_wouldblock_error(bio);
+				return;
+			}
+			bio_io_error(bio);
 			return;
-	} while (bio->bi_iter.bi_size);
+		}
+		sector += len >> SECTOR_SHIFT;
+	}
 
 	bio_endio(bio);
 }
@@ -247,7 +310,8 @@ MODULE_ALIAS("rd");
 /* Legacy boot options - nonmodular */
 static int __init ramdisk_size(char *str)
 {
-	return kstrtoul(str, 0, &rd_size) == 0;
+	rd_size = simple_strtol(str, NULL, 0);
+	return 1;
 }
 __setup("ramdisk_size=", ramdisk_size);
 #endif
@@ -272,7 +336,7 @@ static struct brd_device *brd_find_or_alloc_device(int i)
 		}
 	}
 
-	brd = kzalloc_obj(*brd);
+	brd = kzalloc(sizeof(*brd), GFP_KERNEL);
 	if (!brd) {
 		mutex_unlock(&brd_devices_mutex);
 		return ERR_PTR(-ENOMEM);

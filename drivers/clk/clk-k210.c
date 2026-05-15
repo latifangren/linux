@@ -893,7 +893,7 @@ static void __init k210_clk_init(struct device_node *np)
 	struct k210_sysclk *ksc;
 	int i, ret;
 
-	ksc = kzalloc_obj(*ksc);
+	ksc = kzalloc(sizeof(*ksc), GFP_KERNEL);
 	if (!ksc)
 		return;
 

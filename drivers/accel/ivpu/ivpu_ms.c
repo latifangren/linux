@@ -8,12 +8,11 @@
 
 #include "ivpu_drv.h"
 #include "ivpu_gem.h"
-#include "ivpu_hw.h"
 #include "ivpu_jsm_msg.h"
 #include "ivpu_ms.h"
 #include "ivpu_pm.h"
 
-#define MS_INFO_BUFFER_SIZE	  SZ_64K
+#define MS_INFO_BUFFER_SIZE	  SZ_16K
 #define MS_NUM_BUFFERS		  2
 #define MS_READ_PERIOD_MULTIPLIER 2
 #define MS_MIN_SAMPLE_PERIOD_NS   1000000
@@ -38,8 +37,8 @@ int ivpu_ms_start_ioctl(struct drm_device *dev, void *data, struct drm_file *fil
 	struct drm_ivpu_metric_streamer_start *args = data;
 	struct ivpu_device *vdev = file_priv->vdev;
 	struct ivpu_ms_instance *ms;
+	u64 single_buff_size;
 	u32 sample_size;
-	u64 buf_size;
 	int ret;
 
 	if (!args->metric_group_mask || !args->read_period_samples ||
@@ -53,13 +52,12 @@ int ivpu_ms_start_ioctl(struct drm_device *dev, void *data, struct drm_file *fil
 	mutex_lock(&file_priv->ms_lock);
 
 	if (get_instance_by_mask(file_priv, args->metric_group_mask)) {
-		ivpu_dbg(vdev, IOCTL, "Instance already exists (mask %#llx)\n",
-			 args->metric_group_mask);
+		ivpu_err(vdev, "Instance already exists (mask %#llx)\n", args->metric_group_mask);
 		ret = -EALREADY;
 		goto unlock;
 	}
 
-	ms = kzalloc_obj(*ms);
+	ms = kzalloc(sizeof(*ms), GFP_KERNEL);
 	if (!ms) {
 		ret = -ENOMEM;
 		goto unlock;
@@ -71,18 +69,12 @@ int ivpu_ms_start_ioctl(struct drm_device *dev, void *data, struct drm_file *fil
 	if (ret)
 		goto err_free_ms;
 
-	buf_size = PAGE_ALIGN((u64)args->read_period_samples * sample_size *
-			      MS_READ_PERIOD_MULTIPLIER * MS_NUM_BUFFERS);
-	if (buf_size > ivpu_hw_range_size(&vdev->hw->ranges.global)) {
-		ivpu_dbg(vdev, IOCTL, "Requested MS buffer size %llu exceeds range size %llu\n",
-			 buf_size, ivpu_hw_range_size(&vdev->hw->ranges.global));
-		ret = -EINVAL;
-		goto err_free_ms;
-	}
-
-	ms->bo = ivpu_bo_create_global(vdev, buf_size, DRM_IVPU_BO_CACHED | DRM_IVPU_BO_MAPPABLE);
+	single_buff_size = sample_size *
+		((u64)args->read_period_samples * MS_READ_PERIOD_MULTIPLIER);
+	ms->bo = ivpu_bo_create_global(vdev, PAGE_ALIGN(single_buff_size * MS_NUM_BUFFERS),
+				       DRM_IVPU_BO_CACHED | DRM_IVPU_BO_MAPPABLE);
 	if (!ms->bo) {
-		ivpu_dbg(vdev, IOCTL, "Failed to allocate MS buffer (size %llu)\n", buf_size);
+		ivpu_err(vdev, "Failed to allocate MS buffer (size %llu)\n", single_buff_size);
 		ret = -ENOMEM;
 		goto err_free_ms;
 	}
@@ -183,8 +175,7 @@ int ivpu_ms_get_data_ioctl(struct drm_device *dev, void *data, struct drm_file *
 
 	ms = get_instance_by_mask(file_priv, args->metric_group_mask);
 	if (!ms) {
-		ivpu_dbg(vdev, IOCTL, "Instance doesn't exist for mask: %#llx\n",
-			 args->metric_group_mask);
+		ivpu_err(vdev, "Instance doesn't exist for mask: %#llx\n", args->metric_group_mask);
 		ret = -EINVAL;
 		goto unlock;
 	}

@@ -225,8 +225,7 @@ static inline void sfq_dec(struct sfq_sched_data *q, sfq_index x)
 
 	sfq_unlink(q, x, n, p);
 
-	d = q->slots[x].qlen;
-	WRITE_ONCE(q->slots[x].qlen, d - 1);
+	d = q->slots[x].qlen--;
 	if (n == p && q->cur_depth == d)
 		q->cur_depth--;
 	sfq_link(q, x);
@@ -239,8 +238,7 @@ static inline void sfq_inc(struct sfq_sched_data *q, sfq_index x)
 
 	sfq_unlink(q, x, n, p);
 
-	d = q->slots[x].qlen + 1;
-	WRITE_ONCE(q->slots[x].qlen, d);
+	d = ++q->slots[x].qlen;
 	if (q->cur_depth < d)
 		q->cur_depth = d;
 	sfq_link(q, x);
@@ -300,11 +298,11 @@ static unsigned int sfq_drop(struct Qdisc *sch, struct sk_buff **to_free)
 drop:
 		skb = q->headdrop ? slot_dequeue_head(slot) : slot_dequeue_tail(slot);
 		len = qdisc_pkt_len(skb);
-		WRITE_ONCE(slot->backlog, slot->backlog - len);
+		slot->backlog -= len;
 		sfq_dec(q, x);
 		sch->q.qlen--;
 		qdisc_qstats_backlog_dec(sch, skb);
-		qdisc_drop_reason(skb, sch, to_free, QDISC_DROP_OVERLIMIT);
+		qdisc_drop(skb, sch, to_free);
 		return len;
 	}
 
@@ -316,7 +314,7 @@ drop:
 			q->tail = NULL; /* no more active slots */
 		else
 			q->tail->next = slot->next;
-		WRITE_ONCE(q->ht[slot->hash], SFQ_EMPTY_SLOT);
+		q->ht[slot->hash] = SFQ_EMPTY_SLOT;
 		goto drop;
 	}
 
@@ -365,11 +363,11 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch, struct sk_buff **to_free)
 	if (x == SFQ_EMPTY_SLOT) {
 		x = q->dep[0].next; /* get a free slot */
 		if (x >= SFQ_MAX_FLOWS)
-			return qdisc_drop_reason(skb, sch, to_free, QDISC_DROP_MAXFLOWS);
-		WRITE_ONCE(q->ht[hash], x);
+			return qdisc_drop(skb, sch, to_free);
+		q->ht[hash] = x;
 		slot = &q->slots[x];
 		slot->hash = hash;
-		WRITE_ONCE(slot->backlog, 0); /* should already be 0 anyway... */
+		slot->backlog = 0; /* should already be 0 anyway... */
 		red_set_vars(&slot->vars);
 		goto enqueue;
 	}
@@ -422,14 +420,14 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch, struct sk_buff **to_free)
 	if (slot->qlen >= q->maxdepth) {
 congestion_drop:
 		if (!sfq_headdrop(q))
-			return qdisc_drop_reason(skb, sch, to_free, QDISC_DROP_FLOW_LIMIT);
+			return qdisc_drop(skb, sch, to_free);
 
 		/* We know we have at least one packet in queue */
 		head = slot_dequeue_head(slot);
 		delta = qdisc_pkt_len(head) - qdisc_pkt_len(skb);
 		sch->qstats.backlog -= delta;
-		WRITE_ONCE(slot->backlog, slot->backlog - delta);
-		qdisc_drop_reason(head, sch, to_free, QDISC_DROP_FLOW_LIMIT);
+		slot->backlog -= delta;
+		qdisc_drop(head, sch, to_free);
 
 		slot_queue_add(slot, skb);
 		qdisc_tree_reduce_backlog(sch, 0, delta);
@@ -438,7 +436,7 @@ congestion_drop:
 
 enqueue:
 	qdisc_qstats_backlog_inc(sch, skb);
-	WRITE_ONCE(slot->backlog, slot->backlog + qdisc_pkt_len(skb));
+	slot->backlog += qdisc_pkt_len(skb);
 	slot_queue_add(slot, skb);
 	sfq_inc(q, x);
 	if (slot->qlen == 1) {		/* The flow is new */
@@ -454,7 +452,7 @@ enqueue:
 		 */
 		q->tail = slot;
 		/* We could use a bigger initial quantum for new flows */
-		WRITE_ONCE(slot->allot, q->quantum);
+		slot->allot = q->quantum;
 	}
 	if (++sch->q.qlen <= q->limit)
 		return NET_XMIT_SUCCESS;
@@ -491,7 +489,7 @@ next_slot:
 	slot = &q->slots[a];
 	if (slot->allot <= 0) {
 		q->tail = slot;
-		WRITE_ONCE(slot->allot, slot->allot + q->quantum);
+		slot->allot += q->quantum;
 		goto next_slot;
 	}
 	skb = slot_dequeue_head(slot);
@@ -499,10 +497,10 @@ next_slot:
 	qdisc_bstats_update(sch, skb);
 	sch->q.qlen--;
 	qdisc_qstats_backlog_dec(sch, skb);
-	WRITE_ONCE(slot->backlog, slot->backlog - qdisc_pkt_len(skb));
+	slot->backlog -= qdisc_pkt_len(skb);
 	/* Is the slot empty? */
 	if (slot->qlen == 0) {
-		WRITE_ONCE(q->ht[slot->hash], SFQ_EMPTY_SLOT);
+		q->ht[slot->hash] = SFQ_EMPTY_SLOT;
 		next_a = slot->next;
 		if (a == next_a) {
 			q->tail = NULL; /* no more active slots */
@@ -510,7 +508,7 @@ next_slot:
 		}
 		q->tail->next = next_a;
 	} else {
-		WRITE_ONCE(slot->allot, slot->allot - qdisc_pkt_len(skb));
+		slot->allot -= qdisc_pkt_len(skb);
 	}
 	return skb;
 }
@@ -551,9 +549,9 @@ static void sfq_rehash(struct Qdisc *sch)
 			sfq_dec(q, i);
 			__skb_queue_tail(&list, skb);
 		}
-		WRITE_ONCE(slot->backlog, 0);
+		slot->backlog = 0;
 		red_set_vars(&slot->vars);
-		WRITE_ONCE(q->ht[slot->hash], SFQ_EMPTY_SLOT);
+		q->ht[slot->hash] = SFQ_EMPTY_SLOT;
 	}
 	q->tail = NULL;
 
@@ -572,7 +570,7 @@ drop:
 				dropped++;
 				continue;
 			}
-			WRITE_ONCE(q->ht[hash], x);
+			q->ht[hash] = x;
 			slot = &q->slots[x];
 			slot->hash = hash;
 		}
@@ -583,7 +581,7 @@ drop:
 			slot->vars.qavg = red_calc_qavg(q->red_parms,
 							&slot->vars,
 							slot->backlog);
-		WRITE_ONCE(slot->backlog, slot->backlog + qdisc_pkt_len(skb));
+		slot->backlog += qdisc_pkt_len(skb);
 		sfq_inc(q, x);
 		if (slot->qlen == 1) {		/* The flow is new */
 			if (q->tail == NULL) {	/* It is the first flow */
@@ -593,7 +591,7 @@ drop:
 				q->tail->next = x;
 			}
 			q->tail = slot;
-			WRITE_ONCE(slot->allot, q->quantum);
+			slot->allot = q->quantum;
 		}
 	}
 	sch->q.qlen -= dropped;
@@ -602,7 +600,7 @@ drop:
 
 static void sfq_perturbation(struct timer_list *t)
 {
-	struct sfq_sched_data *q = timer_container_of(q, t, perturb_timer);
+	struct sfq_sched_data *q = from_timer(q, t, perturb_timer);
 	struct Qdisc *sch = q->sch;
 	spinlock_t *root_lock;
 	siphash_key_t nkey;
@@ -670,7 +668,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt,
 					ctl_v1->Wlog, ctl_v1->Scell_log, NULL))
 		return -EINVAL;
 	if (ctl_v1 && ctl_v1->qth_min) {
-		p = kmalloc_obj(*p);
+		p = kmalloc(sizeof(*p), GFP_KERNEL);
 		if (!p)
 			return -ENOMEM;
 	}
@@ -741,7 +739,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt,
 	rtnl_kfree_skbs(to_free, tail);
 	qdisc_tree_reduce_backlog(sch, qlen - sch->q.qlen, dropped);
 
-	timer_delete(&q->perturb_timer);
+	del_timer(&q->perturb_timer);
 	if (q->perturb_period) {
 		mod_timer(&q->perturb_timer, jiffies + q->perturb_period);
 		get_random_bytes(&q->perturbation, sizeof(q->perturbation));
@@ -767,7 +765,7 @@ static void sfq_destroy(struct Qdisc *sch)
 
 	tcf_block_put(q->block);
 	WRITE_ONCE(q->perturb_period, 0);
-	timer_delete_sync(&q->perturb_timer);
+	del_timer_sync(&q->perturb_timer);
 	sfq_free(q->ht);
 	sfq_free(q->slots);
 	kfree(q->red_parms);
@@ -907,16 +905,16 @@ static int sfq_dump_class_stats(struct Qdisc *sch, unsigned long cl,
 				struct gnet_dump *d)
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
-	sfq_index idx = READ_ONCE(q->ht[cl - 1]);
+	sfq_index idx = q->ht[cl - 1];
 	struct gnet_stats_queue qs = { 0 };
 	struct tc_sfq_xstats xstats = { 0 };
 
 	if (idx != SFQ_EMPTY_SLOT) {
 		const struct sfq_slot *slot = &q->slots[idx];
 
-		xstats.allot = READ_ONCE(slot->allot);
-		qs.qlen = READ_ONCE(slot->qlen);
-		qs.backlog = READ_ONCE(slot->backlog);
+		xstats.allot = slot->allot;
+		qs.qlen = slot->qlen;
+		qs.backlog = slot->backlog;
 	}
 	if (gnet_stats_copy_queue(d, NULL, &qs, qs.qlen) < 0)
 		return -1;
@@ -932,7 +930,7 @@ static void sfq_walk(struct Qdisc *sch, struct qdisc_walker *arg)
 		return;
 
 	for (i = 0; i < q->divisor; i++) {
-		if (READ_ONCE(q->ht[i]) == SFQ_EMPTY_SLOT) {
+		if (q->ht[i] == SFQ_EMPTY_SLOT) {
 			arg->count++;
 			continue;
 		}

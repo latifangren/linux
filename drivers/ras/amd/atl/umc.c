@@ -49,6 +49,17 @@ static u8 get_coh_st_inst_id_mi300(struct atl_err *err)
 	return i;
 }
 
+/* XOR the bits in @val. */
+static u16 bitwise_xor_bits(u16 val)
+{
+	u16 tmp = 0;
+	u8 i;
+
+	for (i = 0; i < 16; i++)
+		tmp ^= (val >> i) & 0x1;
+
+	return tmp;
+}
 
 struct xor_bits {
 	bool	xor_enable;
@@ -239,17 +250,17 @@ static unsigned long convert_dram_to_norm_addr_mi300(unsigned long addr)
 		if (!addr_hash.bank[i].xor_enable)
 			continue;
 
-		temp  = hweight16(col & addr_hash.bank[i].col_xor) & 1;
-		temp ^= hweight16(row & addr_hash.bank[i].row_xor) & 1;
+		temp  = bitwise_xor_bits(col & addr_hash.bank[i].col_xor);
+		temp ^= bitwise_xor_bits(row & addr_hash.bank[i].row_xor);
 		bank ^= temp << i;
 	}
 
 	/* Calculate hash for PC bit. */
 	if (addr_hash.pc.xor_enable) {
-		temp  = hweight16(col & addr_hash.pc.col_xor) & 1;
-		temp ^= hweight16(row & addr_hash.pc.row_xor) & 1;
+		temp  = bitwise_xor_bits(col  & addr_hash.pc.col_xor);
+		temp ^= bitwise_xor_bits(row  & addr_hash.pc.row_xor);
 		/* Bits SID[1:0] act as Bank[5:4] for PC hash, so apply them here. */
-		temp ^= hweight16((bank | sid << NUM_BANK_BITS) & addr_hash.bank_xor) & 1;
+		temp ^= bitwise_xor_bits((bank | sid << NUM_BANK_BITS) & addr_hash.bank_xor);
 		pc   ^= temp;
 	}
 
@@ -411,7 +422,7 @@ unsigned long convert_umc_mca_addr_to_sys_addr(struct atl_err *err)
 		 socket_id, die_id, coh_st_inst_id, addr);
 
 	ret_addr = prm_umc_norm_to_sys_addr(socket_id, err->ipid, addr);
-	if (!IS_ERR_VALUE(ret_addr) || df_cfg.flags.prm_only)
+	if (!IS_ERR_VALUE(ret_addr))
 		return ret_addr;
 
 	return norm_to_sys_addr(socket_id, die_id, coh_st_inst_id, addr);

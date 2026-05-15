@@ -7,7 +7,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -395,7 +394,7 @@ struct drm_privacy_screen *drm_privacy_screen_register(
 	struct drm_privacy_screen *priv;
 	int ret;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return ERR_PTR(-ENOMEM);
 

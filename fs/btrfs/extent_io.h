@@ -12,6 +12,7 @@
 #include <linux/rwsem.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include "compression.h"
 #include "messages.h"
 #include "ulist.h"
 #include "misc.h"
@@ -40,7 +41,10 @@ enum {
 	EXTENT_BUFFER_TREE_REF,
 	EXTENT_BUFFER_STALE,
 	EXTENT_BUFFER_WRITEBACK,
+	/* read IO error */
+	EXTENT_BUFFER_READ_ERR,
 	EXTENT_BUFFER_UNMAPPED,
+	EXTENT_BUFFER_IN_TREE,
 	/* write IO error */
 	EXTENT_BUFFER_WRITE_ERR,
 	/* Indicate the extent buffer is written zeroed out (for zoned) */
@@ -97,10 +101,8 @@ struct extent_buffer {
 	void *addr;
 
 	spinlock_t refs_lock;
-	refcount_t refs;
+	atomic_t refs;
 	int read_mirror;
-	/* Inhibit WB_SYNC_NONE writeback when > 0. */
-	atomic_t writeback_inhibitors;
 	/* >= 0 if eb belongs to a log tree, -1 otherwise */
 	s8 log_index;
 	u8 folio_shift;
@@ -198,30 +200,11 @@ static inline void extent_changeset_init(struct extent_changeset *changeset)
 	ulist_init(&changeset->range_changed);
 }
 
-/*
- * Sentinel value for range_changed.prealloc indicating that the changeset
- * only tracks bytes_changed and does not record individual ranges. This
- * avoids GFP_ATOMIC allocations inside add_extent_changeset() when the
- * caller doesn't need to iterate the changed ranges afterwards.
- */
-#define EXTENT_CHANGESET_BYTES_ONLY	((struct ulist_node *)1)
-
-static inline void extent_changeset_init_bytes_only(struct extent_changeset *changeset)
-{
-	changeset->bytes_changed = 0;
-	changeset->range_changed.prealloc = EXTENT_CHANGESET_BYTES_ONLY;
-}
-
-static inline bool extent_changeset_tracks_ranges(const struct extent_changeset *changeset)
-{
-	return changeset->range_changed.prealloc != EXTENT_CHANGESET_BYTES_ONLY;
-}
-
 static inline struct extent_changeset *extent_changeset_alloc(void)
 {
 	struct extent_changeset *ret;
 
-	ret = kmalloc_obj(*ret);
+	ret = kmalloc(sizeof(*ret), GFP_KERNEL);
 	if (!ret)
 		return NULL;
 
@@ -231,7 +214,6 @@ static inline struct extent_changeset *extent_changeset_alloc(void)
 
 static inline void extent_changeset_prealloc(struct extent_changeset *changeset, gfp_t gfp_mask)
 {
-	ASSERT(extent_changeset_tracks_ranges(changeset));
 	ulist_prealloc(&changeset->range_changed, gfp_mask);
 }
 
@@ -240,8 +222,7 @@ static inline void extent_changeset_release(struct extent_changeset *changeset)
 	if (!changeset)
 		return;
 	changeset->bytes_changed = 0;
-	if (extent_changeset_tracks_ranges(changeset))
-		ulist_release(&changeset->range_changed);
+	ulist_release(&changeset->range_changed);
 }
 
 static inline void extent_changeset_free(struct extent_changeset *changeset)
@@ -261,13 +242,15 @@ void extent_write_locked_range(struct inode *inode, const struct folio *locked_f
 			       bool pages_dirty);
 int btrfs_writepages(struct address_space *mapping, struct writeback_control *wbc);
 int btree_writepages(struct address_space *mapping, struct writeback_control *wbc);
-void btrfs_btree_wait_writeback_range(struct btrfs_fs_info *fs_info, u64 start, u64 end);
 void btrfs_readahead(struct readahead_control *rac);
 int set_folio_extent_mapped(struct folio *folio);
+int set_page_extent_mapped(struct page *page);
 void clear_folio_extent_mapped(struct folio *folio);
 
 struct extent_buffer *alloc_extent_buffer(struct btrfs_fs_info *fs_info,
 					  u64 start, u64 owner_root, int level);
+struct extent_buffer *__alloc_dummy_extent_buffer(struct btrfs_fs_info *fs_info,
+						  u64 start, unsigned long len);
 struct extent_buffer *alloc_dummy_extent_buffer(struct btrfs_fs_info *fs_info,
 						u64 start);
 struct extent_buffer *btrfs_clone_extent_buffer(const struct extent_buffer *src);
@@ -287,12 +270,10 @@ static inline void wait_on_extent_buffer_writeback(struct extent_buffer *eb)
 }
 
 void btrfs_readahead_tree_block(struct btrfs_fs_info *fs_info,
-				u64 bytenr, u64 owner_root, u64 gen, int level,
-				const struct btrfs_key *first_key);
+				u64 bytenr, u64 owner_root, u64 gen, int level);
 void btrfs_readahead_node_child(struct extent_buffer *node, int slot);
 
-/* Note: this can be used in for loops without caching the value in a variable. */
-static inline int __pure num_extent_pages(const struct extent_buffer *eb)
+static inline int num_extent_pages(const struct extent_buffer *eb)
 {
 	/*
 	 * For sectorsize == PAGE_SIZE case, since nodesize is always aligned to
@@ -310,10 +291,8 @@ static inline int __pure num_extent_pages(const struct extent_buffer *eb)
  * As we can have either one large folio covering the whole eb
  * (either nodesize <= PAGE_SIZE, or high order folio), or multiple
  * single-paged folios.
- *
- * Note: this can be used in for loops without caching the value in a variable.
  */
-static inline int __pure num_extent_folios(const struct extent_buffer *eb)
+static inline int num_extent_folios(const struct extent_buffer *eb)
 {
 	if (!eb->folios[0])
 		return 0;
@@ -322,7 +301,7 @@ static inline int __pure num_extent_folios(const struct extent_buffer *eb)
 	return num_extent_pages(eb);
 }
 
-static inline bool extent_buffer_uptodate(const struct extent_buffer *eb)
+static inline int extent_buffer_uptodate(const struct extent_buffer *eb)
 {
 	return test_bit(EXTENT_BUFFER_UPTODATE, &eb->bflags);
 }
@@ -367,8 +346,8 @@ void memmove_extent_buffer(const struct extent_buffer *dst,
 			   unsigned long len);
 void memzero_extent_buffer(const struct extent_buffer *eb, unsigned long start,
 			   unsigned long len);
-bool extent_buffer_test_bit(const struct extent_buffer *eb, unsigned long start,
-			    unsigned long pos);
+int extent_buffer_test_bit(const struct extent_buffer *eb, unsigned long start,
+			   unsigned long pos);
 void extent_buffer_bitmap_set(const struct extent_buffer *eb, unsigned long start,
 			      unsigned long pos, unsigned long len);
 void extent_buffer_bitmap_clear(const struct extent_buffer *eb,
@@ -388,8 +367,7 @@ void btrfs_clear_buffer_dirty(struct btrfs_trans_handle *trans,
 
 int btrfs_alloc_page_array(unsigned int nr_pages, struct page **page_array,
 			   bool nofail);
-int btrfs_alloc_folio_array(unsigned int nr_folios, unsigned int order,
-			    struct folio **folio_array);
+int btrfs_alloc_folio_array(unsigned int nr_folios, struct folio **folio_array);
 
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 bool find_lock_delalloc_range(struct inode *inode,
@@ -404,9 +382,5 @@ void btrfs_extent_buffer_leak_debug_check(struct btrfs_fs_info *fs_info);
 #else
 #define btrfs_extent_buffer_leak_debug_check(fs_info)	do {} while (0)
 #endif
-
-void btrfs_inhibit_eb_writeback(struct btrfs_trans_handle *trans,
-			       struct extent_buffer *eb);
-void btrfs_uninhibit_all_eb_writeback(struct btrfs_trans_handle *trans);
 
 #endif

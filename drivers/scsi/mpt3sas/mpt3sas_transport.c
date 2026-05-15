@@ -331,10 +331,10 @@ struct rep_manu_reply {
 	u8 reserved0[2];
 	u8 sas_format;
 	u8 reserved2[3];
-	u8 vendor_id[SAS_EXPANDER_VENDOR_ID_LEN] __nonstring;
-	u8 product_id[SAS_EXPANDER_PRODUCT_ID_LEN] __nonstring;
-	u8 product_rev[SAS_EXPANDER_PRODUCT_REV_LEN] __nonstring;
-	u8 component_vendor_id[SAS_EXPANDER_COMPONENT_VENDOR_ID_LEN] __nonstring;
+	u8 vendor_id[SAS_EXPANDER_VENDOR_ID_LEN];
+	u8 product_id[SAS_EXPANDER_PRODUCT_ID_LEN];
+	u8 product_rev[SAS_EXPANDER_PRODUCT_REV_LEN];
+	u8 component_vendor_id[SAS_EXPANDER_COMPONENT_VENDOR_ID_LEN];
 	u16 component_id;
 	u8 component_revision_id;
 	u8 reserved3;
@@ -698,7 +698,8 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 		return NULL;
 	}
 
-	mpt3sas_port = kzalloc_obj(struct _sas_port);
+	mpt3sas_port = kzalloc(sizeof(struct _sas_port),
+	    GFP_KERNEL);
 	if (!mpt3sas_port) {
 		ioc_err(ioc, "failure at %s:%d/%s()!\n",
 			__FILE__, __LINE__, __func__);

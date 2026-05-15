@@ -761,7 +761,8 @@ static int tsi148_alloc_resource(struct vme_master_resource *image,
 		goto err_resource;
 	}
 
-	image->kern_base = ioremap(image->bus_resource.start, size);
+	image->kern_base = ioremap(
+		image->bus_resource.start, size);
 	if (!image->kern_base) {
 		dev_err(tsi148_bridge->parent, "Failed to remap resource\n");
 		retval = -ENOMEM;
@@ -1611,7 +1612,7 @@ static int tsi148_dma_list_add(struct vme_dma_list *list, struct vme_dma_attr *s
 	tsi148_bridge = list->parent->parent;
 
 	/* Descriptor must be aligned on 64-bit boundaries */
-	entry = kmalloc_obj(*entry);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry) {
 		retval = -ENOMEM;
 		goto err_mem;
@@ -2260,14 +2261,14 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* If we want to support more than one of each bridge, we need to
 	 * dynamically generate this so we get one per device
 	 */
-	tsi148_bridge = kzalloc_obj(*tsi148_bridge);
+	tsi148_bridge = kzalloc(sizeof(*tsi148_bridge), GFP_KERNEL);
 	if (!tsi148_bridge) {
 		retval = -ENOMEM;
 		goto err_struct;
 	}
 	vme_init_bridge(tsi148_bridge);
 
-	tsi148_device = kzalloc_obj(*tsi148_device);
+	tsi148_device = kzalloc(sizeof(*tsi148_device), GFP_KERNEL);
 	if (!tsi148_device) {
 		retval = -ENOMEM;
 		goto err_driver;
@@ -2332,7 +2333,9 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (err_chk) {
 		master_num--;
 
-		tsi148_device->flush_image = kmalloc_obj(*tsi148_device->flush_image);
+		tsi148_device->flush_image =
+			kmalloc(sizeof(*tsi148_device->flush_image),
+				GFP_KERNEL);
 		if (!tsi148_device->flush_image) {
 			retval = -ENOMEM;
 			goto err_master;
@@ -2348,7 +2351,7 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* Add master windows to list */
 	for (i = 0; i < master_num; i++) {
-		master_image = kmalloc_obj(*master_image);
+		master_image = kmalloc(sizeof(*master_image), GFP_KERNEL);
 		if (!master_image) {
 			retval = -ENOMEM;
 			goto err_master;
@@ -2374,7 +2377,7 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* Add slave windows to list */
 	for (i = 0; i < TSI148_MAX_SLAVE; i++) {
-		slave_image = kmalloc_obj(*slave_image);
+		slave_image = kmalloc(sizeof(*slave_image), GFP_KERNEL);
 		if (!slave_image) {
 			retval = -ENOMEM;
 			goto err_slave;
@@ -2395,7 +2398,7 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* Add dma engines to list */
 	for (i = 0; i < TSI148_MAX_DMA; i++) {
-		dma_ctrlr = kmalloc_obj(*dma_ctrlr);
+		dma_ctrlr = kmalloc(sizeof(*dma_ctrlr), GFP_KERNEL);
 		if (!dma_ctrlr) {
 			retval = -ENOMEM;
 			goto err_dma;
@@ -2415,7 +2418,7 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/* Add location monitor to list */
-	lm = kmalloc_obj(*lm);
+	lm = kmalloc(sizeof(*lm), GFP_KERNEL);
 	if (!lm) {
 		retval = -ENOMEM;
 		goto err_lm;

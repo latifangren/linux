@@ -49,7 +49,9 @@ hfi1-y := \
 	user_pages.o \
 	user_sdma.o \
 	verbs.o \
-	verbs_txreq.o
+	verbs_txreq.o \
+	vnic_main.o \
+	vnic_sdma.o
 
 ifdef CONFIG_DEBUG_FS
 hfi1-y += debugfs.o

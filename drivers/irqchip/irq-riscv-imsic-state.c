@@ -126,15 +126,15 @@ void __imsic_eix_update(unsigned long base_id, unsigned long num_id, bool pend, 
 
 static bool __imsic_local_sync(struct imsic_local_priv *lpriv)
 {
-	struct imsic_local_config *tlocal, *mlocal;
-	struct imsic_vector *vec, *tvec, *mvec;
+	struct imsic_local_config *mlocal;
+	struct imsic_vector *vec, *mvec;
 	bool ret = true;
 	int i;
 
 	lockdep_assert_held(&lpriv->lock);
 
 	for_each_set_bit(i, lpriv->dirty_bitmap, imsic->global.nr_ids + 1) {
-		if (!i || (!imsic_noipi && i == IMSIC_IPI_ID))
+		if (!i || i == IMSIC_IPI_ID)
 			goto skip;
 		vec = &lpriv->vectors[i];
 
@@ -169,35 +169,13 @@ static bool __imsic_local_sync(struct imsic_local_priv *lpriv)
 		 */
 		mvec = READ_ONCE(vec->move_next);
 		if (mvec) {
-			/*
-			 * Devices having non-atomic MSI update might see
-			 * an intermediate state so check both old ID and
-			 * new ID for pending interrupts.
-			 *
-			 * For details, see imsic_irq_set_affinity().
-			 */
-			tvec = vec->local_id == mvec->local_id ?
-				NULL : &lpriv->vectors[mvec->local_id];
-
-			if (tvec && !irq_can_move_in_process_context(irq_get_irq_data(vec->irq)) &&
-			    __imsic_id_read_clear_pending(tvec->local_id)) {
-				/* Retrigger temporary vector if it was already in-use */
-				if (READ_ONCE(tvec->enable)) {
-					tlocal = per_cpu_ptr(imsic->global.local, tvec->cpu);
-					writel_relaxed(tvec->local_id, tlocal->msi_va);
-				}
-
-				mlocal = per_cpu_ptr(imsic->global.local, mvec->cpu);
-				writel_relaxed(mvec->local_id, mlocal->msi_va);
-			}
-
-			if (__imsic_id_read_clear_pending(vec->local_id)) {
+			if (__imsic_id_read_clear_pending(i)) {
 				mlocal = per_cpu_ptr(imsic->global.local, mvec->cpu);
 				writel_relaxed(mvec->local_id, mlocal->msi_va);
 			}
 
 			WRITE_ONCE(vec->move_next, NULL);
-			imsic_vector_free(vec);
+			imsic_vector_free(&lpriv->vectors[i]);
 		}
 
 skip:
@@ -333,23 +311,6 @@ void imsic_vector_unmask(struct imsic_vector *vec)
 	raw_spin_unlock(&lpriv->lock);
 }
 
-void imsic_vector_force_move_cleanup(struct imsic_vector *vec)
-{
-	struct imsic_local_priv *lpriv;
-	struct imsic_vector *mvec;
-	unsigned long flags;
-
-	lpriv = per_cpu_ptr(imsic->lpriv, vec->cpu);
-	raw_spin_lock_irqsave(&lpriv->lock, flags);
-
-	mvec = READ_ONCE(vec->move_prev);
-	WRITE_ONCE(vec->move_prev, NULL);
-	if (mvec)
-		imsic_vector_free(mvec);
-
-	raw_spin_unlock_irqrestore(&lpriv->lock, flags);
-}
-
 static bool imsic_vector_move_update(struct imsic_local_priv *lpriv,
 				     struct imsic_vector *vec, bool is_old_vec,
 				     bool new_enable, struct imsic_vector *move_vec)
@@ -419,7 +380,7 @@ void imsic_vector_debug_show(struct seq_file *m, struct imsic_vector *vec, int i
 	seq_printf(m, "%*starget_cpu      : %5u\n", ind, "", vec->cpu);
 	seq_printf(m, "%*starget_local_id : %5u\n", ind, "", vec->local_id);
 	seq_printf(m, "%*sis_reserved     : %5u\n", ind, "",
-		   (!imsic_noipi && vec->local_id <= IMSIC_IPI_ID) ? 1 : 0);
+		   (vec->local_id <= IMSIC_IPI_ID) ? 1 : 0);
 	seq_printf(m, "%*sis_enabled      : %5u\n", ind, "", is_enabled ? 1 : 0);
 	seq_printf(m, "%*sis_move_pending : %5u\n", ind, "", mvec ? 1 : 0);
 	if (mvec) {
@@ -434,7 +395,17 @@ void imsic_vector_debug_show_summary(struct seq_file *m, int ind)
 }
 #endif
 
-struct imsic_vector *imsic_vector_alloc(unsigned int irq, const struct cpumask *mask)
+struct imsic_vector *imsic_vector_from_local_id(unsigned int cpu, unsigned int local_id)
+{
+	struct imsic_local_priv *lpriv = per_cpu_ptr(imsic->lpriv, cpu);
+
+	if (!lpriv || imsic->global.nr_ids < local_id)
+		return NULL;
+
+	return &lpriv->vectors[local_id];
+}
+
+struct imsic_vector *imsic_vector_alloc(unsigned int hwirq, const struct cpumask *mask)
 {
 	struct imsic_vector *vec = NULL;
 	struct imsic_local_priv *lpriv;
@@ -450,7 +421,7 @@ struct imsic_vector *imsic_vector_alloc(unsigned int irq, const struct cpumask *
 
 	lpriv = per_cpu_ptr(imsic->lpriv, cpu);
 	vec = &lpriv->vectors[local_id];
-	vec->irq = irq;
+	vec->hwirq = hwirq;
 	vec->enable = false;
 	vec->move_next = NULL;
 	vec->move_prev = NULL;
@@ -463,7 +434,7 @@ void imsic_vector_free(struct imsic_vector *vec)
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&imsic->matrix_lock, flags);
-	vec->irq = 0;
+	vec->hwirq = UINT_MAX;
 	irq_matrix_free(imsic->matrix, vec->cpu, vec->local_id, false);
 	raw_spin_unlock_irqrestore(&imsic->matrix_lock, flags);
 }
@@ -512,8 +483,8 @@ static int __init imsic_local_init(void)
 #endif
 
 		/* Allocate vector array */
-		lpriv->vectors = kzalloc_objs(*lpriv->vectors,
-					      global->nr_ids + 1);
+		lpriv->vectors = kcalloc(global->nr_ids + 1, sizeof(*lpriv->vectors),
+					 GFP_KERNEL);
 		if (!lpriv->vectors)
 			goto fail_local_cleanup;
 
@@ -522,7 +493,7 @@ static int __init imsic_local_init(void)
 			vec = &lpriv->vectors[i];
 			vec->cpu = cpu;
 			vec->local_id = i;
-			vec->irq = 0;
+			vec->hwirq = UINT_MAX;
 		}
 	}
 
@@ -554,7 +525,7 @@ void imsic_state_offline(void)
 	struct imsic_local_priv *lpriv = this_cpu_ptr(imsic->lpriv);
 
 	raw_spin_lock_irqsave(&lpriv->lock, flags);
-	WARN_ON_ONCE(timer_delete_sync_try(&lpriv->timer) < 0);
+	WARN_ON_ONCE(try_to_del_timer_sync(&lpriv->timer) < 0);
 	raw_spin_unlock_irqrestore(&lpriv->lock, flags);
 #endif
 }
@@ -573,8 +544,7 @@ static int __init imsic_matrix_init(void)
 	irq_matrix_assign_system(imsic->matrix, 0, false);
 
 	/* Reserve IPI ID because it is special and used internally */
-	if (!imsic_noipi)
-		irq_matrix_assign_system(imsic->matrix, IMSIC_IPI_ID, false);
+	irq_matrix_assign_system(imsic->matrix, IMSIC_IPI_ID, false);
 
 	return 0;
 }
@@ -784,7 +754,7 @@ static int __init imsic_parse_fwnode(struct fwnode_handle *fwnode,
 
 int __init imsic_setup_state(struct fwnode_handle *fwnode, void *opaque)
 {
-	u32 i, j, index, nr_parent_irqs, nr_mmios, nr_guest_files, nr_handlers = 0;
+	u32 i, j, index, nr_parent_irqs, nr_mmios, nr_handlers = 0;
 	struct imsic_global_config *global;
 	struct imsic_local_config *local;
 	void __iomem **mmios_va = NULL;
@@ -810,7 +780,7 @@ int __init imsic_setup_state(struct fwnode_handle *fwnode, void *opaque)
 		return -ENODEV;
 	}
 
-	imsic = kzalloc_obj(*imsic);
+	imsic = kzalloc(sizeof(*imsic), GFP_KERNEL);
 	if (!imsic)
 		return -ENOMEM;
 	imsic->fwnode = fwnode;
@@ -828,14 +798,14 @@ int __init imsic_setup_state(struct fwnode_handle *fwnode, void *opaque)
 		goto out_free_local;
 
 	/* Allocate MMIO resource array */
-	mmios = kzalloc_objs(*mmios, nr_mmios);
+	mmios = kcalloc(nr_mmios, sizeof(*mmios), GFP_KERNEL);
 	if (!mmios) {
 		rc = -ENOMEM;
 		goto out_free_local;
 	}
 
 	/* Allocate MMIO virtual address array */
-	mmios_va = kzalloc_objs(*mmios_va, nr_mmios);
+	mmios_va = kcalloc(nr_mmios, sizeof(*mmios_va), GFP_KERNEL);
 	if (!mmios_va) {
 		rc = -ENOMEM;
 		goto out_iounmap;
@@ -878,7 +848,6 @@ int __init imsic_setup_state(struct fwnode_handle *fwnode, void *opaque)
 	}
 
 	/* Configure handlers for target CPUs */
-	global->nr_guest_files = BIT(global->guest_index_bits) - 1;
 	for (i = 0; i < nr_parent_irqs; i++) {
 		rc = imsic_get_parent_hartid(fwnode, i, &hartid);
 		if (rc) {
@@ -918,15 +887,6 @@ int __init imsic_setup_state(struct fwnode_handle *fwnode, void *opaque)
 		local = per_cpu_ptr(global->local, cpu);
 		local->msi_pa = mmios[index].start + reloff;
 		local->msi_va = mmios_va[index] + reloff;
-
-		/*
-		 * KVM uses global->nr_guest_files to determine the available guest
-		 * interrupt files on each CPU. Take the minimum number of guest
-		 * interrupt files across all CPUs to avoid KVM incorrectly allocating
-		 * an unexisted or unmapped guest interrupt file on some CPUs.
-		 */
-		nr_guest_files = (resource_size(&mmios[index]) - reloff) / IMSIC_MMIO_PAGE_SZ - 1;
-		global->nr_guest_files = min(global->nr_guest_files, nr_guest_files);
 
 		nr_handlers++;
 	}

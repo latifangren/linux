@@ -6,7 +6,7 @@
 #ifndef _ASM_RISCV_SET_MEMORY_H
 #define _ASM_RISCV_SET_MEMORY_H
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 /*
  * Functions to change memory attributes.
  */
@@ -42,12 +42,11 @@ static inline int set_kernel_memory(char *startp, char *endp,
 
 int set_direct_map_invalid_noflush(struct page *page);
 int set_direct_map_default_noflush(struct page *page);
-int set_direct_map_valid_noflush(struct page *page, unsigned nr, bool valid);
 bool kernel_page_present(struct page *page);
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
-#if defined(CONFIG_STRICT_KERNEL_RWX)
+#if defined(CONFIG_STRICT_KERNEL_RWX) || defined(CONFIG_XIP_KERNEL)
 #ifdef CONFIG_64BIT
 #define SECTION_ALIGN (1 << 21)
 #else

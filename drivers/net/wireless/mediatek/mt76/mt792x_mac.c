@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: ISC
 /* Copyright (C) 2023 MediaTek Inc. */
 
 #include <linux/module.h>
@@ -142,7 +142,10 @@ struct mt76_wcid *mt792x_rx_get_wcid(struct mt792x_dev *dev, u16 idx,
 	struct mt792x_sta *sta;
 	struct mt76_wcid *wcid;
 
-	wcid = mt76_wcid_ptr(dev, idx);
+	if (idx >= ARRAY_SIZE(dev->mt76.wcid))
+		return NULL;
+
+	wcid = rcu_dereference(dev->mt76.wcid[idx]);
 	if (unicast || !wcid)
 		return wcid;
 
@@ -375,7 +378,7 @@ void mt792x_pm_power_save_work(struct work_struct *work)
 	}
 
 	if (!mt792x_mcu_fw_pmctrl(dev)) {
-		cancel_delayed_work(&mphy->mac_work);
+		cancel_delayed_work_sync(&mphy->mac_work);
 		return;
 	}
 out:

@@ -18,10 +18,9 @@
 #include <asm/e820/api.h>
 #include <asm/proto.h>
 #include <asm/dma.h>
-#include <asm/numa.h>
-#include <asm/amd/nb.h>
+#include <asm/amd_nb.h>
 
-#include "mm_internal.h"
+#include "numa_internal.h"
 
 int numa_off;
 
@@ -48,8 +47,6 @@ s16 __apicid_to_node[MAX_LOCAL_APIC] = {
 	[0 ... MAX_LOCAL_APIC-1] = NUMA_NO_NODE
 };
 
-nodemask_t numa_phys_nodes_parsed __initdata;
-
 int numa_cpu_node(int cpu)
 {
 	u32 apicid = early_per_cpu(x86_cpu_to_apicid, cpu);
@@ -57,11 +54,6 @@ int numa_cpu_node(int cpu)
 	if (apicid != BAD_APICID)
 		return __apicid_to_node[apicid];
 	return NUMA_NO_NODE;
-}
-
-int __init num_phys_nodes(void)
-{
-	return bitmap_weight(numa_phys_nodes_parsed.bits, MAX_NUMNODES);
 }
 
 cpumask_var_t node_to_cpumask_map[MAX_NUMNODES];
@@ -217,7 +209,6 @@ static int __init dummy_numa_init(void)
 	       0LLU, PFN_PHYS(max_pfn) - 1);
 
 	node_set(0, numa_nodes_parsed);
-	node_set(0, numa_phys_nodes_parsed);
 	numa_add_memblk(0, 0, PFN_PHYS(max_pfn));
 
 	return 0;
@@ -270,7 +261,7 @@ void __init init_gi_nodes(void)
 	 * bringup_nonboot_cpus
 	 *  cpu_up
 	 *   __try_online_node
-	 *    register_node
+	 *    register_one_node
 	 * because node_subsys is not initialized yet.
 	 * TODO remove dependency on node_online
 	 */
@@ -311,7 +302,7 @@ void __init init_cpu_to_node(void)
 		 * bringup_nonboot_cpus
 		 *  cpu_up
 		 *   __try_online_node
-		 *    register_node
+		 *    register_one_node
 		 * because node_subsys is not initialized yet.
 		 * TODO remove dependency on node_online
 		 */

@@ -6,7 +6,6 @@
  */
 
 #include <linux/suspend.h>
-#include <net/sock.h>
 
 #include "main.h"
 #include "wmm.h"
@@ -55,12 +54,12 @@ const u16 mwifiex_1d_to_wmm_queue[8] = { 1, 0, 0, 1, 2, 2, 3, 3 };
  * proper cleanup before exiting.
  */
 static int mwifiex_register(void *card, struct device *dev,
-			    const struct mwifiex_if_ops *if_ops, void **padapter)
+			    struct mwifiex_if_ops *if_ops, void **padapter)
 {
 	struct mwifiex_adapter *adapter;
 	int i;
 
-	adapter = kzalloc_obj(struct mwifiex_adapter);
+	adapter = kzalloc(sizeof(struct mwifiex_adapter), GFP_KERNEL);
 	if (!adapter)
 		return -ENOMEM;
 
@@ -82,7 +81,7 @@ static int mwifiex_register(void *card, struct device *dev,
 	for (i = 0; i < MWIFIEX_MAX_BSS_NUM; i++) {
 		/* Allocate memory for private structure */
 		adapter->priv[i] =
-			kzalloc_obj(struct mwifiex_private);
+			kzalloc(sizeof(struct mwifiex_private), GFP_KERNEL);
 		if (!adapter->priv[i])
 			goto error;
 
@@ -308,7 +307,7 @@ process_start:
 		if (IS_CARD_RX_RCVD(adapter)) {
 			adapter->data_received = false;
 			adapter->pm_wakeup_fw_try = false;
-			timer_delete(&adapter->wakeup_timer);
+			del_timer(&adapter->wakeup_timer);
 			if (adapter->ps_state == PS_STATE_SLEEP)
 				adapter->ps_state = PS_STATE_AWAKE;
 		} else {
@@ -355,6 +354,13 @@ process_start:
 		if (adapter->cmd_resp_received) {
 			adapter->cmd_resp_received = false;
 			mwifiex_process_cmdresp(adapter);
+
+			/* call mwifiex back when init_fw is done */
+			if (adapter->hw_status == MWIFIEX_HW_STATUS_INIT_DONE) {
+				adapter->hw_status = MWIFIEX_HW_STATUS_READY;
+				mwifiex_init_fw_complete(adapter);
+				maybe_quirk_fw_disable_ds(adapter);
+			}
 		}
 
 		/* Check if we need to confirm Sleep Request
@@ -409,7 +415,10 @@ process_start:
 			if (adapter->hs_activated) {
 				clear_bit(MWIFIEX_IS_HS_CONFIGURED,
 					  &adapter->work_flags);
-				mwifiex_hs_activated_event(adapter, false);
+				mwifiex_hs_activated_event
+					(mwifiex_get_priv
+					(adapter, MWIFIEX_BSS_ROLE_ANY),
+					false);
 			}
 		}
 
@@ -429,7 +438,10 @@ process_start:
 			if (adapter->hs_activated) {
 				clear_bit(MWIFIEX_IS_HS_CONFIGURED,
 					  &adapter->work_flags);
-				mwifiex_hs_activated_event(adapter, false);
+				mwifiex_hs_activated_event
+					(mwifiex_get_priv
+					 (adapter, MWIFIEX_BSS_ROLE_ANY),
+					 false);
 			}
 		}
 
@@ -448,7 +460,10 @@ process_start:
 			if (adapter->hs_activated) {
 				clear_bit(MWIFIEX_IS_HS_CONFIGURED,
 					  &adapter->work_flags);
-				mwifiex_hs_activated_event(adapter, false);
+				mwifiex_hs_activated_event
+					(mwifiex_get_priv
+					 (adapter, MWIFIEX_BSS_ROLE_ANY),
+					 false);
 			}
 		}
 
@@ -492,11 +507,6 @@ static void mwifiex_free_adapter(struct mwifiex_adapter *adapter)
 	if (!adapter) {
 		pr_err("%s: adapter is NULL\n", __func__);
 		return;
-	}
-
-	if (adapter->rgpower_data) {
-		release_firmware(adapter->rgpower_data);
-		adapter->rgpower_data = NULL;
 	}
 
 	mwifiex_unregister(adapter);
@@ -577,11 +587,21 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 			goto err_dnld_fw;
 	}
 
+	adapter->init_wait_q_woken = false;
 	ret = mwifiex_init_fw(adapter);
-	if (ret == -1)
+	if (ret == -1) {
 		goto err_init_fw;
-
-	maybe_quirk_fw_disable_ds(adapter);
+	} else if (!ret) {
+		adapter->hw_status = MWIFIEX_HW_STATUS_READY;
+		goto done;
+	}
+	/* Wait for mwifiex_init to complete */
+	if (!adapter->mfg_mode) {
+		wait_event_interruptible(adapter->init_wait_q,
+					 adapter->init_wait_q_woken);
+		if (adapter->hw_status != MWIFIEX_HW_STATUS_READY)
+			goto err_init_fw;
+	}
 
 	if (!adapter->wiphy) {
 		if (mwifiex_register_cfg80211(adapter)) {
@@ -671,6 +691,10 @@ err_dnld_fw:
 
 	init_failed = true;
 done:
+	if (adapter->cal_data) {
+		release_firmware(adapter->cal_data);
+		adapter->cal_data = NULL;
+	}
 	if (adapter->firmware) {
 		release_firmware(adapter->firmware);
 		adapter->firmware = NULL;
@@ -918,7 +942,8 @@ mwifiex_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	multicast = is_multicast_ether_addr(skb->data);
 
-	if (unlikely(!multicast && sk_requests_wifi_status(skb->sk) &&
+	if (unlikely(!multicast && skb->sk &&
+		     skb_shinfo(skb)->tx_flags & SKBTX_WIFI_STATUS &&
 		     priv->adapter->fw_api_ver == MWIFIEX_FW_V15))
 		skb = mwifiex_clone_skb_for_tx_status(priv,
 						      skb,
@@ -1180,7 +1205,7 @@ void mwifiex_drv_info_dump(struct mwifiex_adapter *adapter)
 			p += adapter->if_ops.reg_dump(adapter, p);
 	}
 	p += sprintf(p, "\n=== more debug information\n");
-	debug_info = kzalloc_obj(*debug_info);
+	debug_info = kzalloc(sizeof(*debug_info), GFP_KERNEL);
 	if (debug_info) {
 		for (i = 0; i < adapter->priv_num; i++) {
 			if (!adapter->priv[i]->netdev)
@@ -1346,7 +1371,7 @@ void mwifiex_init_priv_params(struct mwifiex_private *priv,
 
 	if (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA ||
 	    GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_UAP) {
-		priv->hist_data = kmalloc_obj(*priv->hist_data);
+		priv->hist_data = kmalloc(sizeof(*priv->hist_data), GFP_KERNEL);
 		if (priv->hist_data)
 			mwifiex_hist_data_reset(priv);
 	}
@@ -1537,6 +1562,7 @@ mwifiex_reinit_sw(struct mwifiex_adapter *adapter)
 
 	adapter->hw_status = MWIFIEX_HW_STATUS_INITIALIZING;
 	clear_bit(MWIFIEX_SURPRISE_REMOVED, &adapter->work_flags);
+	init_waitqueue_head(&adapter->init_wait_q);
 	clear_bit(MWIFIEX_IS_SUSPENDED, &adapter->work_flags);
 	adapter->hs_activated = false;
 	clear_bit(MWIFIEX_IS_CMD_TIMEDOUT, &adapter->work_flags);
@@ -1687,7 +1713,7 @@ err_exit:
  */
 int
 mwifiex_add_card(void *card, struct completion *fw_done,
-		 const struct mwifiex_if_ops *if_ops, u8 iface_type,
+		 struct mwifiex_if_ops *if_ops, u8 iface_type,
 		 struct device *dev)
 {
 	struct mwifiex_adapter *adapter;
@@ -1704,6 +1730,7 @@ mwifiex_add_card(void *card, struct completion *fw_done,
 
 	adapter->hw_status = MWIFIEX_HW_STATUS_INITIALIZING;
 	clear_bit(MWIFIEX_SURPRISE_REMOVED, &adapter->work_flags);
+	init_waitqueue_head(&adapter->init_wait_q);
 	clear_bit(MWIFIEX_IS_SUSPENDED, &adapter->work_flags);
 	adapter->hs_activated = false;
 	init_waitqueue_head(&adapter->hs_activate_wait_q);

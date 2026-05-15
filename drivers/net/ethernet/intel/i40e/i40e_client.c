@@ -291,7 +291,7 @@ static int i40e_register_auxiliary_dev(struct i40e_info *ldev, const char *name)
 	struct auxiliary_device *aux_dev;
 	int ret;
 
-	i40e_aux_dev = kzalloc_obj(*i40e_aux_dev);
+	i40e_aux_dev = kzalloc(sizeof(*i40e_aux_dev), GFP_KERNEL);
 	if (!i40e_aux_dev)
 		return -ENOMEM;
 
@@ -337,7 +337,7 @@ static void i40e_client_add_instance(struct i40e_pf *pf)
 	struct i40e_client_instance *cdev = NULL;
 	struct netdev_hw_addr *mac = NULL;
 
-	cdev = kzalloc_obj(*cdev);
+	cdev = kzalloc(sizeof(*cdev), GFP_KERNEL);
 	if (!cdev)
 		return;
 
@@ -466,7 +466,7 @@ int i40e_lan_add_device(struct i40e_pf *pf)
 			goto out;
 		}
 	}
-	ldev = kzalloc_obj(*ldev);
+	ldev = kzalloc(sizeof(*ldev), GFP_KERNEL);
 	if (!ldev) {
 		ret = -ENOMEM;
 		goto out;
@@ -566,8 +566,8 @@ static int i40e_client_setup_qvlist(struct i40e_info *ldev,
 	struct i40e_qv_info *qv_info;
 	u32 v_idx, i, reg_idx, reg;
 
-	ldev->qvlist_info = kzalloc_flex(*ldev->qvlist_info, qv_info,
-					 qvlist_info->num_vectors);
+	ldev->qvlist_info = kzalloc(struct_size(ldev->qvlist_info, qv_info,
+				    qvlist_info->num_vectors), GFP_KERNEL);
 	if (!ldev->qvlist_info)
 		return -ENOMEM;
 	ldev->qvlist_info->num_vectors = qvlist_info->num_vectors;
@@ -682,7 +682,9 @@ static int i40e_client_update_vsi_ctxt(struct i40e_info *ldev,
 	if (err) {
 		dev_info(&pf->pdev->dev,
 			 "couldn't get PF vsi config, err %pe aq_err %s\n",
-			 ERR_PTR(err), libie_aq_str(pf->hw.aq.asq_last_status));
+			 ERR_PTR(err),
+			 i40e_aq_str(&pf->hw,
+				     pf->hw.aq.asq_last_status));
 		return -ENOENT;
 	}
 
@@ -709,7 +711,8 @@ static int i40e_client_update_vsi_ctxt(struct i40e_info *ldev,
 			dev_info(&pf->pdev->dev,
 				 "update VSI ctxt for PE failed, err %pe aq_err %s\n",
 				 ERR_PTR(err),
-				 libie_aq_str(pf->hw.aq.asq_last_status));
+				 i40e_aq_str(&pf->hw,
+					     pf->hw.aq.asq_last_status));
 		}
 	}
 	return err;

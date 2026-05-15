@@ -10,7 +10,6 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/videodev2.h>
-#include <linux/prandom.h>
 #include <linux/v4l2-dv-timings.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-event.h>
@@ -25,18 +24,16 @@
 /* Sizes must be in increasing order */
 static const struct v4l2_frmsize_discrete webcam_sizes[] = {
 	{  320, 180 },
-	{  320, 240 },
 	{  640, 360 },
 	{  640, 480 },
 	{ 1280, 720 },
-	{ 1280, 960 },
-	{ 1600, 1200 },
 	{ 1920, 1080 },
 	{ 3840, 2160 },
 };
 
 /*
- * Intervals must be in increasing order.
+ * Intervals must be in increasing order and there must be twice as many
+ * elements in this array as there are in webcam_sizes.
  */
 static const struct v4l2_fract webcam_intervals[] = {
 	{  1, 1 },
@@ -260,6 +257,8 @@ const struct vb2_ops vivid_vid_cap_qops = {
 	.start_streaming	= vid_cap_start_streaming,
 	.stop_streaming		= vid_cap_stop_streaming,
 	.buf_request_complete	= vid_cap_buf_request_complete,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
 };
 
 /*
@@ -302,10 +301,8 @@ void vivid_update_quality(struct vivid_dev *dev)
 	 */
 	freq_modulus = (dev->tv_freq - 676 /* (43.25-1) * 16 */) % (6 * 16);
 	if (freq_modulus > 2 * 16) {
-		struct rnd_state prng;
-		prandom_seed_state(&prng, dev->tv_freq ^ 0x55);
 		tpg_s_quality(&dev->tpg, TPG_QUAL_NOISE,
-			prandom_u32_state(&prng) & 0x3f);
+			next_pseudo_random32(dev->tv_freq ^ 0x55) & 0x3f);
 		return;
 	}
 	if (freq_modulus < 12 /*0.75 * 16*/ || freq_modulus > 20 /*1.25 * 16*/)
@@ -901,7 +898,7 @@ int vivid_vid_cap_g_selection(struct file *file, void *priv,
 	return 0;
 }
 
-int vivid_vid_cap_s_selection(struct file *file, void *priv, struct v4l2_selection *s)
+int vivid_vid_cap_s_selection(struct file *file, void *fh, struct v4l2_selection *s)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 	struct v4l2_rect *crop = &dev->crop_cap;
@@ -1224,7 +1221,7 @@ int vidioc_s_input(struct file *file, void *priv, unsigned i)
 	return 0;
 }
 
-int vidioc_enumaudio(struct file *file, void *priv, struct v4l2_audio *vin)
+int vidioc_enumaudio(struct file *file, void *fh, struct v4l2_audio *vin)
 {
 	if (vin->index >= ARRAY_SIZE(vivid_audio_inputs))
 		return -EINVAL;
@@ -1232,7 +1229,7 @@ int vidioc_enumaudio(struct file *file, void *priv, struct v4l2_audio *vin)
 	return 0;
 }
 
-int vidioc_g_audio(struct file *file, void *priv, struct v4l2_audio *vin)
+int vidioc_g_audio(struct file *file, void *fh, struct v4l2_audio *vin)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1242,7 +1239,7 @@ int vidioc_g_audio(struct file *file, void *priv, struct v4l2_audio *vin)
 	return 0;
 }
 
-int vidioc_s_audio(struct file *file, void *priv, const struct v4l2_audio *vin)
+int vidioc_s_audio(struct file *file, void *fh, const struct v4l2_audio *vin)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1254,7 +1251,7 @@ int vidioc_s_audio(struct file *file, void *priv, const struct v4l2_audio *vin)
 	return 0;
 }
 
-int vivid_video_g_frequency(struct file *file, void *priv, struct v4l2_frequency *vf)
+int vivid_video_g_frequency(struct file *file, void *fh, struct v4l2_frequency *vf)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1264,7 +1261,7 @@ int vivid_video_g_frequency(struct file *file, void *priv, struct v4l2_frequency
 	return 0;
 }
 
-int vivid_video_s_frequency(struct file *file, void *priv, const struct v4l2_frequency *vf)
+int vivid_video_s_frequency(struct file *file, void *fh, const struct v4l2_frequency *vf)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1276,7 +1273,7 @@ int vivid_video_s_frequency(struct file *file, void *priv, const struct v4l2_fre
 	return 0;
 }
 
-int vivid_video_s_tuner(struct file *file, void *priv, const struct v4l2_tuner *vt)
+int vivid_video_s_tuner(struct file *file, void *fh, const struct v4l2_tuner *vt)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1288,7 +1285,7 @@ int vivid_video_s_tuner(struct file *file, void *priv, const struct v4l2_tuner *
 	return 0;
 }
 
-int vivid_video_g_tuner(struct file *file, void *priv, struct v4l2_tuner *vt)
+int vivid_video_g_tuner(struct file *file, void *fh, struct v4l2_tuner *vt)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 	enum tpg_quality qual;
@@ -1492,7 +1489,7 @@ static bool valid_cvt_gtf_timings(struct v4l2_dv_timings *timings)
 	return false;
 }
 
-int vivid_vid_cap_s_dv_timings(struct file *file, void *priv,
+int vivid_vid_cap_s_dv_timings(struct file *file, void *_fh,
 				    struct v4l2_dv_timings *timings)
 {
 	struct vivid_dev *dev = video_drvdata(file);
@@ -1515,7 +1512,7 @@ int vivid_vid_cap_s_dv_timings(struct file *file, void *priv,
 	return 0;
 }
 
-int vidioc_query_dv_timings(struct file *file, void *priv,
+int vidioc_query_dv_timings(struct file *file, void *_fh,
 				    struct v4l2_dv_timings *timings)
 {
 	struct vivid_dev *dev = video_drvdata(file);
@@ -1602,7 +1599,7 @@ void vivid_update_connected_outputs(struct vivid_dev *dev)
 	}
 }
 
-int vidioc_s_edid(struct file *file, void *priv,
+int vidioc_s_edid(struct file *file, void *_fh,
 			 struct v4l2_edid *edid)
 {
 	struct vivid_dev *dev = video_drvdata(file);
@@ -1640,7 +1637,7 @@ int vidioc_s_edid(struct file *file, void *priv,
 	return 0;
 }
 
-int vidioc_enum_framesizes(struct file *file, void *priv,
+int vidioc_enum_framesizes(struct file *file, void *fh,
 					 struct v4l2_frmsizeenum *fsize)
 {
 	struct vivid_dev *dev = video_drvdata(file);

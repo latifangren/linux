@@ -7,6 +7,7 @@
  */
 
 #include "vmlinux.h"
+#include "../trace_augment.h"
 
 #include <bpf/bpf_helpers.h>
 #include <linux/limits.h>
@@ -26,8 +27,6 @@
 
 #define MAX_CPUS  4096
 
-#define TRACE_AUG_MAX_BUF 32 /* for buffer augmentation in perf trace */
-
 /* bpf-output associated map */
 struct __augmented_syscalls__ {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -45,7 +44,7 @@ struct syscalls_sys_enter {
 	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
 	__type(key, __u32);
 	__type(value, __u32);
-	__uint(max_entries, 1024);
+	__uint(max_entries, 512);
 } syscalls_sys_enter SEC(".maps");
 
 /*
@@ -57,7 +56,7 @@ struct syscalls_sys_exit {
 	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
 	__type(key, __u32);
 	__type(value, __u32);
-	__uint(max_entries, 1024);
+	__uint(max_entries, 512);
 } syscalls_sys_exit SEC(".maps");
 
 struct syscall_enter_args {

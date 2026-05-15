@@ -317,19 +317,14 @@ static void ah6_output_done(void *data, int err)
 	struct ipv6hdr *top_iph = ipv6_hdr(skb);
 	struct ip_auth_hdr *ah = ip_auth_hdr(skb);
 	struct tmp_ext *iph_ext;
-	int seqhi_len = 0;
-	__be32 *seqhi;
 
 	extlen = skb_network_header_len(skb) - sizeof(struct ipv6hdr);
 	if (extlen)
 		extlen += sizeof(*iph_ext);
 
-	if (x->props.flags & XFRM_STATE_ESN)
-		seqhi_len = sizeof(*seqhi);
 	iph_base = AH_SKB_CB(skb)->tmp;
 	iph_ext = ah_tmp_ext(iph_base);
-	seqhi = (__be32 *)((char *)iph_ext + extlen);
-	icv = ah_tmp_icv(seqhi, seqhi_len);
+	icv = ah_tmp_icv(iph_ext, extlen);
 
 	memcpy(ah->auth_data, icv, ahp->icv_trunc_len);
 	memcpy(top_iph, iph_base, IPV6HDR_BASELEN);
@@ -476,18 +471,13 @@ static void ah6_input_done(void *data, int err)
 	struct ip_auth_hdr *ah = ip_auth_hdr(skb);
 	int hdr_len = skb_network_header_len(skb);
 	int ah_hlen = ipv6_authlen(ah);
-	int seqhi_len = 0;
-	__be32 *seqhi;
 
 	if (err)
 		goto out;
 
-	if (x->props.flags & XFRM_STATE_ESN)
-		seqhi_len = sizeof(*seqhi);
 	work_iph = AH_SKB_CB(skb)->tmp;
 	auth_data = ah_tmp_auth(work_iph, hdr_len);
-	seqhi = (__be32 *)(auth_data + ahp->icv_trunc_len);
-	icv = ah_tmp_icv(seqhi, seqhi_len);
+	icv = ah_tmp_icv(auth_data, ahp->icv_trunc_len);
 
 	err = crypto_memneq(icv, auth_data, ahp->icv_trunc_len) ? -EBADMSG : 0;
 	if (err)
@@ -701,7 +691,7 @@ static int ah6_init_state(struct xfrm_state *x, struct netlink_ext_ack *extack)
 		goto error;
 	}
 
-	ahp = kzalloc_obj(*ahp);
+	ahp = kzalloc(sizeof(*ahp), GFP_KERNEL);
 	if (!ahp)
 		return -ENOMEM;
 

@@ -445,59 +445,36 @@ up_write:
 }
 
 /*
- * ntfs_check_free_space
+ * ntfs_check_for_free_space
  *
  * Check if it is possible to allocate 'clen' clusters and 'mlen' Mft records
  */
-bool ntfs_check_free_space(struct ntfs_sb_info *sbi, CLST clen, CLST mlen,
-			   bool da)
+bool ntfs_check_for_free_space(struct ntfs_sb_info *sbi, CLST clen, CLST mlen)
 {
 	size_t free, zlen, avail;
 	struct wnd_bitmap *wnd;
-	CLST da_clusters = ntfs_get_da(sbi);
 
 	wnd = &sbi->used.bitmap;
 	down_read_nested(&wnd->rw_lock, BITMAP_MUTEX_CLUSTERS);
 	free = wnd_zeroes(wnd);
-
-	if (free >= da_clusters) {
-		free -= da_clusters;
-	} else {
-		free = 0;
-	}
-
 	zlen = min_t(size_t, NTFS_MIN_MFT_ZONE, wnd_zone_len(wnd));
 	up_read(&wnd->rw_lock);
 
-	if (free < zlen + clen) {
+	if (free < zlen + clen)
 		return false;
-	}
 
 	avail = free - (zlen + clen);
 
-	/* 
-	 * When delalloc is active then keep in mind some reserved space.
-	 * The worst case: 1 mft record per each ~500 clusters.
-	 */
-	if (da) {
-		/* 1 mft record per each 1024 clusters. */
-		mlen += da_clusters >> 10;
-	}
+	wnd = &sbi->mft.bitmap;
+	down_read_nested(&wnd->rw_lock, BITMAP_MUTEX_MFT);
+	free = wnd_zeroes(wnd);
+	zlen = wnd_zone_len(wnd);
+	up_read(&wnd->rw_lock);
 
-	if (mlen || !avail) {
-		wnd = &sbi->mft.bitmap;
-		down_read_nested(&wnd->rw_lock, BITMAP_MUTEX_MFT);
-		free = wnd_zeroes(wnd);
-		zlen = wnd_zone_len(wnd);
-		up_read(&wnd->rw_lock);
+	if (free >= zlen + mlen)
+		return true;
 
-		if (free < zlen + mlen &&
-		    avail < bytes_to_cluster(sbi, mlen << sbi->record_bits)) {
-			return false;
-		}
-	}
-
-	return true;
+	return avail >= bytes_to_cluster(sbi, mlen << sbi->record_bits);
 }
 
 /*
@@ -532,8 +509,8 @@ static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 
 	/* Step 1: Resize $MFT::DATA. */
 	down_write(&ni->file.run_lock);
-	err = attr_set_size_ex(ni, ATTR_DATA, NULL, 0, &ni->file.run,
-			       new_mft_bytes, NULL, false, &attr, false);
+	err = attr_set_size(ni, ATTR_DATA, NULL, 0, &ni->file.run,
+			    new_mft_bytes, NULL, false, &attr);
 
 	if (err) {
 		up_write(&ni->file.run_lock);
@@ -548,7 +525,7 @@ static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 	new_bitmap_bytes = ntfs3_bitmap_size(new_mft_total);
 
 	err = attr_set_size(ni, ATTR_BITMAP, NULL, 0, &sbi->mft.bitmap.run,
-			    new_bitmap_bytes, &new_bitmap_bytes, true);
+			    new_bitmap_bytes, &new_bitmap_bytes, true, NULL);
 
 	/* Refresh MFT Zone if necessary. */
 	down_write_nested(&sbi->used.bitmap.rw_lock, BITMAP_MUTEX_CLUSTERS);
@@ -866,8 +843,9 @@ int ntfs_refresh_zone(struct ntfs_sb_info *sbi)
 /*
  * ntfs_update_mftmirr - Update $MFTMirr data.
  */
-void ntfs_update_mftmirr(struct ntfs_sb_info *sbi)
+void ntfs_update_mftmirr(struct ntfs_sb_info *sbi, int wait)
 {
+	int err;
 	struct super_block *sb = sbi->sb;
 	u32 blocksize, bytes;
 	sector_t block1, block2;
@@ -897,7 +875,9 @@ void ntfs_update_mftmirr(struct ntfs_sb_info *sbi)
 			return;
 		}
 
-		wait_on_buffer(bh2);
+		if (buffer_locked(bh2))
+			__wait_on_buffer(bh2);
+
 		lock_buffer(bh2);
 		memcpy(bh2->b_data, bh1->b_data, blocksize);
 		set_buffer_uptodate(bh2);
@@ -906,7 +886,12 @@ void ntfs_update_mftmirr(struct ntfs_sb_info *sbi)
 
 		put_bh(bh1);
 		bh1 = NULL;
+
+		err = wait ? sync_dirty_buffer(bh2) : 0;
+
 		put_bh(bh2);
+		if (err)
+			return;
 	}
 
 	sbi->flags &= ~NTFS_FLAGS_MFTMIRR;
@@ -920,13 +905,9 @@ void ntfs_update_mftmirr(struct ntfs_sb_info *sbi)
 void ntfs_bad_inode(struct inode *inode, const char *hint)
 {
 	struct ntfs_sb_info *sbi = inode->i_sb->s_fs_info;
-	struct ntfs_inode *ni = ntfs_i(inode);
 
 	ntfs_inode_err(inode, "%s", hint);
-
-	/* Do not call make_bad_inode()! */
-	ni->ni_bad = true;
-
+	make_bad_inode(inode);
 	/* Avoid recursion if bad inode is $Volume. */
 	if (inode->i_ino != MFT_REC_VOL &&
 	    !(sbi->flags & NTFS_FLAGS_LOG_REPLAYING)) {
@@ -1054,6 +1035,34 @@ struct buffer_head *ntfs_bread(struct super_block *sb, sector_t block)
 	return NULL;
 }
 
+int ntfs_sb_read(struct super_block *sb, u64 lbo, size_t bytes, void *buffer)
+{
+	struct block_device *bdev = sb->s_bdev;
+	u32 blocksize = sb->s_blocksize;
+	u64 block = lbo >> sb->s_blocksize_bits;
+	u32 off = lbo & (blocksize - 1);
+	u32 op = blocksize - off;
+
+	for (; bytes; block += 1, off = 0, op = blocksize) {
+		struct buffer_head *bh = __bread(bdev, block, blocksize);
+
+		if (!bh)
+			return -EIO;
+
+		if (op > bytes)
+			op = bytes;
+
+		memcpy(buffer, bh->b_data + off, op);
+
+		put_bh(bh);
+
+		bytes -= op;
+		buffer = Add2Ptr(buffer, op);
+	}
+
+	return 0;
+}
+
 int ntfs_sb_write(struct super_block *sb, u64 lbo, size_t bytes,
 		  const void *buf, int wait)
 {
@@ -1084,7 +1093,9 @@ int ntfs_sb_write(struct super_block *sb, u64 lbo, size_t bytes,
 				return -ENOMEM;
 		}
 
-		wait_on_buffer(bh);
+		if (buffer_locked(bh))
+			__wait_on_buffer(bh);
+
 		lock_buffer(bh);
 		if (buf) {
 			memcpy(bh->b_data + off, buf, op);
@@ -1181,13 +1192,11 @@ struct buffer_head *ntfs_bread_run(struct ntfs_sb_info *sbi,
 	return ntfs_bread(sb, lbo >> sb->s_blocksize_bits);
 }
 
-int ntfs_read_run_nb_ra(struct ntfs_sb_info *sbi, const struct runs_tree *run,
-			u64 vbo, void *buf, u32 bytes, struct ntfs_buffers *nb,
-			struct file_ra_state *ra)
+int ntfs_read_run_nb(struct ntfs_sb_info *sbi, const struct runs_tree *run,
+		     u64 vbo, void *buf, u32 bytes, struct ntfs_buffers *nb)
 {
 	int err;
 	struct super_block *sb = sbi->sb;
-	struct address_space *mapping = sb->s_bdev->bd_mapping;
 	u32 blocksize = sb->s_blocksize;
 	u8 cluster_bits = sbi->cluster_bits;
 	u32 off = vbo & sbi->cluster_mask;
@@ -1227,21 +1236,9 @@ int ntfs_read_run_nb_ra(struct ntfs_sb_info *sbi, const struct runs_tree *run,
 		nb->bytes = bytes;
 	}
 
-	if (ra && !ra->ra_pages)
-		file_ra_state_init(ra, mapping);
-
 	for (;;) {
 		u32 len32 = len >= bytes ? bytes : len;
 		sector_t block = lbo >> sb->s_blocksize_bits;
-
-		if (ra) {
-			pgoff_t index = lbo >> PAGE_SHIFT;
-			if (!ra_has_index(ra, index)) {
-				page_cache_sync_readahead(mapping, ra, NULL,
-							  index, 1);
-				ra->prev_pos = (loff_t)index << PAGE_SHIFT;
-			}
-		}
 
 		do {
 			u32 op = blocksize - off;
@@ -1319,11 +1316,11 @@ out:
  *
  * Return: < 0 if error, 0 if ok, -E_NTFS_FIXUP if need to update fixups.
  */
-int ntfs_read_bh_ra(struct ntfs_sb_info *sbi, const struct runs_tree *run,
-		    u64 vbo, struct NTFS_RECORD_HEADER *rhdr, u32 bytes,
-		    struct ntfs_buffers *nb, struct file_ra_state *ra)
+int ntfs_read_bh(struct ntfs_sb_info *sbi, const struct runs_tree *run, u64 vbo,
+		 struct NTFS_RECORD_HEADER *rhdr, u32 bytes,
+		 struct ntfs_buffers *nb)
 {
-	int err = ntfs_read_run_nb_ra(sbi, run, vbo, rhdr, bytes, nb, ra);
+	int err = ntfs_read_run_nb(sbi, run, vbo, rhdr, bytes, nb);
 
 	if (err)
 		return err;
@@ -1380,9 +1377,12 @@ int ntfs_get_bh(struct ntfs_sb_info *sbi, const struct runs_tree *run, u64 vbo,
 					err = -ENOMEM;
 					goto out;
 				}
-				wait_on_buffer(bh);
+				if (buffer_locked(bh))
+					__wait_on_buffer(bh);
+
 				lock_buffer(bh);
-				if (!buffer_uptodate(bh)) {
+				if (!buffer_uptodate(bh))
+				{
 					memset(bh->b_data, 0, blocksize);
 					set_buffer_uptodate(bh);
 				}
@@ -1440,8 +1440,8 @@ int ntfs_write_bh(struct ntfs_sb_info *sbi, struct NTFS_RECORD_HEADER *rhdr,
 	u16 fo = le16_to_cpu(rhdr->fix_off);
 	u16 fn = le16_to_cpu(rhdr->fix_num);
 	u32 idx;
-	__le16 *fixup = NULL;
-	__le16 sample = cpu_to_le16(-1u);
+	__le16 *fixup;
+	__le16 sample;
 
 	if ((fo & 1) || fo + fn * sizeof(short) > SECTOR_SIZE || !fn-- ||
 	    fn * SECTOR_SIZE > bytes) {
@@ -1457,7 +1457,9 @@ int ntfs_write_bh(struct ntfs_sb_info *sbi, struct NTFS_RECORD_HEADER *rhdr,
 		if (op > bytes)
 			op = bytes;
 
-		wait_on_buffer(bh);
+		if (buffer_locked(bh))
+			__wait_on_buffer(bh);
+
 		lock_buffer(bh);
 
 		bh_data = bh->b_data + off;
@@ -1507,86 +1509,99 @@ int ntfs_write_bh(struct ntfs_sb_info *sbi, struct NTFS_RECORD_HEADER *rhdr,
 }
 
 /*
- * ntfs_read_write_run - Read/Write disk's page cache.
+ * ntfs_bio_pages - Read/write pages from/to disk.
  */
-int ntfs_read_write_run(struct ntfs_sb_info *sbi, const struct runs_tree *run,
-			void *buf, u64 vbo, size_t bytes, int wr)
+int ntfs_bio_pages(struct ntfs_sb_info *sbi, const struct runs_tree *run,
+		   struct page **pages, u32 nr_pages, u64 vbo, u32 bytes,
+		   enum req_op op)
 {
+	int err = 0;
+	struct bio *new, *bio = NULL;
 	struct super_block *sb = sbi->sb;
-	struct address_space *mapping = sb->s_bdev->bd_mapping;
+	struct block_device *bdev = sb->s_bdev;
+	struct page *page;
 	u8 cluster_bits = sbi->cluster_bits;
-	CLST vcn_next, vcn = vbo >> cluster_bits;
-	CLST lcn, clen;
+	CLST lcn, clen, vcn, vcn_next;
+	u32 add, off, page_idx;
 	u64 lbo, len;
-	size_t idx;
-	u32 off, op;
-	struct folio *folio;
-	char *kaddr;
+	size_t run_idx;
+	struct blk_plug plug;
 
 	if (!bytes)
 		return 0;
 
-	if (!run_lookup_entry(run, vcn, &lcn, &clen, &idx))
-		return -ENOENT;
+	blk_start_plug(&plug);
 
-	if (lcn == SPARSE_LCN)
-		return -EINVAL;
+	/* Align vbo and bytes to be 512 bytes aligned. */
+	lbo = (vbo + bytes + 511) & ~511ull;
+	vbo = vbo & ~511ull;
+	bytes = lbo - vbo;
 
+	vcn = vbo >> cluster_bits;
+	if (!run_lookup_entry(run, vcn, &lcn, &clen, &run_idx)) {
+		err = -ENOENT;
+		goto out;
+	}
 	off = vbo & sbi->cluster_mask;
-	lbo = ((u64)lcn << cluster_bits) + off;
-	len = ((u64)clen << cluster_bits) - off;
+	page_idx = 0;
+	page = pages[0];
 
 	for (;;) {
-		/* Read range [lbo, lbo+len). */
-		folio = read_mapping_folio(mapping, lbo >> PAGE_SHIFT, NULL);
-
-		if (IS_ERR(folio))
-			return PTR_ERR(folio);
-
-		off = offset_in_page(lbo);
-		op = PAGE_SIZE - off;
-
-		if (op > len)
-			op = len;
-		if (op > bytes)
-			op = bytes;
-
-		kaddr = kmap_local_folio(folio, 0);
-		if (wr) {
-			memcpy(kaddr + off, buf, op);
-			folio_mark_dirty(folio);
-		} else {
-			memcpy(buf, kaddr + off, op);
-			flush_dcache_folio(folio);
+		lbo = ((u64)lcn << cluster_bits) + off;
+		len = ((u64)clen << cluster_bits) - off;
+new_bio:
+		new = bio_alloc(bdev, nr_pages - page_idx, op, GFP_NOFS);
+		if (bio) {
+			bio_chain(bio, new);
+			submit_bio(bio);
 		}
-		kunmap_local(kaddr);
-		folio_put(folio);
+		bio = new;
+		bio->bi_iter.bi_sector = lbo >> 9;
 
-		bytes -= op;
-		if (!bytes)
-			return 0;
+		while (len) {
+			off = vbo & (PAGE_SIZE - 1);
+			add = off + len > PAGE_SIZE ? (PAGE_SIZE - off) : len;
 
-		buf += op;
-		len -= op;
-		if (len) {
-			/* next volume's page. */
-			lbo += op;
-			continue;
+			if (bio_add_page(bio, page, add, off) < add)
+				goto new_bio;
+
+			if (bytes <= add)
+				goto out;
+			bytes -= add;
+			vbo += add;
+
+			if (add + off == PAGE_SIZE) {
+				page_idx += 1;
+				if (WARN_ON(page_idx >= nr_pages)) {
+					err = -EINVAL;
+					goto out;
+				}
+				page = pages[page_idx];
+			}
+
+			if (len <= add)
+				break;
+			len -= add;
+			lbo += add;
 		}
 
-		/* get next range. */
 		vcn_next = vcn + clen;
-		if (!run_get_entry(run, ++idx, &vcn, &lcn, &clen) ||
+		if (!run_get_entry(run, ++run_idx, &vcn, &lcn, &clen) ||
 		    vcn != vcn_next) {
-			return -ENOENT;
+			err = -ENOENT;
+			goto out;
 		}
-
-		if (lcn == SPARSE_LCN)
-			return -EINVAL;
-
-		lbo = ((u64)lcn << cluster_bits);
-		len = ((u64)clen << cluster_bits);
+		off = 0;
 	}
+out:
+	if (bio) {
+		if (!err)
+			err = submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	blk_finish_plug(&plug);
+
+	return err;
 }
 
 /*
@@ -2214,7 +2229,7 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	if (new_sds_size > ni->vfs_inode.i_size) {
 		err = attr_set_size(ni, ATTR_DATA, SDS_NAME,
 				    ARRAY_SIZE(SDS_NAME), &ni->file.run,
-				    new_sds_size, &new_sds_size, false);
+				    new_sds_size, &new_sds_size, false, NULL);
 		if (err)
 			goto out;
 	}
@@ -2655,7 +2670,7 @@ int ntfs_set_label(struct ntfs_sb_info *sbi, u8 *label, int len)
 	u32 uni_bytes;
 	struct ntfs_inode *ni = sbi->volume.ni;
 	/* Allocate PATH_MAX bytes. */
-	struct cpu_str *uni = kmalloc(PATH_MAX, GFP_KERNEL);
+	struct cpu_str *uni = __getname();
 
 	if (!uni)
 		return -ENOMEM;
@@ -2699,6 +2714,6 @@ unlock_out:
 		err = _ni_write_inode(&ni->vfs_inode, 0);
 
 out:
-	kfree(uni);
+	__putname(uni);
 	return err;
 }

@@ -9,3 +9,10 @@ GPIO
 
     Character Device Userspace API <chardev>
     Obsolete Userspace APIs <obsolete>
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

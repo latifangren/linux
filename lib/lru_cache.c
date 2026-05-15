@@ -94,14 +94,14 @@ struct lru_cache *lc_create(const char *name, struct kmem_cache *cache,
 	if (e_count > LC_MAX_ACTIVE)
 		return NULL;
 
-	slot = kzalloc_objs(struct hlist_head, e_count);
+	slot = kcalloc(e_count, sizeof(struct hlist_head), GFP_KERNEL);
 	if (!slot)
 		goto out_fail;
-	element = kzalloc_objs(struct lc_element *, e_count);
+	element = kcalloc(e_count, sizeof(struct lc_element *), GFP_KERNEL);
 	if (!element)
 		goto out_fail;
 
-	lc = kzalloc_obj(*lc);
+	lc = kzalloc(sizeof(*lc), GFP_KERNEL);
 	if (!lc)
 		goto out_fail;
 

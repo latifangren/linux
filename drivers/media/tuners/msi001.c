@@ -426,7 +426,7 @@ static int msi001_probe(struct spi_device *spi)
 
 	dev_dbg(&spi->dev, "\n");
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto err;

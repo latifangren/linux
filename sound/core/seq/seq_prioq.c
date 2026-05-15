@@ -43,7 +43,7 @@ struct snd_seq_prioq *snd_seq_prioq_new(void)
 {
 	struct snd_seq_prioq *f;
 
-	f = kzalloc_obj(*f);
+	f = kzalloc(sizeof(*f), GFP_KERNEL);
 	if (!f)
 		return NULL;
 	

@@ -45,7 +45,11 @@
 #define MLX5_SECTAG_HEADER_SIZE_WITHOUT_SCI 0x8
 #define MLX5_SECTAG_HEADER_SIZE_WITH_SCI (MLX5_SECTAG_HEADER_SIZE_WITHOUT_SCI + MACSEC_SCI_LEN)
 
+/* MACsec RX flow steering */
+#define MLX5_ETH_WQE_FT_META_MACSEC_MASK 0x3E
+
 /* MACsec fs_id handling for steering */
+#define macsec_fs_set_tx_fs_id(fs_id) (MLX5_ETH_WQE_FT_META_MACSEC | (fs_id) << 2)
 #define macsec_fs_set_rx_fs_id(fs_id) ((fs_id) | BIT(30))
 
 struct mlx5_sectag_header {
@@ -267,7 +271,7 @@ static int macsec_fs_tx_create_crypto_table_groups(struct mlx5_macsec_flow_table
 	int err;
 	u8 *mc;
 
-	ft->g = kzalloc_objs(*ft->g, TX_CRYPTO_TABLE_NUM_GROUPS);
+	ft->g = kcalloc(TX_CRYPTO_TABLE_NUM_GROUPS, sizeof(*ft->g), GFP_KERNEL);
 	if (!ft->g)
 		return -ENOMEM;
 	in = kvzalloc(inlen, GFP_KERNEL);
@@ -404,7 +408,7 @@ static int macsec_fs_tx_create(struct mlx5_macsec_fs *macsec_fs)
 	if (!ns)
 		return -ENOMEM;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 
@@ -493,7 +497,7 @@ static int macsec_fs_tx_create(struct mlx5_macsec_fs *macsec_fs)
 	memset(&dest, 0, sizeof(struct mlx5_flow_destination));
 	memset(&flow_act, 0, sizeof(flow_act));
 	dest.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-	dest.counter = tx_tables->check_miss_rule_counter;
+	dest.counter_id = mlx5_fc_id(tx_tables->check_miss_rule_counter);
 	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_DROP | MLX5_FLOW_CONTEXT_ACTION_COUNT;
 	rule = mlx5_add_flow_rules(tx_tables->ft_check,  NULL, &flow_act, &dest, 1);
 	if (IS_ERR(rule)) {
@@ -515,7 +519,7 @@ static int macsec_fs_tx_create(struct mlx5_macsec_fs *macsec_fs)
 	flow_act.flags = FLOW_ACT_NO_APPEND;
 	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_ALLOW | MLX5_FLOW_CONTEXT_ACTION_COUNT;
 	dest.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-	dest.counter = tx_tables->check_rule_counter;
+	dest.counter_id = mlx5_fc_id(tx_tables->check_rule_counter);
 	rule = mlx5_add_flow_rules(tx_tables->ft_check, spec, &flow_act, &dest, 1);
 	if (IS_ERR(rule)) {
 		err = PTR_ERR(rule);
@@ -593,7 +597,7 @@ static int macsec_fs_tx_setup_fte(struct mlx5_macsec_fs *macsec_fs,
 	MLX5_SET(fte_match_param, spec->match_criteria, misc_parameters_2.metadata_reg_a,
 		 MLX5_ETH_WQE_FT_META_MACSEC_MASK);
 	MLX5_SET(fte_match_param, spec->match_value, misc_parameters_2.metadata_reg_a,
-		 MLX5_MACSEC_TX_METADATA(id));
+		 macsec_fs_set_tx_fs_id(id));
 
 	*fs_id = id;
 	flow_act->crypto.type = MLX5_FLOW_CONTEXT_ENCRYPT_DECRYPT_TYPE_MACSEC;
@@ -713,7 +717,7 @@ static int macsec_fs_id_add(struct list_head *macsec_devices_list, u32 fs_id,
 		rcu_read_unlock();
 	}
 
-	fs_id_iter = kzalloc_obj(*fs_id_iter);
+	fs_id_iter = kzalloc(sizeof(*fs_id_iter), GFP_KERNEL);
 	if (!fs_id_iter)
 		return -ENOMEM;
 
@@ -725,7 +729,7 @@ static int macsec_fs_id_add(struct list_head *macsec_devices_list, u32 fs_id,
 	}
 
 	if (!macsec_device) { /* first time adding a SA to that device */
-		macsec_device = kzalloc_obj(*macsec_device);
+		macsec_device = kzalloc(sizeof(*macsec_device), GFP_KERNEL);
 		if (!macsec_device) {
 			err = -ENOMEM;
 			goto err_alloc_dev;
@@ -813,7 +817,7 @@ macsec_fs_tx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 
 	tx_tables = &tx_fs->tables;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return NULL;
 
@@ -821,7 +825,7 @@ macsec_fs_tx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 	if (err)
 		goto out_spec;
 
-	macsec_rule = kzalloc_obj(*macsec_rule);
+	macsec_rule = kzalloc(sizeof(*macsec_rule), GFP_KERNEL);
 	if (!macsec_rule) {
 		macsec_fs_tx_ft_put(macsec_fs);
 		goto out_spec;
@@ -931,7 +935,7 @@ static int macsec_fs_tx_init(struct mlx5_macsec_fs *macsec_fs)
 	struct mlx5_fc *flow_counter;
 	int err;
 
-	tx_fs = kzalloc_obj(*tx_fs);
+	tx_fs = kzalloc(sizeof(*tx_fs), GFP_KERNEL);
 	if (!tx_fs)
 		return -ENOMEM;
 
@@ -1055,7 +1059,7 @@ static int macsec_fs_rx_create_crypto_table_groups(struct mlx5_macsec_flow_table
 	int err;
 	u8 *mc;
 
-	ft->g = kzalloc_objs(*ft->g, RX_CRYPTO_TABLE_NUM_GROUPS);
+	ft->g = kcalloc(RX_CRYPTO_TABLE_NUM_GROUPS, sizeof(*ft->g), GFP_KERNEL);
 	if (!ft->g)
 		return -ENOMEM;
 
@@ -1196,7 +1200,7 @@ static int macsec_fs_rx_create_check_decap_rule(struct mlx5_macsec_fs *macsec_fs
 	flow_act->action |= MLX5_FLOW_CONTEXT_ACTION_PACKET_REFORMAT |
 			    MLX5_FLOW_CONTEXT_ACTION_COUNT;
 	roce_dest[dstn].type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-	roce_dest[dstn].counter = rx_tables->check_rule_counter;
+	roce_dest[dstn].counter_id = mlx5_fc_id(rx_tables->check_rule_counter);
 	rule = mlx5_add_flow_rules(rx_tables->ft_check, spec, flow_act, roce_dest, dstn + 1);
 
 	if (IS_ERR(rule)) {
@@ -1327,7 +1331,7 @@ static int macsec_fs_rx_roce_jump_to_rdma_rules_create(struct mlx5_macsec_fs *ma
 	struct mlx5_flow_spec *spec;
 	int err;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 
@@ -1510,7 +1514,7 @@ static int macsec_fs_rx_create(struct mlx5_macsec_fs *macsec_fs)
 	if (!ns)
 		return -ENOMEM;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 
@@ -1588,7 +1592,7 @@ static int macsec_fs_rx_create(struct mlx5_macsec_fs *macsec_fs)
 	memset(&flow_act, 0, sizeof(flow_act));
 
 	dest.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-	dest.counter = rx_tables->check_miss_rule_counter;
+	dest.counter_id = mlx5_fc_id(rx_tables->check_miss_rule_counter);
 	flow_act.action = MLX5_FLOW_CONTEXT_ACTION_DROP | MLX5_FLOW_CONTEXT_ACTION_COUNT;
 	rule = mlx5_add_flow_rules(rx_tables->ft_check,  NULL, &flow_act, &dest, 1);
 	if (IS_ERR(rule)) {
@@ -1739,7 +1743,7 @@ macsec_fs_rx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 	struct mlx5_flow_spec *spec;
 	int err = 0;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return NULL;
 
@@ -1747,7 +1751,7 @@ macsec_fs_rx_add_rule(struct mlx5_macsec_fs *macsec_fs,
 	if (err)
 		goto out_spec;
 
-	macsec_rule = kzalloc_obj(*macsec_rule);
+	macsec_rule = kzalloc(sizeof(*macsec_rule), GFP_KERNEL);
 	if (!macsec_rule) {
 		macsec_fs_rx_ft_put(macsec_fs);
 		goto out_spec;
@@ -1847,7 +1851,7 @@ static int macsec_fs_rx_init(struct mlx5_macsec_fs *macsec_fs)
 	struct mlx5_fc *flow_counter;
 	int err;
 
-	rx_fs = kzalloc_obj(*rx_fs);
+	rx_fs =	kzalloc(sizeof(*rx_fs), GFP_KERNEL);
 	if (!rx_fs)
 		return -ENOMEM;
 
@@ -2132,11 +2136,11 @@ static int mlx5_macsec_fs_add_roce_rule_rx(struct mlx5_macsec_fs *macsec_fs, u32
 	struct mlx5_flow_spec *spec;
 	int err = 0;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 
-	rx_rule = kzalloc_obj(*rx_rule);
+	rx_rule = kzalloc(sizeof(*rx_rule), GFP_KERNEL);
 	if (!rx_rule) {
 		err = -ENOMEM;
 		goto out;
@@ -2201,11 +2205,11 @@ static int mlx5_macsec_fs_add_roce_rule_tx(struct mlx5_macsec_fs *macsec_fs, u32
 	struct mlx5_flow_spec *spec;
 	int err = 0;
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 
-	tx_rule = kzalloc_obj(*tx_rule);
+	tx_rule = kzalloc(sizeof(*tx_rule), GFP_KERNEL);
 	if (!tx_rule) {
 		err = -ENOMEM;
 		goto out;
@@ -2215,11 +2219,9 @@ static int mlx5_macsec_fs_add_roce_rule_tx(struct mlx5_macsec_fs *macsec_fs, u32
 
 	MLX5_SET(set_action_in, action, action_type, MLX5_ACTION_TYPE_SET);
 	MLX5_SET(set_action_in, action, field, MLX5_ACTION_IN_FIELD_METADATA_REG_A);
-	MLX5_SET(set_action_in, action, data,
-		 mlx5_macsec_fs_set_tx_fs_id(fs_id));
-	MLX5_SET(set_action_in, action, offset,
-		 MLX5_ETH_WQE_FT_META_MACSEC_SHIFT);
-	MLX5_SET(set_action_in, action, length, 8);
+	MLX5_SET(set_action_in, action, data, macsec_fs_set_tx_fs_id(fs_id));
+	MLX5_SET(set_action_in, action, offset, 0);
+	MLX5_SET(set_action_in, action, length, 32);
 
 	modify_hdr = mlx5_modify_header_alloc(mdev, MLX5_FLOW_NAMESPACE_RDMA_TX_MACSEC,
 					      1, action);
@@ -2361,7 +2363,7 @@ mlx5_macsec_fs_init(struct mlx5_core_dev *mdev)
 	struct mlx5_macsec_fs *macsec_fs;
 	int err;
 
-	macsec_fs = kzalloc_obj(*macsec_fs);
+	macsec_fs = kzalloc(sizeof(*macsec_fs), GFP_KERNEL);
 	if (!macsec_fs)
 		return NULL;
 

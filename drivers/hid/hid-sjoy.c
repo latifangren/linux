@@ -83,7 +83,7 @@ static int sjoyff_init(struct hid_device *hid)
 			return -ENODEV;
 		}
 
-		sjoyff = kzalloc_obj(struct sjoyff_device);
+		sjoyff = kzalloc(sizeof(struct sjoyff_device), GFP_KERNEL);
 		if (!sjoyff)
 			return -ENOMEM;
 
@@ -91,17 +91,17 @@ static int sjoyff_init(struct hid_device *hid)
 
 		set_bit(FF_RUMBLE, dev->ffbit);
 
-		sjoyff->report = report;
-		sjoyff->report->field[0]->value[0] = 0x01;
-		sjoyff->report->field[0]->value[1] = 0x00;
-		sjoyff->report->field[0]->value[2] = 0x00;
-		hid_hw_request(hid, sjoyff->report, HID_REQ_SET_REPORT);
-
 		error = input_ff_create_memless(dev, sjoyff, hid_sjoyff_play);
 		if (error) {
 			kfree(sjoyff);
 			return error;
 		}
+
+		sjoyff->report = report;
+		sjoyff->report->field[0]->value[0] = 0x01;
+		sjoyff->report->field[0]->value[1] = 0x00;
+		sjoyff->report->field[0]->value[2] = 0x00;
+		hid_hw_request(hid, sjoyff->report, HID_REQ_SET_REPORT);
 	}
 
 	hid_info(hid, "Force feedback for SmartJoy PLUS PS2/USB adapter\n");

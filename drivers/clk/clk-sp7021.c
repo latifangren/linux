@@ -7,7 +7,6 @@
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/bitfield.h>
-#include <linux/hw_bitfield.h>
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/err.h>
@@ -15,7 +14,7 @@
 
 #include <dt-bindings/clock/sunplus,sp7021-clkc.h>
 
-/* special div_width values for PLLTV/PLLA */
+/* speical div_width values for PLLTV/PLLA */
 #define DIV_TV		33
 #define DIV_A		34
 
@@ -38,6 +37,13 @@ enum {
 #define MASK_DIVR	GENMASK(8, 7)
 #define MASK_DIVN	GENMASK(7, 0)
 #define MASK_DIVM	GENMASK(14, 8)
+
+/* HIWORD_MASK FIELD_PREP */
+#define HWM_FIELD_PREP(mask, value)		\
+({						\
+	u64 _m = mask;				\
+	(_m << 16) | FIELD_PREP(_m, value);	\
+})
 
 struct sp_pll {
 	struct clk_hw hw;
@@ -307,15 +313,15 @@ static int plltv_set_rate(struct sp_pll *clk)
 	u32 r0, r1, r2;
 
 	r0  = BIT(clk->bp_bit + 16);
-	r0 |= FIELD_PREP_WM16(MASK_SEL_FRA, clk->p[SEL_FRA]);
-	r0 |= FIELD_PREP_WM16(MASK_SDM_MOD, clk->p[SDM_MOD]);
-	r0 |= FIELD_PREP_WM16(MASK_PH_SEL, clk->p[PH_SEL]);
-	r0 |= FIELD_PREP_WM16(MASK_NFRA, clk->p[NFRA]);
+	r0 |= HWM_FIELD_PREP(MASK_SEL_FRA, clk->p[SEL_FRA]);
+	r0 |= HWM_FIELD_PREP(MASK_SDM_MOD, clk->p[SDM_MOD]);
+	r0 |= HWM_FIELD_PREP(MASK_PH_SEL, clk->p[PH_SEL]);
+	r0 |= HWM_FIELD_PREP(MASK_NFRA, clk->p[NFRA]);
 
-	r1  = FIELD_PREP_WM16(MASK_DIVR, clk->p[DIVR]);
+	r1  = HWM_FIELD_PREP(MASK_DIVR, clk->p[DIVR]);
 
-	r2  = FIELD_PREP_WM16(MASK_DIVN, clk->p[DIVN] - 1);
-	r2 |= FIELD_PREP_WM16(MASK_DIVM, clk->p[DIVM] - 1);
+	r2  = HWM_FIELD_PREP(MASK_DIVN, clk->p[DIVN] - 1);
+	r2 |= HWM_FIELD_PREP(MASK_DIVM, clk->p[DIVM] - 1);
 
 	spin_lock_irqsave(&clk->lock, flags);
 	writel(r0, clk->reg);
@@ -406,27 +412,25 @@ static long sp_pll_calc_div(struct sp_pll *clk, unsigned long rate)
 	return fbdiv;
 }
 
-static int sp_pll_determine_rate(struct clk_hw *hw,
-				 struct clk_rate_request *req)
+static long sp_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+			      unsigned long *prate)
 {
 	struct sp_pll *clk = to_sp_pll(hw);
 	long ret;
 
-	if (req->rate == req->best_parent_rate) {
-		ret = req->best_parent_rate; /* bypass */
+	if (rate == *prate) {
+		ret = *prate; /* bypass */
 	} else if (clk->div_width == DIV_A) {
-		ret = plla_round_rate(clk, req->rate);
+		ret = plla_round_rate(clk, rate);
 	} else if (clk->div_width == DIV_TV) {
-		ret = plltv_div(clk, req->rate);
+		ret = plltv_div(clk, rate);
 		if (ret < 0)
-			ret = req->best_parent_rate;
+			ret = *prate;
 	} else {
-		ret = sp_pll_calc_div(clk, req->rate) * clk->brate;
+		ret = sp_pll_calc_div(clk, rate) * clk->brate;
 	}
 
-	req->rate = ret;
-
-	return 0;
+	return ret;
 }
 
 static unsigned long sp_pll_recalc_rate(struct clk_hw *hw,
@@ -531,7 +535,7 @@ static const struct clk_ops sp_pll_ops = {
 	.enable = sp_pll_enable,
 	.disable = sp_pll_disable,
 	.is_enabled = sp_pll_is_enabled,
-	.determine_rate = sp_pll_determine_rate,
+	.round_rate = sp_pll_round_rate,
 	.recalc_rate = sp_pll_recalc_rate,
 	.set_rate = sp_pll_set_rate
 };

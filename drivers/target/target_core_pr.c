@@ -91,7 +91,7 @@ target_scsi2_reservation_check(struct se_cmd *cmd)
 
 	switch (cmd->t_task_cdb[0]) {
 	case INQUIRY:
-	case RELEASE_6:
+	case RELEASE:
 	case RELEASE_10:
 		return 0;
 	default:
@@ -418,12 +418,12 @@ static int core_scsi3_pr_seq_non_holder(struct se_cmd *cmd, u32 pr_reg_type,
 			return -EINVAL;
 		}
 		break;
-	case RELEASE_6:
+	case RELEASE:
 	case RELEASE_10:
 		/* Handled by CRH=1 in target_scsi2_reservation_release() */
 		ret = 0;
 		break;
-	case RESERVE_6:
+	case RESERVE:
 	case RESERVE_10:
 		/* Handled by CRH=1 in target_scsi2_reservation_reserve() */
 		ret = 0;
@@ -1490,7 +1490,7 @@ core_scsi3_decode_spec_i_port(
 	 * local_node_acl pointer and add to struct list_head tid_dest_list
 	 * for add registration processing in the loop of tid_dest_list below.
 	 */
-	tidh_new = kzalloc_obj(struct pr_transport_id_holder);
+	tidh_new = kzalloc(sizeof(struct pr_transport_id_holder), GFP_KERNEL);
 	if (!tidh_new) {
 		pr_err("Unable to allocate tidh_new\n");
 		return TCM_INSUFFICIENT_REGISTRATION_RESOURCES;
@@ -1712,7 +1712,8 @@ core_scsi3_decode_spec_i_port(
 		 * the dest_node_acl and dest_se_deve pointers for the
 		 * loop below.
 		 */
-		tidh_new = kzalloc_obj(struct pr_transport_id_holder);
+		tidh_new = kzalloc(sizeof(struct pr_transport_id_holder),
+				GFP_KERNEL);
 		if (!tidh_new) {
 			pr_err("Unable to allocate tidh_new\n");
 			core_scsi3_lunacl_undepend_item(dest_se_deve);
@@ -2809,7 +2810,7 @@ static void core_scsi3_release_preempt_and_abort(
 }
 
 static sense_reason_t
-core_scsi3_emulate_pro_preempt(struct se_cmd *cmd, int type, int scope, u64 res_key,
+core_scsi3_pro_preempt(struct se_cmd *cmd, int type, int scope, u64 res_key,
 		u64 sa_res_key, enum preempt_type preempt_type)
 {
 	struct se_device *dev = cmd->se_dev;
@@ -2838,6 +2839,11 @@ core_scsi3_emulate_pro_preempt(struct se_cmd *cmd, int type, int scope, u64 res_
 		core_scsi3_put_pr_reg(pr_reg_n);
 		return TCM_RESERVATION_CONFLICT;
 	}
+	if (scope != PR_SCOPE_LU_SCOPE) {
+		pr_err("SPC-3 PR: Illegal SCOPE: 0x%02x\n", scope);
+		core_scsi3_put_pr_reg(pr_reg_n);
+		return TCM_INVALID_PARAMETER_LIST;
+	}
 
 	spin_lock(&dev->dev_reservation_lock);
 	pr_res_holder = dev->dev_pr_res_holder;
@@ -2851,37 +2857,6 @@ core_scsi3_emulate_pro_preempt(struct se_cmd *cmd, int type, int scope, u64 res_
 		core_scsi3_put_pr_reg(pr_reg_n);
 		return TCM_INVALID_PARAMETER_LIST;
 	}
-
-	/* Validate TYPE and SCOPE fields if they will be used */
-	if (pr_res_holder &&
-	    (pr_res_holder->pr_res_key == sa_res_key ||
-	     (all_reg && !sa_res_key))) {
-		switch (type) {
-		case PR_TYPE_WRITE_EXCLUSIVE:
-		case PR_TYPE_EXCLUSIVE_ACCESS:
-		case PR_TYPE_WRITE_EXCLUSIVE_REGONLY:
-		case PR_TYPE_EXCLUSIVE_ACCESS_REGONLY:
-		case PR_TYPE_WRITE_EXCLUSIVE_ALLREG:
-		case PR_TYPE_EXCLUSIVE_ACCESS_ALLREG:
-			break;
-		default:
-			pr_err("SPC-3 PR: Unknown Service Action PREEMPT%s"
-				" Type: 0x%02x\n",
-				(preempt_type == PREEMPT_AND_ABORT) ?
-				"_AND_ABORT" : "", type);
-			spin_unlock(&dev->dev_reservation_lock);
-			core_scsi3_put_pr_reg(pr_reg_n);
-			return TCM_INVALID_CDB_FIELD;
-		}
-
-		if (scope != PR_SCOPE_LU_SCOPE) {
-			pr_err("SPC-3 PR: Illegal SCOPE: 0x%02x\n", scope);
-			spin_unlock(&dev->dev_reservation_lock);
-			core_scsi3_put_pr_reg(pr_reg_n);
-			return TCM_INVALID_PARAMETER_LIST;
-		}
-	}
-
 	/*
 	 * From spc4r17, section 5.7.11.4.4 Removing Registrations:
 	 *
@@ -3143,6 +3118,27 @@ core_scsi3_emulate_pro_preempt(struct se_cmd *cmd, int type, int scope, u64 res_
 	core_scsi3_pr_generation(cmd->se_dev);
 	return 0;
 }
+
+static sense_reason_t
+core_scsi3_emulate_pro_preempt(struct se_cmd *cmd, int type, int scope,
+		u64 res_key, u64 sa_res_key, enum preempt_type preempt_type)
+{
+	switch (type) {
+	case PR_TYPE_WRITE_EXCLUSIVE:
+	case PR_TYPE_EXCLUSIVE_ACCESS:
+	case PR_TYPE_WRITE_EXCLUSIVE_REGONLY:
+	case PR_TYPE_EXCLUSIVE_ACCESS_REGONLY:
+	case PR_TYPE_WRITE_EXCLUSIVE_ALLREG:
+	case PR_TYPE_EXCLUSIVE_ACCESS_ALLREG:
+		return core_scsi3_pro_preempt(cmd, type, scope, res_key,
+					      sa_res_key, preempt_type);
+	default:
+		pr_err("SPC-3 PR: Unknown Service Action PREEMPT%s"
+			" Type: 0x%02x\n", (preempt_type == PREEMPT_AND_ABORT) ? "_AND_ABORT" : "", type);
+		return TCM_INVALID_CDB_FIELD;
+	}
+}
+
 
 static sense_reason_t
 core_scsi3_emulate_pro_register_and_move(struct se_cmd *cmd, u64 res_key,

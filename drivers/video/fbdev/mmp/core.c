@@ -155,7 +155,8 @@ struct mmp_path *mmp_register_path(struct mmp_path_info *info)
 	struct mmp_path *path = NULL;
 	struct mmp_panel *panel;
 
-	path = kzalloc_flex(*path, overlays, info->overlay_num);
+	path = kzalloc(struct_size(path, overlays, info->overlay_num),
+		       GFP_KERNEL);
 	if (!path)
 		return NULL;
 

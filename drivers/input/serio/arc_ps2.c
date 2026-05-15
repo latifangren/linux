@@ -155,7 +155,7 @@ static int arc_ps2_create_port(struct platform_device *pdev,
 	struct arc_ps2_port *port = &arc_ps2->port[index];
 	struct serio *io;
 
-	io = kzalloc_obj(*io);
+	io = kzalloc(sizeof(*io), GFP_KERNEL);
 	if (!io)
 		return -ENOMEM;
 
@@ -189,7 +189,8 @@ static int arc_ps2_probe(struct platform_device *pdev)
 	if (irq < 0)
 		return -EINVAL;
 
-	arc_ps2 = devm_kzalloc(&pdev->dev, sizeof(*arc_ps2), GFP_KERNEL);
+	arc_ps2 = devm_kzalloc(&pdev->dev, sizeof(struct arc_ps2_data),
+				GFP_KERNEL);
 	if (!arc_ps2) {
 		dev_err(&pdev->dev, "out of memory\n");
 		return -ENOMEM;
@@ -259,7 +260,7 @@ static struct platform_driver arc_ps2_driver = {
 		.of_match_table	= of_match_ptr(arc_ps2_match),
 	},
 	.probe	= arc_ps2_probe,
-	.remove	= arc_ps2_remove,
+	.remove_new = arc_ps2_remove,
 };
 
 module_platform_driver(arc_ps2_driver);

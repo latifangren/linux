@@ -196,7 +196,7 @@ int aiu_fifo_dai_probe(struct snd_soc_dai *dai)
 {
 	struct aiu_fifo *fifo;
 
-	fifo = kzalloc_obj(*fifo);
+	fifo = kzalloc(sizeof(*fifo), GFP_KERNEL);
 	if (!fifo)
 		return -ENOMEM;
 

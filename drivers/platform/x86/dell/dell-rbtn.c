@@ -9,7 +9,6 @@
 #include <linux/acpi.h>
 #include <linux/rfkill.h>
 #include <linux/input.h>
-#include <linux/platform_device.h>
 
 #include "dell-rbtn.h"
 
@@ -110,9 +109,9 @@ static const struct rfkill_ops rbtn_ops = {
 	.set_block = rbtn_rfkill_set_block,
 };
 
-static int rbtn_rfkill_init(struct device *dev)
+static int rbtn_rfkill_init(struct acpi_device *device)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 	int ret;
 
 	if (rbtn_data->rfkill)
@@ -123,8 +122,8 @@ static int rbtn_rfkill_init(struct device *dev)
 	 *       but rfkill interface does not support "ANY" type
 	 *       so "WLAN" type is used
 	 */
-	rbtn_data->rfkill = rfkill_alloc("dell-rbtn", dev, RFKILL_TYPE_WLAN,
-					 &rbtn_ops, ACPI_COMPANION(dev));
+	rbtn_data->rfkill = rfkill_alloc("dell-rbtn", &device->dev,
+					 RFKILL_TYPE_WLAN, &rbtn_ops, device);
 	if (!rbtn_data->rfkill)
 		return -ENOMEM;
 
@@ -138,9 +137,9 @@ static int rbtn_rfkill_init(struct device *dev)
 	return 0;
 }
 
-static void rbtn_rfkill_exit(struct device *dev)
+static void rbtn_rfkill_exit(struct acpi_device *device)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 
 	if (!rbtn_data->rfkill)
 		return;
@@ -150,12 +149,12 @@ static void rbtn_rfkill_exit(struct device *dev)
 	rbtn_data->rfkill = NULL;
 }
 
-static void rbtn_rfkill_event(struct device *dev)
+static void rbtn_rfkill_event(struct acpi_device *device)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 
 	if (rbtn_data->rfkill)
-		rbtn_rfkill_query(rbtn_data->rfkill, ACPI_COMPANION(dev));
+		rbtn_rfkill_query(rbtn_data->rfkill, device);
 }
 
 
@@ -206,9 +205,9 @@ static void rbtn_input_event(struct rbtn_data *rbtn_data)
  * acpi driver
  */
 
-static int rbtn_probe(struct platform_device *pdev);
-static void rbtn_remove(struct platform_device *pdev);
-static void rbtn_notify(acpi_handle handle, u32 event, void *data);
+static int rbtn_add(struct acpi_device *device);
+static void rbtn_remove(struct acpi_device *device);
+static void rbtn_notify(struct acpi_device *device, u32 event);
 
 static const struct acpi_device_id rbtn_ids[] = {
 	{ "DELRBTN", 0 },
@@ -252,7 +251,8 @@ static void ACPI_SYSTEM_XFACE rbtn_clear_suspended_flag(void *context)
 
 static int rbtn_suspend(struct device *dev)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct acpi_device *device = to_acpi_device(dev);
+	struct rbtn_data *rbtn_data = acpi_driver_data(device);
 
 	rbtn_data->suspended = true;
 
@@ -261,7 +261,8 @@ static int rbtn_suspend(struct device *dev)
 
 static int rbtn_resume(struct device *dev)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct acpi_device *device = to_acpi_device(dev);
+	struct rbtn_data *rbtn_data = acpi_driver_data(device);
 	acpi_status status;
 
 	/*
@@ -285,13 +286,14 @@ static int rbtn_resume(struct device *dev)
 
 static SIMPLE_DEV_PM_OPS(rbtn_pm_ops, rbtn_suspend, rbtn_resume);
 
-static struct platform_driver rbtn_driver = {
-	.probe = rbtn_probe,
-	.remove = rbtn_remove,
-	.driver = {
-		.name = "dell-rbtn",
-		.acpi_match_table = rbtn_ids,
-		.pm = &rbtn_pm_ops,
+static struct acpi_driver rbtn_driver = {
+	.name = "dell-rbtn",
+	.ids = rbtn_ids,
+	.drv.pm = &rbtn_pm_ops,
+	.ops = {
+		.add = rbtn_add,
+		.remove = rbtn_remove,
+		.notify = rbtn_notify,
 	},
 };
 
@@ -306,7 +308,8 @@ static ATOMIC_NOTIFIER_HEAD(rbtn_chain_head);
 
 static int rbtn_inc_count(struct device *dev, void *data)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct acpi_device *device = to_acpi_device(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 	int *count = data;
 
 	if (rbtn_data->type == RBTN_SLIDER)
@@ -317,16 +320,17 @@ static int rbtn_inc_count(struct device *dev, void *data)
 
 static int rbtn_switch_dev(struct device *dev, void *data)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct acpi_device *device = to_acpi_device(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 	bool enable = data;
 
 	if (rbtn_data->type != RBTN_SLIDER)
 		return 0;
 
 	if (enable)
-		rbtn_rfkill_init(dev);
+		rbtn_rfkill_init(device);
 	else
-		rbtn_rfkill_exit(dev);
+		rbtn_rfkill_exit(device);
 
 	return 0;
 }
@@ -338,7 +342,7 @@ int dell_rbtn_notifier_register(struct notifier_block *nb)
 	int ret;
 
 	count = 0;
-	ret = driver_for_each_device(&rbtn_driver.driver, NULL, &count,
+	ret = driver_for_each_device(&rbtn_driver.drv, NULL, &count,
 				     rbtn_inc_count);
 	if (ret || count == 0)
 		return -ENODEV;
@@ -350,7 +354,7 @@ int dell_rbtn_notifier_register(struct notifier_block *nb)
 		return ret;
 
 	if (auto_remove_rfkill && first)
-		ret = driver_for_each_device(&rbtn_driver.driver, NULL,
+		ret = driver_for_each_device(&rbtn_driver.drv, NULL,
 					     (void *)false, rbtn_switch_dev);
 
 	return ret;
@@ -366,7 +370,7 @@ int dell_rbtn_notifier_unregister(struct notifier_block *nb)
 		return ret;
 
 	if (auto_remove_rfkill && !rbtn_chain_head.head)
-		ret = driver_for_each_device(&rbtn_driver.driver, NULL,
+		ret = driver_for_each_device(&rbtn_driver.drv, NULL,
 					     (void *)true, rbtn_switch_dev);
 
 	return ret;
@@ -378,48 +382,30 @@ EXPORT_SYMBOL_GPL(dell_rbtn_notifier_unregister);
  * acpi driver functions
  */
 
-static void rbtn_cleanup(struct device *dev)
+static int rbtn_add(struct acpi_device *device)
 {
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
-
-	switch (rbtn_data->type) {
-	case RBTN_TOGGLE:
-		rbtn_input_exit(rbtn_data);
-		break;
-	case RBTN_SLIDER:
-		rbtn_rfkill_exit(dev);
-		break;
-	default:
-		break;
-	}
-}
-
-static int rbtn_probe(struct platform_device *pdev)
-{
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	struct rbtn_data *rbtn_data;
 	enum rbtn_type type;
 	int ret = 0;
 
 	type = rbtn_check(device);
 	if (type == RBTN_UNKNOWN) {
-		dev_info(&pdev->dev, "Unknown device type\n");
+		dev_info(&device->dev, "Unknown device type\n");
 		return -EINVAL;
 	}
 
-	rbtn_data = devm_kzalloc(&pdev->dev, sizeof(*rbtn_data), GFP_KERNEL);
+	rbtn_data = devm_kzalloc(&device->dev, sizeof(*rbtn_data), GFP_KERNEL);
 	if (!rbtn_data)
 		return -ENOMEM;
 
 	ret = rbtn_acquire(device, true);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "Cannot enable device\n");
+		dev_err(&device->dev, "Cannot enable device\n");
 		return ret;
 	}
 
-	platform_set_drvdata(pdev, rbtn_data);
-
 	rbtn_data->type = type;
+	device->driver_data = rbtn_data;
 
 	switch (rbtn_data->type) {
 	case RBTN_TOGGLE:
@@ -429,54 +415,51 @@ static int rbtn_probe(struct platform_device *pdev)
 		if (auto_remove_rfkill && rbtn_chain_head.head)
 			ret = 0;
 		else
-			ret = rbtn_rfkill_init(&pdev->dev);
+			ret = rbtn_rfkill_init(device);
 		break;
 	default:
 		ret = -EINVAL;
 		break;
 	}
 	if (ret)
-		goto err;
+		rbtn_acquire(device, false);
 
-	ret = acpi_dev_install_notify_handler(device, ACPI_DEVICE_NOTIFY,
-					      rbtn_notify, &pdev->dev);
-	if (ret)
-		goto err_cleanup;
-
-	return 0;
-
-err_cleanup:
-	rbtn_cleanup(&pdev->dev);
-err:
-	rbtn_acquire(device, false);
 	return ret;
 }
 
-static void rbtn_remove(struct platform_device *pdev)
+static void rbtn_remove(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 
-	acpi_dev_remove_notify_handler(device, ACPI_DEVICE_NOTIFY, rbtn_notify);
-	rbtn_cleanup(&pdev->dev);
+	switch (rbtn_data->type) {
+	case RBTN_TOGGLE:
+		rbtn_input_exit(rbtn_data);
+		break;
+	case RBTN_SLIDER:
+		rbtn_rfkill_exit(device);
+		break;
+	default:
+		break;
+	}
+
 	rbtn_acquire(device, false);
 }
 
-static void rbtn_notify(acpi_handle handle, u32 event, void *data)
+static void rbtn_notify(struct acpi_device *device, u32 event)
 {
-	struct device *dev = data;
-	struct rbtn_data *rbtn_data = dev_get_drvdata(dev);
+	struct rbtn_data *rbtn_data = device->driver_data;
 
 	/*
 	 * Some BIOSes send a notification at resume.
 	 * Ignore it to prevent unwanted input events.
 	 */
 	if (rbtn_data->suspended) {
-		dev_dbg(dev, "ACPI notification ignored\n");
+		dev_dbg(&device->dev, "ACPI notification ignored\n");
 		return;
 	}
 
 	if (event != 0x80) {
-		dev_info(dev, "Received unknown event (0x%x)\n",
+		dev_info(&device->dev, "Received unknown event (0x%x)\n",
 			 event);
 		return;
 	}
@@ -486,15 +469,20 @@ static void rbtn_notify(acpi_handle handle, u32 event, void *data)
 		rbtn_input_event(rbtn_data);
 		break;
 	case RBTN_SLIDER:
-		rbtn_rfkill_event(dev);
-		atomic_notifier_call_chain(&rbtn_chain_head, event, NULL);
+		rbtn_rfkill_event(device);
+		atomic_notifier_call_chain(&rbtn_chain_head, event, device);
 		break;
 	default:
 		break;
 	}
 }
 
-module_platform_driver(rbtn_driver);
+
+/*
+ * module functions
+ */
+
+module_acpi_driver(rbtn_driver);
 
 module_param(auto_remove_rfkill, bool, 0444);
 

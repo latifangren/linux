@@ -14,7 +14,6 @@
  */
 
 #include <linux/delay.h>
-#include <linux/export.h>
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/input/touchscreen.h>
@@ -494,30 +493,34 @@ static int cyttsp_disable(struct cyttsp *ts)
 static int cyttsp_suspend(struct device *dev)
 {
 	struct cyttsp *ts = dev_get_drvdata(dev);
-	int error;
+	int retval = 0;
 
-	guard(mutex)(&ts->input->mutex);
+	mutex_lock(&ts->input->mutex);
 
 	if (input_device_enabled(ts->input)) {
-		error = cyttsp_disable(ts);
-		if (error)
-			return error;
+		retval = cyttsp_disable(ts);
+		if (retval == 0)
+			ts->suspended = true;
 	}
 
-	ts->suspended = true;
-	return 0;
+	mutex_unlock(&ts->input->mutex);
+
+	return retval;
 }
 
 static int cyttsp_resume(struct device *dev)
 {
 	struct cyttsp *ts = dev_get_drvdata(dev);
 
-	guard(mutex)(&ts->input->mutex);
+	mutex_lock(&ts->input->mutex);
 
 	if (input_device_enabled(ts->input))
 		cyttsp_enable(ts);
 
 	ts->suspended = false;
+
+	mutex_unlock(&ts->input->mutex);
+
 	return 0;
 }
 

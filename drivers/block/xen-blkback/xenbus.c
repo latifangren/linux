@@ -131,7 +131,8 @@ static int xen_blkif_alloc_rings(struct xen_blkif *blkif)
 {
 	unsigned int r;
 
-	blkif->rings = kzalloc_objs(struct xen_blkif_ring, blkif->nr_rings);
+	blkif->rings = kcalloc(blkif->nr_rings, sizeof(struct xen_blkif_ring),
+			       GFP_KERNEL);
 	if (!blkif->rings)
 		return -ENOMEM;
 
@@ -627,7 +628,8 @@ static int xen_blkbk_probe(struct xenbus_device *dev,
 			   const struct xenbus_device_id *id)
 {
 	int err;
-	struct backend_info *be = kzalloc_obj(struct backend_info);
+	struct backend_info *be = kzalloc(sizeof(struct backend_info),
+					  GFP_KERNEL);
 
 	/* match the pr_debug in xen_blkbk_remove */
 	pr_debug("%s %p %d\n", __func__, dev, dev->otherend_id);
@@ -1008,17 +1010,18 @@ static int read_per_ring_refs(struct xen_blkif_ring *ring, const char *dir)
 
 	err = -ENOMEM;
 	for (i = 0; i < nr_grefs * XEN_BLKIF_REQS_PER_PAGE; i++) {
-		req = kzalloc_obj(*req);
+		req = kzalloc(sizeof(*req), GFP_KERNEL);
 		if (!req)
 			goto fail;
 		list_add_tail(&req->free_list, &ring->pending_free);
 		for (j = 0; j < MAX_INDIRECT_SEGMENTS; j++) {
-			req->segments[j] = kzalloc_obj(*req->segments[0]);
+			req->segments[j] = kzalloc(sizeof(*req->segments[0]), GFP_KERNEL);
 			if (!req->segments[j])
 				goto fail;
 		}
 		for (j = 0; j < MAX_INDIRECT_PAGES; j++) {
-			req->indirect_pages[j] = kzalloc_obj(*req->indirect_pages[0]);
+			req->indirect_pages[j] = kzalloc(sizeof(*req->indirect_pages[0]),
+							 GFP_KERNEL);
 			if (!req->indirect_pages[j])
 				goto fail;
 		}

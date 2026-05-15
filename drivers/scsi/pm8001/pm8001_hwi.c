@@ -1686,7 +1686,7 @@ int pm8001_handle_event(struct pm8001_hba_info *pm8001_ha, void *data,
 	struct pm8001_work *pw;
 	int ret = 0;
 
-	pw = kmalloc_obj(struct pm8001_work, GFP_ATOMIC);
+	pw = kmalloc(sizeof(struct pm8001_work), GFP_ATOMIC);
 	if (pw) {
 		pw->pm8001_ha = pm8001_ha;
 		pw->data = data;
@@ -2163,7 +2163,8 @@ mpi_sata_completion(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	/* Print sas address of IO failed device */
 	if ((status != IO_SUCCESS) && (status != IO_OVERFLOW) &&
 		(status != IO_UNDERFLOW)) {
-		if (!dev_parent_is_expander(t->dev)) {
+		if (!((t->dev->parent) &&
+			(dev_is_expander(t->dev->parent->dev_type)))) {
 			for (i = 0, j = 4; j <= 7 && i <= 3; i++, j++)
 				sata_addr_low[i] = pm8001_ha->sas_addr[j];
 			for (i = 0, j = 0; j <= 3 && i <= 3; i++, j++)
@@ -3471,13 +3472,12 @@ int pm8001_mpi_task_abort_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 			   status, tag, scp);
 	switch (status) {
 	case IO_SUCCESS:
-		pm8001_dbg(pm8001_ha, FAIL, "ABORT IO_SUCCESS for tag %#x\n",
-			   tag);
+		pm8001_dbg(pm8001_ha, EH, "IO_SUCCESS\n");
 		ts->resp = SAS_TASK_COMPLETE;
 		ts->stat = SAS_SAM_STAT_GOOD;
 		break;
 	case IO_NOT_VALID:
-		pm8001_dbg(pm8001_ha, FAIL, "IO_NOT_VALID for tag %#x\n", tag);
+		pm8001_dbg(pm8001_ha, EH, "IO_NOT_VALID\n");
 		ts->resp = TMF_RESP_FUNC_FAILED;
 		break;
 	}
@@ -4167,6 +4167,7 @@ static int pm8001_chip_reg_dev_req(struct pm8001_hba_info *pm8001_ha,
 	u16 firstBurstSize = 0;
 	u16 ITNT = 2000;
 	struct domain_device *dev = pm8001_dev->sas_device;
+	struct domain_device *parent_dev = dev->parent;
 	struct pm8001_port *port = dev->port->lldd_port;
 
 	memset(&payload, 0, sizeof(payload));
@@ -4184,9 +4185,10 @@ static int pm8001_chip_reg_dev_req(struct pm8001_hba_info *pm8001_ha,
 			dev_is_expander(pm8001_dev->dev_type))
 			stp_sspsmp_sata = 0x01; /*ssp or smp*/
 	}
-
-	phy_id = pm80xx_get_local_phy_id(dev);
-
+	if (parent_dev && dev_is_expander(parent_dev->dev_type))
+		phy_id = parent_dev->ex_dev.ex_phy->phy_id;
+	else
+		phy_id = pm8001_dev->attached_phy;
 	opc = OPC_INB_REG_DEV;
 	linkrate = (pm8001_dev->sas_device->linkrate < dev->port->linkrate) ?
 			pm8001_dev->sas_device->linkrate : dev->port->linkrate;
@@ -4371,7 +4373,7 @@ int pm8001_chip_get_nvmd_req(struct pm8001_hba_info *pm8001_ha,
 	struct pm8001_ioctl_payload *ioctl_payload = payload;
 
 	nvmd_type = ioctl_payload->minor_function;
-	fw_control_context = kzalloc_obj(struct fw_control_ex);
+	fw_control_context = kzalloc(sizeof(struct fw_control_ex), GFP_KERNEL);
 	if (!fw_control_context)
 		return -ENOMEM;
 	fw_control_context->usrAddr = (u8 *)ioctl_payload->func_specific;
@@ -4464,7 +4466,7 @@ int pm8001_chip_set_nvmd_req(struct pm8001_hba_info *pm8001_ha,
 	struct pm8001_ioctl_payload *ioctl_payload = payload;
 
 	nvmd_type = ioctl_payload->minor_function;
-	fw_control_context = kzalloc_obj(struct fw_control_ex);
+	fw_control_context = kzalloc(sizeof(struct fw_control_ex), GFP_KERNEL);
 	if (!fw_control_context)
 		return -ENOMEM;
 
@@ -4579,7 +4581,7 @@ pm8001_chip_fw_flash_update_req(struct pm8001_hba_info *pm8001_ha,
 	dma_addr_t phys_addr = pm8001_ha->memoryMap.region[FW_FLASH].phys_addr;
 	struct pm8001_ioctl_payload *ioctl_payload = payload;
 
-	fw_control_context = kzalloc_obj(struct fw_control_ex);
+	fw_control_context = kzalloc(sizeof(struct fw_control_ex), GFP_KERNEL);
 	if (!fw_control_context)
 		return -ENOMEM;
 	fw_control = (struct fw_control_info *)&ioctl_payload->func_specific;

@@ -168,7 +168,7 @@ label##5:							\
 #define ALT_FW_FTR_SECTION_END_IFCLR(msk)	\
 	ALT_FW_FTR_SECTION_END_NESTED_IFCLR(msk, 97)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #define ASM_FTR_IF(section_if, section_else, msk, val)	\
 	stringify_in_c(BEGIN_FTR_SECTION)			\
@@ -196,7 +196,7 @@ label##5:							\
 #define ASM_MMU_FTR_IFCLR(section_if, section_else, msk)	\
 	ASM_MMU_FTR_IF(section_if, section_else, (msk), 0)
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 /* LWSYNC feature sections */
 #define START_LWSYNC_SECTION(label)	label##1:
@@ -276,7 +276,7 @@ label##3:					       	\
 	FTR_ENTRY_OFFSET 956b-957b;			\
 	.popsection;
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <linux/types.h>
 
 extern long stf_barrier_fallback;

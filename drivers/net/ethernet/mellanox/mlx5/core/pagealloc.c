@@ -77,8 +77,7 @@ static u32 get_function(u16 func_id, bool ec_function)
 static u16 func_id_to_type(struct mlx5_core_dev *dev, u16 func_id, bool ec_function)
 {
 	if (!func_id)
-		return mlx5_core_is_ecpf(dev) && !ec_function ?
-			MLX5_HOST_PF : MLX5_SELF;
+		return mlx5_core_is_ecpf(dev) && !ec_function ? MLX5_HOST_PF : MLX5_PF;
 
 	if (func_id <= max(mlx5_core_max_vfs(dev), mlx5_core_max_ec_vfs(dev))) {
 		if (ec_function)
@@ -108,7 +107,7 @@ static struct rb_root *page_root_per_function(struct mlx5_core_dev *dev, u32 fun
 	if (root)
 		return root;
 
-	root = kzalloc_obj(*root);
+	root = kzalloc(sizeof(*root), GFP_KERNEL);
 	if (!root)
 		return ERR_PTR(-ENOMEM);
 
@@ -149,7 +148,7 @@ static int insert_page(struct mlx5_core_dev *dev, u64 addr, struct page *page, u
 			return -EEXIST;
 	}
 
-	nfp = kzalloc_obj(*nfp);
+	nfp = kzalloc(sizeof(*nfp), GFP_KERNEL);
 	if (!nfp)
 		return -ENOMEM;
 
@@ -640,7 +639,7 @@ static int req_pages_handler(struct notifier_block *nb,
 		      RELEASE_ALL_PAGES_MASK;
 	mlx5_core_dbg(dev, "page request for func 0x%x, npages %d, release_all %d\n",
 		      func_id, npages, release_all);
-	req = kzalloc_obj(*req, GFP_ATOMIC);
+	req = kzalloc(sizeof(*req), GFP_ATOMIC);
 	if (!req) {
 		mlx5_core_warn(dev, "failed to allocate pages request\n");
 		return NOTIFY_DONE;

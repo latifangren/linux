@@ -552,7 +552,7 @@ static int mipid_spi_probe(struct spi_device *spi)
 	struct mipid_device *md;
 	int r;
 
-	md = kzalloc_obj(*md);
+	md = kzalloc(sizeof(*md), GFP_KERNEL);
 	if (md == NULL) {
 		dev_err(&spi->dev, "out of memory\n");
 		return -ENOMEM;

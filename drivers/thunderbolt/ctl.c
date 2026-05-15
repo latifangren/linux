@@ -70,9 +70,6 @@ struct tb_ctl {
 #define tb_ctl_dbg(ctl, format, arg...) \
 	dev_dbg(&(ctl)->nhi->pdev->dev, format, ## arg)
 
-#define tb_ctl_dbg_once(ctl, format, arg...) \
-	dev_dbg_once(&(ctl)->nhi->pdev->dev, format, ## arg)
-
 static DECLARE_WAIT_QUEUE_HEAD(tb_cfg_request_cancel_queue);
 /* Serializes access to request kref_get/put */
 static DEFINE_MUTEX(tb_cfg_request_lock);
@@ -82,14 +79,12 @@ static DEFINE_MUTEX(tb_cfg_request_lock);
  *
  * This is refcounted object so when you are done with this, call
  * tb_cfg_request_put() to it.
- *
- * Return: &struct tb_cfg_request on success, %NULL otherwise.
  */
 struct tb_cfg_request *tb_cfg_request_alloc(void)
 {
 	struct tb_cfg_request *req;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
 		return NULL;
 
@@ -275,7 +270,7 @@ static struct tb_cfg_result parse_header(const struct ctl_pkg *pkg, u32 len,
 	return res;
 }
 
-static void tb_cfg_print_error(struct tb_ctl *ctl, enum tb_cfg_space space,
+static void tb_cfg_print_error(struct tb_ctl *ctl,
 			       const struct tb_cfg_result *res)
 {
 	WARN_ON(res->err != 1);
@@ -289,8 +284,8 @@ static void tb_cfg_print_error(struct tb_ctl *ctl, enum tb_cfg_space space,
 		 * Invalid cfg_space/offset/length combination in
 		 * cfg_read/cfg_write.
 		 */
-		tb_ctl_dbg_once(ctl, "%llx:%x: invalid config space (%u) or offset\n",
-				res->response_route, res->response_port, space);
+		tb_ctl_dbg(ctl, "%llx:%x: invalid config space or offset\n",
+			   res->response_route, res->response_port);
 		return;
 	case TB_CFG_ERROR_NO_SUCH_PORT:
 		/*
@@ -319,7 +314,7 @@ static void tb_cfg_print_error(struct tb_ctl *ctl, enum tb_cfg_space space,
 
 static __be32 tb_crc(const void *data, size_t len)
 {
-	return cpu_to_be32(~crc32c(~0, data, len));
+	return cpu_to_be32(~__crc32c_le(~0, data, len));
 }
 
 static void tb_ctl_pkg_free(struct ctl_pkg *pkg)
@@ -333,7 +328,7 @@ static void tb_ctl_pkg_free(struct ctl_pkg *pkg)
 
 static struct ctl_pkg *tb_ctl_pkg_alloc(struct tb_ctl *ctl)
 {
-	struct ctl_pkg *pkg = kzalloc_obj(*pkg);
+	struct ctl_pkg *pkg = kzalloc(sizeof(*pkg), GFP_KERNEL);
 	if (!pkg)
 		return NULL;
 	pkg->ctl = ctl;
@@ -361,7 +356,7 @@ static void tb_ctl_tx_callback(struct tb_ring *ring, struct ring_frame *frame,
  *
  * len must be a multiple of four.
  *
- * Return: %0 on success, negative errno otherwise.
+ * Return: Returns 0 on success or an error code on failure.
  */
 static int tb_ctl_tx(struct tb_ctl *ctl, const void *data, size_t len,
 		     enum tb_cfg_pkg_type type)
@@ -412,7 +407,7 @@ static void tb_ctl_rx_submit(struct ctl_pkg *pkg)
 					     * We ignore failures during stop.
 					     * All rx packets are referenced
 					     * from ctl->rx_packets, so we do
-					     * not lose them.
+					     * not loose them.
 					     */
 }
 
@@ -541,8 +536,6 @@ static void tb_cfg_request_work(struct work_struct *work)
  *
  * This queues @req on the given control channel without waiting for it
  * to complete. When the request completes @callback is called.
- *
- * Return: %0 on success, negative errno otherwise.
  */
 int tb_cfg_request(struct tb_ctl *ctl, struct tb_cfg_request *req,
 		   void (*callback)(void *), void *callback_data)
@@ -609,9 +602,6 @@ static void tb_cfg_request_complete(void *data)
  * triggers the request is canceled before function returns. Note the
  * caller needs to make sure only one message for given switch is active
  * at a time.
- *
- * Return: &struct tb_cfg_result with non-zero @err field if error
- * has occurred.
  */
 struct tb_cfg_result tb_cfg_request_sync(struct tb_ctl *ctl,
 					 struct tb_cfg_request *req,
@@ -648,13 +638,13 @@ struct tb_cfg_result tb_cfg_request_sync(struct tb_ctl *ctl,
  *
  * cb will be invoked once for every hot plug event.
  *
- * Return: Pointer to &struct tb_ctl, %NULL on failure.
+ * Return: Returns a pointer on success or NULL on failure.
  */
 struct tb_ctl *tb_ctl_alloc(struct tb_nhi *nhi, int index, int timeout_msec,
 			    event_cb cb, void *cb_data)
 {
 	int i;
-	struct tb_ctl *ctl = kzalloc_obj(*ctl);
+	struct tb_ctl *ctl = kzalloc(sizeof(*ctl), GFP_KERNEL);
 	if (!ctl)
 		return NULL;
 
@@ -771,9 +761,8 @@ void tb_ctl_stop(struct tb_ctl *ctl)
  * @route: Router that originated the event
  * @error: Pointer to the notification package
  *
- * Call this as a response for non-plug notification to ack it.
- *
- * Return: %0 on success, negative errno otherwise.
+ * Call this as response for non-plug notification to ack it. Returns
+ * %0 on success or an error code on failure.
  */
 int tb_cfg_ack_notification(struct tb_ctl *ctl, u64 route,
 			    const struct cfg_error_pkg *error)
@@ -835,9 +824,8 @@ int tb_cfg_ack_notification(struct tb_ctl *ctl, u64 route,
  * @port: Port where the hot plug/unplug happened
  * @unplug: Ack hot plug or unplug
  *
- * Call this as a response for hot plug/unplug event to ack it.
- *
- * Return: %0 on success, negative errno otherwise.
+ * Call this as response for hot plug/unplug event to ack it.
+ * Returns %0 on success or an error code on failure.
  */
 int tb_cfg_ack_plug(struct tb_ctl *ctl, u64 route, u32 port, bool unplug)
 {
@@ -904,9 +892,6 @@ static bool tb_cfg_copy(struct tb_cfg_request *req, const struct ctl_pkg *pkg)
  * If the switch at route is incorrectly configured then we will not receive a
  * reply (even though the switch will reset). The caller should check for
  * -ETIMEDOUT and attempt to reconfigure the switch.
- *
- * Return: &struct tb_cfg_result with non-zero @err field if error
- * has occurred.
  */
 struct tb_cfg_result tb_cfg_reset(struct tb_ctl *ctl, u64 route)
 {
@@ -949,9 +934,6 @@ struct tb_cfg_result tb_cfg_reset(struct tb_ctl *ctl, u64 route)
  * @timeout_msec: Timeout in ms how long to wait for the response
  *
  * Reads from router config space without translating the possible error.
- *
- * Return: &struct tb_cfg_result with non-zero @err field if error
- * has occurred.
  */
 struct tb_cfg_result tb_cfg_read_raw(struct tb_ctl *ctl, void *buffer,
 		u64 route, u32 port, enum tb_cfg_space space,
@@ -1023,9 +1005,6 @@ struct tb_cfg_result tb_cfg_read_raw(struct tb_ctl *ctl, void *buffer,
  * @timeout_msec: Timeout in ms how long to wait for the response
  *
  * Writes to router config space without translating the possible error.
- *
- * Return: &struct tb_cfg_result with non-zero @err field if error
- * has occurred.
  */
 struct tb_cfg_result tb_cfg_write_raw(struct tb_ctl *ctl, const void *buffer,
 		u64 route, u32 port, enum tb_cfg_space space,
@@ -1098,7 +1077,7 @@ static int tb_cfg_get_error(struct tb_ctl *ctl, enum tb_cfg_space space,
 	    res->tb_error == TB_CFG_ERROR_INVALID_CONFIG_SPACE)
 		return -ENODEV;
 
-	tb_cfg_print_error(ctl, space, res);
+	tb_cfg_print_error(ctl, res);
 
 	if (res->tb_error == TB_CFG_ERROR_LOCK)
 		return -EACCES;
@@ -1168,7 +1147,8 @@ int tb_cfg_write(struct tb_ctl *ctl, const void *buffer, u64 route, u32 port,
  * Reads the first dword from the switches TB_CFG_SWITCH config area and
  * returns the port number from which the reply originated.
  *
- * Return: Upstream port number on success or negative error code on failure.
+ * Return: Returns the upstream port number on success or an error code on
+ * failure.
  */
 int tb_cfg_get_upstream_port(struct tb_ctl *ctl, u64 route)
 {

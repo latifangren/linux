@@ -21,10 +21,6 @@
 	status = "okay";
 };
 
-&beeper {
-	status = "okay";
-};
-
 &lcd_display {
 	status = "okay";
 };
@@ -38,10 +34,6 @@
 };
 
 &pwm1 {
-	status = "okay";
-};
-
-&pwm3 {
 	status = "okay";
 };
 

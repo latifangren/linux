@@ -311,7 +311,7 @@ static int jffs2_init_fs_context(struct fs_context *fc)
 {
 	struct jffs2_sb_info *ctx;
 
-	ctx = kzalloc_obj(struct jffs2_sb_info);
+	ctx = kzalloc(sizeof(struct jffs2_sb_info), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 

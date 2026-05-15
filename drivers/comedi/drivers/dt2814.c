@@ -305,8 +305,7 @@ static int dt2814_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_check_request_region(dev, it->options[0], 0x2,
-					  0x200, 0x3ff, 2);
+	ret = comedi_request_region(dev, it->options[0], 0x2);
 	if (ret)
 		return ret;
 

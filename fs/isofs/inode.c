@@ -589,7 +589,7 @@ static int isofs_fill_super(struct super_block *s, struct fs_context *fc)
 	unsigned int vol_desc_start;
 	int silent = fc->sb_flags & SB_SILENT;
 
-	sbi = kzalloc_obj(*sbi);
+	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
 	s->s_fs_info = sbi;
@@ -944,7 +944,7 @@ root_found:
 	sbi->s_check = opt->check;
 
 	if (table)
-		set_default_d_op(s, &isofs_dentry_ops[table - 1]);
+		s->s_d_op = &isofs_dentry_ops[table - 1];
 
 	/* get the root dentry */
 	s->s_root = d_make_root(inode);
@@ -1261,7 +1261,7 @@ out_noread:
 
 out_toomany:
 	printk(KERN_INFO "%s: More than 100 file sections ?!?, aborting...\n"
-		"isofs_read_level3_size: inode=%llu\n",
+		"isofs_read_level3_size: inode=%lu\n",
 		__func__, inode->i_ino);
 	goto out;
 }
@@ -1380,7 +1380,7 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 	/* I have no idea what file_unit_size is used for, so
 	   we will flag it for now */
 	if (de->file_unit_size[0] != 0) {
-		printk(KERN_DEBUG "ISOFS: File unit size != 0 for ISO file (%llu).\n",
+		printk(KERN_DEBUG "ISOFS: File unit size != 0 for ISO file (%ld).\n",
 			inode->i_ino);
 	}
 
@@ -1389,7 +1389,7 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 #ifdef DEBUG
 	if((de->flags[-high_sierra] & ~2)!= 0){
 		printk(KERN_DEBUG "ISOFS: Unusual flag settings for ISO file "
-				"(%llu %x).\n",
+				"(%ld %x).\n",
 			inode->i_ino, de->flags[-high_sierra]);
 	}
 #endif
@@ -1450,7 +1450,7 @@ static int isofs_read_inode(struct inode *inode, int relocated)
 		/* XXX - parse_rock_ridge_inode() had already set i_rdev. */
 		init_special_inode(inode, inode->i_mode, inode->i_rdev);
 	} else {
-		printk(KERN_DEBUG "ISOFS: Invalid file type 0%04o for inode %llu.\n",
+		printk(KERN_DEBUG "ISOFS: Invalid file type 0%04o for inode %lu.\n",
 			inode->i_mode, inode->i_ino);
 		ret = -EIO;
 		goto fail;
@@ -1520,7 +1520,7 @@ struct inode *__isofs_iget(struct super_block *sb,
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
-	if (inode_state_read_once(inode) & I_NEW) {
+	if (inode->i_state & I_NEW) {
 		ret = isofs_read_inode(inode, relocated);
 		if (ret < 0) {
 			iget_failed(inode);
@@ -1557,7 +1557,7 @@ static int isofs_init_fs_context(struct fs_context *fc)
 {
 	struct isofs_options *opt;
 
-	opt = kzalloc_obj(*opt);
+	opt = kzalloc(sizeof(*opt), GFP_KERNEL);
 	if (!opt)
 		return -ENOMEM;
 

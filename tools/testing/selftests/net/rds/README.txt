@@ -31,11 +31,8 @@ EXAMPLE:
     # Alternatly create a gcov disabled .config
     tools/testing/selftests/net/rds/config.sh
 
-    # Config paths may also be specified with the -c flag
-    tools/testing/selftests/net/rds/config.sh -c .config.local
-
     # build the kernel
-    vng --build --config .config
+    vng --build  --config tools/testing/selftests/net/config
 
     # launch the tests in a VM
     vng -v --rwdir ./ --run . --user root --cpus 4 -- \

@@ -215,19 +215,24 @@ static void pnv_php_reverse_nodes(struct device_node *parent)
 static int pnv_php_populate_changeset(struct of_changeset *ocs,
 				      struct device_node *dn)
 {
-	int ret;
+	struct device_node *child;
+	int ret = 0;
 
-	for_each_child_of_node_scoped(dn, child) {
+	for_each_child_of_node(dn, child) {
 		ret = of_changeset_attach_node(ocs, child);
-		if (ret)
-			return ret;
+		if (ret) {
+			of_node_put(child);
+			break;
+		}
 
 		ret = pnv_php_populate_changeset(ocs, child);
-		if (ret)
-			return ret;
+		if (ret) {
+			of_node_put(child);
+			break;
+		}
 	}
 
-	return 0;
+	return ret;
 }
 
 static void *pnv_php_add_one_pdn(struct device_node *dn, void *data)
@@ -436,23 +441,10 @@ static int pnv_php_get_adapter_state(struct hotplug_slot *slot, u8 *state)
 	return ret;
 }
 
-static int pnv_php_get_raw_indicator_status(struct hotplug_slot *slot, u8 *state)
-{
-	struct pnv_php_slot *php_slot = to_pnv_php_slot(slot);
-	struct pci_dev *bridge = php_slot->pdev;
-	u16 status;
-
-	pcie_capability_read_word(bridge, PCI_EXP_SLTCTL, &status);
-	*state = (status & (PCI_EXP_SLTCTL_AIC | PCI_EXP_SLTCTL_PIC)) >> 6;
-	return 0;
-}
-
-
 static int pnv_php_get_attention_state(struct hotplug_slot *slot, u8 *state)
 {
 	struct pnv_php_slot *php_slot = to_pnv_php_slot(slot);
 
-	pnv_php_get_raw_indicator_status(slot, &php_slot->attention_state);
 	*state = php_slot->attention_state;
 	return 0;
 }
@@ -470,7 +462,7 @@ static int pnv_php_set_attention_state(struct hotplug_slot *slot, u8 state)
 	mask = PCI_EXP_SLTCTL_AIC;
 
 	if (state)
-		new = FIELD_PREP(PCI_EXP_SLTCTL_AIC, state);
+		new = PCI_EXP_SLTCTL_ATTN_IND_ON;
 	else
 		new = PCI_EXP_SLTCTL_ATTN_IND_OFF;
 
@@ -786,7 +778,7 @@ static struct pnv_php_slot *pnv_php_alloc_slot(struct device_node *dn)
 	if (!bus)
 		return NULL;
 
-	php_slot = kzalloc_obj(*php_slot);
+	php_slot = kzalloc(sizeof(*php_slot), GFP_KERNEL);
 	if (!php_slot)
 		return NULL;
 
@@ -797,7 +789,7 @@ static struct pnv_php_slot *pnv_php_alloc_slot(struct device_node *dn)
 	}
 
 	/* Allocate workqueue for this slot's interrupt handling */
-	php_slot->wq = alloc_workqueue("pciehp-%s", WQ_PERCPU, 0, php_slot->name);
+	php_slot->wq = alloc_workqueue("pciehp-%s", 0, 0, php_slot->name);
 	if (!php_slot->wq) {
 		SLOT_WARN(php_slot, "Cannot alloc workqueue\n");
 		kfree(php_slot->name);
@@ -1023,7 +1015,7 @@ static irqreturn_t pnv_php_interrupt(int irq, void *data)
 	 * The PE is left in frozen state if the event is missed. It's
 	 * fine as the PCI devices (PE) aren't functional any more.
 	 */
-	event = kzalloc_obj(*event, GFP_ATOMIC);
+	event = kzalloc(sizeof(*event), GFP_ATOMIC);
 	if (!event) {
 		SLOT_WARN(php_slot,
 			  "PCI slot [%s] missed hotplug event 0x%04x\n",

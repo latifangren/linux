@@ -22,6 +22,7 @@
 #include "shpchp.h"
 
 /* Global variables */
+bool shpchp_debug;
 bool shpchp_poll_mode;
 int shpchp_poll_time;
 
@@ -32,8 +33,10 @@ int shpchp_poll_time;
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 
+module_param(shpchp_debug, bool, 0644);
 module_param(shpchp_poll_mode, bool, 0644);
 module_param(shpchp_poll_time, int, 0644);
+MODULE_PARM_DESC(shpchp_debug, "Debugging mode enabled or not");
 MODULE_PARM_DESC(shpchp_poll_mode, "Using polling mechanism for hot-plug events or not");
 MODULE_PARM_DESC(shpchp_poll_time, "Polling mechanism frequency, in seconds");
 
@@ -66,7 +69,7 @@ static int init_slots(struct controller *ctrl)
 	int i;
 
 	for (i = 0; i < ctrl->num_slots; i++) {
-		slot = kzalloc_obj(*slot);
+		slot = kzalloc(sizeof(*slot), GFP_KERNEL);
 		if (!slot) {
 			retval = -ENOMEM;
 			goto error;
@@ -80,8 +83,7 @@ static int init_slots(struct controller *ctrl)
 		slot->device = ctrl->slot_device_offset + i;
 		slot->number = ctrl->first_slot + (ctrl->slot_num_inc * i);
 
-		slot->wq = alloc_workqueue("shpchp-%d", WQ_PERCPU, 0,
-					   slot->number);
+		slot->wq = alloc_workqueue("shpchp-%d", 0, 0, slot->number);
 		if (!slot->wq) {
 			retval = -ENOMEM;
 			goto error_slot;
@@ -259,7 +261,7 @@ static int shpc_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (acpi_get_hp_hw_control_from_firmware(pdev))
 		return -ENODEV;
 
-	ctrl = kzalloc_obj(*ctrl);
+	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
 	if (!ctrl)
 		goto err_out_none;
 
@@ -322,12 +324,20 @@ static struct pci_driver shpc_driver = {
 
 static int __init shpcd_init(void)
 {
-	return pci_register_driver(&shpc_driver);
+	int retval;
+
+	retval = pci_register_driver(&shpc_driver);
+	dbg("%s: pci_register_driver = %d\n", __func__, retval);
+	info(DRIVER_DESC " version: " DRIVER_VERSION "\n");
+
+	return retval;
 }
 
 static void __exit shpcd_cleanup(void)
 {
+	dbg("unload_shpchpd()\n");
 	pci_unregister_driver(&shpc_driver);
+	info(DRIVER_DESC " version: " DRIVER_VERSION " unloaded\n");
 }
 
 module_init(shpcd_init);

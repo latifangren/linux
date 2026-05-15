@@ -122,7 +122,7 @@ struct afs_vldb_entry *afs_vl_get_entry_by_name_u(struct afs_vl_cursor *vc,
 	padsz = (4 - (volnamesz & 3)) & 3;
 	reqsz = 8 + volnamesz + padsz;
 
-	entry = kzalloc_obj(struct afs_vldb_entry);
+	entry = kzalloc(sizeof(struct afs_vldb_entry), GFP_KERNEL);
 	if (!entry)
 		return ERR_PTR(-ENOMEM);
 
@@ -370,7 +370,6 @@ static const struct afs_call_type afs_RXVLGetCapabilities = {
 	.name		= "VL.GetCapabilities",
 	.op		= afs_VL_GetCapabilities,
 	.deliver	= afs_deliver_vl_get_capabilities,
-	.immediate_cancel = afs_vlserver_probe_result,
 	.done		= afs_vlserver_probe_result,
 	.destructor	= afs_destroy_vl_get_capabilities,
 };

@@ -24,6 +24,10 @@
 #define GCOV_COUNTERS			9
 #elif (__GNUC__ >= 10)
 #define GCOV_COUNTERS			8
+#elif (__GNUC__ >= 7)
+#define GCOV_COUNTERS			9
+#elif (__GNUC__ > 5) || (__GNUC__ == 5 && __GNUC_MINOR__ >= 1)
+#define GCOV_COUNTERS			10
 #else
 #define GCOV_COUNTERS			9
 #endif
@@ -298,7 +302,8 @@ struct gcov_info *gcov_info_dup(struct gcov_info *info)
 	if (!dup->filename)
 		goto err_free;
 
-	dup->functions = kzalloc_objs(struct gcov_fn_info *, info->n_functions);
+	dup->functions = kcalloc(info->n_functions,
+				 sizeof(struct gcov_fn_info *), GFP_KERNEL);
 	if (!dup->functions)
 		goto err_free;
 

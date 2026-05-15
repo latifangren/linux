@@ -8,3 +8,10 @@ ARC architecture
     arc
 
     features
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

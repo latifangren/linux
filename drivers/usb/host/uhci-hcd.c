@@ -603,7 +603,8 @@ static int uhci_start(struct usb_hcd *hcd)
 		goto err_alloc_frame;
 	}
 
-	uhci->frame_cpu = kzalloc_objs(*uhci->frame_cpu, UHCI_NUMFRAMES);
+	uhci->frame_cpu = kcalloc(UHCI_NUMFRAMES, sizeof(*uhci->frame_cpu),
+			GFP_KERNEL);
 	if (!uhci->frame_cpu)
 		goto err_alloc_frame_cpu;
 
@@ -715,7 +716,7 @@ static void uhci_stop(struct usb_hcd *hcd)
 	spin_unlock_irq(&uhci->lock);
 	synchronize_irq(hcd->irq);
 
-	timer_delete_sync(&uhci->fsbr_timer);
+	del_timer_sync(&uhci->fsbr_timer);
 	release_uhci(uhci);
 }
 
@@ -866,6 +867,8 @@ static int __init uhci_hcd_init(void)
 	if (usb_disabled())
 		return -ENODEV;
 
+	set_bit(USB_UHCI_LOADED, &usb_hcds_loaded);
+
 #ifdef CONFIG_DYNAMIC_DEBUG
 	errbuf = kmalloc(ERRBUF_LEN, GFP_KERNEL);
 	if (!errbuf)
@@ -909,6 +912,8 @@ up_failed:
 
 errbuf_failed:
 #endif
+
+	clear_bit(USB_UHCI_LOADED, &usb_hcds_loaded);
 	return retval;
 }
 
@@ -925,6 +930,7 @@ static void __exit uhci_hcd_cleanup(void)
 #ifdef CONFIG_DYNAMIC_DEBUG
 	kfree(errbuf);
 #endif
+	clear_bit(USB_UHCI_LOADED, &usb_hcds_loaded);
 }
 
 module_init(uhci_hcd_init);

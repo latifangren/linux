@@ -10,7 +10,7 @@
 
 #include <drm/drm_managed.h>
 
-#include "xe_gt_types.h"
+#include "xe_gt.h"
 
 static void xe_gt_sysfs_kobj_release(struct kobject *kobj)
 {
@@ -36,7 +36,7 @@ int xe_gt_sysfs_init(struct xe_gt *gt)
 	struct kobj_gt *kg;
 	int err;
 
-	kg = kzalloc_obj(*kg);
+	kg = kzalloc(sizeof(*kg), GFP_KERNEL);
 	if (!kg)
 		return -ENOMEM;
 

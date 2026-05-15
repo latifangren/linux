@@ -236,8 +236,7 @@ static irqreturn_t pd6729_interrupt(int irq, void *dev)
 
 static void pd6729_interrupt_wrapper(struct timer_list *t)
 {
-	struct pd6729_socket *socket = timer_container_of(socket, t,
-							  poll_timer);
+	struct pd6729_socket *socket = from_timer(socket, t, poll_timer);
 
 	pd6729_interrupt(0, (void *)socket);
 	mod_timer(&socket->poll_timer, jiffies + HZ);
@@ -629,7 +628,8 @@ static int pd6729_pci_probe(struct pci_dev *dev,
 	char configbyte;
 	struct pd6729_socket *socket;
 
-	socket = kzalloc_objs(struct pd6729_socket, MAX_SOCKETS);
+	socket = kcalloc(MAX_SOCKETS, sizeof(struct pd6729_socket),
+			 GFP_KERNEL);
 	if (!socket) {
 		dev_warn(&dev->dev, "failed to kzalloc socket.\n");
 		return -ENOMEM;

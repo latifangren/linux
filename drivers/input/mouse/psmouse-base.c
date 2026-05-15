@@ -26,6 +26,7 @@
 #include "synaptics.h"
 #include "logips2pp.h"
 #include "alps.h"
+#include "hgpk.h"
 #include "lifebook.h"
 #include "trackpoint.h"
 #include "touchkit_ps2.h"
@@ -112,6 +113,8 @@ ATTRIBUTE_GROUPS(psmouse_dev);
  * is taken in "slow" paths it is not worth it.
  */
 static DEFINE_MUTEX(psmouse_mutex);
+
+static struct workqueue_struct *kpsmoused_wq;
 
 struct psmouse *psmouse_from_serio(struct serio *serio)
 {
@@ -236,6 +239,12 @@ psmouse_ret_t psmouse_process_byte(struct psmouse *psmouse)
 	input_sync(dev);
 
 	return PSMOUSE_FULL_PACKET;
+}
+
+void psmouse_queue_work(struct psmouse *psmouse, struct delayed_work *work,
+		unsigned long delay)
+{
+	queue_delayed_work(kpsmoused_wq, work, delay);
 }
 
 /*
@@ -371,7 +380,7 @@ static void psmouse_receive_byte(struct ps2dev *ps2dev, u8 data)
 			     psmouse->name, psmouse->phys, psmouse->pktcnt);
 		psmouse->badbyte = psmouse->packet[0];
 		__psmouse_set_state(psmouse, PSMOUSE_RESYNCING);
-		schedule_work(&psmouse->resync_work);
+		psmouse_queue_work(psmouse, &psmouse->resync_work, 0);
 		return;
 	}
 
@@ -384,7 +393,9 @@ static void psmouse_receive_byte(struct ps2dev *ps2dev, u8 data)
 			return;
 		}
 
-		if (psmouse->packet[1] == PSMOUSE_RET_ID) {
+		if (psmouse->packet[1] == PSMOUSE_RET_ID ||
+		    (psmouse->protocol->type == PSMOUSE_HGPK &&
+		     psmouse->packet[1] == PSMOUSE_RET_BAT)) {
 			__psmouse_set_state(psmouse, PSMOUSE_IGNORE);
 			serio_reconnect(ps2dev->serio);
 			return;
@@ -407,7 +418,7 @@ static void psmouse_receive_byte(struct ps2dev *ps2dev, u8 data)
 	    time_after(jiffies, psmouse->last + psmouse->resync_time * HZ)) {
 		psmouse->badbyte = psmouse->packet[0];
 		__psmouse_set_state(psmouse, PSMOUSE_RESYNCING);
-		schedule_work(&psmouse->resync_work);
+		psmouse_queue_work(psmouse, &psmouse->resync_work, 0);
 		return;
 	}
 
@@ -826,6 +837,14 @@ static const struct psmouse_protocol psmouse_protocols[] = {
 		.detect		= touchkit_ps2_detect,
 	},
 #endif
+#ifdef CONFIG_MOUSE_PS2_OLPC
+	{
+		.type		= PSMOUSE_HGPK,
+		.name		= "OLPC HGPK",
+		.alias		= "hgpk",
+		.detect		= hgpk_detect,
+	},
+#endif
 #ifdef CONFIG_MOUSE_PS2_ELANTECH
 	{
 		.type		= PSMOUSE_ELANTECH,
@@ -1134,6 +1153,13 @@ static int psmouse_extensions(struct psmouse *psmouse,
 			return PSMOUSE_ALPS;
 	}
 
+	/* Try OLPC HGPK touchpad */
+	if (max_proto > PSMOUSE_IMEX &&
+	    psmouse_try_protocol(psmouse, PSMOUSE_HGPK, &max_proto,
+				 set_properties, true)) {
+		return PSMOUSE_HGPK;
+	}
+
 	/* Try Elantech touchpad */
 	if (max_proto > PSMOUSE_IMEX &&
 	    psmouse_try_protocol(psmouse, PSMOUSE_ELANTECH,
@@ -1305,7 +1331,7 @@ int psmouse_deactivate(struct psmouse *psmouse)
 static void psmouse_resync(struct work_struct *work)
 {
 	struct psmouse *parent = NULL, *psmouse =
-		container_of(work, struct psmouse, resync_work);
+		container_of(work, struct psmouse, resync_work.work);
 	struct serio *serio = psmouse->ps2dev.serio;
 	psmouse_ret_t rc = PSMOUSE_GOOD_DATA;
 	bool failed = false, enabled = false;
@@ -1458,7 +1484,7 @@ static void psmouse_disconnect(struct serio *serio)
 
 	/* make sure we don't have a resync in progress */
 	mutex_unlock(&psmouse_mutex);
-	disable_work_sync(&psmouse->resync_work);
+	flush_workqueue(kpsmoused_wq);
 	mutex_lock(&psmouse_mutex);
 
 	if (serio->parent && serio->id.type == SERIO_PS_PSTHRU) {
@@ -1565,16 +1591,16 @@ static int psmouse_connect(struct serio *serio, struct serio_driver *drv)
 		psmouse_deactivate(parent);
 	}
 
-	psmouse = kzalloc_obj(*psmouse);
+	psmouse = kzalloc(sizeof(*psmouse), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!psmouse || !input_dev)
 		goto err_free;
 
 	ps2_init(&psmouse->ps2dev, serio,
 		 psmouse_pre_receive_byte, psmouse_receive_byte);
-	INIT_WORK(&psmouse->resync_work, psmouse_resync);
+	INIT_DELAYED_WORK(&psmouse->resync_work, psmouse_resync);
 	psmouse->dev = input_dev;
-	scnprintf(psmouse->phys, sizeof(psmouse->phys), "%s/input0", serio->phys);
+	snprintf(psmouse->phys, sizeof(psmouse->phys), "%s/input0", serio->phys);
 
 	psmouse_set_state(psmouse, PSMOUSE_INITIALIZING);
 
@@ -2009,17 +2035,27 @@ static int __init psmouse_init(void)
 
 	lifebook_module_init();
 	synaptics_module_init();
+	hgpk_module_init();
 
 	err = psmouse_smbus_module_init();
 	if (err)
 		return err;
 
+	kpsmoused_wq = alloc_ordered_workqueue("kpsmoused", 0);
+	if (!kpsmoused_wq) {
+		pr_err("failed to create kpsmoused workqueue\n");
+		err = -ENOMEM;
+		goto err_smbus_exit;
+	}
+
 	err = serio_register_driver(&psmouse_drv);
 	if (err)
-		goto err_smbus_exit;
+		goto err_destroy_wq;
 
 	return 0;
 
+err_destroy_wq:
+	destroy_workqueue(kpsmoused_wq);
 err_smbus_exit:
 	psmouse_smbus_module_exit();
 	return err;
@@ -2028,6 +2064,7 @@ err_smbus_exit:
 static void __exit psmouse_exit(void)
 {
 	serio_unregister_driver(&psmouse_drv);
+	destroy_workqueue(kpsmoused_wq);
 	psmouse_smbus_module_exit();
 }
 

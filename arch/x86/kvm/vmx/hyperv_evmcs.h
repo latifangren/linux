@@ -6,7 +6,7 @@
 #ifndef __KVM_X86_VMX_HYPERV_EVMCS_H
 #define __KVM_X86_VMX_HYPERV_EVMCS_H
 
-#include <hyperv/hvhdk.h>
+#include <asm/hyperv-tlfs.h>
 
 #include "capabilities.h"
 #include "vmcs12.h"
@@ -130,7 +130,7 @@ static __always_inline int evmcs_field_offset(unsigned long field,
 					      u16 *clean_field)
 {
 	const struct evmcs_field *evmcs_field;
-	unsigned int index = ENC_TO_VMCS12_IDX(field);
+	unsigned int index = ROL16(field, 6);
 
 	if (unlikely(index >= nr_evmcs_1_fields))
 		return -ENOENT;

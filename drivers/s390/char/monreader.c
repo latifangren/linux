@@ -7,7 +7,8 @@
  * Author: Gerald Schaefer <gerald.schaefer@de.ibm.com>
  */
 
-#define pr_fmt(fmt) "monreader: " fmt
+#define KMSG_COMPONENT "monreader"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -23,7 +24,6 @@
 #include <linux/slab.h>
 #include <net/iucv/iucv.h>
 #include <linux/uaccess.h>
-#include <asm/machine.h>
 #include <asm/ebcdic.h>
 #include <asm/extmem.h>
 
@@ -181,11 +181,12 @@ static struct mon_private *mon_alloc_mem(void)
 	int i;
 	struct mon_private *monpriv;
 
-	monpriv = kzalloc_obj(struct mon_private);
+	monpriv = kzalloc(sizeof(struct mon_private), GFP_KERNEL);
 	if (!monpriv)
 		return NULL;
 	for (i = 0; i < MON_MSGLIM; i++) {
-		monpriv->msg_array[i] = kzalloc_obj(struct mon_msg);
+		monpriv->msg_array[i] = kzalloc(sizeof(struct mon_msg),
+						    GFP_KERNEL);
 		if (!monpriv->msg_array[i]) {
 			mon_free_mem(monpriv);
 			return NULL;
@@ -455,7 +456,7 @@ static int __init mon_init(void)
 {
 	int rc;
 
-	if (!machine_is_vm()) {
+	if (!MACHINE_IS_VM) {
 		pr_err("The z/VM *MONITOR record device driver cannot be "
 		       "loaded without z/VM\n");
 		return -ENODEV;

@@ -89,26 +89,6 @@ static char *shorten_to_initial_path(char *fname)
 }
 
 /**
- * Returns true if the given path is an absolute one.
- *
- * On Windows, it either needs to begin with a forward slash or with a drive
- * letter (e.g. "C:").
- * On all other operating systems, it must begin with a forward slash to be
- * considered an absolute path.
- */
-static bool is_absolute_path(const char *path)
-{
-#ifdef WIN32
-	return (
-		path[0] == '/' ||
-		(((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':')
-	);
-#else
-	return (path[0] == '/');
-#endif
-}
-
-/**
  * Try to open a file in a given directory.
  *
  * If the filename is an absolute path, then dirname is ignored. If it is a
@@ -123,7 +103,7 @@ static char *try_open(const char *dirname, const char *fname, FILE **fp)
 {
 	char *fullname;
 
-	if (!dirname || is_absolute_path(fname))
+	if (!dirname || fname[0] == '/')
 		fullname = xstrdup(fname);
 	else
 		fullname = join_path(dirname, fname);
@@ -180,10 +160,8 @@ FILE *srcfile_relative_open(const char *fname, char **fullnamep)
 			    strerror(errno));
 	}
 
-	if (depfile) {
-		fputc(' ', depfile);
-		fprint_path_escaped(depfile, fullname);
-	}
+	if (depfile)
+		fprintf(depfile, " %s", fullname);
 
 	if (fullnamep)
 		*fullnamep = fullname;
@@ -305,17 +283,6 @@ struct srcpos *srcpos_extend(struct srcpos *pos, struct srcpos *newtail)
 	for (p = pos; p->next != NULL; p = p->next);
 	p->next = newtail;
 	return pos;
-}
-
-void srcpos_free(struct srcpos *pos)
-{
-	struct srcpos *p_next;
-
-	while (pos) {
-		p_next = pos->next;
-		free(pos);
-		pos = p_next;
-	}
 }
 
 char *

@@ -47,7 +47,7 @@ static int jumbo_frm(struct stmmac_tx_queue *tx_q, struct sk_buff *skb,
 
 	while (len != 0) {
 		tx_q->tx_skbuff[entry] = NULL;
-		entry = STMMAC_NEXT_ENTRY(entry, priv->dma_conf.dma_tx_size);
+		entry = STMMAC_GET_ENTRY(entry, priv->dma_conf.dma_tx_size);
 		desc = tx_q->dma_tx + entry;
 
 		if (len > bmax) {
@@ -84,13 +84,14 @@ static int jumbo_frm(struct stmmac_tx_queue *tx_q, struct sk_buff *skb,
 	return entry;
 }
 
-static bool is_jumbo_frm(unsigned int len, bool enh_desc)
+static unsigned int is_jumbo_frm(int len, int enh_desc)
 {
-	bool ret = false;
+	unsigned int ret = 0;
 
 	if ((enh_desc && (len > BUF_SIZE_8KiB)) ||
-	    (!enh_desc && (len > BUF_SIZE_2KiB)))
-		ret = true;
+	    (!enh_desc && (len > BUF_SIZE_2KiB))) {
+		ret = 1;
+	}
 
 	return ret;
 }

@@ -49,9 +49,10 @@ static int cros_ec_pwm_set_duty(struct cros_ec_pwm_device *ec_pwm, u8 index,
 				u16 duty)
 {
 	struct cros_ec_device *ec = ec_pwm->ec;
-	TRAILING_OVERLAP(struct cros_ec_command, msg, data,
+	struct {
+		struct cros_ec_command msg;
 		struct ec_params_pwm_set_duty params;
-	) __packed buf;
+	} __packed buf;
 	struct ec_params_pwm_set_duty *params = &buf.params;
 	struct cros_ec_command *msg = &buf.msg;
 	int ret;
@@ -82,12 +83,13 @@ static int cros_ec_pwm_set_duty(struct cros_ec_pwm_device *ec_pwm, u8 index,
 
 static int cros_ec_pwm_get_duty(struct cros_ec_device *ec, bool use_pwm_type, u8 index)
 {
-	TRAILING_OVERLAP(struct cros_ec_command, msg, data,
+	struct {
+		struct cros_ec_command msg;
 		union {
 			struct ec_params_pwm_get_duty params;
 			struct ec_response_pwm_get_duty resp;
 		};
-	) __packed buf;
+	} __packed buf;
 	struct ec_params_pwm_get_duty *params = &buf.params;
 	struct ec_response_pwm_get_duty *resp = &buf.resp;
 	struct cros_ec_command *msg = &buf.msg;

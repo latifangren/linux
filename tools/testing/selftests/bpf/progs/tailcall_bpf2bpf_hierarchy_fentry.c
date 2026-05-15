@@ -4,7 +4,6 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include "bpf_test_utils.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
@@ -25,8 +24,6 @@ int subprog_tail(void *ctx)
 SEC("fentry/dummy")
 int BPF_PROG(fentry, struct sk_buff *skb)
 {
-	clobber_regs_stack();
-
 	count++;
 	subprog_tail(ctx);
 	subprog_tail(ctx);

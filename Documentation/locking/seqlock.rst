@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: GPL-2.0
-
 ======================================
 Sequence counters and sequential locks
 ======================================
@@ -220,14 +218,13 @@ Read path, three categories:
    according to a passed marker. This is used to avoid lockless readers
    starvation (too much retry loops) in case of a sharp spike in write
    activity. First, a lockless read is tried (even marker passed). If
-   that trial fails (sequence counter doesn't match), make the marker
-   odd for the next iteration, the lockless read is transformed to a
-   full locking read and no retry loop is necessary, for example::
+   that trial fails (odd sequence counter is returned, which is used as
+   the next iteration marker), the lockless read is transformed to a
+   full locking read and no retry loop is necessary::
 
 	/* marker; even initialization */
-	int seq = 1;
+	int seq = 0;
 	do {
-		seq++; /* 2 on the 1st/lockless path, otherwise odd */
 		read_seqbegin_or_lock(&foo_seqlock, &seq);
 
 		/* ... [[read-side critical section]] ... */

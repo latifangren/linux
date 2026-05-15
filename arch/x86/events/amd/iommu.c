@@ -16,8 +16,6 @@
 #include <linux/slab.h>
 #include <linux/amd-iommu.h>
 
-#include <asm/msr.h>
-
 #include "../perf_event.h"
 #include "iommu.h"
 
@@ -32,7 +30,7 @@
 #define GET_DOMID_MASK(x)  (((x)->conf1 >> 16) & 0xFFFFULL)
 #define GET_PASID_MASK(x)  (((x)->conf1 >> 32) & 0xFFFFFULL)
 
-#define IOMMU_NAME_SIZE 24
+#define IOMMU_NAME_SIZE 16
 
 struct perf_amd_iommu {
 	struct list_head list;
@@ -387,7 +385,7 @@ static __init int _init_events_attrs(void)
 	while (amd_iommu_v2_event_descs[i].attr.attr.name)
 		i++;
 
-	attrs = kzalloc_objs(*attrs, i + 1);
+	attrs = kcalloc(i + 1, sizeof(*attrs), GFP_KERNEL);
 	if (!attrs)
 		return -ENOMEM;
 
@@ -422,7 +420,7 @@ static __init int init_one_iommu(unsigned int idx)
 	struct perf_amd_iommu *perf_iommu;
 	int ret;
 
-	perf_iommu = kzalloc_obj(struct perf_amd_iommu);
+	perf_iommu = kzalloc(sizeof(struct perf_amd_iommu), GFP_KERNEL);
 	if (!perf_iommu)
 		return -ENOMEM;
 

@@ -283,10 +283,10 @@ static u32 nv_didt_rreg(struct amdgpu_device *adev, u32 reg)
 	address = SOC15_REG_OFFSET(GC, 0, mmDIDT_IND_INDEX);
 	data = SOC15_REG_OFFSET(GC, 0, mmDIDT_IND_DATA);
 
-	spin_lock_irqsave(&adev->reg.didt.lock, flags);
+	spin_lock_irqsave(&adev->didt_idx_lock, flags);
 	WREG32(address, (reg));
 	r = RREG32(data);
-	spin_unlock_irqrestore(&adev->reg.didt.lock, flags);
+	spin_unlock_irqrestore(&adev->didt_idx_lock, flags);
 	return r;
 }
 
@@ -297,10 +297,10 @@ static void nv_didt_wreg(struct amdgpu_device *adev, u32 reg, u32 v)
 	address = SOC15_REG_OFFSET(GC, 0, mmDIDT_IND_INDEX);
 	data = SOC15_REG_OFFSET(GC, 0, mmDIDT_IND_DATA);
 
-	spin_lock_irqsave(&adev->reg.didt.lock, flags);
+	spin_lock_irqsave(&adev->didt_idx_lock, flags);
 	WREG32(address, (reg));
 	WREG32(data, (v));
-	spin_unlock_irqrestore(&adev->reg.didt.lock, flags);
+	spin_unlock_irqrestore(&adev->didt_idx_lock, flags);
 }
 
 static u32 nv_get_config_memsize(struct amdgpu_device *adev)
@@ -454,7 +454,6 @@ nv_asic_reset_method(struct amdgpu_device *adev)
 
 	switch (amdgpu_ip_version(adev, MP1_HWIP, 0)) {
 	case IP_VERSION(11, 5, 0):
-	case IP_VERSION(11, 5, 2):
 	case IP_VERSION(13, 0, 1):
 	case IP_VERSION(13, 0, 3):
 	case IP_VERSION(13, 0, 5):
@@ -593,6 +592,10 @@ static void nv_init_doorbell_index(struct amdgpu_device *adev)
 	adev->doorbell_index.sdma_doorbell_range = 20;
 }
 
+static void nv_pre_asic_init(struct amdgpu_device *adev)
+{
+}
+
 static int nv_update_umd_stable_pstate(struct amdgpu_device *adev,
 				       bool enter)
 {
@@ -626,24 +629,31 @@ static const struct amdgpu_asic_funcs nv_asic_funcs = {
 	.need_reset_on_init = &nv_need_reset_on_init,
 	.get_pcie_replay_count = &amdgpu_nbio_get_pcie_replay_count,
 	.supports_baco = &amdgpu_dpm_is_baco_supported,
+	.pre_asic_init = &nv_pre_asic_init,
 	.update_umd_stable_pstate = &nv_update_umd_stable_pstate,
 	.query_video_codecs = &nv_query_video_codecs,
 };
 
-static int nv_common_early_init(struct amdgpu_ip_block *ip_block)
+static int nv_common_early_init(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	adev->nbio.funcs->set_reg_remap(adev);
-	adev->reg.pcie.rreg = &amdgpu_device_indirect_rreg;
-	adev->reg.pcie.wreg = &amdgpu_device_indirect_wreg;
-	adev->reg.pcie.rreg64 = &amdgpu_device_indirect_rreg64;
-	adev->reg.pcie.wreg64 = &amdgpu_device_indirect_wreg64;
-	adev->reg.pcie.port_rreg = &amdgpu_device_pcie_port_rreg;
-	adev->reg.pcie.port_wreg = &amdgpu_device_pcie_port_wreg;
+	adev->smc_rreg = NULL;
+	adev->smc_wreg = NULL;
+	adev->pcie_rreg = &amdgpu_device_indirect_rreg;
+	adev->pcie_wreg = &amdgpu_device_indirect_wreg;
+	adev->pcie_rreg64 = &amdgpu_device_indirect_rreg64;
+	adev->pcie_wreg64 = &amdgpu_device_indirect_wreg64;
+	adev->pciep_rreg = amdgpu_device_pcie_port_rreg;
+	adev->pciep_wreg = amdgpu_device_pcie_port_wreg;
 
-	adev->reg.didt.rreg = &nv_didt_rreg;
-	adev->reg.didt.wreg = &nv_didt_wreg;
+	/* TODO: will add them during VCN v2 implementation */
+	adev->uvd_ctx_rreg = NULL;
+	adev->uvd_ctx_wreg = NULL;
+
+	adev->didt_rreg = &nv_didt_rreg;
+	adev->didt_wreg = &nv_didt_wreg;
 
 	adev->asic_funcs = &nv_asic_funcs;
 
@@ -934,9 +944,9 @@ static int nv_common_early_init(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int nv_common_late_init(struct amdgpu_ip_block *ip_block)
+static int nv_common_late_init(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (amdgpu_sriov_vf(adev)) {
 		xgpu_nv_mailbox_get_irq(adev);
@@ -963,9 +973,9 @@ static int nv_common_late_init(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int nv_common_sw_init(struct amdgpu_ip_block *ip_block)
+static int nv_common_sw_init(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (amdgpu_sriov_vf(adev))
 		xgpu_nv_mailbox_add_irq_id(adev);
@@ -973,9 +983,14 @@ static int nv_common_sw_init(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int nv_common_hw_init(struct amdgpu_ip_block *ip_block)
+static int nv_common_sw_fini(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	return 0;
+}
+
+static int nv_common_hw_init(void *handle)
+{
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (adev->nbio.funcs->apply_lc_spc_mode_wa)
 		adev->nbio.funcs->apply_lc_spc_mode_wa(adev);
@@ -999,9 +1014,9 @@ static int nv_common_hw_init(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int nv_common_hw_fini(struct amdgpu_ip_block *ip_block)
+static int nv_common_hw_fini(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	/* Disable the doorbell aperture and selfring doorbell aperture
 	 * separately in hw_fini because nv_enable_doorbell_aperture
@@ -1014,25 +1029,39 @@ static int nv_common_hw_fini(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int nv_common_suspend(struct amdgpu_ip_block *ip_block)
+static int nv_common_suspend(void *handle)
 {
-	return nv_common_hw_fini(ip_block);
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	return nv_common_hw_fini(adev);
 }
 
-static int nv_common_resume(struct amdgpu_ip_block *ip_block)
+static int nv_common_resume(void *handle)
 {
-	return nv_common_hw_init(ip_block);
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	return nv_common_hw_init(adev);
 }
 
-static bool nv_common_is_idle(struct amdgpu_ip_block *ip_block)
+static bool nv_common_is_idle(void *handle)
 {
 	return true;
 }
 
-static int nv_common_set_clockgating_state(struct amdgpu_ip_block *ip_block,
+static int nv_common_wait_for_idle(void *handle)
+{
+	return 0;
+}
+
+static int nv_common_soft_reset(void *handle)
+{
+	return 0;
+}
+
+static int nv_common_set_clockgating_state(void *handle,
 					   enum amd_clockgating_state state)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (amdgpu_sriov_vf(adev))
 		return 0;
@@ -1060,16 +1089,16 @@ static int nv_common_set_clockgating_state(struct amdgpu_ip_block *ip_block,
 	return 0;
 }
 
-static int nv_common_set_powergating_state(struct amdgpu_ip_block *ip_block,
+static int nv_common_set_powergating_state(void *handle,
 					   enum amd_powergating_state state)
 {
 	/* TODO */
 	return 0;
 }
 
-static void nv_common_get_clockgating_state(struct amdgpu_ip_block *ip_block, u64 *flags)
+static void nv_common_get_clockgating_state(void *handle, u64 *flags)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	if (amdgpu_sriov_vf(adev))
 		*flags = 0;
@@ -1086,12 +1115,17 @@ static const struct amd_ip_funcs nv_common_ip_funcs = {
 	.early_init = nv_common_early_init,
 	.late_init = nv_common_late_init,
 	.sw_init = nv_common_sw_init,
+	.sw_fini = nv_common_sw_fini,
 	.hw_init = nv_common_hw_init,
 	.hw_fini = nv_common_hw_fini,
 	.suspend = nv_common_suspend,
 	.resume = nv_common_resume,
 	.is_idle = nv_common_is_idle,
+	.wait_for_idle = nv_common_wait_for_idle,
+	.soft_reset = nv_common_soft_reset,
 	.set_clockgating_state = nv_common_set_clockgating_state,
 	.set_powergating_state = nv_common_set_powergating_state,
 	.get_clockgating_state = nv_common_get_clockgating_state,
+	.dump_ip_state = NULL,
+	.print_ip_state = NULL,
 };

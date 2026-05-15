@@ -48,7 +48,7 @@ nfp_map_ptr_record(struct nfp_app_bpf *bpf, struct nfp_prog *nfp_prog,
 	 */
 	bpf_map_inc(map);
 
-	record = kmalloc_obj(*record);
+	record = kmalloc(sizeof(*record), GFP_KERNEL);
 	if (!record) {
 		err = -ENOMEM;
 		goto err_map_put;
@@ -123,7 +123,9 @@ nfp_map_ptrs_record(struct nfp_app_bpf *bpf, struct nfp_prog *nfp_prog,
 	if (!cnt)
 		goto out;
 
-	nfp_prog->map_records = kmalloc_objs(nfp_prog->map_records[0], cnt);
+	nfp_prog->map_records = kmalloc_array(cnt,
+					      sizeof(nfp_prog->map_records[0]),
+					      GFP_KERNEL);
 	if (!nfp_prog->map_records) {
 		err = -ENOMEM;
 		goto out;
@@ -153,7 +155,7 @@ nfp_prog_prepare(struct nfp_prog *nfp_prog, const struct bpf_insn *prog,
 	unsigned int i;
 
 	for (i = 0; i < cnt; i++) {
-		meta = kzalloc_obj(*meta);
+		meta = kzalloc(sizeof(*meta), GFP_KERNEL);
 		if (!meta)
 			return -ENOMEM;
 
@@ -191,7 +193,7 @@ static int nfp_bpf_verifier_prep(struct bpf_prog *prog)
 	struct nfp_prog *nfp_prog;
 	int ret;
 
-	nfp_prog = kzalloc_obj(*nfp_prog);
+	nfp_prog = kzalloc(sizeof(*nfp_prog), GFP_KERNEL);
 	if (!nfp_prog)
 		return -ENOMEM;
 	prog->aux->offload->dev_priv = nfp_prog;

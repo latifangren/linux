@@ -14,7 +14,6 @@
 
 #include <linux/printk.h>
 #include <linux/types.h>
-#include <linux/units.h>
 #include <asm/platform.h>
 #include <asm/timex.h>
 
@@ -39,7 +38,7 @@ void __weak platform_idle(void)
 #ifdef CONFIG_XTENSA_CALIBRATE_CCOUNT
 void __weak platform_calibrate_ccount(void)
 {
-	pr_err("ERROR: Cannot calibrate cpu frequency! Assuming 10 MHz.\n");
-	ccount_freq = 10 * HZ_PER_MHZ;
+	pr_err("ERROR: Cannot calibrate cpu frequency! Assuming 10MHz.\n");
+	ccount_freq = 10 * 1000000UL;
 }
 #endif

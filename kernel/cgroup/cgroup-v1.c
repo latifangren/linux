@@ -10,7 +10,6 @@
 #include <linux/sched/task.h>
 #include <linux/magic.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <linux/delayacct.h>
 #include <linux/pid_namespace.h>
@@ -28,13 +27,10 @@
 #define CGROUP_PIDLIST_DESTROY_DELAY	HZ
 
 /* Controllers blocked by the commandline in v1 */
-static u32 cgroup_no_v1_mask;
+static u16 cgroup_no_v1_mask;
 
 /* disable named v1 mounts */
 static bool cgroup_no_v1_named;
-
-/* Show unavailable controllers in /proc/cgroups */
-static bool proc_show_all;
 
 /*
  * pidlist destructions need to be flushed on cgroup destruction.  Use a
@@ -69,7 +65,7 @@ int cgroup_attach_task_all(struct task_struct *from, struct task_struct *tsk)
 	int retval = 0;
 
 	cgroup_lock();
-	cgroup_attach_lock(CGRP_ATTACH_LOCK_GLOBAL, NULL);
+	cgroup_attach_lock(true);
 	for_each_root(root) {
 		struct cgroup *from_cgrp;
 
@@ -81,7 +77,7 @@ int cgroup_attach_task_all(struct task_struct *from, struct task_struct *tsk)
 		if (retval)
 			break;
 	}
-	cgroup_attach_unlock(CGRP_ATTACH_LOCK_GLOBAL, NULL);
+	cgroup_attach_unlock(true);
 	cgroup_unlock();
 
 	return retval;
@@ -118,7 +114,7 @@ int cgroup_transfer_tasks(struct cgroup *to, struct cgroup *from)
 
 	cgroup_lock();
 
-	cgroup_attach_lock(CGRP_ATTACH_LOCK_GLOBAL, NULL);
+	cgroup_attach_lock(true);
 
 	/* all tasks in @from are being moved, all csets are source */
 	spin_lock_irq(&css_set_lock);
@@ -154,7 +150,7 @@ int cgroup_transfer_tasks(struct cgroup *to, struct cgroup *from)
 	} while (task && !ret);
 out_err:
 	cgroup_migrate_finish(&mgctx);
-	cgroup_attach_unlock(CGRP_ATTACH_LOCK_GLOBAL, NULL);
+	cgroup_attach_unlock(true);
 	cgroup_unlock();
 	return ret;
 }
@@ -317,7 +313,7 @@ static struct cgroup_pidlist *cgroup_pidlist_find_create(struct cgroup *cgrp,
 		return l;
 
 	/* entry not found; create a new one */
-	l = kzalloc_obj(struct cgroup_pidlist);
+	l = kzalloc(sizeof(struct cgroup_pidlist), GFP_KERNEL);
 	if (!l)
 		return l;
 
@@ -352,7 +348,7 @@ static int pidlist_array_load(struct cgroup *cgrp, enum cgroup_filetype type,
 	 * show up until sometime later on.
 	 */
 	length = cgroup_task_count(cgrp);
-	array = kvmalloc_objs(pid_t, length);
+	array = kvmalloc_array(length, sizeof(pid_t), GFP_KERNEL);
 	if (!array)
 		return -ENOMEM;
 	/* now, populate the array */
@@ -503,13 +499,13 @@ static ssize_t __cgroup1_procs_write(struct kernfs_open_file *of,
 	struct task_struct *task;
 	const struct cred *cred, *tcred;
 	ssize_t ret;
-	enum cgroup_attach_lock_mode lock_mode;
+	bool locked;
 
 	cgrp = cgroup_kn_lock_live(of->kn, false);
 	if (!cgrp)
 		return -ENODEV;
 
-	task = cgroup_procs_write_start(buf, threadgroup, &lock_mode);
+	task = cgroup_procs_write_start(buf, threadgroup, &locked);
 	ret = PTR_ERR_OR_ZERO(task);
 	if (ret)
 		goto out_unlock;
@@ -532,7 +528,7 @@ static ssize_t __cgroup1_procs_write(struct kernfs_open_file *of,
 	ret = cgroup_attach_task(cgrp, task, threadgroup);
 
 out_finish:
-	cgroup_procs_write_finish(task, lock_mode);
+	cgroup_procs_write_finish(task, locked);
 out_unlock:
 	cgroup_kn_unlock(of->kn);
 
@@ -677,7 +673,6 @@ struct cftype cgroup1_base_files[] = {
 int proc_cgroupstats_show(struct seq_file *m, void *v)
 {
 	struct cgroup_subsys *ss;
-	bool cgrp_v1_visible = false;
 	int i;
 
 	seq_puts(m, "#subsys_name\thierarchy\tnum_cgroups\tenabled\n");
@@ -687,20 +682,13 @@ int proc_cgroupstats_show(struct seq_file *m, void *v)
 	 */
 
 	for_each_subsys(ss, i) {
-		cgrp_v1_visible |= ss->root != &cgrp_dfl_root;
-
-		if (!proc_show_all && cgroup1_subsys_absent(ss))
+		if (cgroup1_subsys_absent(ss))
 			continue;
-
 		seq_printf(m, "%s\t%d\t%d\t%d\n",
 			   ss->legacy_name, ss->root->hierarchy_id,
 			   atomic_read(&ss->root->nr_cgrps),
 			   cgroup_ssid_enabled(i));
 	}
-
-	if (cgrp_dfl_visible && !cgrp_v1_visible)
-		pr_info_once("/proc/cgroups lists only v1 controllers, use cgroup.controllers of root cgroup for v2 info\n");
-
 
 	return 0;
 }
@@ -856,7 +844,7 @@ static int cgroup1_rename(struct kernfs_node *kn, struct kernfs_node *new_parent
 
 	if (kernfs_type(kn) != KERNFS_DIR)
 		return -ENOTDIR;
-	if (rcu_access_pointer(kn->__parent) != new_parent)
+	if (kn->parent != new_parent)
 		return -EIO;
 
 	/*
@@ -1037,13 +1025,13 @@ int cgroup1_parse_param(struct fs_context *fc, struct fs_parameter *param)
 static int check_cgroupfs_options(struct fs_context *fc)
 {
 	struct cgroup_fs_context *ctx = cgroup_fc2context(fc);
-	u32 mask = U32_MAX;
-	u32 enabled = 0;
+	u16 mask = U16_MAX;
+	u16 enabled = 0;
 	struct cgroup_subsys *ss;
 	int i;
 
 #ifdef CONFIG_CPUSETS
-	mask = ~((u32)1 << cpuset_cgrp_id);
+	mask = ~((u16)1 << cpuset_cgrp_id);
 #endif
 	for_each_subsys(ss, i)
 		if (cgroup_ssid_enabled(i) && !cgroup1_ssid_disabled(i) &&
@@ -1095,7 +1083,7 @@ int cgroup1_reconfigure(struct fs_context *fc)
 	struct kernfs_root *kf_root = kernfs_root_from_sb(fc->root->d_sb);
 	struct cgroup_root *root = cgroup_root_from_kf(kf_root);
 	int ret = 0;
-	u32 added_mask, removed_mask;
+	u16 added_mask, removed_mask;
 
 	cgroup_lock_and_drain_offline(&cgrp_dfl_root.cgrp);
 
@@ -1134,7 +1122,7 @@ int cgroup1_reconfigure(struct fs_context *fc)
 
 	if (ctx->release_agent) {
 		spin_lock(&release_agent_path_lock);
-		strscpy(root->release_agent_path, ctx->release_agent);
+		strcpy(root->release_agent_path, ctx->release_agent);
 		spin_unlock(&release_agent_path_lock);
 	}
 
@@ -1237,7 +1225,7 @@ static int cgroup1_root_to_use(struct fs_context *fc)
 	if (ctx->ns != &init_cgroup_ns)
 		return -EPERM;
 
-	root = kzalloc_obj(*root);
+	root = kzalloc(sizeof(*root), GFP_KERNEL);
 	if (!root)
 		return -ENOMEM;
 
@@ -1326,7 +1314,7 @@ static int __init cgroup1_wq_init(void)
 	 * Cap @max_active to 1 too.
 	 */
 	cgroup_pidlist_destroy_wq = alloc_workqueue("cgroup_pidlist_destroy",
-						    WQ_PERCPU, 1);
+						    0, 1);
 	BUG_ON(!cgroup_pidlist_destroy_wq);
 	return 0;
 }
@@ -1343,7 +1331,7 @@ static int __init cgroup_no_v1(char *str)
 			continue;
 
 		if (!strcmp(token, "all")) {
-			cgroup_no_v1_mask = U32_MAX;
+			cgroup_no_v1_mask = U16_MAX;
 			continue;
 		}
 
@@ -1364,9 +1352,3 @@ static int __init cgroup_no_v1(char *str)
 	return 1;
 }
 __setup("cgroup_no_v1=", cgroup_no_v1);
-
-static int __init cgroup_v1_proc(char *str)
-{
-	return (kstrtobool(str, &proc_show_all) == 0);
-}
-__setup("cgroup_v1_proc=", cgroup_v1_proc);

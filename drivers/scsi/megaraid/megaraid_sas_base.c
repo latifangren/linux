@@ -93,7 +93,7 @@ static unsigned int scmd_timeout = MEGASAS_DEFAULT_CMD_TIMEOUT;
 module_param(scmd_timeout, int, 0444);
 MODULE_PARM_DESC(scmd_timeout, "scsi command timeout (10-90s), default 90s. See megasas_reset_timer.");
 
-static int perf_mode = -1;
+int perf_mode = -1;
 module_param(perf_mode, int, 0444);
 MODULE_PARM_DESC(perf_mode, "Performance mode (only for Aero adapters), options:\n\t\t"
 		"0 - balanced: High iops and low latency queues are allocated &\n\t\t"
@@ -105,15 +105,15 @@ MODULE_PARM_DESC(perf_mode, "Performance mode (only for Aero adapters), options:
 		"default mode is 'balanced'"
 		);
 
-static int event_log_level = MFI_EVT_CLASS_CRITICAL;
+int event_log_level = MFI_EVT_CLASS_CRITICAL;
 module_param(event_log_level, int, 0644);
 MODULE_PARM_DESC(event_log_level, "Asynchronous event logging level- range is: -2(CLASS_DEBUG) to 4(CLASS_DEAD), Default: 2(CLASS_CRITICAL)");
 
-static unsigned int enable_sdev_max_qd;
+unsigned int enable_sdev_max_qd;
 module_param(enable_sdev_max_qd, int, 0444);
 MODULE_PARM_DESC(enable_sdev_max_qd, "Enable sdev max qd as can_queue. Default: 0");
 
-static int poll_queues;
+int poll_queues;
 module_param(poll_queues, int, 0444);
 MODULE_PARM_DESC(poll_queues, "Number of queues to be use for io_uring poll mode.\n\t\t"
 		"This parameter is effective only if host_tagset_enable=1 &\n\t\t"
@@ -122,7 +122,7 @@ MODULE_PARM_DESC(poll_queues, "Number of queues to be use for io_uring poll mode
 		"High iops queues are not allocated &\n\t\t"
 		);
 
-static int host_tagset_enable = 1;
+int host_tagset_enable = 1;
 module_param(host_tagset_enable, int, 0444);
 MODULE_PARM_DESC(host_tagset_enable, "Shared host tagset enable/disable Default: enable(1)");
 
@@ -146,7 +146,7 @@ megasas_set_ld_removed_by_fw(struct megasas_instance *instance);
 /*
  * PCI ID table for all supported controllers
  */
-static const struct pci_device_id megasas_pci_table[] = {
+static struct pci_device_id megasas_pci_table[] = {
 
 	{PCI_DEVICE(PCI_VENDOR_ID_LSI_LOGIC, PCI_DEVICE_ID_LSI_SAS1064R)},
 	/* xscale IOP */
@@ -1781,8 +1781,8 @@ out_return_cmd:
  * @shost:			adapter SCSI host
  * @scmd:			SCSI command to be queued
  */
-static enum scsi_qc_status megasas_queue_command(struct Scsi_Host *shost,
-						 struct scsi_cmnd *scmd)
+static int
+megasas_queue_command(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
 {
 	struct megasas_instance *instance;
 	struct MR_PRIV_DEVICE *mr_device_priv_data;
@@ -2067,8 +2067,8 @@ static void megasas_set_static_target_properties(struct scsi_device *sdev,
 }
 
 
-static int megasas_sdev_configure(struct scsi_device *sdev,
-				  struct queue_limits *lim)
+static int megasas_device_configure(struct scsi_device *sdev,
+		struct queue_limits *lim)
 {
 	u16 pd_index = 0;
 	struct megasas_instance *instance;
@@ -2111,7 +2111,7 @@ static int megasas_sdev_configure(struct scsi_device *sdev,
 	return 0;
 }
 
-static int megasas_sdev_init(struct scsi_device *sdev)
+static int megasas_slave_alloc(struct scsi_device *sdev)
 {
 	u16 pd_index = 0, ld_tgt_id;
 	struct megasas_instance *instance ;
@@ -2137,7 +2137,8 @@ static int megasas_sdev_init(struct scsi_device *sdev)
 	}
 
 scan_target:
-	mr_device_priv_data = kzalloc_obj(*mr_device_priv_data);
+	mr_device_priv_data = kzalloc(sizeof(*mr_device_priv_data),
+					GFP_KERNEL);
 	if (!mr_device_priv_data)
 		return -ENOMEM;
 
@@ -2155,7 +2156,7 @@ scan_target:
 	return 0;
 }
 
-static void megasas_sdev_destroy(struct scsi_device *sdev)
+static void megasas_slave_destroy(struct scsi_device *sdev)
 {
 	u16 ld_tgt_id;
 	struct megasas_instance *instance;
@@ -2723,7 +2724,7 @@ out:
 static void megasas_sriov_heartbeat_handler(struct timer_list *t)
 {
 	struct megasas_instance *instance =
-		timer_container_of(instance, t, sriov_heartbeat_timer);
+		from_timer(instance, t, sriov_heartbeat_timer);
 
 	if (instance->hb_host_mem->HB.fwCounter !=
 	    instance->hb_host_mem->HB.driverCounter) {
@@ -3136,12 +3137,12 @@ static int megasas_reset_target(struct scsi_cmnd *scmd)
 /**
  * megasas_bios_param - Returns disk geometry for a disk
  * @sdev:		device handle
- * @unused:		gendisk
+ * @bdev:		block device
  * @capacity:		drive capacity
  * @geom:		geometry parameters
  */
 static int
-megasas_bios_param(struct scsi_device *sdev, struct gendisk *unused,
+megasas_bios_param(struct scsi_device *sdev, struct block_device *bdev,
 		 sector_t capacity, int geom[])
 {
 	int heads;
@@ -3254,7 +3255,7 @@ megasas_service_aen(struct megasas_instance *instance, struct megasas_cmd *cmd)
 		((instance->issuepend_done == 1))) {
 		struct megasas_aen_event *ev;
 
-		ev = kzalloc_obj(*ev, GFP_ATOMIC);
+		ev = kzalloc(sizeof(*ev), GFP_ATOMIC);
 		if (!ev) {
 			dev_err(&instance->pdev->dev, "megasas_service_aen: out of memory\n");
 		} else {
@@ -3511,9 +3512,9 @@ static const struct scsi_host_template megasas_template = {
 	.module = THIS_MODULE,
 	.name = "Avago SAS based MegaRAID driver",
 	.proc_name = "megaraid_sas",
-	.sdev_configure = megasas_sdev_configure,
-	.sdev_init = megasas_sdev_init,
-	.sdev_destroy = megasas_sdev_destroy,
+	.device_configure = megasas_device_configure,
+	.slave_alloc = megasas_slave_alloc,
+	.slave_destroy = megasas_slave_destroy,
 	.queuecommand = megasas_queue_command,
 	.eh_target_reset_handler = megasas_reset_target,
 	.eh_abort_handler = megasas_task_abort,
@@ -4467,7 +4468,7 @@ int megasas_alloc_cmds(struct megasas_instance *instance)
 	 * Allocate the dynamic array first and then allocate individual
 	 * commands.
 	 */
-	instance->cmd_list = kzalloc_objs(struct megasas_cmd *, max_cmd);
+	instance->cmd_list = kcalloc(max_cmd, sizeof(struct megasas_cmd*), GFP_KERNEL);
 
 	if (!instance->cmd_list) {
 		dev_printk(KERN_DEBUG, &instance->pdev->dev, "out of memory\n");
@@ -4475,7 +4476,8 @@ int megasas_alloc_cmds(struct megasas_instance *instance)
 	}
 
 	for (i = 0; i < max_cmd; i++) {
-		instance->cmd_list[i] = kmalloc_obj(struct megasas_cmd);
+		instance->cmd_list[i] = kmalloc(sizeof(struct megasas_cmd),
+						GFP_KERNEL);
 
 		if (!instance->cmd_list[i]) {
 
@@ -5969,8 +5971,7 @@ megasas_alloc_irq_vectors(struct megasas_instance *instance)
 		else
 			instance->iopoll_q_count = 0;
 
-		num_msix_req = blk_mq_num_online_queues(0) +
-			instance->low_latency_index_start;
+		num_msix_req = num_online_cpus() + instance->low_latency_index_start;
 		instance->msix_vectors = min(num_msix_req,
 				instance->msix_vectors);
 
@@ -5986,8 +5987,7 @@ megasas_alloc_irq_vectors(struct megasas_instance *instance)
 		/* Disable Balanced IOPS mode and try realloc vectors */
 		instance->perf_mode = MR_LATENCY_PERF_MODE;
 		instance->low_latency_index_start = 1;
-		num_msix_req = blk_mq_num_online_queues(0) +
-			instance->low_latency_index_start;
+		num_msix_req = num_online_cpus() + instance->low_latency_index_start;
 
 		instance->msix_vectors = min(num_msix_req,
 				instance->msix_vectors);
@@ -6243,7 +6243,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
 		intr_coalescing = (scratch_pad_1 & MR_INTR_COALESCING_SUPPORT_OFFSET) ?
 								true : false;
 		if (intr_coalescing &&
-			(blk_mq_num_online_queues(0) >= MR_HIGH_IOPS_QUEUE_COUNT) &&
+			(num_online_cpus() >= MR_HIGH_IOPS_QUEUE_COUNT) &&
 			(instance->msix_vectors == MEGASAS_MAX_MSIX_QUEUES))
 			instance->perf_mode = MR_BALANCED_PERF_MODE;
 		else
@@ -6287,8 +6287,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
 		else
 			instance->low_latency_index_start = 1;
 
-		num_msix_req = blk_mq_num_online_queues(0) +
-			instance->low_latency_index_start;
+		num_msix_req = num_online_cpus() + instance->low_latency_index_start;
 
 		instance->msix_vectors = min(num_msix_req,
 				instance->msix_vectors);
@@ -6320,8 +6319,8 @@ static int megasas_init_fw(struct megasas_instance *instance)
 	megasas_setup_reply_map(instance);
 
 	dev_info(&instance->pdev->dev,
-		"current msix/max num queues\t: (%d/%u)\n",
-		instance->msix_vectors, blk_mq_num_online_queues(0));
+		"current msix/online cpus\t: (%d/%d)\n",
+		instance->msix_vectors, (unsigned int)num_online_cpus());
 	dev_info(&instance->pdev->dev,
 		"RDPQ mode\t: (%s)\n", instance->is_rdpq ? "enabled" : "disabled");
 
@@ -6365,20 +6364,19 @@ static int megasas_init_fw(struct megasas_instance *instance)
 
 	megasas_setup_jbod_map(instance);
 
-	scoped_guard(mutex, &instance->reset_mutex) {
-		if (megasas_get_device_list(instance) != SUCCESS) {
-			dev_err(&instance->pdev->dev,
-				"%s: megasas_get_device_list failed\n",
-				__func__);
-			goto fail_get_ld_pd_list;
-		}
+	if (megasas_get_device_list(instance) != SUCCESS) {
+		dev_err(&instance->pdev->dev,
+			"%s: megasas_get_device_list failed\n",
+			__func__);
+		goto fail_get_ld_pd_list;
 	}
 
 	/* stream detection initialization */
 	if (instance->adapter_type >= VENTURA_SERIES) {
 		fusion->stream_detect_by_ld =
-			kzalloc_objs(struct LD_STREAM_DETECT *,
-				     MAX_LOGICAL_DRIVES_EXT);
+			kcalloc(MAX_LOGICAL_DRIVES_EXT,
+				sizeof(struct LD_STREAM_DETECT *),
+				GFP_KERNEL);
 		if (!fusion->stream_detect_by_ld) {
 			dev_err(&instance->pdev->dev,
 				"unable to allocate stream detection for pool of LDs\n");
@@ -6386,7 +6384,8 @@ static int megasas_init_fw(struct megasas_instance *instance)
 		}
 		for (i = 0; i < MAX_LOGICAL_DRIVES_EXT; ++i) {
 			fusion->stream_detect_by_ld[i] =
-				kzalloc_obj(struct LD_STREAM_DETECT);
+				kzalloc(sizeof(struct LD_STREAM_DETECT),
+				GFP_KERNEL);
 			if (!fusion->stream_detect_by_ld[i]) {
 				dev_err(&instance->pdev->dev,
 					"unable to allocate stream detect by LD\n");
@@ -6470,8 +6469,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
 	}
 
 	if (instance->snapdump_wait_time) {
-		scoped_guard(mutex, &instance->reset_mutex)
-			megasas_get_snapdump_properties(instance);
+		megasas_get_snapdump_properties(instance);
 		dev_info(&instance->pdev->dev, "Snap dump wait time\t: %d\n",
 			 instance->snapdump_wait_time);
 	}
@@ -6532,7 +6530,7 @@ static int megasas_init_fw(struct megasas_instance *instance)
 
 fail_start_watchdog:
 	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
-		timer_delete_sync(&instance->sriov_heartbeat_timer);
+		del_timer_sync(&instance->sriov_heartbeat_timer);
 fail_get_ld_pd_list:
 	instance->instancet->disable_intr(instance);
 	megasas_destroy_irqs(instance);
@@ -7614,7 +7612,7 @@ fail_io_attach:
 	megasas_mgmt_info.instance[megasas_mgmt_info.max_index] = NULL;
 
 	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
-		timer_delete_sync(&instance->sriov_heartbeat_timer);
+		del_timer_sync(&instance->sriov_heartbeat_timer);
 
 	instance->instancet->disable_intr(instance);
 	megasas_destroy_irqs(instance);
@@ -7754,7 +7752,7 @@ megasas_suspend(struct device *dev)
 
 	/* Shutdown SR-IOV heartbeat timer */
 	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
-		timer_delete_sync(&instance->sriov_heartbeat_timer);
+		del_timer_sync(&instance->sriov_heartbeat_timer);
 
 	/* Stop the FW fault detection watchdog */
 	if (instance->adapter_type != MFI_SERIES)
@@ -7918,7 +7916,7 @@ megasas_resume(struct device *dev)
 
 fail_start_watchdog:
 	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
-		timer_delete_sync(&instance->sriov_heartbeat_timer);
+		del_timer_sync(&instance->sriov_heartbeat_timer);
 fail_init_mfi:
 	megasas_free_ctrl_dma_buffers(instance);
 	megasas_free_ctrl_mem(instance);
@@ -7982,7 +7980,7 @@ static void megasas_detach_one(struct pci_dev *pdev)
 
 	/* Shutdown SR-IOV heartbeat timer */
 	if (instance->requestorId && !instance->skip_heartbeat_timer_del)
-		timer_delete_sync(&instance->sriov_heartbeat_timer);
+		del_timer_sync(&instance->sriov_heartbeat_timer);
 
 	/* Stop the FW fault detection watchdog */
 	if (instance->adapter_type != MFI_SERIES)
@@ -8495,7 +8493,7 @@ megasas_compat_iocpacket_get_user(void __user *arg)
 	int err = -EFAULT;
 	int i;
 
-	ioc = kzalloc_obj(*ioc);
+	ioc = kzalloc(sizeof(*ioc), GFP_KERNEL);
 	if (!ioc)
 		return ERR_PTR(-ENOMEM);
 	size = offsetof(struct megasas_iocpacket, frame) + sizeof(ioc->frame);

@@ -10,6 +10,7 @@ Contents:
 .. toctree::
    :maxdepth: 2
 
+   3com/3c509
    3com/vortex
    amazon/ena
    altera/altera_tse
@@ -27,7 +28,6 @@ Contents:
    freescale/gianfar
    google/gve
    huawei/hinic
-   huawei/hinic3
    intel/e100
    intel/e1000
    intel/e1000e
@@ -46,18 +46,22 @@ Contents:
    mellanox/mlx5/index
    meta/fbnic
    microsoft/netvsc
-   mucse/rnpgbe
+   neterion/s2io
    netronome/nfp
    pensando/ionic
-   pensando/ionic_rdma
-   qualcomm/ppe/ppe
+   smsc/smc9
    stmicro/stmmac
    ti/cpsw
    ti/cpsw_switchdev
    ti/am65_nuss_cpsw_switchdev
    ti/tlan
-   ti/icssg_prueth
+   toshiba/spider_net
    wangxun/txgbe
-   wangxun/txgbevf
    wangxun/ngbe
-   wangxun/ngbevf
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

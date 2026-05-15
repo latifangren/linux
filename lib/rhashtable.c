@@ -184,8 +184,8 @@ static struct bucket_table *bucket_table_alloc(struct rhashtable *ht,
 	static struct lock_class_key __key;
 
 	tbl = alloc_hooks_tag(ht->alloc_tag,
-			kvmalloc_node_align_noprof(struct_size(tbl, buckets, nbuckets),
-					     1, gfp|__GFP_ZERO, NUMA_NO_NODE));
+			kvmalloc_node_noprof(struct_size(tbl, buckets, nbuckets),
+					     gfp|__GFP_ZERO, NUMA_NO_NODE));
 
 	size = nbuckets;
 
@@ -358,7 +358,6 @@ static int rhashtable_rehash_table(struct rhashtable *ht)
 static int rhashtable_rehash_alloc(struct rhashtable *ht,
 				   struct bucket_table *old_tbl,
 				   unsigned int size)
-	__must_hold(&ht->mutex)
 {
 	struct bucket_table *new_tbl;
 	int err;
@@ -393,7 +392,6 @@ static int rhashtable_rehash_alloc(struct rhashtable *ht,
  * bucket locks or concurrent RCU protected lookups and traversals.
  */
 static int rhashtable_shrink(struct rhashtable *ht)
-	__must_hold(&ht->mutex)
 {
 	struct bucket_table *old_tbl = rht_dereference(ht->tbl, ht);
 	unsigned int nelems = atomic_read(&ht->nelems);
@@ -441,31 +439,8 @@ static void rht_deferred_worker(struct work_struct *work)
 
 	mutex_unlock(&ht->mutex);
 
-	/*
-	 * Re-arm via @run_work, not @run_irq_work.
-	 * rhashtable_free_and_destroy() drains async work as irq_work_sync()
-	 * followed by cancel_work_sync(). If this site queued irq_work while
-	 * cancel_work_sync() was waiting for us, irq_work_sync() would already
-	 * have returned and the stale irq_work could fire post-teardown.
-	 * cancel_work_sync() natively handles self-requeue on @run_work.
-	 */
 	if (err)
 		schedule_work(&ht->run_work);
-}
-
-/*
- * Insert-path callers can run under a raw spinlock (e.g. an insecure_elasticity
- * user). Calling schedule_work() under that lock records caller_lock ->
- * pool->lock -> pi_lock -> rq->__lock, closing a locking cycle if any of
- * these is acquired in the reverse direction elsewhere. Bounce through
- * irq_work so the schedule_work() runs with the caller's lock no longer held.
- */
-static void rht_deferred_irq_work(struct irq_work *irq_work)
-{
-	struct rhashtable *ht = container_of(irq_work, struct rhashtable,
-					     run_irq_work);
-
-	schedule_work(&ht->run_work);
 }
 
 static int rhashtable_insert_rehash(struct rhashtable *ht,
@@ -500,7 +475,7 @@ static int rhashtable_insert_rehash(struct rhashtable *ht,
 		if (err == -EEXIST)
 			err = 0;
 	} else
-		irq_work_queue(&ht->run_irq_work);
+		schedule_work(&ht->run_work);
 
 	return err;
 
@@ -511,7 +486,7 @@ fail:
 
 	/* Schedule async rehash to retry allocation in process context. */
 	if (err == -ENOMEM)
-		irq_work_queue(&ht->run_irq_work);
+		schedule_work(&ht->run_work);
 
 	return err;
 }
@@ -561,7 +536,7 @@ static void *rhashtable_lookup_one(struct rhashtable *ht,
 		return NULL;
 	}
 
-	if (elasticity <= 0 && !ht->p.insecure_elasticity)
+	if (elasticity <= 0)
 		return ERR_PTR(-EAGAIN);
 
 	return ERR_PTR(-ENOENT);
@@ -591,8 +566,7 @@ static struct bucket_table *rhashtable_insert_one(
 	if (unlikely(rht_grow_above_max(ht, tbl)))
 		return ERR_PTR(-E2BIG);
 
-	if (unlikely(rht_grow_above_100(ht, tbl)) &&
-	    !ht->p.insecure_elasticity)
+	if (unlikely(rht_grow_above_100(ht, tbl)))
 		return ERR_PTR(-EAGAIN);
 
 	head = rht_ptr(bkt, tbl, hash);
@@ -653,7 +627,7 @@ static void *rhashtable_try_insert(struct rhashtable *ht, const void *key,
 			rht_unlock(tbl, bkt, flags);
 
 			if (inserted && rht_grow_above_75(ht, tbl))
-				irq_work_queue(&ht->run_irq_work);
+				schedule_work(&ht->run_work);
 		}
 	} while (!IS_ERR_OR_NULL(new_tbl));
 
@@ -695,7 +669,7 @@ EXPORT_SYMBOL_GPL(rhashtable_insert_slow);
  * structure outside the hash table.
  *
  * This function may be called from any process context, including
- * non-preemptible context, but cannot be called from softirq or
+ * non-preemptable context, but cannot be called from softirq or
  * hardirq context.
  *
  * You must call rhashtable_walk_exit after this function returns.
@@ -750,7 +724,7 @@ EXPORT_SYMBOL_GPL(rhashtable_walk_exit);
  * resize events and always continue.
  */
 int rhashtable_walk_start_check(struct rhashtable_iter *iter)
-	__acquires_shared(RCU)
+	__acquires(RCU)
 {
 	struct rhashtable *ht = iter->ht;
 	bool rhlist = ht->rhlist;
@@ -966,6 +940,7 @@ EXPORT_SYMBOL_GPL(rhashtable_walk_peek);
  * hash table.
  */
 void rhashtable_walk_stop(struct rhashtable_iter *iter)
+	__releases(RCU)
 {
 	struct rhashtable *ht;
 	struct bucket_table *tbl = iter->walker.tbl;
@@ -1108,7 +1083,6 @@ int rhashtable_init_noprof(struct rhashtable *ht,
 	RCU_INIT_POINTER(ht->tbl, tbl);
 
 	INIT_WORK(&ht->run_work, rht_deferred_worker);
-	init_irq_work(&ht->run_irq_work, rht_deferred_irq_work);
 
 	return 0;
 }
@@ -1174,7 +1148,6 @@ void rhashtable_free_and_destroy(struct rhashtable *ht,
 	struct bucket_table *tbl, *next_tbl;
 	unsigned int i;
 
-	irq_work_sync(&ht->run_irq_work);
 	cancel_work_sync(&ht->run_work);
 
 	mutex_lock(&ht->mutex);

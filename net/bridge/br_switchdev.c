@@ -70,7 +70,7 @@ bool nbp_switchdev_allowed_egress(const struct net_bridge_port *p,
 	struct br_input_skb_cb *cb = BR_INPUT_SKB_CB(skb);
 
 	return !test_bit(p->hwdom, &cb->fwd_hwdoms) &&
-		(!skb->offload_fwd_mark || cb->src_hwdom != p->hwdom);
+		(!skb->offload_fwd_mark || !p->hwdom || cb->src_hwdom != p->hwdom);
 }
 
 /* Flags that can be offloaded to hardware */
@@ -182,21 +182,6 @@ int br_switchdev_port_vlan_add(struct net_device *dev, u16 vid, u16 flags,
 	struct switchdev_obj_port_vlan v = {
 		.obj.orig_dev = dev,
 		.obj.id = SWITCHDEV_OBJ_ID_PORT_VLAN,
-		.flags = flags,
-		.vid = vid,
-		.changed = changed,
-	};
-
-	return switchdev_port_obj_add(dev, &v.obj, extack);
-}
-
-int br_switchdev_port_vlan_no_foreign_add(struct net_device *dev, u16 vid, u16 flags,
-					  bool changed, struct netlink_ext_ack *extack)
-{
-	struct switchdev_obj_port_vlan v = {
-		.obj.orig_dev = dev,
-		.obj.id = SWITCHDEV_OBJ_ID_PORT_VLAN,
-		.obj.flags = SWITCHDEV_F_NO_FOREIGN,
 		.flags = flags,
 		.vid = vid,
 		.changed = changed,
@@ -522,10 +507,9 @@ static void br_switchdev_mdb_complete(struct net_device *dev, int err, void *pri
 	struct net_bridge_mdb_entry *mp;
 	struct net_bridge_port *port = data->port;
 	struct net_bridge *br = port->br;
-	u8 old_flags;
 
-	if (err == -EOPNOTSUPP)
-		goto out_free;
+	if (err)
+		goto err;
 
 	spin_lock_bh(&br->multicast_lock);
 	mp = br_mdb_ip_get(br, &data->ip);
@@ -535,15 +519,11 @@ static void br_switchdev_mdb_complete(struct net_device *dev, int err, void *pri
 	     pp = &p->next) {
 		if (p->key.port != port)
 			continue;
-
-		old_flags = p->flags;
-		br_multicast_set_pg_offload_flags(p, !err);
-		if (br_mdb_should_notify(br, old_flags ^ p->flags))
-			br_mdb_flag_change_notify(br->dev, mp, p);
+		p->flags |= MDB_PG_FLAGS_OFFLOAD;
 	}
 out:
 	spin_unlock_bh(&br->multicast_lock);
-out_free:
+err:
 	kfree(priv);
 }
 
@@ -591,10 +571,18 @@ static void br_switchdev_host_mdb(struct net_device *dev,
 				  struct net_bridge_mdb_entry *mp, int type)
 {
 	struct net_device *lower_dev;
+	struct net_bridge_port *port;
 	struct list_head *iter;
 
-	netdev_for_each_lower_dev(dev, lower_dev, iter)
+	rcu_read_lock();
+	netdev_for_each_lower_dev(dev, lower_dev, iter) {
+		port = br_port_get_rcu(lower_dev);
+		if (!port || !port->offload_count)
+			continue;
+
 		br_switchdev_host_mdb_one(dev, lower_dev, mp, type);
+	}
+	rcu_read_unlock();
 }
 
 static int
@@ -676,7 +664,7 @@ void br_switchdev_mdb_notify(struct net_device *dev,
 	mdb.obj.orig_dev = pg->key.port->dev;
 	switch (type) {
 	case RTM_NEWMDB:
-		complete_info = kmalloc_obj(*complete_info, GFP_ATOMIC);
+		complete_info = kmalloc(sizeof(*complete_info), GFP_ATOMIC);
 		if (!complete_info)
 			break;
 		complete_info->port = pg->key.port;
@@ -852,7 +840,7 @@ int br_switchdev_port_offload(struct net_bridge_port *p,
 	struct netdev_phys_item_id ppid;
 	int err;
 
-	err = netif_get_port_parent_id(dev, &ppid, false);
+	err = dev_get_port_parent_id(dev, &ppid, false);
 	if (err)
 		return err;
 

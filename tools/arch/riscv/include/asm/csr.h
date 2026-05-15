@@ -469,13 +469,13 @@
 #define IE_TIE		(_AC(0x1, UL) << RV_IRQ_TIMER)
 #define IE_EIE		(_AC(0x1, UL) << RV_IRQ_EXT)
 
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 #define __ASM_STR(x)    x
 #else
 #define __ASM_STR(x)    #x
 #endif
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #define csr_swap(csr, val)					\
 ({								\
@@ -537,6 +537,6 @@
 			      : "memory");			\
 })
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_RISCV_CSR_H */

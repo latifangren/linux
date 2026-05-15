@@ -92,7 +92,7 @@
  * Auxiliary devices are created and registered by a subsystem-level core
  * device that needs to break up its functionality into smaller fragments. One
  * way to extend the scope of an auxiliary_device is to encapsulate it within a
- * domain-specific structure defined by the parent device. This structure
+ * domain- pecific structure defined by the parent device. This structure
  * contains the auxiliary_device and any associated shared data/callbacks
  * needed to establish the connection with the parent.
  *
@@ -156,33 +156,22 @@
  *		},
  *		.ops = my_custom_ops,
  *	};
- *
- * Please note that such custom ops approach is valid, but it is hard to implement
- * it right without global locks per-device to protect from auxiliary_drv removal
- * during call to that ops. In addition, this implementation lacks proper module
- * dependency, which causes to load/unload races between auxiliary parent and devices
- * modules.
- *
- * The most easiest way to provide these ops reliably without needing to
- * have a lock is to EXPORT_SYMBOL*() them and rely on already existing
- * modules infrastructure for validity and correct dependencies chains.
  */
 
 static const struct auxiliary_device_id *auxiliary_match_id(const struct auxiliary_device_id *id,
 							    const struct auxiliary_device *auxdev)
 {
-	const char *auxdev_name = dev_name(&auxdev->dev);
-	const char *p = strrchr(auxdev_name, '.');
-	int match_size;
-
-	if (!p)
-		return NULL;
-	match_size = p - auxdev_name;
-
 	for (; id->name[0]; id++) {
+		const char *p = strrchr(dev_name(&auxdev->dev), '.');
+		int match_size;
+
+		if (!p)
+			continue;
+		match_size = p - dev_name(&auxdev->dev);
+
 		/* use dev_name(&auxdev->dev) prefix before last '.' char to match to */
 		if (strlen(id->name) == match_size &&
-		    !strncmp(auxdev_name, id->name, match_size))
+		    !strncmp(dev_name(&auxdev->dev), id->name, match_size))
 			return id;
 	}
 	return NULL;
@@ -207,20 +196,28 @@ static int auxiliary_uevent(const struct device *dev, struct kobj_uevent_env *en
 			      (int)(p - name), name);
 }
 
+static const struct dev_pm_ops auxiliary_dev_pm_ops = {
+	SET_RUNTIME_PM_OPS(pm_generic_runtime_suspend, pm_generic_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(pm_generic_suspend, pm_generic_resume)
+};
+
 static int auxiliary_bus_probe(struct device *dev)
 {
 	const struct auxiliary_driver *auxdrv = to_auxiliary_drv(dev->driver);
 	struct auxiliary_device *auxdev = to_auxiliary_dev(dev);
 	int ret;
 
-	ret = dev_pm_domain_attach(dev, PD_FLAG_ATTACH_POWER_ON |
-					PD_FLAG_DETACH_POWER_OFF);
+	ret = dev_pm_domain_attach(dev, true);
 	if (ret) {
 		dev_warn(dev, "Failed to attach to PM Domain : %d\n", ret);
 		return ret;
 	}
 
-	return auxdrv->probe(auxdev, auxiliary_match_id(auxdrv->id_table, auxdev));
+	ret = auxdrv->probe(auxdev, auxiliary_match_id(auxdrv->id_table, auxdev));
+	if (ret)
+		dev_pm_domain_detach(dev, true);
+
+	return ret;
 }
 
 static void auxiliary_bus_remove(struct device *dev)
@@ -230,6 +227,7 @@ static void auxiliary_bus_remove(struct device *dev)
 
 	if (auxdrv->remove)
 		auxdrv->remove(auxdev);
+	dev_pm_domain_detach(dev, true);
 }
 
 static void auxiliary_bus_shutdown(struct device *dev)
@@ -253,6 +251,7 @@ static const struct bus_type auxiliary_bus_type = {
 	.shutdown = auxiliary_bus_shutdown,
 	.match = auxiliary_match,
 	.uevent = auxiliary_uevent,
+	.pm = &auxiliary_dev_pm_ops,
 };
 
 /**
@@ -337,6 +336,35 @@ int __auxiliary_device_add(struct auxiliary_device *auxdev, const char *modname)
 EXPORT_SYMBOL_GPL(__auxiliary_device_add);
 
 /**
+ * auxiliary_find_device - auxiliary device iterator for locating a particular device.
+ * @start: Device to begin with
+ * @data: Data to pass to match function
+ * @match: Callback function to check device
+ *
+ * This function returns a reference to a device that is 'found'
+ * for later use, as determined by the @match callback.
+ *
+ * The reference returned should be released with put_device().
+ *
+ * The callback should return 0 if the device doesn't match and non-zero
+ * if it does.  If the callback returns non-zero, this function will
+ * return to the caller and not iterate over any more devices.
+ */
+struct auxiliary_device *auxiliary_find_device(struct device *start,
+					       const void *data,
+					       device_match_t match)
+{
+	struct device *dev;
+
+	dev = bus_find_device(&auxiliary_bus_type, start, data, match);
+	if (!dev)
+		return NULL;
+
+	return to_auxiliary_dev(dev);
+}
+EXPORT_SYMBOL_GPL(auxiliary_find_device);
+
+/**
  * __auxiliary_driver_register - register a driver for auxiliary bus devices
  * @auxdrv: auxiliary_driver structure
  * @owner: owning module/driver
@@ -390,7 +418,6 @@ static void auxiliary_device_release(struct device *dev)
 {
 	struct auxiliary_device *auxdev = to_auxiliary_dev(dev);
 
-	of_node_put(dev->of_node);
 	kfree(auxdev);
 }
 
@@ -414,7 +441,7 @@ struct auxiliary_device *auxiliary_device_create(struct device *dev,
 	struct auxiliary_device *auxdev;
 	int ret;
 
-	auxdev = kzalloc_obj(*auxdev);
+	auxdev = kzalloc(sizeof(*auxdev), GFP_KERNEL);
 	if (!auxdev)
 		return NULL;
 
@@ -427,7 +454,6 @@ struct auxiliary_device *auxiliary_device_create(struct device *dev,
 
 	ret = auxiliary_device_init(auxdev);
 	if (ret) {
-		of_node_put(auxdev->dev.of_node);
 		kfree(auxdev);
 		return NULL;
 	}
@@ -495,16 +521,6 @@ struct auxiliary_device *__devm_auxiliary_device_create(struct device *dev,
 	return auxdev;
 }
 EXPORT_SYMBOL_GPL(__devm_auxiliary_device_create);
-
-/**
- * dev_is_auxiliary - check if the device is an auxiliary one
- * @dev: device to check
- */
-bool dev_is_auxiliary(struct device *dev)
-{
-	return dev->bus == &auxiliary_bus_type;
-}
-EXPORT_SYMBOL_GPL(dev_is_auxiliary);
 
 void __init auxiliary_bus_init(void)
 {

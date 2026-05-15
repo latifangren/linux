@@ -69,7 +69,7 @@ static DEFINE_MUTEX(attribute_container_mutex);
  * @cont: The container to register.  This must be allocated by the
  *        callee and should also be zeroed by it.
  */
-void
+int
 attribute_container_register(struct attribute_container *cont)
 {
 	INIT_LIST_HEAD(&cont->node);
@@ -79,6 +79,8 @@ attribute_container_register(struct attribute_container *cont)
 	mutex_lock(&attribute_container_mutex);
 	list_add_tail(&cont->node, &attribute_container_list);
 	mutex_unlock(&attribute_container_mutex);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(attribute_container_register);
 
@@ -153,7 +155,7 @@ attribute_container_add_device(struct device *dev,
 		if (!cont->match(cont, dev))
 			continue;
 
-		ic = kzalloc_obj(*ic);
+		ic = kzalloc(sizeof(*ic), GFP_KERNEL);
 		if (!ic) {
 			dev_err(dev, "failed to allocate class container\n");
 			continue;

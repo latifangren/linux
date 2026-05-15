@@ -113,7 +113,6 @@ static int __init pseries_alloc_bootmem_huge_page(struct hstate *hstate)
 	gpage_freearray[nr_gpages] = 0;
 	list_add(&m->list, &huge_boot_pages[0]);
 	m->hstate = hstate;
-	m->flags = 0;
 	return 1;
 }
 
@@ -200,15 +199,18 @@ static int __init hugetlbpage_init(void)
 
 arch_initcall(hugetlbpage_init);
 
-unsigned int __init arch_hugetlb_cma_order(void)
+void __init gigantic_hugetlb_cma_reserve(void)
 {
+	unsigned long order = 0;
+
 	if (radix_enabled())
-		return PUD_SHIFT - PAGE_SHIFT;
+		order = PUD_SHIFT - PAGE_SHIFT;
 	else if (!firmware_has_feature(FW_FEATURE_LPAR) && mmu_psize_defs[MMU_PAGE_16G].shift)
 		/*
 		 * For pseries we do use ibm,expected#pages for reserving 16G pages.
 		 */
-		return mmu_psize_to_shift(MMU_PAGE_16G) - PAGE_SHIFT;
+		order = mmu_psize_to_shift(MMU_PAGE_16G) - PAGE_SHIFT;
 
-	return 0;
+	if (order)
+		hugetlb_cma_reserve(order);
 }

@@ -20,7 +20,6 @@
 #include <linux/pm.h>
 #include <linux/regmap.h>
 
-#include <drm/clients/drm_client_setup.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
@@ -229,7 +228,7 @@ static int ingenic_drm_update_pixclk(struct notifier_block *nb,
 }
 
 static void ingenic_drm_bridge_atomic_enable(struct drm_bridge *bridge,
-					     struct drm_atomic_state *state)
+					     struct drm_bridge_state *old_bridge_state)
 {
 	struct ingenic_drm *priv = drm_device_get_priv(bridge->dev);
 
@@ -247,8 +246,8 @@ static void ingenic_drm_crtc_atomic_enable(struct drm_crtc *crtc,
 	struct ingenic_drm_private_state *priv_state;
 	unsigned int next_id;
 
-	priv_state = ingenic_drm_get_new_priv_state(priv, state);
-	if (WARN_ON(!priv_state))
+	priv_state = ingenic_drm_get_priv_state(priv, state);
+	if (WARN_ON(IS_ERR(priv_state)))
 		return;
 
 	/* Set addresses of our DMA descriptor chains */
@@ -260,7 +259,7 @@ static void ingenic_drm_crtc_atomic_enable(struct drm_crtc *crtc,
 }
 
 static void ingenic_drm_bridge_atomic_disable(struct drm_bridge *bridge,
-					      struct drm_atomic_state *state)
+					      struct drm_bridge_state *old_bridge_state)
 {
 	struct ingenic_drm *priv = drm_device_get_priv(bridge->dev);
 	unsigned int var;
@@ -340,18 +339,12 @@ static int ingenic_drm_crtc_atomic_check(struct drm_crtc *crtc,
 									  crtc);
 	struct ingenic_drm *priv = drm_crtc_get_priv(crtc);
 	struct drm_plane_state *f1_state, *f0_state, *ipu_state = NULL;
-	struct ingenic_drm_private_state *priv_state;
 
 	if (crtc_state->gamma_lut &&
 	    drm_color_lut_size(crtc_state->gamma_lut) != ARRAY_SIZE(priv->dma_hwdescs->palette)) {
 		dev_dbg(priv->dev, "Invalid palette size\n");
 		return -EINVAL;
 	}
-
-	/* We will need the state in atomic_enable, so let's make sure it's part of the state */
-	priv_state = ingenic_drm_get_priv_state(priv, state);
-	if (IS_ERR(priv_state))
-		return PTR_ERR(priv_state);
 
 	if (drm_atomic_crtc_needs_modeset(crtc_state) && priv->soc_info->has_osd) {
 		f1_state = drm_atomic_get_plane_state(crtc_state->state,
@@ -477,7 +470,8 @@ static int ingenic_drm_plane_atomic_check(struct drm_plane *plane,
 	if (priv->soc_info->plane_f0_not_working && plane == &priv->f0)
 		return -EINVAL;
 
-	crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+	crtc_state = drm_atomic_get_existing_crtc_state(state,
+							crtc);
 	if (WARN_ON(!crtc_state))
 		return -EINVAL;
 
@@ -796,12 +790,11 @@ static void ingenic_drm_encoder_atomic_mode_set(struct drm_encoder *encoder,
 }
 
 static int ingenic_drm_bridge_attach(struct drm_bridge *bridge,
-				     struct drm_encoder *encoder,
 				     enum drm_bridge_attach_flags flags)
 {
-	struct ingenic_drm_bridge *ib = to_ingenic_drm_bridge(encoder);
+	struct ingenic_drm_bridge *ib = to_ingenic_drm_bridge(bridge->encoder);
 
-	return drm_bridge_attach(encoder, ib->next_bridge,
+	return drm_bridge_attach(bridge->encoder, ib->next_bridge,
 				 &ib->bridge, flags);
 }
 
@@ -906,15 +899,14 @@ static void ingenic_drm_disable_vblank(struct drm_crtc *crtc)
 
 static struct drm_framebuffer *
 ingenic_drm_gem_fb_create(struct drm_device *drm, struct drm_file *file,
-			  const struct drm_format_info *info,
 			  const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct ingenic_drm *priv = drm_device_get_priv(drm);
 
 	if (priv->soc_info->map_noncoherent)
-		return drm_gem_fb_create_with_dirty(drm, file, info, mode_cmd);
+		return drm_gem_fb_create_with_dirty(drm, file, mode_cmd);
 
-	return drm_gem_fb_create(drm, file, info, mode_cmd);
+	return drm_gem_fb_create(drm, file, mode_cmd);
 }
 
 static struct drm_gem_object *
@@ -923,7 +915,7 @@ ingenic_drm_gem_create_object(struct drm_device *drm, size_t size)
 	struct ingenic_drm *priv = drm_device_get_priv(drm);
 	struct drm_gem_dma_object *obj;
 
-	obj = kzalloc_obj(*obj);
+	obj = kzalloc(sizeof(*obj), GFP_KERNEL);
 	if (!obj)
 		return ERR_PTR(-ENOMEM);
 
@@ -954,26 +946,13 @@ static void ingenic_drm_destroy_state(struct drm_private_obj *obj,
 	kfree(priv_state);
 }
 
-static struct drm_private_state *
-ingenic_drm_create_state(struct drm_private_obj *obj)
-{
-	struct ingenic_drm_private_state *priv_state;
-
-	priv_state = kzalloc_obj(*priv_state);
-	if (!priv_state)
-		return ERR_PTR(-ENOMEM);
-
-	__drm_atomic_helper_private_obj_create_state(obj, &priv_state->base);
-
-	return &priv_state->base;
-}
-
 DEFINE_DRM_GEM_DMA_FOPS(ingenic_drm_fops);
 
 static const struct drm_driver ingenic_drm_driver_data = {
 	.driver_features	= DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
 	.name			= "ingenic-drm",
 	.desc			= "DRM module for Ingenic SoCs",
+	.date			= "20200716",
 	.major			= 1,
 	.minor			= 1,
 	.patchlevel		= 0,
@@ -981,7 +960,6 @@ static const struct drm_driver ingenic_drm_driver_data = {
 	.fops			= &ingenic_drm_fops,
 	.gem_create_object	= ingenic_drm_gem_create_object,
 	DRM_GEM_DMA_DRIVER_OPS,
-	DRM_FBDEV_DMA_DRIVER_OPS,
 };
 
 static const struct drm_plane_funcs ingenic_drm_primary_plane_funcs = {
@@ -1048,7 +1026,6 @@ static struct drm_mode_config_helper_funcs ingenic_drm_mode_config_helpers = {
 };
 
 static const struct drm_private_state_funcs ingenic_drm_private_state_funcs = {
-	.atomic_create_state = ingenic_drm_create_state,
 	.atomic_duplicate_state = ingenic_drm_duplicate_state,
 	.atomic_destroy_state = ingenic_drm_destroy_state,
 };
@@ -1102,6 +1079,7 @@ static void ingenic_drm_atomic_private_obj_fini(struct drm_device *drm, void *pr
 static int ingenic_drm_bind(struct device *dev, bool has_components)
 {
 	struct platform_device *pdev = to_platform_device(dev);
+	struct ingenic_drm_private_state *private_state;
 	const struct jz_soc_info *soc_info;
 	struct ingenic_drm *priv;
 	struct clk *parent_clk;
@@ -1401,13 +1379,19 @@ static int ingenic_drm_bind(struct device *dev, bool has_components)
 		goto err_devclk_disable;
 	}
 
-	drm_atomic_private_obj_init(drm, &priv->private_obj,
+	private_state = kzalloc(sizeof(*private_state), GFP_KERNEL);
+	if (!private_state) {
+		ret = -ENOMEM;
+		goto err_clk_notifier_unregister;
+	}
+
+	drm_atomic_private_obj_init(drm, &priv->private_obj, &private_state->base,
 				    &ingenic_drm_private_state_funcs);
 
 	ret = drmm_add_action_or_reset(drm, ingenic_drm_atomic_private_obj_fini,
 				       &priv->private_obj);
 	if (ret)
-		goto err_clk_notifier_unregister;
+		goto err_private_state_free;
 
 	ret = drm_dev_register(drm, 0);
 	if (ret) {
@@ -1415,10 +1399,12 @@ static int ingenic_drm_bind(struct device *dev, bool has_components)
 		goto err_clk_notifier_unregister;
 	}
 
-	drm_client_setup(drm, NULL);
+	drm_fbdev_dma_setup(drm, 32);
 
 	return 0;
 
+err_private_state_free:
+	kfree(private_state);
 err_clk_notifier_unregister:
 	clk_notifier_unregister(parent_clk, &priv->clock_nb);
 err_devclk_disable:
@@ -1644,7 +1630,7 @@ static struct platform_driver ingenic_drm_driver = {
 		.of_match_table = of_match_ptr(ingenic_drm_of_match),
 	},
 	.probe = ingenic_drm_probe,
-	.remove = ingenic_drm_remove,
+	.remove_new = ingenic_drm_remove,
 	.shutdown = ingenic_drm_shutdown,
 };
 

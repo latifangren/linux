@@ -322,7 +322,7 @@ static struct policy_dbs_info *od_alloc(void)
 {
 	struct od_policy_dbs_info *dbs_info;
 
-	dbs_info = kzalloc_obj(*dbs_info);
+	dbs_info = kzalloc(sizeof(*dbs_info), GFP_KERNEL);
 	return dbs_info ? &dbs_info->policy_dbs : NULL;
 }
 
@@ -334,12 +334,17 @@ static void od_free(struct policy_dbs_info *policy_dbs)
 static int od_init(struct dbs_data *dbs_data)
 {
 	struct od_dbs_tuners *tuners;
+	u64 idle_time;
+	int cpu;
 
-	tuners = kzalloc_obj(*tuners);
+	tuners = kzalloc(sizeof(*tuners), GFP_KERNEL);
 	if (!tuners)
 		return -ENOMEM;
 
-	if (tick_nohz_is_active()) {
+	cpu = get_cpu();
+	idle_time = get_cpu_idle_time_us(cpu, NULL);
+	put_cpu();
+	if (idle_time != -1ULL) {
 		/* Idle micro accounting is supported. Use finer thresholds */
 		dbs_data->up_threshold = MICRO_FREQUENCY_UP_THRESHOLD;
 	} else {

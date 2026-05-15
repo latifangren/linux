@@ -28,7 +28,8 @@
  *	      Benjamin Block
  */
 
-#define pr_fmt(fmt) "zfcp: " fmt
+#define KMSG_COMPONENT "zfcp"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -40,7 +41,7 @@
 
 #define ZFCP_BUS_ID_SIZE	20
 
-MODULE_AUTHOR("IBM Corporation");
+MODULE_AUTHOR("IBM Deutschland Entwicklung GmbH - linux390@de.ibm.com");
 MODULE_DESCRIPTION("FCP HBA driver");
 MODULE_LICENSE("GPL");
 
@@ -311,13 +312,15 @@ static void zfcp_print_sl(struct seq_file *m, struct service_level *sl)
 
 static int zfcp_setup_adapter_work_queue(struct zfcp_adapter *adapter)
 {
-	adapter->work_queue =
-		alloc_ordered_workqueue("zfcp_q_%s", WQ_MEM_RECLAIM,
-					dev_name(&adapter->ccw_device->dev));
-	if (!adapter->work_queue)
-		return -ENOMEM;
+	char name[TASK_COMM_LEN];
 
-	return 0;
+	snprintf(name, sizeof(name), "zfcp_q_%s",
+		 dev_name(&adapter->ccw_device->dev));
+	adapter->work_queue = alloc_ordered_workqueue(name, WQ_MEM_RECLAIM);
+
+	if (adapter->work_queue)
+		return 0;
+	return -ENOMEM;
 }
 
 static void zfcp_destroy_adapter_work_queue(struct zfcp_adapter *adapter)
@@ -344,7 +347,7 @@ struct zfcp_adapter *zfcp_adapter_enqueue(struct ccw_device *ccw_device)
 	if (!get_device(&ccw_device->dev))
 		return ERR_PTR(-ENODEV);
 
-	adapter = kzalloc_obj(struct zfcp_adapter);
+	adapter = kzalloc(sizeof(struct zfcp_adapter), GFP_KERNEL);
 	if (!adapter) {
 		put_device(&ccw_device->dev);
 		return ERR_PTR(-ENOMEM);
@@ -518,7 +521,7 @@ struct zfcp_port *zfcp_port_enqueue(struct zfcp_adapter *adapter, u64 wwpn,
 		goto err_put;
 	}
 
-	port = kzalloc_obj(struct zfcp_port);
+	port = kzalloc(sizeof(struct zfcp_port), GFP_KERNEL);
 	if (!port)
 		goto err_put;
 

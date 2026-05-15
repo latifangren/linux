@@ -7,7 +7,7 @@
 
 #ifdef CONFIG_PPC_KUAP
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #include <asm/reg.h>
 
@@ -49,7 +49,8 @@ static __always_inline void uaccess_end_8xx(void)
 	    "i"(SPRN_MD_AP), "r"(MD_APG_KUAP), "i"(MMU_FTR_KUAP) : "memory");
 }
 
-static __always_inline void allow_user_access(void __user *to, unsigned long dir)
+static __always_inline void allow_user_access(void __user *to, const void __user *from,
+					      unsigned long size, unsigned long dir)
 {
 	uaccess_begin_8xx(MD_APG_INIT);
 }
@@ -81,7 +82,7 @@ __bad_kuap_fault(struct pt_regs *regs, unsigned long address, bool is_write)
 	return !((regs->kuap ^ MD_APG_KUAP) & 0xff000000);
 }
 
-#endif /* !__ASSEMBLER__ */
+#endif /* !__ASSEMBLY__ */
 
 #endif /* CONFIG_PPC_KUAP */
 

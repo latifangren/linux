@@ -80,13 +80,12 @@
 			};
 		};
 
-		base_fpga_region: fpga-region {
+		base_fpga_region {
 			#address-cells = <0x1>;
 			#size-cells = <0x1>;
 
 			compatible = "fpga-region";
 			fpga-mgr = <&fpga_mgr>;
-			ranges;
 		};
 
 		clkmgr@ffd04000 {
@@ -687,9 +686,6 @@
 		ocram: sram@ffe00000 {
 			compatible = "mmio-sram";
 			reg = <0xffe00000 0x40000>;
-			#address-cells = <1>;
-			#size-cells = <1>;
-			ranges;
 		};
 
 		eccmgr: eccmgr {

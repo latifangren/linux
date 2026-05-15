@@ -251,10 +251,10 @@ static int gred_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 
 	q->stats.pdrop++;
 drop:
-	return qdisc_drop_reason(skb, sch, to_free, QDISC_DROP_OVERLIMIT);
+	return qdisc_drop(skb, sch, to_free);
 
 congestion_drop:
-	qdisc_drop_reason(skb, sch, to_free, QDISC_DROP_CONGESTED);
+	qdisc_drop(skb, sch, to_free);
 	return NET_XMIT_CN;
 }
 
@@ -359,7 +359,7 @@ static int gred_offload_dump_stats(struct Qdisc *sch)
 	unsigned int i;
 	int ret;
 
-	hw_stats = kzalloc_obj(*hw_stats);
+	hw_stats = kzalloc(sizeof(*hw_stats), GFP_KERNEL);
 	if (!hw_stats)
 		return -ENOMEM;
 
@@ -668,7 +668,7 @@ static int gred_change(struct Qdisc *sch, struct nlattr *opt,
 		return -EINVAL;
 	}
 
-	max_P = nla_get_u32_default(tb[TCA_GRED_MAX_P], 0);
+	max_P = tb[TCA_GRED_MAX_P] ? nla_get_u32(tb[TCA_GRED_MAX_P]) : 0;
 
 	ctl = nla_data(tb[TCA_GRED_PARMS]);
 	stab = nla_data(tb[TCA_GRED_STAB]);
@@ -700,7 +700,7 @@ static int gred_change(struct Qdisc *sch, struct nlattr *opt,
 			prio = ctl->prio;
 	}
 
-	prealloc = kzalloc_obj(*prealloc);
+	prealloc = kzalloc(sizeof(*prealloc), GFP_KERNEL);
 	sch_tree_lock(sch);
 
 	err = gred_change_vq(sch, ctl->DP, ctl, prio, stab, max_P, &prealloc,
@@ -757,7 +757,7 @@ static int gred_init(struct Qdisc *sch, struct nlattr *opt,
 		             * psched_mtu(qdisc_dev(sch));
 
 	if (qdisc_dev(sch)->netdev_ops->ndo_setup_tc) {
-		table->opt = kzalloc_obj(*table->opt);
+		table->opt = kzalloc(sizeof(*table->opt), GFP_KERNEL);
 		if (!table->opt)
 			return -ENOMEM;
 	}

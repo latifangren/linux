@@ -20,14 +20,9 @@ properties:
     pattern: "^reset-controller@[0-9a-f]+$"
 
   compatible:
-    oneOf:
-      - enum:
-          - microchip,sparx5-switch-reset
-          - microchip,lan966x-switch-reset
-      - items:
-          - enum:
-              - microchip,lan9691-switch-reset
-          - const: microchip,lan966x-switch-reset
+    enum:
+      - microchip,sparx5-switch-reset
+      - microchip,lan966x-switch-reset
 
   reg:
     items:

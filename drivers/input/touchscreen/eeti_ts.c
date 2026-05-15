@@ -89,7 +89,7 @@ static irqreturn_t eeti_ts_isr(int irq, void *dev_id)
 	struct eeti_ts *eeti = dev_id;
 	int error;
 
-	guard(mutex)(&eeti->mutex);
+	mutex_lock(&eeti->mutex);
 
 	do {
 		/*
@@ -109,12 +109,13 @@ static irqreturn_t eeti_ts_isr(int irq, void *dev_id)
 
 	} while (eeti->running && eeti->attn_gpio);
 
+	mutex_unlock(&eeti->mutex);
 	return IRQ_HANDLED;
 }
 
 static void eeti_ts_start(struct eeti_ts *eeti)
 {
-	guard(mutex)(&eeti->mutex);
+	mutex_lock(&eeti->mutex);
 
 	eeti->running = true;
 	enable_irq(eeti->client->irq);
@@ -126,6 +127,8 @@ static void eeti_ts_start(struct eeti_ts *eeti)
 	 */
 	if (eeti->attn_gpio && gpiod_get_value_cansleep(eeti->attn_gpio))
 		eeti_ts_read(eeti);
+
+	mutex_unlock(&eeti->mutex);
 }
 
 static void eeti_ts_stop(struct eeti_ts *eeti)
@@ -235,10 +238,12 @@ static int eeti_ts_suspend(struct device *dev)
 	struct eeti_ts *eeti = i2c_get_clientdata(client);
 	struct input_dev *input_dev = eeti->input;
 
-	scoped_guard(mutex, &input_dev->mutex) {
-		if (input_device_enabled(input_dev))
-			eeti_ts_stop(eeti);
-	}
+	mutex_lock(&input_dev->mutex);
+
+	if (input_device_enabled(input_dev))
+		eeti_ts_stop(eeti);
+
+	mutex_unlock(&input_dev->mutex);
 
 	if (device_may_wakeup(&client->dev))
 		enable_irq_wake(client->irq);
@@ -255,10 +260,12 @@ static int eeti_ts_resume(struct device *dev)
 	if (device_may_wakeup(&client->dev))
 		disable_irq_wake(client->irq);
 
-	scoped_guard(mutex, &input_dev->mutex) {
-		if (input_device_enabled(input_dev))
-			eeti_ts_start(eeti);
-	}
+	mutex_lock(&input_dev->mutex);
+
+	if (input_device_enabled(input_dev))
+		eeti_ts_start(eeti);
+
+	mutex_unlock(&input_dev->mutex);
 
 	return 0;
 }

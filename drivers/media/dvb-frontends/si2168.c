@@ -40,7 +40,7 @@ static int si2168_cmd_execute(struct i2c_client *client, struct si2168_cmd *cmd)
 
 	if (cmd->rlen) {
 		/* wait cmd execution terminate */
-		#define TIMEOUT 140
+		#define TIMEOUT 70
 		timeout = jiffies + msecs_to_jiffies(TIMEOUT);
 		while (!time_after(jiffies, timeout)) {
 			ret = i2c_master_recv(client, cmd->args, cmd->rlen);
@@ -54,8 +54,6 @@ static int si2168_cmd_execute(struct i2c_client *client, struct si2168_cmd *cmd)
 			/* firmware ready? */
 			if ((cmd->args[0] >> 7) & 0x01)
 				break;
-
-			usleep_range(2500, 3500);
 		}
 
 		dev_dbg(&client->dev, "cmd execution took %d ms\n",
@@ -574,8 +572,8 @@ static int si2168_sleep(struct dvb_frontend *fe)
 	if (ret)
 		goto err;
 
-	/* Firmware B 4.0-11 and later lose warm state during sleep */
-	if (dev->version >= ('B' << 24 | 4 << 16 | 0 << 8 | 11 << 0))
+	/* Firmware later than B 4.0-11 loses warm state during sleep */
+	if (dev->version > ('B' << 24 | 4 << 16 | 0 << 8 | 11 << 0))
 		dev->warm = false;
 
 	cmd_init(&cmd, "\x13", 1, 0);
@@ -683,7 +681,7 @@ static int si2168_probe(struct i2c_client *client)
 
 	dev_dbg(&client->dev, "\n");
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto err;

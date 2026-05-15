@@ -127,7 +127,7 @@ static struct prestera_vr *__prestera_vr_create(struct prestera_switch *sw,
 	struct prestera_vr *vr;
 	int err;
 
-	vr = kzalloc_obj(*vr);
+	vr = kzalloc(sizeof(*vr), GFP_KERNEL);
 	if (!vr) {
 		err = -ENOMEM;
 		goto err_alloc_vr;
@@ -252,7 +252,7 @@ prestera_rif_entry_create(struct prestera_switch *sw,
 	struct prestera_rif_entry *e;
 	struct prestera_iface iface;
 
-	e = kzalloc_obj(*e);
+	e = kzalloc(sizeof(*e), GFP_KERNEL);
 	if (!e)
 		goto err_kzalloc;
 
@@ -301,7 +301,7 @@ __prestera_nh_neigh_create(struct prestera_switch *sw,
 	struct prestera_nh_neigh *neigh;
 	int err;
 
-	neigh = kzalloc_obj(*neigh);
+	neigh = kzalloc(sizeof(*neigh), GFP_KERNEL);
 	if (!neigh)
 		goto err_kzalloc;
 
@@ -397,7 +397,7 @@ __prestera_nexthop_group_create(struct prestera_switch *sw,
 	struct prestera_nh_neigh *nh_neigh;
 	int nh_cnt, err, gid;
 
-	nh_grp = kzalloc_obj(*nh_grp);
+	nh_grp = kzalloc(sizeof(*nh_grp), GFP_KERNEL);
 	if (!nh_grp)
 		goto err_kzalloc;
 
@@ -628,7 +628,7 @@ prestera_fib_node_create(struct prestera_switch *sw,
 	struct prestera_vr *vr;
 	int err;
 
-	fib_node = kzalloc_obj(*fib_node);
+	fib_node = kzalloc(sizeof(*fib_node), GFP_KERNEL);
 	if (!fib_node)
 		goto err_kzalloc;
 

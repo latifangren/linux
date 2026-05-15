@@ -45,12 +45,10 @@ static unsigned long gate_recalc_rate(struct clk_hw *hw,
 	return parent_rate;
 }
 
-static int gate_determine_rate(struct clk_hw *hw,
-			       struct clk_rate_request *req)
+static long gate_round_rate(struct clk_hw *hw, unsigned long rate,
+			    unsigned long *parent_rate)
 {
-	req->rate = req->best_parent_rate;
-
-	return 0;
+	return *parent_rate;
 }
 
 static int gate_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -65,7 +63,7 @@ const struct clk_ops cv1800_clk_gate_ops = {
 	.is_enabled = gate_is_enabled,
 
 	.recalc_rate = gate_recalc_rate,
-	.determine_rate = gate_determine_rate,
+	.round_rate = gate_round_rate,
 	.set_rate = gate_set_rate,
 };
 
@@ -152,27 +150,28 @@ static u32 div_helper_get_clockdiv(struct cv1800_clk_common *common,
 	return clockdiv;
 }
 
-static int div_helper_determine_rate(struct cv1800_clk_regfield *div,
-				     struct clk_hw *hw,
-				     struct clk_rate_request *req)
+static u32 div_helper_round_rate(struct cv1800_clk_regfield *div,
+				 struct clk_hw *hw, struct clk_hw *parent,
+				 unsigned long rate, unsigned long *prate)
 {
 	if (div->width == 0) {
 		if (div->initval <= 0)
-			req->rate = DIV_ROUND_UP_ULL(req->best_parent_rate, 1);
+			return DIV_ROUND_UP_ULL(*prate, 1);
 		else
-			req->rate = DIV_ROUND_UP_ULL(req->best_parent_rate, div->initval);
-
-		return 0;
+			return DIV_ROUND_UP_ULL(*prate, div->initval);
 	}
 
-	return divider_determine_rate(hw, req, NULL, div->width, div->flags);
+	return divider_round_rate_parent(hw, parent, rate, prate, NULL,
+					 div->width, div->flags);
 }
 
-static int do_div_determine_rate(struct clk_rate_request *req, int id, void *data)
+static long div_round_rate(struct clk_hw *parent, unsigned long *parent_rate,
+			   unsigned long rate, int id, void *data)
 {
 	struct cv1800_clk_div *div = data;
 
-	return div_helper_determine_rate(&div->div, &div->common.hw, req);
+	return div_helper_round_rate(&div->div, &div->common.hw, parent,
+				     rate, parent_rate);
 }
 
 static bool div_is_better_rate(struct cv1800_clk_common *common,
@@ -187,60 +186,53 @@ static bool div_is_better_rate(struct cv1800_clk_common *common,
 
 static int mux_helper_determine_rate(struct cv1800_clk_common *common,
 				     struct clk_rate_request *req,
-				     int (*round)(struct clk_rate_request *,
-						  int,
-						  void *),
+				     long (*round)(struct clk_hw *,
+						   unsigned long *,
+						   unsigned long,
+						   int,
+						   void *),
 				     void *data)
 {
 	unsigned long best_parent_rate = 0, best_rate = 0;
 	struct clk_hw *best_parent, *hw = &common->hw;
 	unsigned int i;
-	int ret;
 
 	if (clk_hw_get_flags(hw) & CLK_SET_RATE_NO_REPARENT) {
-		struct clk_rate_request tmp_req = *req;
+		unsigned long adj_parent_rate;
 
 		best_parent = clk_hw_get_parent(hw);
-		tmp_req.best_parent_hw = best_parent;
-		tmp_req.best_parent_rate = clk_hw_get_rate(best_parent);
+		best_parent_rate = clk_hw_get_rate(best_parent);
 
-		ret = round(&tmp_req, -1, data);
-		if (ret)
-			return ret;
-
-		best_parent_rate = tmp_req.best_parent_rate;
-		best_rate = tmp_req.rate;
+		best_rate = round(best_parent, &adj_parent_rate,
+				  req->rate, -1, data);
 
 		goto find;
 	}
 
 	for (i = 0; i < clk_hw_get_num_parents(hw); i++) {
-		struct clk_rate_request tmp_req = *req;
+		unsigned long tmp_rate, parent_rate;
 		struct clk_hw *parent;
 
 		parent = clk_hw_get_parent_by_index(hw, i);
 		if (!parent)
 			continue;
 
-		tmp_req.best_parent_hw = parent;
-		tmp_req.best_parent_rate = clk_hw_get_rate(parent);
+		parent_rate = clk_hw_get_rate(parent);
 
-		ret = round(&tmp_req, i, data);
-		if (ret)
-			continue;
+		tmp_rate = round(parent, &parent_rate, req->rate, i, data);
 
-		if (tmp_req.rate == req->rate) {
+		if (tmp_rate == req->rate) {
 			best_parent = parent;
-			best_parent_rate = tmp_req.best_parent_rate;
-			best_rate = tmp_req.rate;
+			best_parent_rate = parent_rate;
+			best_rate = tmp_rate;
 			goto find;
 		}
 
 		if (div_is_better_rate(common, req->rate,
-				       tmp_req.rate, best_rate)) {
+				       tmp_rate, best_rate)) {
 			best_parent = parent;
-			best_parent_rate = tmp_req.best_parent_rate;
-			best_rate = tmp_req.rate;
+			best_parent_rate = parent_rate;
+			best_rate = tmp_rate;
 		}
 	}
 
@@ -260,7 +252,7 @@ static int div_determine_rate(struct clk_hw *hw,
 	struct cv1800_clk_div *div = hw_to_cv1800_clk_div(hw);
 
 	return mux_helper_determine_rate(&div->common, req,
-					 do_div_determine_rate, div);
+					 div_round_rate, div);
 }
 
 static unsigned long div_recalc_rate(struct clk_hw *hw,
@@ -307,28 +299,24 @@ hw_to_cv1800_clk_bypass_div(struct clk_hw *hw)
 	return container_of(div, struct cv1800_clk_bypass_div, div);
 }
 
-static int do_bypass_div_determine_rate(struct clk_rate_request *req, int id,
-					void *data)
+static long bypass_div_round_rate(struct clk_hw *parent,
+				  unsigned long *parent_rate,
+				  unsigned long rate, int id, void *data)
 {
 	struct cv1800_clk_bypass_div *div = data;
 
 	if (id == -1) {
-		if (cv1800_clk_checkbit(&div->div.common, &div->bypass)) {
-			req->rate = req->best_parent_rate;
-
-			return 0;
-		}
-
-		return do_div_determine_rate(req, -1, &div->div);
+		if (cv1800_clk_checkbit(&div->div.common, &div->bypass))
+			return *parent_rate;
+		else
+			return div_round_rate(parent, parent_rate, rate,
+					      -1, &div->div);
 	}
 
-	if (id == 0) {
-		req->rate = req->best_parent_rate;
+	if (id == 0)
+		return *parent_rate;
 
-		return 0;
-	}
-
-	return do_div_determine_rate(req, id - 1, &div->div);
+	return div_round_rate(parent, parent_rate, rate, id - 1, &div->div);
 }
 
 static int bypass_div_determine_rate(struct clk_hw *hw,
@@ -337,7 +325,7 @@ static int bypass_div_determine_rate(struct clk_hw *hw,
 	struct cv1800_clk_bypass_div *div = hw_to_cv1800_clk_bypass_div(hw);
 
 	return mux_helper_determine_rate(&div->div.common, req,
-					 do_bypass_div_determine_rate, div);
+					 bypass_div_round_rate, div);
 }
 
 static unsigned long bypass_div_recalc_rate(struct clk_hw *hw,
@@ -424,11 +412,13 @@ static int mux_is_enabled(struct clk_hw *hw)
 	return cv1800_clk_checkbit(&mux->common, &mux->gate);
 }
 
-static int do_mux_determine_rate(struct clk_rate_request *req, int id, void *data)
+static long mux_round_rate(struct clk_hw *parent, unsigned long *parent_rate,
+			   unsigned long rate, int id, void *data)
 {
 	struct cv1800_clk_mux *mux = data;
 
-	return div_helper_determine_rate(&mux->div, &mux->common.hw, req);
+	return div_helper_round_rate(&mux->div, &mux->common.hw, parent,
+				     rate, parent_rate);
 }
 
 static int mux_determine_rate(struct clk_hw *hw,
@@ -437,7 +427,7 @@ static int mux_determine_rate(struct clk_hw *hw,
 	struct cv1800_clk_mux *mux = hw_to_cv1800_clk_mux(hw);
 
 	return mux_helper_determine_rate(&mux->common, req,
-					 do_mux_determine_rate, mux);
+					 mux_round_rate, mux);
 }
 
 static unsigned long mux_recalc_rate(struct clk_hw *hw,
@@ -520,28 +510,24 @@ hw_to_cv1800_clk_bypass_mux(struct clk_hw *hw)
 	return container_of(mux, struct cv1800_clk_bypass_mux, mux);
 }
 
-static int do_bypass_mux_determine_rate(struct clk_rate_request *req, int id,
-					void *data)
+static long bypass_mux_round_rate(struct clk_hw *parent,
+				  unsigned long *parent_rate,
+				  unsigned long rate, int id, void *data)
 {
 	struct cv1800_clk_bypass_mux *mux = data;
 
 	if (id == -1) {
-		if (cv1800_clk_checkbit(&mux->mux.common, &mux->bypass)) {
-			req->rate = req->best_parent_rate;
-
-			return 0;
-		}
-
-		return do_mux_determine_rate(req, -1, &mux->mux);
+		if (cv1800_clk_checkbit(&mux->mux.common, &mux->bypass))
+			return *parent_rate;
+		else
+			return mux_round_rate(parent, parent_rate, rate,
+					      -1, &mux->mux);
 	}
 
-	if (id == 0) {
-		req->rate = req->best_parent_rate;
+	if (id == 0)
+		return *parent_rate;
 
-		return 0;
-	}
-
-	return do_mux_determine_rate(req, id - 1, &mux->mux);
+	return mux_round_rate(parent, parent_rate, rate, id - 1, &mux->mux);
 }
 
 static int bypass_mux_determine_rate(struct clk_hw *hw,
@@ -550,7 +536,7 @@ static int bypass_mux_determine_rate(struct clk_hw *hw,
 	struct cv1800_clk_bypass_mux *mux = hw_to_cv1800_clk_bypass_mux(hw);
 
 	return mux_helper_determine_rate(&mux->mux.common, req,
-					 do_bypass_mux_determine_rate, mux);
+					 bypass_mux_round_rate, mux);
 }
 
 static unsigned long bypass_mux_recalc_rate(struct clk_hw *hw,
@@ -651,31 +637,27 @@ static int mmux_is_enabled(struct clk_hw *hw)
 	return cv1800_clk_checkbit(&mmux->common, &mmux->gate);
 }
 
-static int do_mmux_determine_rate(struct clk_rate_request *req, int id, void *data)
+static long mmux_round_rate(struct clk_hw *parent, unsigned long *parent_rate,
+			    unsigned long rate, int id, void *data)
 {
 	struct cv1800_clk_mmux *mmux = data;
 	s8 div_id;
 
 	if (id == -1) {
-		if (cv1800_clk_checkbit(&mmux->common, &mmux->bypass)) {
-			req->rate = req->best_parent_rate;
-
-			return 0;
-		}
+		if (cv1800_clk_checkbit(&mmux->common, &mmux->bypass))
+			return *parent_rate;
 
 		id = mmux_get_parent_id(mmux);
 	}
 
 	div_id = mmux->parent2sel[id];
 
-	if (div_id < 0) {
-		req->rate = req->best_parent_rate;
+	if (div_id < 0)
+		return *parent_rate;
 
-		return 0;
-	}
-
-	return div_helper_determine_rate(&mmux->div[div_id], &mmux->common.hw,
-					 req);
+	return div_helper_round_rate(&mmux->div[div_id],
+				     &mmux->common.hw, parent,
+				     rate, parent_rate);
 }
 
 static int mmux_determine_rate(struct clk_hw *hw,
@@ -684,7 +666,7 @@ static int mmux_determine_rate(struct clk_hw *hw,
 	struct cv1800_clk_mmux *mmux = hw_to_cv1800_clk_mmux(hw);
 
 	return mux_helper_determine_rate(&mmux->common, req,
-					 do_mmux_determine_rate, mmux);
+					 mmux_round_rate, mmux);
 }
 
 static unsigned long mmux_recalc_rate(struct clk_hw *hw,

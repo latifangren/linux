@@ -57,7 +57,7 @@ enum inv_icm42600_gyro_scan {
 
 static const struct iio_chan_spec_ext_info inv_icm42600_gyro_ext_infos[] = {
 	IIO_MOUNT_MATRIX(IIO_SHARED_BY_ALL, inv_icm42600_get_mount_matrix),
-	{ }
+	{},
 };
 
 static const struct iio_chan_spec inv_icm42600_gyro_channels[] = {
@@ -184,6 +184,7 @@ static int inv_icm42600_gyro_read_sensor(struct inv_icm42600_state *st,
 		ret = -EINVAL;
 exit:
 	mutex_unlock(&st->lock);
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 	return ret;
 }
@@ -277,10 +278,12 @@ static int inv_icm42600_gyro_write_scale(struct iio_dev *indio_dev,
 	conf.fs = idx / 2;
 
 	pm_runtime_get_sync(dev);
+	mutex_lock(&st->lock);
 
-	scoped_guard(mutex, &st->lock)
-		ret = inv_icm42600_set_gyro_conf(st, &conf, NULL);
+	ret = inv_icm42600_set_gyro_conf(st, &conf, NULL);
 
+	mutex_unlock(&st->lock);
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return ret;
@@ -377,6 +380,7 @@ static int inv_icm42600_gyro_write_odr(struct iio_dev *indio_dev,
 
 out_unlock:
 	mutex_unlock(&st->lock);
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return ret;
@@ -428,6 +432,7 @@ static int inv_icm42600_gyro_read_offset(struct inv_icm42600_state *st,
 	memcpy(data, st->buffer, sizeof(data));
 
 	mutex_unlock(&st->lock);
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 	if (ret)
 		return ret;
@@ -564,6 +569,7 @@ static int inv_icm42600_gyro_write_offset(struct inv_icm42600_state *st,
 
 out_unlock:
 	mutex_unlock(&st->lock);
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 	return ret;
 }
@@ -587,10 +593,11 @@ static int inv_icm42600_gyro_read_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
 		ret = inv_icm42600_gyro_read_sensor(st, chan, &data);
-		iio_device_release_direct(indio_dev);
+		iio_device_release_direct_mode(indio_dev);
 		if (ret)
 			return ret;
 		*val = data;
@@ -648,18 +655,20 @@ static int inv_icm42600_gyro_write_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
 		ret = inv_icm42600_gyro_write_scale(indio_dev, val, val2);
-		iio_device_release_direct(indio_dev);
+		iio_device_release_direct_mode(indio_dev);
 		return ret;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		return inv_icm42600_gyro_write_odr(indio_dev, val, val2);
 	case IIO_CHAN_INFO_CALIBBIAS:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
 		ret = inv_icm42600_gyro_write_offset(st, chan, val, val2);
-		iio_device_release_direct(indio_dev);
+		iio_device_release_direct_mode(indio_dev);
 		return ret;
 	default:
 		return -EINVAL;
@@ -689,11 +698,16 @@ static int inv_icm42600_gyro_hwfifo_set_watermark(struct iio_dev *indio_dev,
 						  unsigned int val)
 {
 	struct inv_icm42600_state *st = iio_device_get_drvdata(indio_dev);
+	int ret;
 
-	guard(mutex)(&st->lock);
+	mutex_lock(&st->lock);
 
 	st->fifo.watermark.gyro = val;
-	return inv_icm42600_buffer_update_watermark(st);
+	ret = inv_icm42600_buffer_update_watermark(st);
+
+	mutex_unlock(&st->lock);
+
+	return ret;
 }
 
 static int inv_icm42600_gyro_hwfifo_flush(struct iio_dev *indio_dev,
@@ -705,13 +719,15 @@ static int inv_icm42600_gyro_hwfifo_flush(struct iio_dev *indio_dev,
 	if (count == 0)
 		return 0;
 
-	guard(mutex)(&st->lock);
+	mutex_lock(&st->lock);
 
 	ret = inv_icm42600_buffer_hwfifo_flush(st, count);
-	if (ret)
-		return ret;
+	if (!ret)
+		ret = st->fifo.nb.gyro;
 
-	return st->fifo.nb.gyro;
+	mutex_unlock(&st->lock);
+
+	return ret;
 }
 
 static const struct iio_info inv_icm42600_gyro_info = {

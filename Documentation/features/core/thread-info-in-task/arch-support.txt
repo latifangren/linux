@@ -24,7 +24,7 @@
     |        s390: |  ok  |
     |          sh: | TODO |
     |       sparc: | TODO |
-    |          um: |  ok  |
+    |          um: | TODO |
     |         x86: |  ok  |
     |      xtensa: | TODO |
     -----------------------

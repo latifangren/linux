@@ -16,7 +16,6 @@
 #include <media/v4l2-rect.h>
 
 #include "vivid-core.h"
-#include "vivid-osd.h"
 #include "vivid-vid-common.h"
 #include "vivid-kthread-out.h"
 #include "vivid-vid-out.h"
@@ -202,6 +201,8 @@ const struct vb2_ops vivid_vid_out_qops = {
 	.start_streaming	= vid_out_start_streaming,
 	.stop_streaming		= vid_out_stop_streaming,
 	.buf_request_complete	= vid_out_buf_request_complete,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
 };
 
 /*
@@ -672,7 +673,7 @@ int vivid_vid_out_g_selection(struct file *file, void *priv,
 	return 0;
 }
 
-int vivid_vid_out_s_selection(struct file *file, void *priv, struct v4l2_selection *s)
+int vivid_vid_out_s_selection(struct file *file, void *fh, struct v4l2_selection *s)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 	struct v4l2_rect *crop = &dev->crop_out;
@@ -880,7 +881,7 @@ int vidioc_s_fmt_vid_out_overlay(struct file *file, void *priv,
 	return ret;
 }
 
-int vivid_vid_out_overlay(struct file *file, void *priv, unsigned i)
+int vivid_vid_out_overlay(struct file *file, void *fh, unsigned i)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -893,7 +894,7 @@ int vivid_vid_out_overlay(struct file *file, void *priv, unsigned i)
 	return 0;
 }
 
-int vivid_vid_out_g_fbuf(struct file *file, void *priv,
+int vivid_vid_out_g_fbuf(struct file *file, void *fh,
 				struct v4l2_framebuffer *a)
 {
 	struct vivid_dev *dev = video_drvdata(file);
@@ -908,7 +909,7 @@ int vivid_vid_out_g_fbuf(struct file *file, void *priv,
 	a->base = (void *)dev->video_pbase;
 	a->fmt.width = dev->display_width;
 	a->fmt.height = dev->display_height;
-	if (vivid_fb_green_bits(dev) == 5)
+	if (dev->fb_defined.green.length == 5)
 		a->fmt.pixelformat = V4L2_PIX_FMT_ARGB555;
 	else
 		a->fmt.pixelformat = V4L2_PIX_FMT_RGB565;
@@ -920,7 +921,7 @@ int vivid_vid_out_g_fbuf(struct file *file, void *priv,
 	return 0;
 }
 
-int vivid_vid_out_s_fbuf(struct file *file, void *priv,
+int vivid_vid_out_s_fbuf(struct file *file, void *fh,
 				const struct v4l2_framebuffer *a)
 {
 	struct vivid_dev *dev = video_drvdata(file);
@@ -1016,7 +1017,7 @@ int vidioc_s_output(struct file *file, void *priv, unsigned o)
 	return 0;
 }
 
-int vidioc_enumaudout(struct file *file, void *priv, struct v4l2_audioout *vout)
+int vidioc_enumaudout(struct file *file, void *fh, struct v4l2_audioout *vout)
 {
 	if (vout->index >= ARRAY_SIZE(vivid_audio_outputs))
 		return -EINVAL;
@@ -1024,7 +1025,7 @@ int vidioc_enumaudout(struct file *file, void *priv, struct v4l2_audioout *vout)
 	return 0;
 }
 
-int vidioc_g_audout(struct file *file, void *priv, struct v4l2_audioout *vout)
+int vidioc_g_audout(struct file *file, void *fh, struct v4l2_audioout *vout)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1034,7 +1035,7 @@ int vidioc_g_audout(struct file *file, void *priv, struct v4l2_audioout *vout)
 	return 0;
 }
 
-int vidioc_s_audout(struct file *file, void *priv, const struct v4l2_audioout *vout)
+int vidioc_s_audout(struct file *file, void *fh, const struct v4l2_audioout *vout)
 {
 	struct vivid_dev *dev = video_drvdata(file);
 
@@ -1072,7 +1073,7 @@ static bool valid_cvt_gtf_timings(struct v4l2_dv_timings *timings)
 	return false;
 }
 
-int vivid_vid_out_s_dv_timings(struct file *file, void *priv,
+int vivid_vid_out_s_dv_timings(struct file *file, void *_fh,
 				    struct v4l2_dv_timings *timings)
 {
 	struct vivid_dev *dev = video_drvdata(file);

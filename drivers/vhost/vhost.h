@@ -14,7 +14,6 @@
 #include <linux/atomic.h>
 #include <linux/vhost_iotlb.h>
 #include <linux/irqbypass.h>
-#include <linux/unroll.h>
 
 struct vhost_work;
 struct vhost_task;
@@ -116,8 +115,6 @@ struct vhost_virtqueue {
 	 * Values are limited to 0x7fff, and the high bit is used as
 	 * a wrap counter when using VIRTIO_F_RING_PACKED. */
 	u16 last_avail_idx;
-	/* Next avail ring head when VIRTIO_F_IN_ORDER is negoitated */
-	u16 next_avail_head;
 
 	/* Caches available index value from user. */
 	u16 avail_idx;
@@ -144,12 +141,11 @@ struct vhost_virtqueue {
 	struct iovec iotlb_iov[64];
 	struct iovec *indirect;
 	struct vring_used_elem *heads;
-	u16 *nheads;
 	/* Protected by virtqueue mutex. */
 	struct vhost_iotlb *umem;
 	struct vhost_iotlb *iotlb;
 	void *private_data;
-	VIRTIO_DECLARE_FEATURES(acked_features);
+	u64 acked_features;
 	u64 acked_backend_features;
 	/* Log write descriptors */
 	void __user *log_base;
@@ -231,15 +227,7 @@ int vhost_get_vq_desc(struct vhost_virtqueue *,
 		      struct iovec iov[], unsigned int iov_size,
 		      unsigned int *out_num, unsigned int *in_num,
 		      struct vhost_log *log, unsigned int *log_num);
-
-int vhost_get_vq_desc_n(struct vhost_virtqueue *vq,
-			struct iovec iov[], unsigned int iov_size,
-			unsigned int *out_num, unsigned int *in_num,
-			struct vhost_log *log, unsigned int *log_num,
-			unsigned int *ndesc);
-
-void vhost_discard_vq_desc(struct vhost_virtqueue *, int nbuf,
-			   unsigned int ndesc);
+void vhost_discard_vq_desc(struct vhost_virtqueue *, int n);
 
 bool vhost_vq_work_queue(struct vhost_virtqueue *vq, struct vhost_work *work);
 bool vhost_vq_has_work(struct vhost_virtqueue *vq);
@@ -247,12 +235,11 @@ bool vhost_vq_is_setup(struct vhost_virtqueue *vq);
 int vhost_vq_init_access(struct vhost_virtqueue *);
 int vhost_add_used(struct vhost_virtqueue *, unsigned int head, int len);
 int vhost_add_used_n(struct vhost_virtqueue *, struct vring_used_elem *heads,
-		     u16 *nheads, unsigned count);
+		     unsigned count);
 void vhost_add_used_and_signal(struct vhost_dev *, struct vhost_virtqueue *,
 			       unsigned int id, int len);
 void vhost_add_used_and_signal_n(struct vhost_dev *, struct vhost_virtqueue *,
-				 struct vring_used_elem *heads, u16 *nheads,
-				 unsigned count);
+			       struct vring_used_elem *heads, unsigned count);
 void vhost_signal(struct vhost_dev *, struct vhost_virtqueue *);
 void vhost_disable_notify(struct vhost_dev *, struct vhost_virtqueue *);
 bool vhost_vq_avail_empty(struct vhost_dev *, struct vhost_virtqueue *);
@@ -288,39 +275,14 @@ void vhost_iotlb_map_free(struct vhost_iotlb *iotlb,
 				eventfd_signal((vq)->error_ctx);\
 	} while (0)
 
-#define VHOST_FEATURES \
-	VIRTIO_F_NOTIFY_ON_EMPTY, \
-	VIRTIO_RING_F_INDIRECT_DESC, \
-	VIRTIO_RING_F_EVENT_IDX, \
-	VHOST_F_LOG_ALL, \
-	VIRTIO_F_ANY_LAYOUT, \
-	VIRTIO_F_VERSION_1
-
-static inline u64 vhost_features_u64(const int *features, int size, int idx)
-{
-	u64 res = 0;
-
-	unrolled_count(VIRTIO_FEATURES_BITS)
-	for (int i = 0; i < size; ++i) {
-		int bit = features[i];
-
-		if (virtio_features_chk_bit(bit) && VIRTIO_U64(bit) == idx)
-			res |= VIRTIO_BIT(bit);
-	}
-	return res;
-}
-
-#define VHOST_FEATURES_U64(features, idx) \
-	vhost_features_u64(features, ARRAY_SIZE(features), idx)
-
-#define DEFINE_VHOST_FEATURES_ARRAY_ENTRY(idx, features) \
-	[idx] = VHOST_FEATURES_U64(features, idx),
-
-#define DEFINE_VHOST_FEATURES_ARRAY(array, features) \
-	u64 array[VIRTIO_FEATURES_U64S] = { \
-		UNROLL(VIRTIO_FEATURES_U64S, \
-		       DEFINE_VHOST_FEATURES_ARRAY_ENTRY, features) \
-	}
+enum {
+	VHOST_FEATURES = (1ULL << VIRTIO_F_NOTIFY_ON_EMPTY) |
+			 (1ULL << VIRTIO_RING_F_INDIRECT_DESC) |
+			 (1ULL << VIRTIO_RING_F_EVENT_IDX) |
+			 (1ULL << VHOST_F_LOG_ALL) |
+			 (1ULL << VIRTIO_F_ANY_LAYOUT) |
+			 (1ULL << VIRTIO_F_VERSION_1)
+};
 
 /**
  * vhost_vq_set_backend - Set backend.
@@ -351,7 +313,7 @@ static inline void *vhost_vq_get_backend(struct vhost_virtqueue *vq)
 
 static inline bool vhost_has_feature(struct vhost_virtqueue *vq, int bit)
 {
-	return virtio_features_test_bit(vq->acked_features_array, bit);
+	return vq->acked_features & (1ULL << bit);
 }
 
 static inline bool vhost_backend_has_feature(struct vhost_virtqueue *vq, int bit)

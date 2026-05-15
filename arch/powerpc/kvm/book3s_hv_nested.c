@@ -451,8 +451,6 @@ long kvmhv_nested_init(void)
 	if (rc == H_SUCCESS) {
 		unsigned long capabilities = 0;
 
-		if (cpu_has_feature(CPU_FTR_P11_PVR))
-			capabilities |= H_GUEST_CAP_POWER11;
 		if (cpu_has_feature(CPU_FTR_ARCH_31))
 			capabilities |= H_GUEST_CAP_POWER10;
 		if (cpu_has_feature(CPU_FTR_ARCH_300))
@@ -726,7 +724,7 @@ static struct kvm_nested_guest *kvmhv_alloc_nested(struct kvm *kvm, unsigned int
 	struct kvm_nested_guest *gp;
 	long shadow_lpid;
 
-	gp = kzalloc_obj(*gp);
+	gp = kzalloc(sizeof(*gp), GFP_KERNEL);
 	if (!gp)
 		return NULL;
 	gp->l1_host = kvm;
@@ -1535,6 +1533,7 @@ static long int __kvmhv_nested_page_fault(struct kvm_vcpu *vcpu,
 	unsigned long n_gpa, gpa, gfn, perm = 0UL;
 	unsigned int shift, l1_shift, level;
 	bool writing = !!(dsisr & DSISR_ISSTORE);
+	bool kvm_ro = false;
 	long int ret;
 
 	if (!gp->l1_gr_to_hr) {
@@ -1614,6 +1613,7 @@ static long int __kvmhv_nested_page_fault(struct kvm_vcpu *vcpu,
 					ea, DSISR_ISSTORE | DSISR_PROTFAULT);
 			return RESUME_GUEST;
 		}
+		kvm_ro = true;
 	}
 
 	/* 2. Find the host pte for this L1 guest real address */
@@ -1635,7 +1635,7 @@ static long int __kvmhv_nested_page_fault(struct kvm_vcpu *vcpu,
 	if (!pte_present(pte) || (writing && !(pte_val(pte) & _PAGE_WRITE))) {
 		/* No suitable pte found -> try to insert a mapping */
 		ret = kvmppc_book3s_instantiate_page(vcpu, gpa, memslot,
-					writing, &pte, &level);
+					writing, kvm_ro, &pte, &level);
 		if (ret == -EAGAIN)
 			return RESUME_GUEST;
 		else if (ret)
@@ -1671,7 +1671,7 @@ static long int __kvmhv_nested_page_fault(struct kvm_vcpu *vcpu,
 
 	/* 4. Insert the pte into our shadow_pgtable */
 
-	n_rmap = kzalloc_obj(*n_rmap);
+	n_rmap = kzalloc(sizeof(*n_rmap), GFP_KERNEL);
 	if (!n_rmap)
 		return RESUME_GUEST; /* Let the guest try again */
 	n_rmap->rmap = (n_gpa & RMAP_NESTED_GPA_MASK) |

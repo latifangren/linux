@@ -113,10 +113,10 @@ static void tiadc_step_config(struct iio_dev *indio_dev)
 	 * There are 16 configurable steps and 8 analog input
 	 * lines available which are shared between Touchscreen and ADC.
 	 *
-	 * Steps forward, i.e. from 0 towards 16, are used by ADC
-	 * depending on the number of input lines needed.
+	 * Steps forwards i.e. from 0 towards 16 are used by ADC
+	 * depending on number of input lines needed.
 	 * Channel would represent which analog input
-	 * needs to be given to ADC to digitize data.
+	 * needs to be given to ADC to digitalize data.
 	 */
 	for (i = 0; i < adc_dev->channels; i++) {
 		int chan;
@@ -494,7 +494,7 @@ static int tiadc_read_raw(struct iio_dev *indio_dev,
 	/*
 	 * We check the complete FIFO. We programmed just one entry but in case
 	 * something went wrong we left empty handed (-EAGAIN previously) and
-	 * then the value appeared somehow in the FIFO we would have two entries.
+	 * then the value apeared somehow in the FIFO we would have two entries.
 	 * Therefore we read every item and keep only the latest version of the
 	 * requested channel.
 	 */
@@ -631,9 +631,10 @@ static int tiadc_probe(struct platform_device *pdev)
 	}
 
 	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*adc_dev));
-	if (!indio_dev)
+	if (!indio_dev) {
+		dev_err(&pdev->dev, "failed to allocate iio device\n");
 		return -ENOMEM;
-
+	}
 	adc_dev = iio_priv(indio_dev);
 
 	adc_dev->mfd_tscadc = ti_tscadc_dev_get(pdev);

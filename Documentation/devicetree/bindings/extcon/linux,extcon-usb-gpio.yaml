@@ -25,12 +25,6 @@ properties:
 required:
   - compatible
 
-anyOf:
-  - required:
-      - id-gpios
-  - required:
-      - vbus-gpios
-
 additionalProperties: false
 
 examples:

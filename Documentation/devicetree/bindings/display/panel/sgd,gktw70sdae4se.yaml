@@ -41,6 +41,8 @@ properties:
   panel-timing: true
   port: true
 
+additionalProperties: false
+
 required:
   - compatible
   - port
@@ -48,8 +50,6 @@ required:
   - width-mm
   - height-mm
   - panel-timing
-
-additionalProperties: false
 
 examples:
   - |+

@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/cpu.h>
 #include <linux/delay.h>
-#include <linux/hex.h>
 #include <linux/ioport.h>
 #include <linux/export.h>
 #include <linux/memblock.h>
@@ -31,7 +30,6 @@
 #include <linux/of_fdt.h>
 #include <linux/dmi.h>
 #include <linux/crash_dump.h>
-#include <linux/string.h>
 
 #include <asm/addrspace.h>
 #include <asm/bootinfo.h>
@@ -460,7 +458,7 @@ static void __init mips_parse_crashkernel(void)
 	total_mem = memblock_phys_mem_size();
 	ret = parse_crashkernel(boot_command_line, total_mem,
 				&crash_size, &crash_base,
-				NULL, NULL, NULL);
+				NULL, NULL);
 	if (ret != 0 || crash_size <= 0)
 		return;
 
@@ -542,9 +540,6 @@ static int __init bootcmdline_scan_chosen(unsigned long node, const char *uname,
 
 	p = of_get_flat_dt_prop(node, "bootargs", &l);
 	if (p != NULL && l > 0) {
-		if (strnlen(p, l) >= l)
-			return 1;
-
 		bootcmdline_append(p, min(l, COMMAND_LINE_SIZE));
 		*dt_bootargs = true;
 	}
@@ -619,7 +614,8 @@ static void __init bootcmdline_init(void)
  * kernel but generic memory management system is still entirely uninitialized.
  *
  *  o bootmem_init()
- *  o pagetable_init()
+ *  o sparse_init()
+ *  o paging_init()
  *  o dma_contiguous_reserve()
  *
  * At this stage the bootmem allocator is ready to use.
@@ -669,6 +665,16 @@ static void __init arch_mem_init(char **cmdline_p)
 	mips_parse_crashkernel();
 	device_tree_init();
 
+	/*
+	 * In order to reduce the possibility of kernel panic when failed to
+	 * get IO TLB memory under CONFIG_SWIOTLB, it is better to allocate
+	 * low memory as small as possible before plat_swiotlb_setup(), so
+	 * make sparse_init() using top-down allocation.
+	 */
+	memblock_set_bottom_up(false);
+	sparse_init();
+	memblock_set_bottom_up(true);
+
 	plat_swiotlb_setup();
 
 	dma_contiguous_reserve(PFN_PHYS(max_low_pfn));
@@ -698,7 +704,10 @@ static void __init resource_init(void)
 	for_each_mem_range(i, &start, &end) {
 		struct resource *res;
 
-		res = memblock_alloc_or_panic(sizeof(struct resource), SMP_CACHE_BYTES);
+		res = memblock_alloc(sizeof(struct resource), SMP_CACHE_BYTES);
+		if (!res)
+			panic("%s: Failed to allocate %zu bytes\n", __func__,
+			      sizeof(struct resource));
 
 		res->start = start;
 		/*
@@ -783,7 +792,7 @@ void __init setup_arch(char **cmdline_p)
 	prefill_possible_map();
 
 	cpu_cache_init();
-	pagetable_init();
+	paging_init();
 
 	memblock_dump_all();
 

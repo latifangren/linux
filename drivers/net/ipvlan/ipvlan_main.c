@@ -3,7 +3,6 @@
  */
 
 #include <linux/ethtool.h>
-#include <net/netdev_lock.h>
 
 #include "ipvlan.h"
 
@@ -64,7 +63,7 @@ static int ipvlan_port_create(struct net_device *dev)
 	struct ipvl_port *port;
 	int err, idx;
 
-	port = kzalloc_obj(struct ipvl_port);
+	port = kzalloc(sizeof(struct ipvl_port), GFP_KERNEL);
 	if (!port)
 		return -ENOMEM;
 
@@ -535,13 +534,11 @@ err:
 	return ret;
 }
 
-int ipvlan_link_new(struct net_device *dev, struct rtnl_newlink_params *params,
+int ipvlan_link_new(struct net *src_net, struct net_device *dev,
+		    struct nlattr *tb[], struct nlattr *data[],
 		    struct netlink_ext_ack *extack)
 {
-	struct net *link_net = rtnl_newlink_link_net(params);
 	struct ipvl_dev *ipvlan = netdev_priv(dev);
-	struct nlattr **data = params->data;
-	struct nlattr **tb = params->tb;
 	struct ipvl_port *port;
 	struct net_device *phy_dev;
 	int err;
@@ -550,7 +547,7 @@ int ipvlan_link_new(struct net_device *dev, struct rtnl_newlink_params *params,
 	if (!tb[IFLA_LINK])
 		return -EINVAL;
 
-	phy_dev = __dev_get_by_index(link_net, nla_get_u32(tb[IFLA_LINK]));
+	phy_dev = __dev_get_by_index(src_net, nla_get_u32(tb[IFLA_LINK]));
 	if (!phy_dev)
 		return -ENODEV;
 
@@ -785,9 +782,9 @@ static int ipvlan_device_event(struct notifier_block *unused,
 	case NETDEV_PRE_CHANGEADDR:
 		prechaddr_info = ptr;
 		list_for_each_entry(ipvlan, &port->ipvlans, pnode) {
-			err = netif_pre_changeaddr_notify(ipvlan->dev,
-							  prechaddr_info->dev_addr,
-							  extack);
+			err = dev_pre_changeaddr_notify(ipvlan->dev,
+						    prechaddr_info->dev_addr,
+						    extack);
 			if (err)
 				return notifier_from_errno(err);
 		}
@@ -803,12 +800,6 @@ static int ipvlan_device_event(struct notifier_block *unused,
 	case NETDEV_PRE_TYPE_CHANGE:
 		/* Forbid underlying device to change its type. */
 		return NOTIFY_BAD;
-
-	case NETDEV_NOTIFY_PEERS:
-	case NETDEV_BONDING_FAILOVER:
-	case NETDEV_RESEND_IGMP:
-		list_for_each_entry(ipvlan, &port->ipvlans, pnode)
-			call_netdevice_notifiers(event, ipvlan->dev);
 	}
 	return NOTIFY_DONE;
 }
@@ -820,7 +811,7 @@ static int ipvlan_add_addr(struct ipvl_dev *ipvlan, void *iaddr, bool is_v6)
 
 	assert_spin_locked(&ipvlan->port->addrs_lock);
 
-	addr = kzalloc_obj(struct ipvl_addr, GFP_ATOMIC);
+	addr = kzalloc(sizeof(struct ipvl_addr), GFP_ATOMIC);
 	if (!addr)
 		return -ENOMEM;
 
@@ -1103,4 +1094,3 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mahesh Bandewar <maheshb@google.com>");
 MODULE_DESCRIPTION("Driver for L3 (IPv6/IPv4) based VLANs");
 MODULE_ALIAS_RTNL_LINK("ipvlan");
-MODULE_IMPORT_NS("NETDEV_INTERNAL");

@@ -112,10 +112,6 @@
 };
 
 /* Verdin HDMI_1 */
-&hdmi_pai {
-	status = "okay";
-};
-
 &hdmi_pvi {
 	status = "okay";
 };

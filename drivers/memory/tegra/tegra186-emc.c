@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2019-2025 NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (C) 2019 NVIDIA CORPORATION.  All rights reserved.
  */
 
 #include <linux/clk.h>
@@ -22,7 +22,6 @@ struct tegra186_emc {
 	struct tegra_bpmp *bpmp;
 	struct device *dev;
 	struct clk *clk;
-	struct clk *clk_dbb;
 
 	struct tegra186_emc_dvfs *dvfs;
 	unsigned int num_dvfs;
@@ -219,20 +218,20 @@ static int tegra186_emc_get_emc_dvfs_latency(struct tegra186_emc *emc)
 }
 
 /*
- * tegra186_emc_icc_set_bw() - Set BW api for EMC provider
+ * tegra_emc_icc_set_bw() - Set BW api for EMC provider
  * @src: ICC node for External Memory Controller (EMC)
  * @dst: ICC node for External Memory (DRAM)
  *
  * Do nothing here as info to BPMP-FW is now passed in the BW set function
  * of the MC driver. BPMP-FW sets the final Freq based on the passed values.
  */
-static int tegra186_emc_icc_set_bw(struct icc_node *src, struct icc_node *dst)
+static int tegra_emc_icc_set_bw(struct icc_node *src, struct icc_node *dst)
 {
 	return 0;
 }
 
 static struct icc_node *
-tegra186_emc_of_icc_xlate(const struct of_phandle_args *spec, void *data)
+tegra_emc_of_icc_xlate(const struct of_phandle_args *spec, void *data)
 {
 	struct icc_provider *provider = data;
 	struct icc_node *node;
@@ -248,7 +247,7 @@ tegra186_emc_of_icc_xlate(const struct of_phandle_args *spec, void *data)
 	return ERR_PTR(-EPROBE_DEFER);
 }
 
-static int tegra186_emc_icc_get_init_bw(struct icc_node *node, u32 *avg, u32 *peak)
+static int tegra_emc_icc_get_init_bw(struct icc_node *node, u32 *avg, u32 *peak)
 {
 	*avg = 0;
 	*peak = 0;
@@ -256,7 +255,7 @@ static int tegra186_emc_icc_get_init_bw(struct icc_node *node, u32 *avg, u32 *pe
 	return 0;
 }
 
-static int tegra186_emc_interconnect_init(struct tegra186_emc *emc)
+static int tegra_emc_interconnect_init(struct tegra186_emc *emc)
 {
 	struct tegra_mc *mc = dev_get_drvdata(emc->dev->parent);
 	const struct tegra_mc_soc *soc = mc->soc;
@@ -264,18 +263,20 @@ static int tegra186_emc_interconnect_init(struct tegra186_emc *emc)
 	int err;
 
 	emc->provider.dev = emc->dev;
-	emc->provider.set = tegra186_emc_icc_set_bw;
+	emc->provider.set = tegra_emc_icc_set_bw;
 	emc->provider.data = &emc->provider;
 	emc->provider.aggregate = soc->icc_ops->aggregate;
-	emc->provider.xlate = tegra186_emc_of_icc_xlate;
-	emc->provider.get_bw = tegra186_emc_icc_get_init_bw;
+	emc->provider.xlate = tegra_emc_of_icc_xlate;
+	emc->provider.get_bw = tegra_emc_icc_get_init_bw;
 
 	icc_provider_init(&emc->provider);
 
 	/* create External Memory Controller node */
 	node = icc_node_create(TEGRA_ICC_EMC);
-	if (IS_ERR(node))
-		return PTR_ERR(node);
+	if (IS_ERR(node)) {
+		err = PTR_ERR(node);
+		goto err_msg;
+	}
 
 	node->name = "External Memory Controller";
 	icc_node_add(node, &emc->provider);
@@ -303,8 +304,10 @@ static int tegra186_emc_interconnect_init(struct tegra186_emc *emc)
 
 remove_nodes:
 	icc_nodes_remove(&emc->provider);
+err_msg:
+	dev_err(emc->dev, "failed to initialize ICC: %d\n", err);
 
-	return dev_err_probe(emc->dev, err, "failed to initialize ICC\n");
+	return err;
 }
 
 static int tegra186_emc_probe(struct platform_device *pdev)
@@ -319,20 +322,12 @@ static int tegra186_emc_probe(struct platform_device *pdev)
 
 	emc->bpmp = tegra_bpmp_get(&pdev->dev);
 	if (IS_ERR(emc->bpmp))
-		return dev_err_probe(&pdev->dev, PTR_ERR(emc->bpmp),
-				     "failed to get BPMP\n");
+		return dev_err_probe(&pdev->dev, PTR_ERR(emc->bpmp), "failed to get BPMP\n");
 
 	emc->clk = devm_clk_get(&pdev->dev, "emc");
 	if (IS_ERR(emc->clk)) {
-		err = dev_err_probe(&pdev->dev, PTR_ERR(emc->clk),
-				    "failed to get EMC clock\n");
-		goto put_bpmp;
-	}
-
-	emc->clk_dbb = devm_clk_get_optional_enabled(&pdev->dev, "dbb");
-	if (IS_ERR(emc->clk_dbb)) {
-		err = dev_err_probe(&pdev->dev, PTR_ERR(emc->clk_dbb),
-				    "failed to get DBB clock\n");
+		err = PTR_ERR(emc->clk);
+		dev_err(&pdev->dev, "failed to get EMC clock: %d\n", err);
 		goto put_bpmp;
 	}
 
@@ -364,7 +359,7 @@ static int tegra186_emc_probe(struct platform_device *pdev)
 		 * EINVAL instead of passing the request to BPMP-FW later when the BW
 		 * request is made by client with 'icc_set_bw()' call.
 		 */
-		err = tegra186_emc_interconnect_init(emc);
+		err = tegra_emc_interconnect_init(emc);
 		if (err) {
 			mc->bpmp = NULL;
 			goto put_bpmp;
@@ -399,9 +394,6 @@ static const struct of_device_id tegra186_emc_of_match[] = {
 #if defined(CONFIG_ARCH_TEGRA_234_SOC)
 	{ .compatible = "nvidia,tegra234-emc" },
 #endif
-#if defined(CONFIG_ARCH_TEGRA_264_SOC)
-	{ .compatible = "nvidia,tegra264-emc" },
-#endif
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, tegra186_emc_of_match);
@@ -414,7 +406,7 @@ static struct platform_driver tegra186_emc_driver = {
 		.sync_state = icc_sync_state,
 	},
 	.probe = tegra186_emc_probe,
-	.remove = tegra186_emc_remove,
+	.remove_new = tegra186_emc_remove,
 };
 module_platform_driver(tegra186_emc_driver);
 

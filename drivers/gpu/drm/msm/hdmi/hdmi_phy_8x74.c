@@ -7,7 +7,7 @@
 #include "hdmi.h"
 
 static void hdmi_phy_8x74_powerup(struct hdmi_phy *phy,
-				  unsigned long pixclock)
+		unsigned long int pixclock)
 {
 	hdmi_phy_write(phy, REG_HDMI_8x74_ANA_CFG0,   0x1b);
 	hdmi_phy_write(phy, REG_HDMI_8x74_ANA_CFG1,   0xf2);

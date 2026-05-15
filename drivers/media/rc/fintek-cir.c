@@ -465,7 +465,7 @@ static int fintek_probe(struct pnp_dev *pdev, const struct pnp_device_id *dev_id
 	struct rc_dev *rdev;
 	int ret = -ENOMEM;
 
-	fintek = kzalloc_obj(struct fintek_dev);
+	fintek = kzalloc(sizeof(struct fintek_dev), GFP_KERNEL);
 	if (!fintek)
 		return ret;
 
@@ -568,7 +568,6 @@ static void fintek_remove(struct pnp_dev *pdev)
 	struct fintek_dev *fintek = pnp_get_drvdata(pdev);
 	unsigned long flags;
 
-	rc_unregister_device(fintek->rdev);
 	spin_lock_irqsave(&fintek->fintek_lock, flags);
 	/* disable CIR */
 	fintek_disable_cir(fintek);
@@ -581,7 +580,7 @@ static void fintek_remove(struct pnp_dev *pdev)
 	free_irq(fintek->cir_irq, fintek);
 	release_region(fintek->cir_addr, fintek->cir_port_len);
 
-	rc_free_device(fintek->rdev);
+	rc_unregister_device(fintek->rdev);
 
 	kfree(fintek);
 }

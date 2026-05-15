@@ -23,9 +23,20 @@ test_LAG_cleanup()
 		ip link set dev dummy2 master "$name"
 	elif [ "$driver" = "team" ]; then
 		name="team0"
-		ip link add "$name" type team
-		ip link set dev dummy1 master "$name"
-		ip link set dev dummy2 master "$name"
+		teamd -d -c '
+			{
+				"device": "'"$name"'",
+				"runner": {
+					"name": "'"$mode"'"
+				},
+				"ports": {
+					"dummy1":
+						{},
+					"dummy2":
+						{}
+				}
+			}
+		'
 		ip link set dev "$name" up
 	else
 		check_err 1

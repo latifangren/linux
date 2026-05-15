@@ -14,9 +14,9 @@
 #include <sys/mman.h>
 #include <linux/stringify.h>
 
+#include "build-id.h"
 #include "event.h"
 #include "debug.h"
-#include "dso.h"
 #include "evlist.h"
 #include "namespaces.h"
 #include "symbol.h"
@@ -90,8 +90,7 @@ jit_emit_elf(struct jit_buf_desc *jd,
 	saved_errno = errno;
 	nsinfo__mountns_exit(&nsc);
 	if (fd == -1) {
-		errno = saved_errno;
-		pr_warning("cannot create jit ELF %s: %m\n", filename);
+		pr_warning("cannot create jit ELF %s: %s\n", filename, strerror(saved_errno));
 		return -1;
 	}
 
@@ -234,8 +233,7 @@ jit_open(struct jit_buf_desc *jd, const char *name)
 	/*
 	 * keep dirname for generating files and mmap records
 	 */
-	strncpy(jd->dir, name, PATH_MAX);
-	jd->dir[PATH_MAX - 1] = '\0';
+	strcpy(jd->dir, name);
 	dirname(jd->dir);
 	free(buf);
 
@@ -518,7 +516,7 @@ static int jit_repipe_code_load(struct jit_buf_desc *jd, union jr_entry *jr)
 	 * create pseudo sample to induce dso hit increment
 	 * use first address as sample address
 	 */
-	perf_sample__init(&sample, /*all=*/true);
+	memset(&sample, 0, sizeof(sample));
 	sample.cpumode = PERF_RECORD_MISC_USER;
 	sample.pid  = pid;
 	sample.tid  = tid;
@@ -533,26 +531,10 @@ static int jit_repipe_code_load(struct jit_buf_desc *jd, union jr_entry *jr)
 	/*
 	 * mark dso as use to generate buildid in the header
 	 */
-	if (!ret) {
-		struct dso_id dso_id = {
-			{
-				.maj = event->mmap2.maj,
-				.min = event->mmap2.min,
-				.ino = event->mmap2.ino,
-				.ino_generation = event->mmap2.ino_generation,
-			},
-			.mmap2_valid = true,
-			.mmap2_ino_generation_valid = true,
-		};
-		struct dso *dso = machine__findnew_dso_id(jd->machine, filename, &dso_id);
+	if (!ret)
+		build_id__mark_dso_hit(tool, event, &sample, NULL, jd->machine);
 
-		if (dso)
-			dso__set_hit(dso);
-
-		dso__put(dso);
-	}
 out:
-	perf_sample__exit(&sample);
 	free(event);
 	return ret;
 }
@@ -629,7 +611,7 @@ static int jit_repipe_code_move(struct jit_buf_desc *jd, union jr_entry *jr)
 	 * create pseudo sample to induce dso hit increment
 	 * use first address as sample address
 	 */
-	perf_sample__init(&sample, /*all=*/true);
+	memset(&sample, 0, sizeof(sample));
 	sample.cpumode = PERF_RECORD_MISC_USER;
 	sample.pid  = pid;
 	sample.tid  = tid;
@@ -638,13 +620,12 @@ static int jit_repipe_code_move(struct jit_buf_desc *jd, union jr_entry *jr)
 
 	ret = perf_event__process_mmap2(tool, event, &sample, jd->machine);
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = jit_inject_event(jd, event);
 	if (!ret)
 		build_id__mark_dso_hit(tool, event, &sample, NULL, jd->machine);
-out:
-	perf_sample__exit(&sample);
+
 	return ret;
 }
 
@@ -756,9 +737,9 @@ jit_inject(struct jit_buf_desc *jd, const char *path)
  * as captured in the RECORD_MMAP record
  */
 static int
-jit_detect(const char *mmap_name, pid_t pid, struct nsinfo *nsi, bool *in_pidns)
+jit_detect(const char *mmap_name, pid_t pid, struct nsinfo *nsi)
  {
-	const char *p;
+	char *p;
 	char *end = NULL;
 	pid_t pid2;
 
@@ -792,16 +773,11 @@ jit_detect(const char *mmap_name, pid_t pid, struct nsinfo *nsi, bool *in_pidns)
 	if (!end)
 		return -1;
 
-	*in_pidns = pid == nsinfo__nstgid(nsi);
 	/*
 	 * pid does not match mmap pid
 	 * pid==0 in system-wide mode (synthesized)
-	 *
-	 * If the pid in the file name is equal to the nstgid, then
-	 * the agent ran inside a container and perf outside the
-	 * container, so record it for further use in jit_inject().
 	 */
-	if (pid && !(pid2 == pid || *in_pidns))
+	if (pid && pid2 != nsinfo__nstgid(nsi))
 		return -1;
 	/*
 	 * validate suffix
@@ -854,7 +830,6 @@ jit_process(struct perf_session *session,
 	struct nsinfo *nsi;
 	struct evsel *first;
 	struct jit_buf_desc jd;
-	bool in_pidns = false;
 	int ret;
 
 	thread = machine__findnew_thread(machine, pid, tid);
@@ -869,7 +844,7 @@ jit_process(struct perf_session *session,
 	/*
 	 * first, detect marker mmap (i.e., the jitdump mmap)
 	 */
-	if (jit_detect(filename, pid, nsi, &in_pidns)) {
+	if (jit_detect(filename, pid, nsi)) {
 		nsinfo__put(nsi);
 
 		/*
@@ -890,9 +865,6 @@ jit_process(struct perf_session *session,
 	jd.output  = output;
 	jd.machine = machine;
 	jd.nsi = nsi;
-
-	if (in_pidns)
-		nsinfo__set_in_pidns(nsi);
 
 	/*
 	 * track sample_type to compute id_all layout

@@ -16,7 +16,6 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
-#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/io.h>
 
@@ -88,7 +87,7 @@ static int atmel_ac97c_playback_open(struct snd_pcm_substream *substream)
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->opened++;
 	runtime->hw = atmel_ac97c_hw;
 	if (chip->cur_rate) {
@@ -97,6 +96,7 @@ static int atmel_ac97c_playback_open(struct snd_pcm_substream *substream)
 	}
 	if (chip->cur_format)
 		runtime->hw.formats = pcm_format_to_bits(chip->cur_format);
+	mutex_unlock(&opened_mutex);
 	chip->playback_substream = substream;
 	return 0;
 }
@@ -106,7 +106,7 @@ static int atmel_ac97c_capture_open(struct snd_pcm_substream *substream)
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->opened++;
 	runtime->hw = atmel_ac97c_hw;
 	if (chip->cur_rate) {
@@ -115,6 +115,7 @@ static int atmel_ac97c_capture_open(struct snd_pcm_substream *substream)
 	}
 	if (chip->cur_format)
 		runtime->hw.formats = pcm_format_to_bits(chip->cur_format);
+	mutex_unlock(&opened_mutex);
 	chip->capture_substream = substream;
 	return 0;
 }
@@ -123,12 +124,13 @@ static int atmel_ac97c_playback_close(struct snd_pcm_substream *substream)
 {
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->opened--;
 	if (!chip->opened) {
 		chip->cur_rate = 0;
 		chip->cur_format = 0;
 	}
+	mutex_unlock(&opened_mutex);
 
 	chip->playback_substream = NULL;
 
@@ -139,12 +141,13 @@ static int atmel_ac97c_capture_close(struct snd_pcm_substream *substream)
 {
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->opened--;
 	if (!chip->opened) {
 		chip->cur_rate = 0;
 		chip->cur_format = 0;
 	}
+	mutex_unlock(&opened_mutex);
 
 	chip->capture_substream = NULL;
 
@@ -157,9 +160,10 @@ static int atmel_ac97c_playback_hw_params(struct snd_pcm_substream *substream,
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 
 	/* Set restrictions to params. */
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->cur_rate = params_rate(hw_params);
 	chip->cur_format = params_format(hw_params);
+	mutex_unlock(&opened_mutex);
 
 	return 0;
 }
@@ -170,9 +174,10 @@ static int atmel_ac97c_capture_hw_params(struct snd_pcm_substream *substream,
 	struct atmel_ac97c *chip = snd_pcm_substream_chip(substream);
 
 	/* Set restrictions to params. */
-	guard(mutex)(&opened_mutex);
+	mutex_lock(&opened_mutex);
 	chip->cur_rate = params_rate(hw_params);
 	chip->cur_format = params_format(hw_params);
+	mutex_unlock(&opened_mutex);
 
 	return 0;
 }
@@ -584,7 +589,7 @@ static int atmel_ac97c_pcm_new(struct atmel_ac97c *chip)
 
 	pcm->private_data = chip;
 	pcm->info_flags = 0;
-	strscpy(pcm->name, chip->card->shortname);
+	strcpy(pcm->name, chip->card->shortname);
 	chip->pcm = pcm;
 
 	return 0;
@@ -743,9 +748,9 @@ static int atmel_ac97c_probe(struct platform_device *pdev)
 
 	spin_lock_init(&chip->lock);
 
-	strscpy(card->driver, "Atmel AC97C");
-	strscpy(card->shortname, "Atmel AC97C");
-	strscpy(card->longname, "Atmel AC97 controller");
+	strcpy(card->driver, "Atmel AC97C");
+	strcpy(card->shortname, "Atmel AC97C");
+	sprintf(card->longname, "Atmel AC97 controller");
 
 	chip->card = card;
 	chip->pclk = pclk;
@@ -812,6 +817,7 @@ err_prepare_enable:
 	return retval;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int atmel_ac97c_suspend(struct device *pdev)
 {
 	struct snd_card *card = dev_get_drvdata(pdev);
@@ -830,7 +836,11 @@ static int atmel_ac97c_resume(struct device *pdev)
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(atmel_ac97c_pm, atmel_ac97c_suspend, atmel_ac97c_resume);
+static SIMPLE_DEV_PM_OPS(atmel_ac97c_pm, atmel_ac97c_suspend, atmel_ac97c_resume);
+#define ATMEL_AC97C_PM_OPS	&atmel_ac97c_pm
+#else
+#define ATMEL_AC97C_PM_OPS	NULL
+#endif
 
 static void atmel_ac97c_remove(struct platform_device *pdev)
 {
@@ -851,10 +861,10 @@ static void atmel_ac97c_remove(struct platform_device *pdev)
 
 static struct platform_driver atmel_ac97c_driver = {
 	.probe		= atmel_ac97c_probe,
-	.remove		= atmel_ac97c_remove,
+	.remove_new	= atmel_ac97c_remove,
 	.driver		= {
 		.name	= "atmel_ac97c",
-		.pm	= pm_ptr(&atmel_ac97c_pm),
+		.pm	= ATMEL_AC97C_PM_OPS,
 		.of_match_table = atmel_ac97c_dt_ids,
 	},
 };

@@ -10,7 +10,6 @@
  * based on TSC2301 driver by Klaus K. Pedersen <klaus.k.pedersen@nokia.com>
  */
 
-#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/input.h>
@@ -195,7 +194,7 @@ out:
 
 static void tsc200x_penup_timer(struct timer_list *t)
 {
-	struct tsc200x *ts = timer_container_of(ts, t, penup_timer);
+	struct tsc200x *ts = from_timer(ts, t, penup_timer);
 
 	guard(spinlock_irqsave)(&ts->lock);
 	tsc200x_update_pen_state(ts, 0, 0, 0);
@@ -230,7 +229,7 @@ static void __tsc200x_disable(struct tsc200x *ts)
 
 	guard(disable_irq)(&ts->irq);
 
-	timer_delete_sync(&ts->penup_timer);
+	del_timer_sync(&ts->penup_timer);
 	cancel_delayed_work_sync(&ts->esd_work);
 }
 
@@ -389,7 +388,7 @@ static void tsc200x_esd_work(struct work_struct *work)
 		dev_info(ts->dev, "TSC200X not responding - resetting\n");
 
 		scoped_guard(disable_irq, &ts->irq) {
-			timer_delete_sync(&ts->penup_timer);
+			del_timer_sync(&ts->penup_timer);
 			tsc200x_update_pen_state(ts, 0, 0, 0);
 			tsc200x_reset(ts);
 		}

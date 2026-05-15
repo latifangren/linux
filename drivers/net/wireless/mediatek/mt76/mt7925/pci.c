@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: ISC
 /* Copyright (C) 2023 MediaTek Inc. */
 
 #include <linux/kernel.h>
@@ -8,7 +8,6 @@
 #include "mt7925.h"
 #include "mac.h"
 #include "mcu.h"
-#include "regd.h"
 #include "../dma.h"
 
 static const struct pci_device_id mt7925_pci_device_table[] = {
@@ -32,10 +31,6 @@ static void mt7925e_unregister_device(struct mt792x_dev *dev)
 {
 	int i;
 	struct mt76_connac_pm *pm = &dev->pm;
-	struct ieee80211_hw *hw = mt76_hw(dev);
-
-	if (dev->phy.chip_cap & MT792x_CHIP_CAP_WF_RF_PIN_CTRL_EVT_EN)
-		wiphy_rfkill_stop_polling(hw->wiphy);
 
 	cancel_work_sync(&dev->init_work);
 	mt76_unregister_device(&dev->mt76);
@@ -530,7 +525,7 @@ restore_suspend:
 	return err;
 }
 
-static int _mt7925_pci_resume(struct device *device, bool restore)
+static int mt7925_pci_resume(struct device *device)
 {
 	struct pci_dev *pdev = to_pci_dev(device);
 	struct mt76_dev *mdev = pci_get_drvdata(pdev);
@@ -558,20 +553,14 @@ static int _mt7925_pci_resume(struct device *device, bool restore)
 
 	mt76_worker_enable(&mdev->tx_worker);
 
-	mt76_for_each_q_rx(mdev, i) {
-		napi_enable(&mdev->napi[i]);
-	}
-	napi_enable(&mdev->tx_napi);
-
 	local_bh_disable();
 	mt76_for_each_q_rx(mdev, i) {
+		napi_enable(&mdev->napi[i]);
 		napi_schedule(&mdev->napi[i]);
 	}
+	napi_enable(&mdev->tx_napi);
 	napi_schedule(&mdev->tx_napi);
 	local_bh_enable();
-
-	if (restore)
-		goto failed;
 
 	mt76_connac_mcu_set_hif_suspend(mdev, false, false);
 	ret = wait_event_timeout(dev->wait,
@@ -585,11 +574,11 @@ static int _mt7925_pci_resume(struct device *device, bool restore)
 	if (!pm->ds_enable)
 		mt7925_mcu_set_deep_sleep(dev, false);
 
-	mt7925_mcu_regd_update(dev, mdev->alpha2, dev->country_ie_env);
+	mt7925_regd_update(dev);
 failed:
 	pm->suspended = false;
 
-	if (err < 0 || restore)
+	if (err < 0)
 		mt792x_reset(&dev->mt76);
 
 	return err;
@@ -600,24 +589,7 @@ static void mt7925_pci_shutdown(struct pci_dev *pdev)
 	mt7925_pci_remove(pdev);
 }
 
-static int mt7925_pci_resume(struct device *device)
-{
-	return _mt7925_pci_resume(device, false);
-}
-
-static int mt7925_pci_restore(struct device *device)
-{
-	return _mt7925_pci_resume(device, true);
-}
-
-static const struct dev_pm_ops mt7925_pm_ops = {
-	.suspend = pm_sleep_ptr(mt7925_pci_suspend),
-	.resume  = pm_sleep_ptr(mt7925_pci_resume),
-	.freeze = pm_sleep_ptr(mt7925_pci_suspend),
-	.thaw = pm_sleep_ptr(mt7925_pci_resume),
-	.poweroff = pm_sleep_ptr(mt7925_pci_suspend),
-	.restore = pm_sleep_ptr(mt7925_pci_restore),
-};
+static DEFINE_SIMPLE_DEV_PM_OPS(mt7925_pm_ops, mt7925_pci_suspend, mt7925_pci_resume);
 
 static struct pci_driver mt7925_pci_driver = {
 	.name		= KBUILD_MODNAME,

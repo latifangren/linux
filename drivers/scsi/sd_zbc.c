@@ -35,7 +35,8 @@ static bool sd_zbc_is_gap_zone(const u8 buf[64])
  * @buf: SCSI zone descriptor.
  * @idx: Index of the zone relative to the first zone reported by the current
  *	sd_zbc_report_zones() call.
- * @args: report zones arguments (callback, etc)
+ * @cb: Callback function pointer.
+ * @data: Second argument passed to @cb.
  *
  * Return: Value returned by @cb.
  *
@@ -43,11 +44,12 @@ static bool sd_zbc_is_gap_zone(const u8 buf[64])
  * call @cb(blk_zone, @data).
  */
 static int sd_zbc_parse_report(struct scsi_disk *sdkp, const u8 buf[64],
-			unsigned int idx, struct blk_report_zones_args *args)
+			       unsigned int idx, report_zones_cb cb, void *data)
 {
 	struct scsi_device *sdp = sdkp->device;
 	struct blk_zone zone = { 0 };
 	sector_t start_lba, gran;
+	int ret;
 
 	if (WARN_ON_ONCE(sd_zbc_is_gap_zone(buf)))
 		return -EINVAL;
@@ -85,7 +87,11 @@ static int sd_zbc_parse_report(struct scsi_disk *sdkp, const u8 buf[64],
 	else
 		zone.wp = logical_to_sectors(sdp, get_unaligned_be64(&buf[24]));
 
-	return disk_report_zone(sdkp->disk, &zone, idx, args);
+	ret = cb(&zone, idx, data);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 /**
@@ -211,14 +217,14 @@ static inline sector_t sd_zbc_zone_sectors(struct scsi_disk *sdkp)
  * @disk: Disk to report zones for.
  * @sector: Start sector.
  * @nr_zones: Maximum number of zones to report.
- * @args: Callback arguments.
+ * @cb: Callback function called to report zone information.
+ * @data: Second argument passed to @cb.
  *
  * Called by the block layer to iterate over zone information. See also the
  * disk->fops->report_zones() calls in block/blk-zoned.c.
  */
 int sd_zbc_report_zones(struct gendisk *disk, sector_t sector,
-			unsigned int nr_zones,
-			struct blk_report_zones_args *args)
+			unsigned int nr_zones, report_zones_cb cb, void *data)
 {
 	struct scsi_disk *sdkp = scsi_disk(disk);
 	sector_t lba = sectors_to_logical(sdkp->device, sector);
@@ -277,7 +283,7 @@ int sd_zbc_report_zones(struct gendisk *disk, sector_t sector,
 			}
 
 			ret = sd_zbc_parse_report(sdkp, buf + offset, zone_idx,
-						  args);
+						  cb, data);
 			if (ret)
 				goto out;
 
@@ -631,6 +637,8 @@ int sd_zbc_read_zones(struct scsi_disk *sdkp, struct queue_limits *lim,
 		lim->max_open_zones = sdkp->zones_max_open;
 	lim->max_active_zones = 0;
 	lim->chunk_sectors = logical_to_sectors(sdkp->device, zone_blocks);
+	/* Enable block layer zone append emulation */
+	lim->max_zone_append_sectors = 0;
 
 	return 0;
 

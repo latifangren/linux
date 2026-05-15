@@ -193,7 +193,7 @@
  * Preprocessor magic to expand macros used as arguments before we insert them
  * into assembly code.
  */
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 # define ___SYNC(type, reason, else)				\
 	____SYNC(type, reason, else)
 #else

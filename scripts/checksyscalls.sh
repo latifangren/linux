@@ -10,10 +10,6 @@
 # checksyscalls.sh gcc gcc-options
 #
 
-set -e
-
-reference_table="$(dirname $0)/../arch/x86/entry/syscalls/syscall_32.tbl"
-
 ignore_list() {
 cat << EOF
 #include <asm/types.h>
@@ -273,10 +269,5 @@ syscall_list() {
 	done
 }
 
-(ignore_list && syscall_list ${reference_table}) | \
+(ignore_list && syscall_list $(dirname $0)/../arch/x86/entry/syscalls/syscall_32.tbl) | \
 $* -Wno-error -Wno-unused-macros -E -x c - > /dev/null
-
-# For fixdep
-if [ -n "${DEPFILE}" ]; then
-	echo "${0}: ${0} ${reference_table}" >> "${DEPFILE}"
-fi

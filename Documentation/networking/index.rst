@@ -14,9 +14,9 @@ Contents:
    can
    can_ucan_protocol
    device_drivers/index
-   diagnostic/index
    dsa/index
    devlink/index
+   caif/index
    ethtool-netlink
    ieee802154
    iso15765-2
@@ -40,11 +40,14 @@ Contents:
    tls-handshake
    nfc
    6lowpan
+   6pack
    arcnet-hardware
    arcnet
    atm
+   ax25
    bonding
    cdc_mbim
+   dccp
    dctcp
    devmem
    dns_resolver
@@ -54,12 +57,11 @@ Contents:
    filter
    generic-hdlc
    generic_netlink
-   ../netlink/specs/index
+   netlink_spec/index
    gen_stats
    gtp
    ila
    ioam6-sysctl
-   iou-zcrx
    ip_dynaddr
    ipsec
    ip-sysctl
@@ -83,7 +85,6 @@ Contents:
    netdevices
    netfilter-sysctl
    netif-msg
-   netmem
    nexthop-group-resilient
    nf_conntrack-sysctl
    nf_flowtable
@@ -93,13 +94,11 @@ Contents:
    packet_mmap
    phonet
    phy-link-topology
-   phy-port
    pktgen
    plip
    ppp_generic
    proc_net_tcp
    pse-pd/index
-   psp
    radiotap-headers
    rds
    regulatory
@@ -129,6 +128,16 @@ Contents:
    vxlan
    x25
    x25-iface
-   xfrm/index
+   xfrm_device
+   xfrm_proc
+   xfrm_sync
+   xfrm_sysctl
    xdp-rx-metadata
    xsk-tx-metadata
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

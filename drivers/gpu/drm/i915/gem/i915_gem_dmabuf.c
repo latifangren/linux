@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
 /*
+ * SPDX-License-Identifier: MIT
+ *
  * Copyright 2012 Red Hat Inc
  */
 
@@ -15,7 +16,7 @@
 #include "i915_gem_object.h"
 #include "i915_scatterlist.h"
 
-MODULE_IMPORT_NS("DMA_BUF");
+MODULE_IMPORT_NS(DMA_BUF);
 
 I915_SELFTEST_DECLARE(static bool force_different_devices;)
 
@@ -36,7 +37,7 @@ static struct sg_table *i915_gem_map_dma_buf(struct dma_buf_attachment *attach,
 	 * Make a copy of the object's sgt, so that we can make an independent
 	 * mapping
 	 */
-	sgt = kmalloc_obj(*sgt);
+	sgt = kmalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
 		ret = -ENOMEM;
 		goto err;
@@ -105,7 +106,7 @@ static int i915_gem_dmabuf_mmap(struct dma_buf *dma_buf, struct vm_area_struct *
 	if (!obj->base.filp)
 		return -ENODEV;
 
-	ret = vfs_mmap(obj->base.filp, vma);
+	ret = call_mmap(obj->base.filp, vma);
 	if (ret)
 		return ret;
 

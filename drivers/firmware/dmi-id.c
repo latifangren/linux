@@ -96,7 +96,6 @@ static ssize_t get_modalias(char *buffer, size_t buffer_size)
 		{ "ct",  DMI_CHASSIS_TYPE },
 		{ "cvr", DMI_CHASSIS_VERSION },
 		{ "sku", DMI_PRODUCT_SKU },
-		{ "pfa", DMI_PRODUCT_FAMILY },
 		{ NULL,  DMI_NONE }
 	};
 
@@ -237,7 +236,7 @@ static int __init dmi_id_init(void)
 	if (ret)
 		return ret;
 
-	dmi_dev = kzalloc_obj(*dmi_dev);
+	dmi_dev = kzalloc(sizeof(*dmi_dev), GFP_KERNEL);
 	if (!dmi_dev) {
 		ret = -ENOMEM;
 		goto fail_class_unregister;

@@ -55,7 +55,8 @@ int x25_forward_call(struct x25_address *dest_addr, struct x25_neigh *from,
 
 	/* Save the forwarding details for future traffic */
 	if (!same_lci){
-		if ((new_frwd = kmalloc_obj(struct x25_forward, GFP_ATOMIC)) == NULL){
+		if ((new_frwd = kmalloc(sizeof(struct x25_forward),
+						GFP_ATOMIC)) == NULL){
 			rc = -ENOMEM;
 			goto out_put_nb;
 		}

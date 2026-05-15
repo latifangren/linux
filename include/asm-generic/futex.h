@@ -25,9 +25,7 @@
  *			  argument and comparison of the previous
  *			  futex value with another constant.
  *
- * @op:		operation to execute
- * @oparg:	argument of the operation
- * @oval:	previous value at @uaddr on successful return
+ * @encoded_op:	encoded operation to execute
  * @uaddr:	pointer to user space address
  *
  * Return:

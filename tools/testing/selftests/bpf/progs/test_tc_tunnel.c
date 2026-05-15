@@ -2,11 +2,23 @@
 
 /* In-place tunneling */
 
-#include <vmlinux.h>
+#include <stdbool.h>
+#include <string.h>
 
-#include <bpf/bpf_helpers.h>
+#include <linux/stddef.h>
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/in.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/mpls.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
+#include <linux/pkt_cls.h>
+#include <linux/types.h>
+
 #include <bpf/bpf_endian.h>
-#include "bpf_tracing_net.h"
+#include <bpf/bpf_helpers.h>
 #include "bpf_compiler.h"
 
 #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
@@ -15,20 +27,7 @@ static const int cfg_port = 8000;
 
 static const int cfg_udp_src = 20000;
 
-#define ETH_P_MPLS_UC	0x8847
-#define ETH_P_TEB	0x6558
-
-#define MPLS_LS_S_MASK	0x00000100
-#define BPF_F_ADJ_ROOM_ENCAP_L2(len)			\
-	(((__u64)len & BPF_ADJ_ROOM_ENCAP_L2_MASK)	\
-	 << BPF_ADJ_ROOM_ENCAP_L2_SHIFT)
-
-struct vxlanhdr___local {
-	__be32 vx_flags;
-	__be32 vx_vni;
-};
-
-#define	L2_PAD_SZ	(sizeof(struct vxlanhdr___local) + ETH_HLEN)
+#define	L2_PAD_SZ	(sizeof(struct vxlanhdr) + ETH_HLEN)
 
 #define	UDP_PORT		5555
 #define	MPLS_OVER_UDP_PORT	6635
@@ -37,9 +36,10 @@ struct vxlanhdr___local {
 
 #define	EXTPROTO_VXLAN	0x1
 
-#define	VXLAN_FLAGS     bpf_htonl(1<<27)
-#define	VNI_ID		1
-#define	VXLAN_VNI	bpf_htonl(VNI_ID << 8)
+#define	VXLAN_N_VID     (1u << 24)
+#define	VXLAN_VNI_MASK	bpf_htonl((VXLAN_N_VID - 1) << 8)
+#define	VXLAN_FLAGS     0x8
+#define	VXLAN_VNI       1
 
 #ifndef NEXTHDR_DEST
 #define NEXTHDR_DEST	60
@@ -48,6 +48,12 @@ struct vxlanhdr___local {
 /* MPLS label 1000 with S bit (last label) set and ttl of 255. */
 static const __u32 mpls_label = __bpf_constant_htonl(1000 << 12 |
 						     MPLS_LS_S_MASK | 0xff);
+
+struct vxlanhdr {
+	__be32 vx_flags;
+	__be32 vx_vni;
+} __attribute__((packed));
+
 struct gre_hdr {
 	__be16 flags;
 	__be16 protocol;
@@ -88,8 +94,8 @@ static __always_inline void set_ipv4_csum(struct iphdr *iph)
 static __always_inline int __encap_ipv4(struct __sk_buff *skb, __u8 encap_proto,
 					__u16 l2_proto, __u16 ext_proto)
 {
-	struct iphdr iph_inner = {0};
 	__u16 udp_dst = UDP_PORT;
+	struct iphdr iph_inner;
 	struct v4hdr h_outer;
 	struct tcphdr tcph;
 	int olen, l2_len;
@@ -116,6 +122,7 @@ static __always_inline int __encap_ipv4(struct __sk_buff *skb, __u8 encap_proto,
 			return TC_ACT_OK;
 
 		/* Derive the IPv4 header fields from the IPv6 header */
+		memset(&iph_inner, 0, sizeof(iph_inner));
 		iph_inner.version = 4;
 		iph_inner.ihl = 5;
 		iph_inner.tot_len = bpf_htons(sizeof(iph6_inner) +
@@ -159,7 +166,7 @@ static __always_inline int __encap_ipv4(struct __sk_buff *skb, __u8 encap_proto,
 		l2_len = ETH_HLEN;
 		if (ext_proto & EXTPROTO_VXLAN) {
 			udp_dst = VXLAN_UDP_PORT;
-			l2_len += sizeof(struct vxlanhdr___local);
+			l2_len += sizeof(struct vxlanhdr);
 		} else
 			udp_dst = ETH_OVER_UDP_PORT;
 		break;
@@ -200,12 +207,12 @@ static __always_inline int __encap_ipv4(struct __sk_buff *skb, __u8 encap_proto,
 		flags |= BPF_F_ADJ_ROOM_ENCAP_L2_ETH;
 
 		if (ext_proto & EXTPROTO_VXLAN) {
-			struct vxlanhdr___local *vxlan_hdr = (struct vxlanhdr___local *)l2_hdr;
+			struct vxlanhdr *vxlan_hdr = (struct vxlanhdr *)l2_hdr;
 
 			vxlan_hdr->vx_flags = VXLAN_FLAGS;
-			vxlan_hdr->vx_vni = VXLAN_VNI;
+			vxlan_hdr->vx_vni = bpf_htonl((VXLAN_VNI & VXLAN_VNI_MASK) << 8);
 
-			l2_hdr += sizeof(struct vxlanhdr___local);
+			l2_hdr += sizeof(struct vxlanhdr);
 		}
 
 		if (bpf_skb_load_bytes(skb, 0, l2_hdr, ETH_HLEN))
@@ -290,7 +297,7 @@ static __always_inline int __encap_ipv6(struct __sk_buff *skb, __u8 encap_proto,
 		l2_len = ETH_HLEN;
 		if (ext_proto & EXTPROTO_VXLAN) {
 			udp_dst = VXLAN_UDP_PORT;
-			l2_len += sizeof(struct vxlanhdr___local);
+			l2_len += sizeof(struct vxlanhdr);
 		} else
 			udp_dst = ETH_OVER_UDP_PORT;
 		break;
@@ -330,12 +337,12 @@ static __always_inline int __encap_ipv6(struct __sk_buff *skb, __u8 encap_proto,
 		flags |= BPF_F_ADJ_ROOM_ENCAP_L2_ETH;
 
 		if (ext_proto & EXTPROTO_VXLAN) {
-			struct vxlanhdr___local *vxlan_hdr = (struct vxlanhdr___local *)l2_hdr;
+			struct vxlanhdr *vxlan_hdr = (struct vxlanhdr *)l2_hdr;
 
 			vxlan_hdr->vx_flags = VXLAN_FLAGS;
-			vxlan_hdr->vx_vni = VXLAN_VNI;
+			vxlan_hdr->vx_vni = bpf_htonl((VXLAN_VNI & VXLAN_VNI_MASK) << 8);
 
-			l2_hdr += sizeof(struct vxlanhdr___local);
+			l2_hdr += sizeof(struct vxlanhdr);
 		}
 
 		if (bpf_skb_load_bytes(skb, 0, l2_hdr, ETH_HLEN))
@@ -365,8 +372,8 @@ static __always_inline int __encap_ipv6(struct __sk_buff *skb, __u8 encap_proto,
 
 static int encap_ipv6_ipip6(struct __sk_buff *skb)
 {
-	struct v6hdr h_outer = {0};
 	struct iphdr iph_inner;
+	struct v6hdr h_outer;
 	struct tcphdr tcph;
 	struct ethhdr eth;
 	__u64 flags;
@@ -393,12 +400,13 @@ static int encap_ipv6_ipip6(struct __sk_buff *skb)
 		return TC_ACT_SHOT;
 
 	/* prepare new outer network header */
+	memset(&h_outer.ip, 0, sizeof(h_outer.ip));
 	h_outer.ip.version = 6;
 	h_outer.ip.hop_limit = iph_inner.ttl;
-	h_outer.ip.saddr.in6_u.u6_addr8[1] = 0xfd;
-	h_outer.ip.saddr.in6_u.u6_addr8[15] = 1;
-	h_outer.ip.daddr.in6_u.u6_addr8[1] = 0xfd;
-	h_outer.ip.daddr.in6_u.u6_addr8[15] = 2;
+	h_outer.ip.saddr.s6_addr[1] = 0xfd;
+	h_outer.ip.saddr.s6_addr[15] = 1;
+	h_outer.ip.daddr.s6_addr[1] = 0xfd;
+	h_outer.ip.daddr.s6_addr[15] = 2;
 	h_outer.ip.payload_len = iph_inner.tot_len;
 	h_outer.ip.nexthdr = IPPROTO_IPIP;
 
@@ -423,7 +431,7 @@ static __always_inline int encap_ipv6(struct __sk_buff *skb, __u8 encap_proto,
 	return __encap_ipv6(skb, encap_proto, l2_proto, 0);
 }
 
-SEC("tc")
+SEC("encap_ipip_none")
 int __encap_ipip_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -432,7 +440,7 @@ int __encap_ipip_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_gre_none")
 int __encap_gre_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -441,7 +449,7 @@ int __encap_gre_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_gre_mpls")
 int __encap_gre_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -450,7 +458,7 @@ int __encap_gre_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_gre_eth")
 int __encap_gre_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -459,7 +467,7 @@ int __encap_gre_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_udp_none")
 int __encap_udp_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -468,7 +476,7 @@ int __encap_udp_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_udp_mpls")
 int __encap_udp_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -477,7 +485,7 @@ int __encap_udp_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_udp_eth")
 int __encap_udp_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -486,7 +494,7 @@ int __encap_udp_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_vxlan_eth")
 int __encap_vxlan_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -497,7 +505,7 @@ int __encap_vxlan_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_sit_none")
 int __encap_sit_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -506,7 +514,7 @@ int __encap_sit_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6tnl_none")
 int __encap_ip6tnl_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -515,7 +523,7 @@ int __encap_ip6tnl_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ipip6_none")
 int __encap_ipip6_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IP))
@@ -524,7 +532,7 @@ int __encap_ipip6_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6gre_none")
 int __encap_ip6gre_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -533,7 +541,7 @@ int __encap_ip6gre_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6gre_mpls")
 int __encap_ip6gre_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -542,7 +550,7 @@ int __encap_ip6gre_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6gre_eth")
 int __encap_ip6gre_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -551,7 +559,7 @@ int __encap_ip6gre_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6udp_none")
 int __encap_ip6udp_none(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -560,7 +568,7 @@ int __encap_ip6udp_none(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6udp_mpls")
 int __encap_ip6udp_mpls(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -569,7 +577,7 @@ int __encap_ip6udp_mpls(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6udp_eth")
 int __encap_ip6udp_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -578,7 +586,7 @@ int __encap_ip6udp_eth(struct __sk_buff *skb)
 		return TC_ACT_OK;
 }
 
-SEC("tc")
+SEC("encap_ip6vxlan_eth")
 int __encap_ip6vxlan_eth(struct __sk_buff *skb)
 {
 	if (skb->protocol == __bpf_constant_htons(ETH_P_IPV6))
@@ -644,7 +652,7 @@ static int decap_internal(struct __sk_buff *skb, int off, int len, char proto)
 			olen += ETH_HLEN;
 			break;
 		case VXLAN_UDP_PORT:
-			olen += ETH_HLEN + sizeof(struct vxlanhdr___local);
+			olen += ETH_HLEN + sizeof(struct vxlanhdr);
 			break;
 		}
 		break;
@@ -685,7 +693,7 @@ static int decap_ipv6(struct __sk_buff *skb)
 			      iph_outer.nexthdr);
 }
 
-SEC("tc")
+SEC("decap")
 int decap_f(struct __sk_buff *skb)
 {
 	switch (skb->protocol) {

@@ -31,6 +31,7 @@ static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX; /* Index 0-max */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR; /* Id for card */
 static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP; /* Enable card */
 static struct sfire_chip *chips[SNDRV_CARDS] = SNDRV_DEFAULT_PTR;
+static struct usb_device *devices[SNDRV_CARDS] = SNDRV_DEFAULT_PTR;
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for the 6fire sound device");
@@ -43,28 +44,32 @@ static DEFINE_MUTEX(register_mutex);
 
 static void usb6fire_chip_abort(struct sfire_chip *chip)
 {
-	if (chip->pcm)
-		usb6fire_pcm_abort(chip);
-	if (chip->midi)
-		usb6fire_midi_abort(chip);
-	if (chip->comm)
-		usb6fire_comm_abort(chip);
-	if (chip->control)
-		usb6fire_control_abort(chip);
+	if (chip) {
+		if (chip->pcm)
+			usb6fire_pcm_abort(chip);
+		if (chip->midi)
+			usb6fire_midi_abort(chip);
+		if (chip->comm)
+			usb6fire_comm_abort(chip);
+		if (chip->control)
+			usb6fire_control_abort(chip);
+	}
 }
 
 static void usb6fire_card_free(struct snd_card *card)
 {
 	struct sfire_chip *chip = card->private_data;
 
-	if (chip->pcm)
-		usb6fire_pcm_destroy(chip);
-	if (chip->midi)
-		usb6fire_midi_destroy(chip);
-	if (chip->comm)
-		usb6fire_comm_destroy(chip);
-	if (chip->control)
-		usb6fire_control_destroy(chip);
+	if (chip) {
+		if (chip->pcm)
+			usb6fire_pcm_destroy(chip);
+		if (chip->midi)
+			usb6fire_midi_destroy(chip);
+		if (chip->comm)
+			usb6fire_comm_destroy(chip);
+		if (chip->control)
+			usb6fire_control_destroy(chip);
+	}
 }
 
 static int usb6fire_chip_probe(struct usb_interface *intf,
@@ -78,19 +83,24 @@ static int usb6fire_chip_probe(struct usb_interface *intf,
 	struct snd_card *card = NULL;
 
 	/* look if we already serve this card and return if so */
-	guard(mutex)(&register_mutex);
+	mutex_lock(&register_mutex);
 	for (i = 0; i < SNDRV_CARDS; i++) {
-		if (chips[i] && chips[i]->dev == device) {
-			chips[i]->intf_count++;
+		if (devices[i] == device) {
+			if (chips[i])
+				chips[i]->intf_count++;
 			usb_set_intfdata(intf, chips[i]);
+			mutex_unlock(&register_mutex);
 			return 0;
-		} else if (!chips[i] && regidx < 0)
+		} else if (!devices[i] && regidx < 0)
 			regidx = i;
 	}
 	if (regidx < 0) {
+		mutex_unlock(&register_mutex);
 		dev_err(&intf->dev, "too many cards registered.\n");
 		return -ENODEV;
 	}
+	devices[regidx] = device;
+	mutex_unlock(&register_mutex);
 
 	/* check, if firmware is present on device, upload it if not */
 	ret = usb6fire_fw_init(intf);
@@ -110,12 +120,13 @@ static int usb6fire_chip_probe(struct usb_interface *intf,
 		dev_err(&intf->dev, "cannot create alsa card.\n");
 		return ret;
 	}
-	strscpy(card->driver, "6FireUSB");
-	strscpy(card->shortname, "TerraTec DMX6FireUSB");
+	strcpy(card->driver, "6FireUSB");
+	strcpy(card->shortname, "TerraTec DMX6FireUSB");
 	sprintf(card->longname, "%s at %d:%d", card->shortname,
 			device->bus->busnum, device->devnum);
 
 	chip = card->private_data;
+	chips[regidx] = chip;
 	chip->dev = device;
 	chip->regidx = regidx;
 	chip->intf_count = 1;
@@ -143,10 +154,7 @@ static int usb6fire_chip_probe(struct usb_interface *intf,
 		dev_err(&intf->dev, "cannot register card.");
 		goto destroy_chip;
 	}
-
 	usb_set_intfdata(intf, chip);
-	chips[regidx] = chip;
-
 	return 0;
 
 destroy_chip:
@@ -159,31 +167,30 @@ static void usb6fire_chip_disconnect(struct usb_interface *intf)
 	struct sfire_chip *chip;
 	struct snd_card *card;
 
-	guard(mutex)(&register_mutex);
 	chip = usb_get_intfdata(intf);
-	/* if !chip, fw upload has been performed */
-	if (!chip)
-		return;
+	if (chip) { /* if !chip, fw upload has been performed */
+		chip->intf_count--;
+		if (!chip->intf_count) {
+			mutex_lock(&register_mutex);
+			devices[chip->regidx] = NULL;
+			chips[chip->regidx] = NULL;
+			mutex_unlock(&register_mutex);
 
-	chip->intf_count--;
-	if (chip->intf_count)
-		return;
-
-	chips[chip->regidx] = NULL;
-
-	/*
-	 * Save card pointer before teardown.
-	 * snd_card_free_when_closed() may free card (and
-	 * the embedded chip) immediately, so it must be
-	 * called last and chip must not be accessed after.
-	 */
-	card = chip->card;
-	chip->shutdown = true;
-	if (card)
-		snd_card_disconnect(card);
-	usb6fire_chip_abort(chip);
-	if (card)
-		snd_card_free_when_closed(card);
+			/*
+			 * Save card pointer before teardown.
+			 * snd_card_free_when_closed() may free card (and
+			 * the embedded chip) immediately, so it must be
+			 * called last and chip must not be accessed after.
+			 */
+			card = chip->card;
+			chip->shutdown = true;
+			if (card)
+				snd_card_disconnect(card);
+			usb6fire_chip_abort(chip);
+			if (card)
+				snd_card_free_when_closed(card);
+		}
+	}
 }
 
 static const struct usb_device_id device_table[] = {

@@ -129,9 +129,6 @@ static LIST_HEAD(snd_timer_list);
 /* list of slave instances */
 static LIST_HEAD(snd_timer_slave_list);
 
-/* list of open master instances that can accept slave links */
-static LIST_HEAD(snd_timer_master_list);
-
 /* lock for slave active lists */
 static DEFINE_SPINLOCK(slave_active_lock);
 
@@ -154,7 +151,7 @@ struct snd_timer_instance *snd_timer_instance_new(const char *owner)
 {
 	struct snd_timer_instance *timeri;
 
-	timeri = kzalloc_obj(*timeri);
+	timeri = kzalloc(sizeof(*timeri), GFP_KERNEL);
 	if (timeri == NULL)
 		return NULL;
 	timeri->owner = kstrdup(owner, GFP_KERNEL);
@@ -164,7 +161,6 @@ struct snd_timer_instance *snd_timer_instance_new(const char *owner)
 	}
 	INIT_LIST_HEAD(&timeri->open_list);
 	INIT_LIST_HEAD(&timeri->active_list);
-	INIT_LIST_HEAD(&timeri->master_list);
 	INIT_LIST_HEAD(&timeri->ack_list);
 	INIT_LIST_HEAD(&timeri->slave_list_head);
 	INIT_LIST_HEAD(&timeri->slave_active_head);
@@ -249,12 +245,6 @@ static int check_matching_master_slave(struct snd_timer_instance *master,
 	return 1;
 }
 
-static bool snd_timer_has_slave_key(const struct snd_timer_instance *timeri)
-{
-	return !(timeri->flags & SNDRV_TIMER_IFLG_SLAVE) &&
-		timeri->slave_class > SNDRV_TIMER_SCLASS_NONE;
-}
-
 /*
  * look for a master instance matching with the slave id of the given slave.
  * when found, relink the open_link of the slave.
@@ -263,15 +253,19 @@ static bool snd_timer_has_slave_key(const struct snd_timer_instance *timeri)
  */
 static int snd_timer_check_slave(struct snd_timer_instance *slave)
 {
+	struct snd_timer *timer;
 	struct snd_timer_instance *master;
 	int err = 0;
 
-	list_for_each_entry(master, &snd_timer_master_list, master_list) {
-		err = check_matching_master_slave(master, slave);
-		if (err != 0) /* match found or error */
-			goto out;
+	/* FIXME: it's really dumb to look up all entries.. */
+	list_for_each_entry(timer, &snd_timer_list, device_list) {
+		list_for_each_entry(master, &timer->open_list_head, open_list) {
+			err = check_matching_master_slave(master, slave);
+			if (err != 0) /* match found or error */
+				goto out;
+		}
 	}
-out:
+ out:
 	return err < 0 ? err : 0;
 }
 
@@ -383,8 +377,6 @@ int snd_timer_open(struct snd_timer_instance *timeri,
 	timeri->slave_id = slave_id;
 
 	list_add_tail(&timeri->open_list, &timer->open_list_head);
-	if (snd_timer_has_slave_key(timeri))
-		list_add_tail(&timeri->master_list, &snd_timer_master_list);
 	timer->num_instances++;
 	err = snd_timer_check_master(timeri);
 list_added:
@@ -438,9 +430,6 @@ static void snd_timer_close_locked(struct snd_timer_instance *timeri,
 		if (timeri->flags & SNDRV_TIMER_IFLG_SLAVE)
 			num_slaves--;
 	}
-
-	if (!list_empty(&timeri->master_list))
-		list_del_init(&timeri->master_list);
 
 	/* force to stop the timer */
 	snd_timer_stop(timeri);
@@ -941,7 +930,7 @@ int snd_timer_new(struct snd_card *card, char *id, struct snd_timer_id *tid,
 	}
 	if (rtimer)
 		*rtimer = NULL;
-	timer = kzalloc_obj(*timer);
+	timer = kzalloc(sizeof(*timer), GFP_KERNEL);
 	if (!timer)
 		return -ENOMEM;
 	timer->tmr_class = tid->dev_class;
@@ -1129,8 +1118,8 @@ struct snd_timer_system_private {
 
 static void snd_timer_s_function(struct timer_list *t)
 {
-	struct snd_timer_system_private *priv = timer_container_of(priv, t,
-								   tlist);
+	struct snd_timer_system_private *priv = from_timer(priv, t,
+								tlist);
 	struct snd_timer *timer = priv->snd_timer;
 	unsigned long jiff = jiffies;
 	if (time_after(jiff, priv->last_expires))
@@ -1163,7 +1152,7 @@ static int snd_timer_s_stop(struct snd_timer * timer)
 	unsigned long jiff;
 
 	priv = (struct snd_timer_system_private *) timer->private_data;
-	timer_delete(&priv->tlist);
+	del_timer(&priv->tlist);
 	jiff = jiffies;
 	if (time_before(jiff, priv->last_expires))
 		timer->sticks = priv->last_expires - jiff;
@@ -1178,7 +1167,7 @@ static int snd_timer_s_close(struct snd_timer *timer)
 	struct snd_timer_system_private *priv;
 
 	priv = (struct snd_timer_system_private *)timer->private_data;
-	timer_delete_sync(&priv->tlist);
+	del_timer_sync(&priv->tlist);
 	return 0;
 }
 
@@ -1206,9 +1195,9 @@ static int snd_timer_register_system(void)
 	err = snd_timer_global_new("system", SNDRV_TIMER_GLOBAL_SYSTEM, &timer);
 	if (err < 0)
 		return err;
-	strscpy(timer->name, "system timer");
+	strcpy(timer->name, "system timer");
 	timer->hw = snd_timer_system;
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (priv == NULL) {
 		snd_timer_free(timer);
 		return -ENOMEM;
@@ -1443,11 +1432,11 @@ static int realloc_user_queue(struct snd_timer_user *tu, int size)
 	struct snd_timer_tread64 *tqueue = NULL;
 
 	if (tu->tread) {
-		tqueue = kzalloc_objs(*tqueue, size);
+		tqueue = kcalloc(size, sizeof(*tqueue), GFP_KERNEL);
 		if (!tqueue)
 			return -ENOMEM;
 	} else {
-		queue = kzalloc_objs(*queue, size);
+		queue = kcalloc(size, sizeof(*queue), GFP_KERNEL);
 		if (!queue)
 			return -ENOMEM;
 	}
@@ -1472,7 +1461,7 @@ static int snd_timer_user_open(struct inode *inode, struct file *file)
 	if (err < 0)
 		return err;
 
-	tu = kzalloc_obj(*tu);
+	tu = kzalloc(sizeof(*tu), GFP_KERNEL);
 	if (tu == NULL)
 		return -ENOMEM;
 	spin_lock_init(&tu->qlock);
@@ -1625,12 +1614,12 @@ static int snd_timer_user_next_device(struct snd_timer_id __user *_tid)
 static int snd_timer_user_ginfo(struct file *file,
 				struct snd_timer_ginfo __user *_ginfo)
 {
+	struct snd_timer_ginfo *ginfo __free(kfree) = NULL;
 	struct snd_timer_id tid;
 	struct snd_timer *t;
 	struct list_head *p;
-	struct snd_timer_ginfo *ginfo __free(kfree) =
-		memdup_user(_ginfo, sizeof(*ginfo));
 
+	ginfo = memdup_user(_ginfo, sizeof(*ginfo));
 	if (IS_ERR(ginfo))
 		return PTR_ERR(ginfo);
 
@@ -1767,6 +1756,7 @@ static int snd_timer_user_info(struct file *file,
 			       struct snd_timer_info __user *_info)
 {
 	struct snd_timer_user *tu;
+	struct snd_timer_info *info __free(kfree) = NULL;
 	struct snd_timer *t;
 
 	tu = file->private_data;
@@ -1776,8 +1766,7 @@ static int snd_timer_user_info(struct file *file,
 	if (!t)
 		return -EBADFD;
 
-	struct snd_timer_info *info __free(kfree) =
-		kzalloc(sizeof(*info), GFP_KERNEL);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (! info)
 		return -ENOMEM;
 	info->card = t->card ? t->card->number : -1;
@@ -2139,7 +2128,7 @@ static int snd_utimer_create(struct snd_timer_uinfo *utimer_info,
 	if (!utimer_info || utimer_info->resolution == 0)
 		return -EINVAL;
 
-	utimer = kzalloc_obj(*utimer);
+	utimer = kzalloc(sizeof(*utimer), GFP_KERNEL);
 	if (!utimer)
 		return -ENOMEM;
 
@@ -2203,10 +2192,10 @@ static int snd_utimer_ioctl_create(struct file *file,
 				   struct snd_timer_uinfo __user *_utimer_info)
 {
 	struct snd_utimer *utimer;
+	struct snd_timer_uinfo *utimer_info __free(kfree) = NULL;
 	int err, timer_fd;
-	struct snd_timer_uinfo *utimer_info __free(kfree) =
-		memdup_user(_utimer_info, sizeof(*utimer_info));
 
+	utimer_info = memdup_user(_utimer_info, sizeof(*utimer_info));
 	if (IS_ERR(utimer_info))
 		return PTR_ERR(utimer_info);
 

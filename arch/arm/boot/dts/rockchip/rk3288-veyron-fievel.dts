@@ -98,8 +98,9 @@
 	snps,reset-gpio = <&gpio4 RK_PB0 0>;
 	snps,reset-active-low;
 	snps,reset-delays-us = <0 10000 30000>;
+	wakeup-source;
 
-	mdio {
+	mdio0 {
 		compatible = "snps,dwmac-mdio";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -176,7 +177,7 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	btmrvl: bluetooth@2 {
+	btmrvl: btmrvl@2 {
 		compatible = "marvell,sd8897-bt";
 		reg = <2>;
 		interrupt-parent = <&gpio4>;

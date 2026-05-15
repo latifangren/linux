@@ -442,13 +442,8 @@ static int i2c_lpc2k_suspend(struct device *dev)
 static int i2c_lpc2k_resume(struct device *dev)
 {
 	struct lpc2k_i2c *i2c = dev_get_drvdata(dev);
-	int ret;
 
-	ret = clk_enable(i2c->clk);
-	if (ret) {
-		dev_err(dev, "failed to enable clock.\n");
-		return ret;
-	}
+	clk_enable(i2c->clk);
 	i2c_lpc2k_reset(i2c);
 
 	return 0;

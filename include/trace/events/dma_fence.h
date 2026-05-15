@@ -9,11 +9,6 @@
 
 struct dma_fence;
 
-/*
- * Safe only for call sites which are guaranteed to not race with fence
- * signaling,holding the fence->lock and having checked for not signaled, or the
- * signaling path itself.
- */
 DECLARE_EVENT_CLASS(dma_fence,
 
 	TP_PROTO(struct dma_fence *fence),

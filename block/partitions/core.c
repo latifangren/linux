@@ -7,8 +7,6 @@
 #include <linux/fs.h>
 #include <linux/major.h>
 #include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/sysfs.h>
 #include <linux/ctype.h>
 #include <linux/vmalloc.h>
 #include <linux/raid/detect.h>
@@ -95,7 +93,7 @@ static struct parsed_partitions *allocate_partitions(struct gendisk *hd)
 	struct parsed_partitions *state;
 	int nr = DISK_MAX_PARTS;
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (!state)
 		return NULL;
 
@@ -124,16 +122,16 @@ static struct parsed_partitions *check_partition(struct gendisk *hd)
 	state = allocate_partitions(hd);
 	if (!state)
 		return NULL;
-	state->pp_buf.buffer = (char *)__get_free_page(GFP_KERNEL);
-	if (!state->pp_buf.buffer) {
+	state->pp_buf = (char *)__get_free_page(GFP_KERNEL);
+	if (!state->pp_buf) {
 		free_partitions(state);
 		return NULL;
 	}
-	seq_buf_init(&state->pp_buf, state->pp_buf.buffer, PAGE_SIZE);
+	state->pp_buf[0] = '\0';
 
 	state->disk = hd;
-	strscpy(state->name, hd->disk_name);
-	seq_buf_printf(&state->pp_buf, " %s:", state->name);
+	snprintf(state->name, BDEVNAME_SIZE, "%s", hd->disk_name);
+	snprintf(state->pp_buf, PAGE_SIZE, " %s:", state->name);
 	if (isdigit(state->name[strlen(state->name)-1]))
 		sprintf(state->name, "p");
 
@@ -152,9 +150,9 @@ static struct parsed_partitions *check_partition(struct gendisk *hd)
 
 	}
 	if (res > 0) {
-		printk(KERN_INFO "%s", seq_buf_str(&state->pp_buf));
+		printk(KERN_INFO "%s", state->pp_buf);
 
-		free_page((unsigned long)state->pp_buf.buffer);
+		free_page((unsigned long)state->pp_buf);
 		return state;
 	}
 	if (state->access_beyond_eod)
@@ -165,12 +163,12 @@ static struct parsed_partitions *check_partition(struct gendisk *hd)
 	if (err)
 		res = err;
 	if (res) {
-		seq_buf_puts(&state->pp_buf,
-			     " unable to read partition table\n");
-		printk(KERN_INFO "%s", seq_buf_str(&state->pp_buf));
+		strlcat(state->pp_buf,
+			" unable to read partition table\n", PAGE_SIZE);
+		printk(KERN_INFO "%s", state->pp_buf);
 	}
 
-	free_page((unsigned long)state->pp_buf.buffer);
+	free_page((unsigned long)state->pp_buf);
 	free_partitions(state);
 	return ERR_PTR(res);
 }
@@ -178,31 +176,31 @@ static struct parsed_partitions *check_partition(struct gendisk *hd)
 static ssize_t part_partition_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", bdev_partno(dev_to_bdev(dev)));
+	return sprintf(buf, "%d\n", bdev_partno(dev_to_bdev(dev)));
 }
 
 static ssize_t part_start_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%llu\n", dev_to_bdev(dev)->bd_start_sect);
+	return sprintf(buf, "%llu\n", dev_to_bdev(dev)->bd_start_sect);
 }
 
 static ssize_t part_ro_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%d\n", bdev_read_only(dev_to_bdev(dev)));
+	return sprintf(buf, "%d\n", bdev_read_only(dev_to_bdev(dev)));
 }
 
 static ssize_t part_alignment_offset_show(struct device *dev,
 					  struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%u\n", bdev_alignment_offset(dev_to_bdev(dev)));
+	return sprintf(buf, "%u\n", bdev_alignment_offset(dev_to_bdev(dev)));
 }
 
 static ssize_t part_discard_alignment_show(struct device *dev,
 					   struct device_attribute *attr, char *buf)
 {
-	return sysfs_emit(buf, "%u\n", bdev_discard_alignment(dev_to_bdev(dev)));
+	return sprintf(buf, "%u\n", bdev_discard_alignment(dev_to_bdev(dev)));
 }
 
 static DEVICE_ATTR(partition, 0444, part_partition_show, NULL);
@@ -258,8 +256,6 @@ static int part_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	add_uevent_var(env, "PARTN=%u", bdev_partno(part));
 	if (part->bd_meta_info && part->bd_meta_info->volname[0])
 		add_uevent_var(env, "PARTNAME=%s", part->bd_meta_info->volname);
-	if (part->bd_meta_info && part->bd_meta_info->uuid[0])
-		add_uevent_var(env, "PARTUUID=%s", part->bd_meta_info->uuid);
 	return 0;
 }
 

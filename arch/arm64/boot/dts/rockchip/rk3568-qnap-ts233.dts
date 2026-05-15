@@ -6,7 +6,6 @@
 
 /dts-v1/;
 
-#include "rk3568.dtsi"
 #include "rk3568-qnap-tsx33.dtsi"
 
 / {
@@ -18,8 +17,8 @@
 	};
 };
 
-/* Connected to usb_host0_xhci */
-&combphy0 {
+/* connected to sata2 */
+&combphy2 {
 	status = "okay";
 };
 
@@ -49,17 +48,6 @@
 		pagesize = <16>;
 		read-only;
 	};
-};
-
-&keys {
-		pinctrl-names = "default";
-		pinctrl-0 = <&copy_button_pin>, <&reset_button_pin>;
-
-		key-copy {
-			label = "copy";
-			gpios = <&gpio0 RK_PB6 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_COPY>;
-		};
 };
 
 &leds {
@@ -104,7 +92,7 @@
 	};
 };
 
-&sata1 {
+&sata2 {
 	status = "okay";
 };
 

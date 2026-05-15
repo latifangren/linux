@@ -56,9 +56,6 @@ enum thermal_notify_event {
 	THERMAL_TZ_UNBIND_CDEV, /* Cooling dev is unbind from the thermal zone */
 	THERMAL_INSTANCE_WEIGHT_CHANGED, /* Thermal instance weight changed */
 	THERMAL_TZ_RESUME, /* Thermal zone is resuming after system sleep */
-	THERMAL_TZ_ADD_THRESHOLD, /* Threshold added */
-	THERMAL_TZ_DEL_THRESHOLD, /* Threshold deleted */
-	THERMAL_TZ_FLUSH_THRESHOLDS, /* All thresholds deleted */
 };
 
 /**
@@ -137,9 +134,6 @@ struct thermal_cooling_device {
 	struct thermal_debugfs *debugfs;
 #endif
 };
-
-DEFINE_GUARD(cooling_dev, struct thermal_cooling_device *, mutex_lock(&_T->lock),
-	     mutex_unlock(&_T->lock))
 
 /* Structure to define Thermal Zone parameters */
 struct thermal_zone_params {
@@ -273,9 +267,6 @@ bool thermal_trip_is_bound_to_cdev(struct thermal_zone_device *tz,
 int thermal_zone_device_enable(struct thermal_zone_device *tz);
 int thermal_zone_device_disable(struct thermal_zone_device *tz);
 void thermal_zone_device_critical(struct thermal_zone_device *tz);
-
-void thermal_pm_prepare(void);
-void thermal_pm_complete(void);
 #else
 static inline struct thermal_zone_device *thermal_zone_device_register_with_trips(
 					const char *type,
@@ -294,10 +285,6 @@ static inline struct thermal_zone_device *thermal_tripless_zone_device_register(
 { return ERR_PTR(-ENODEV); }
 
 static inline void thermal_zone_device_unregister(struct thermal_zone_device *tz)
-{ }
-
-static inline void thermal_zone_device_update(struct thermal_zone_device *tz,
-					      enum thermal_notify_event event)
 { }
 
 static inline struct thermal_cooling_device *
@@ -353,9 +340,6 @@ static inline int thermal_zone_device_enable(struct thermal_zone_device *tz)
 
 static inline int thermal_zone_device_disable(struct thermal_zone_device *tz)
 { return -ENODEV; }
-
-static inline void thermal_pm_prepare(void) {}
-static inline void thermal_pm_complete(void) {}
 #endif /* CONFIG_THERMAL */
 
 #endif /* __THERMAL_H__ */

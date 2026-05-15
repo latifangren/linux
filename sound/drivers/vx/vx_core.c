@@ -344,8 +344,12 @@ int vx_send_msg_nolock(struct vx_core *chip, struct vx_rmh *rmh)
  */
 int vx_send_msg(struct vx_core *chip, struct vx_rmh *rmh)
 {
-	guard(mutex)(&chip->lock);
-	return vx_send_msg_nolock(chip, rmh);
+	int err;
+
+	mutex_lock(&chip->lock);
+	err = vx_send_msg_nolock(chip, rmh);
+	mutex_unlock(&chip->lock);
+	return err;
 }
 
 
@@ -400,8 +404,12 @@ int vx_send_rih_nolock(struct vx_core *chip, int cmd)
  */
 int vx_send_rih(struct vx_core *chip, int cmd)
 {
-	guard(mutex)(&chip->lock);
-	return vx_send_rih_nolock(chip, cmd);
+	int err;
+
+	mutex_lock(&chip->lock);
+	err = vx_send_rih_nolock(chip, cmd);
+	mutex_unlock(&chip->lock);
+	return err;
 }
 
 #define END_OF_RESET_WAIT_TIME		500	/* us */
@@ -473,12 +481,13 @@ static int vx_test_irq_src(struct vx_core *chip, unsigned int *ret)
 	int err;
 
 	vx_init_rmh(&chip->irq_rmh, CMD_TEST_IT);
-	guard(mutex)(&chip->lock);
+	mutex_lock(&chip->lock);
 	err = vx_send_msg_nolock(chip, &chip->irq_rmh);
 	if (err < 0)
 		*ret = 0;
 	else
 		*ret = chip->irq_rmh.Stat[0];
+	mutex_unlock(&chip->lock);
 	return err;
 }
 
@@ -797,7 +806,7 @@ struct vx_core *snd_vx_create(struct snd_card *card,
 
 	chip->card = card;
 	card->private_data = chip;
-	strscpy(card->driver, hw->name);
+	strcpy(card->driver, hw->name);
 	sprintf(card->shortname, "Digigram %s", hw->name);
 
 	vx_proc_init(chip);

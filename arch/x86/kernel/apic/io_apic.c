@@ -1165,7 +1165,7 @@ static void io_apic_print_entries(unsigned int apic, unsigned int nr_entries)
 				 (entry.ir_index_15 << 15) | entry.ir_index_0_14, entry.ir_zero);
 		} else {
 			apic_dbg("%s, %s, D(%02X%02X), M(%1d)\n", buf,
-				 entry.dest_mode_logical ? "logical " : "physical",
+				 entry.dest_mode_logical ? "logical " : "physic	al",
 				 entry.virt_destid_8_14, entry.destid_0_7, entry.delivery_mode);
 		}
 	}
@@ -1486,7 +1486,7 @@ static void __init delay_with_tsc(void)
 	 * 1 GHz == 40 jiffies
 	 */
 	do {
-		native_pause();
+		rep_nop();
 		now = rdtsc();
 	} while ((now - start) < 40000000000ULL / HZ &&	time_before_eq(jiffies, end));
 }
@@ -1861,7 +1861,7 @@ static struct irq_chip ioapic_chip __read_mostly = {
 	.irq_set_affinity	= ioapic_set_affinity,
 	.irq_retrigger		= irq_chip_retrigger_hierarchy,
 	.irq_get_irqchip_state	= ioapic_irq_get_chip_state,
-	.flags			= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_MOVE_DEFERRED |
+	.flags			= IRQCHIP_SKIP_SET_WAKE |
 				  IRQCHIP_AFFINITY_PRE_STARTUP,
 };
 
@@ -2225,7 +2225,7 @@ static int mp_irqdomain_create(int ioapic)
 
 	/* Handle device tree enumerated APICs proper */
 	if (cfg->dev) {
-		fn = of_fwnode_handle(cfg->dev);
+		fn = of_node_to_fwnode(cfg->dev);
 	} else {
 		fn = irq_domain_alloc_named_id_fwnode("IO-APIC", mpc_ioapic_id(ioapic));
 		if (!fn)
@@ -2308,12 +2308,7 @@ static void resume_ioapic_id(int ioapic_idx)
 	}
 }
 
-static int ioapic_suspend(void *data)
-{
-	return save_ioapic_entries();
-}
-
-static void ioapic_resume(void *data)
+static void ioapic_resume(void)
 {
 	int ioapic_idx;
 
@@ -2323,18 +2318,14 @@ static void ioapic_resume(void *data)
 	restore_ioapic_entries();
 }
 
-static const struct syscore_ops ioapic_syscore_ops = {
-	.suspend	= ioapic_suspend,
+static struct syscore_ops ioapic_syscore_ops = {
+	.suspend	= save_ioapic_entries,
 	.resume		= ioapic_resume,
-};
-
-static struct syscore ioapic_syscore = {
-	.ops = &ioapic_syscore_ops,
 };
 
 static int __init ioapic_init_ops(void)
 {
-	register_syscore(&ioapic_syscore);
+	register_syscore_ops(&ioapic_syscore_ops);
 
 	return 0;
 }
@@ -2512,7 +2503,9 @@ static struct resource * __init ioapic_setup_resources(void)
 	n = IOAPIC_RESOURCE_NAME_SIZE + sizeof(struct resource);
 	n *= nr_ioapics;
 
-	mem = memblock_alloc_or_panic(n, SMP_CACHE_BYTES);
+	mem = memblock_alloc(n, SMP_CACHE_BYTES);
+	if (!mem)
+		panic("%s: Failed to allocate %lu bytes\n", __func__, n);
 	res = (void *)mem;
 
 	mem += sizeof(struct resource) * nr_ioapics;
@@ -2571,8 +2564,11 @@ void __init io_apic_init_mappings(void)
 #ifdef CONFIG_X86_32
 fake_ioapic_page:
 #endif
-			ioapic_phys = (unsigned long)memblock_alloc_or_panic(PAGE_SIZE,
+			ioapic_phys = (unsigned long)memblock_alloc(PAGE_SIZE,
 								    PAGE_SIZE);
+			if (!ioapic_phys)
+				panic("%s: Failed to allocate %lu bytes align=0x%lx\n",
+				      __func__, PAGE_SIZE, PAGE_SIZE);
 			ioapic_phys = __pa(ioapic_phys);
 		}
 		io_apic_set_fixmap(idx, ioapic_phys);
@@ -2873,10 +2869,10 @@ int mp_irqdomain_alloc(struct irq_domain *domain, unsigned int virq,
 
 	ioapic = mp_irqdomain_ioapic_idx(domain);
 	pin = info->ioapic.pin;
-	if (irq_resolve_mapping(domain, (irq_hw_number_t)pin))
+	if (irq_find_mapping(domain, (irq_hw_number_t)pin) > 0)
 		return -EEXIST;
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 

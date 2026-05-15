@@ -367,8 +367,6 @@ static int pci_epf_mhi_edma_read(struct mhi_ep_cntrl *mhi_cntrl,
 		dev_err(dev, "DMA transfer timeout\n");
 		dmaengine_terminate_sync(chan);
 		ret = -ETIMEDOUT;
-	} else {
-		ret = 0;
 	}
 
 err_unmap:
@@ -440,8 +438,6 @@ static int pci_epf_mhi_edma_write(struct mhi_ep_cntrl *mhi_cntrl,
 		dev_err(dev, "DMA transfer timeout\n");
 		dmaengine_terminate_sync(chan);
 		ret = -ETIMEDOUT;
-	} else {
-		ret = 0;
 	}
 
 err_unmap:
@@ -529,7 +525,7 @@ static int pci_epf_mhi_edma_read_async(struct mhi_ep_cntrl *mhi_cntrl,
 		goto err_unmap;
 	}
 
-	transfer = kzalloc_obj(*transfer);
+	transfer = kzalloc(sizeof(*transfer), GFP_KERNEL);
 	if (!transfer) {
 		ret = -ENOMEM;
 		goto err_unmap;
@@ -608,7 +604,7 @@ static int pci_epf_mhi_edma_write_async(struct mhi_ep_cntrl *mhi_cntrl,
 		goto err_unmap;
 	}
 
-	transfer = kzalloc_obj(*transfer);
+	transfer = kzalloc(sizeof(*transfer), GFP_KERNEL);
 	if (!transfer) {
 		ret = -ENOMEM;
 		goto err_unmap;
@@ -690,7 +686,7 @@ static int pci_epf_mhi_dma_init(struct pci_epf_mhi *epf_mhi)
 		goto err_release_tx;
 	}
 
-	epf_mhi->dma_wq = alloc_workqueue("pci_epf_mhi_dma_wq", WQ_PERCPU, 0);
+	epf_mhi->dma_wq = alloc_workqueue("pci_epf_mhi_dma_wq", 0, 0);
 	if (!epf_mhi->dma_wq) {
 		ret = -ENOMEM;
 		goto err_release_rx;

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: MIT */
 /*
  * Copyright 2020 Advanced Micro Devices, Inc.
  *
@@ -39,11 +38,8 @@ struct dm_irq_params {
 
 #ifdef CONFIG_DEBUG_FS
 	enum amdgpu_dm_pipe_crc_source crc_src;
-	int crc_poly_mode; /* enum crc_poly_mode from timing_generator.h */
 #ifdef CONFIG_DRM_AMD_SECURE_DISPLAY
-	struct crc_window_param window_param[MAX_CRC_WINDOW_NUM];
-	/* At least one CRC window is activated or not*/
-	bool crc_window_activated;
+	struct crc_window_param window_param;
 #endif
 #endif
 };

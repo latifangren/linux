@@ -161,7 +161,7 @@ u32 fhci_create_ep(struct fhci_usb *usb, enum fhci_mem_alloc data_mem,
 		return -EINVAL;
 	}
 
-	ep = kzalloc_obj(*ep);
+	ep = kzalloc(sizeof(*ep), GFP_KERNEL);
 	if (!ep)
 		return -ENOMEM;
 
@@ -183,7 +183,7 @@ u32 fhci_create_ep(struct fhci_usb *usb, enum fhci_mem_alloc data_mem,
 		struct packet *pkt;
 		u8 *buff;
 
-		pkt = kmalloc_obj(*pkt);
+		pkt = kmalloc(sizeof(*pkt), GFP_KERNEL);
 		if (!pkt) {
 			err_for = "frame";
 			goto err;

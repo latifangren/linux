@@ -158,7 +158,7 @@ static int mantis_pci_probe(struct pci_dev *pdev,
 	struct mantis_hwconfig *config;
 	int err;
 
-	mantis = kzalloc_obj(*mantis);
+	mantis = kzalloc(sizeof(*mantis), GFP_KERNEL);
 	if (!mantis)
 		return -ENOMEM;
 

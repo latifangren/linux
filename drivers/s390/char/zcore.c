@@ -9,7 +9,8 @@
  * Author(s): Michael Holzheu
  */
 
-#define pr_fmt(fmt) "zdump: " fmt
+#define KMSG_COMPONENT "zdump"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/init.h>
 #include <linux/slab.h>

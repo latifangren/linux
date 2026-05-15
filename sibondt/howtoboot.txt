@@ -1,0 +1,60 @@
+uInitrd
+========
+usb start
+fatload usb 0:1 0x04000000 uInitrd
+fatload usb 0:1 0x07f00000 rtd1619-x1-prime-c.dtb
+fatload usb 0:1 0x08000000 Image
+fatload usb 0:1 0x05000000 u-boot.bin
+chain 0x05000000
+
+langsung interrupt dengan tombol escape
+
+setenv bootargs earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 keep_bootcon root=LABEL=rootfs rootwait rw ignore_loglevel loglevel=8
+setenv bootargs earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 keep_bootcon root=LABEL=rootfs rootwait rw ignore_loglevel loglevel=8 maxcpus=1 nosmp
+
+setenv initrd_high 0xffffffffffffffff
+fdt addr 0x07f00000
+fdt resize 0x1000
+booti 0x08000000 0x04000000:1b4061 0x07f00000
+
+text_offset
+-------------
+mw.l 0x08000008 0x01080000
+mw.l 0x0800000c 0x00000000
+
+booti 0x08000000 0x04000000:1b4061 0x07f00000
+
+
+No uInitrd
+==========
+usb start
+fatload usb 0:1 0x07f00000 rtd1619-mjolnir.dtb
+fatload usb 0:1 0x08000000 Image
+fatload usb 0:1 0x05000000 u-boot.bin
+chain 0x05000000
+
+setenv bootargs earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 keep_bootcon ignore_loglevel loglevel=8 rdinit=/bin/sh initcall_debug
+
+setenv initrd_high 0xffffffffffffffff
+fdt addr 0x07f00000
+fdt resize 0x1000
+
+text_offset
+-------------
+mw.l 0x08000008 0x01080000
+mw.l 0x0800000c 0x00000000
+
+booti 0x08000000 - 0x07f00000
+fatload usb 0:1 0x01000000 boot.scr
+
+
+Kalau tidak ditekan, lanjut auto bootr.
+
+
+uci delete network.@device[0]
+uci set network.lan.device='eth0'
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr='192.168.1.1'
+uci set network.lan.netmask='255.255.255.0'
+uci commit network
+/etc/init.d/network restart

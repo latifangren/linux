@@ -92,7 +92,7 @@ int bd_link_disk_holder(struct block_device *bdev, struct gendisk *disk)
 		goto out_unlock;
 	}
 
-	holder = kzalloc_obj(*holder);
+	holder = kzalloc(sizeof(*holder), GFP_KERNEL);
 	if (!holder) {
 		ret = -ENOMEM;
 		goto out_unlock;

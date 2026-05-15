@@ -16,7 +16,6 @@
 
 #include <network_helpers.h>
 
-#include "bpf_util.h"
 #include "xdp_features.skel.h"
 #include "xdp_features.h"
 
@@ -213,7 +212,7 @@ static void set_env_default(void)
 	env.feature.drv_feature = NETDEV_XDP_ACT_NDO_XMIT;
 	env.feature.action = -EINVAL;
 	env.ifindex = -ENODEV;
-	strscpy(env.ifname, "unknown");
+	strcpy(env.ifname, "unknown");
 	make_sockaddr(AF_INET6, "::ffff:127.0.0.1", DUT_CTRL_PORT,
 		      &env.dut_ctrl_addr, NULL);
 	make_sockaddr(AF_INET6, "::ffff:127.0.0.1", DUT_ECHO_PORT,

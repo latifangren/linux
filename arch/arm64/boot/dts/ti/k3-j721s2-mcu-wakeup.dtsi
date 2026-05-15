@@ -21,19 +21,16 @@
 		k3_pds: power-controller {
 			compatible = "ti,sci-pm-domain";
 			#power-domain-cells = <2>;
-			bootph-all;
 		};
 
 		k3_clks: clock-controller {
 			compatible = "ti,k2g-sci-clk";
 			#clock-cells = <2>;
-			bootph-all;
 		};
 
 		k3_reset: reset-controller {
 			compatible = "ti,sci-reset";
 			#reset-cells = <2>;
-			bootph-all;
 		};
 	};
 
@@ -46,7 +43,6 @@
 		chipid: chipid@14 {
 			compatible = "ti,am654-chipid";
 			reg = <0x14 0x4>;
-			bootph-all;
 		};
 	};
 
@@ -57,8 +53,6 @@
 		reg = <0x00 0x43600000 0x00 0x10000>,
 		      <0x00 0x44880000 0x00 0x20000>,
 		      <0x00 0x44860000 0x00 0x20000>;
-		bootph-pre-ram;
-
 		/*
 		 * Marked Disabled:
 		 * Node is incomplete as it is meant for bootloaders and
@@ -76,7 +70,7 @@
 	};
 
 	wkup_pmx0: pinctrl@4301c000 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		/* Proxy 0 addressing */
 		reg = <0x00 0x4301c000 0x00 0x034>;
 		#pinctrl-cells = <1>;
@@ -85,16 +79,16 @@
 	};
 
 	wkup_pmx1: pinctrl@4301c038 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		/* Proxy 0 addressing */
-		reg = <0x00 0x4301c038 0x00 0x02c>;
+		reg = <0x00 0x4301c038 0x00 0x02C>;
 		#pinctrl-cells = <1>;
 		pinctrl-single,register-width = <32>;
 		pinctrl-single,function-mask = <0xffffffff>;
 	};
 
 	wkup_pmx2: pinctrl@4301c068 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		/* Proxy 0 addressing */
 		reg = <0x00 0x4301c068 0x00 0x120>;
 		#pinctrl-cells = <1>;
@@ -103,7 +97,7 @@
 	};
 
 	wkup_pmx3: pinctrl@4301c190 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		/* Proxy 0 addressing */
 		reg = <0x00 0x4301c190 0x00 0x004>;
 		#pinctrl-cells = <1>;
@@ -113,7 +107,7 @@
 
 	/* MCU_TIMERIO pad input CTRLMMR_MCU_TIMER*_CTRL registers */
 	mcu_timerio_input: pinctrl@40f04200 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		reg = <0x00 0x40f04200 0x00 0x28>;
 		#pinctrl-cells = <1>;
 		pinctrl-single,register-width = <32>;
@@ -124,7 +118,7 @@
 
 	/* MCU_TIMERIO pad output CTRLMMR_MCU_TIMERIO*_CTRL registers */
 	mcu_timerio_output: pinctrl@40f04280 {
-		compatible = "ti,j7200-padconf", "pinctrl-single";
+		compatible = "pinctrl-single";
 		reg = <0x00 0x40f04280 0x00 0x28>;
 		#pinctrl-cells = <1>;
 		pinctrl-single,register-width = <32>;
@@ -173,7 +167,6 @@
 		assigned-clocks = <&k3_clks 35 1>;
 		assigned-clock-parents = <&k3_clks 35 2>;
 		power-domains = <&k3_pds 35 TI_SCI_PD_EXCLUSIVE>;
-		bootph-pre-ram;
 		ti,timer-pwm;
 		/* Non-MPU Firmware usage */
 		status = "reserved";
@@ -368,7 +361,6 @@
 		clocks = <&k3_clks 223 1>;
 		clock-names = "fck";
 		power-domains = <&k3_pds 223 TI_SCI_PD_EXCLUSIVE>;
-		bootph-all;
 		status = "disabled";
 	};
 
@@ -477,7 +469,6 @@
 			      <0x0 0x2a500000 0x0 0x40000>,
 			      <0x0 0x28440000 0x0 0x40000>;
 			reg-names = "rt", "fifos", "proxy_gcfg", "proxy_target", "cfg";
-			bootph-all;
 			ti,num-rings = <286>;
 			ti,sci-rm-range-gp-rings = <0x1>;
 			ti,sci = <&sms>;
@@ -497,7 +488,6 @@
 				    "tchan", "rchan", "rflow";
 			msi-parent = <&main_udmass_inta>;
 			#dma-cells = <1>;
-			bootph-all;
 
 			ti,sci = <&sms>;
 			ti,sci-dev-id = <273>;
@@ -517,8 +507,6 @@
 		reg = <0x00 0x2a480000 0x00 0x80000>,
 		      <0x00 0x2a380000 0x00 0x80000>,
 		      <0x00 0x2a400000 0x00 0x80000>;
-		bootph-pre-ram;
-
 		/*
 		 * Marked Disabled:
 		 * Node is incomplete as it is meant for bootloaders and
@@ -551,8 +539,6 @@
 		dma-names = "tx0", "tx1", "tx2", "tx3",
 			    "tx4", "tx5", "tx6", "tx7",
 			    "rx";
-
-		status = "disabled";
 
 		ethernet-ports {
 			#address-cells = <1>;
@@ -681,7 +667,6 @@
 		      <0x00 0x42050000 0x0 0x350>;
 		power-domains = <&k3_pds 180 TI_SCI_PD_SHARED>;
 		#thermal-sensor-cells = <1>;
-		bootph-pre-ram;
 	};
 
 	mcu_r5fss0: r5fss@41000000 {
@@ -692,7 +677,6 @@
 		ranges = <0x41000000 0x00 0x41000000 0x20000>,
 			 <0x41400000 0x00 0x41400000 0x20000>;
 		power-domains = <&k3_pds 283 TI_SCI_PD_EXCLUSIVE>;
-		status = "disabled";
 
 		mcu_r5fss0_core0: r5f@41000000 {
 			compatible = "ti,j721s2-r5f";
@@ -707,7 +691,6 @@
 			ti,atcm-enable = <1>;
 			ti,btcm-enable = <1>;
 			ti,loczrama = <1>;
-			status = "disabled";
 		};
 
 		mcu_r5fss0_core1: r5f@41400000 {
@@ -723,7 +706,6 @@
 			ti,atcm-enable = <1>;
 			ti,btcm-enable = <1>;
 			ti,loczrama = <1>;
-			status = "disabled";
 		};
 	};
 
@@ -764,23 +746,6 @@
 		assigned-clocks = <&k3_clks 296 1>;
 		assigned-clock-parents = <&k3_clks 296 5>;
 		/* reserved for MCU_R5F0_1 */
-		status = "reserved";
-	};
-
-	hsm: remoteproc@43c00000 {
-		compatible = "ti,hsm-m4fss";
-		/* contiguous regions but instantiated separately in HW */
-		reg = <0x00 0x43c00000 0x00 0x20000>,
-		      <0x00 0x43c20000 0x00 0x10000>,
-		      <0x00 0x43c30000 0x00 0x10000>;
-		reg-names = "sram0_0", "sram0_1", "sram1";
-		resets = <&k3_reset 304 1>;
-		firmware-name = "j721s2-hsm-m4f-fw";
-		bootph-pre-ram;
-		ti,sci = <&sms>;
-		ti,sci-dev-id = <304>;
-		ti,sci-proc-ids = <0x80 0xff>;
-		/* reserved for early-stage bootloader */
 		status = "reserved";
 	};
 };

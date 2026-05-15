@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Silicon Labs Si470x FM Radio Receiver
 
 maintainers:
-  - Hans Verkuil <hverkuil@kernel.org>
+  - Hans Verkuil <hverkuil@xs4all.nl>
   - Paweł Chmiel <pawel.mikolaj.chmiel@gmail.com>
 
 properties:

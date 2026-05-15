@@ -774,7 +774,7 @@ static int wmt_mci_probe(struct platform_device *pdev)
 		goto fail1;
 	}
 
-	mmc = devm_mmc_alloc_host(&pdev->dev, sizeof(*priv));
+	mmc = mmc_alloc_host(sizeof(struct wmt_mci_priv), &pdev->dev);
 	if (!mmc) {
 		dev_err(&pdev->dev, "Failed to allocate mmc_host\n");
 		ret = -ENOMEM;
@@ -808,7 +808,7 @@ static int wmt_mci_probe(struct platform_device *pdev)
 	if (!priv->sdmmc_base) {
 		dev_err(&pdev->dev, "Failed to map IO space\n");
 		ret = -ENOMEM;
-		goto fail1;
+		goto fail2;
 	}
 
 	priv->irq_regular = regular_irq;
@@ -873,6 +873,8 @@ fail4:
 	free_irq(regular_irq, priv);
 fail3:
 	iounmap(priv->sdmmc_base);
+fail2:
+	mmc_free_host(mmc);
 fail1:
 	return ret;
 }
@@ -908,9 +910,12 @@ static void wmt_mci_remove(struct platform_device *pdev)
 	clk_disable_unprepare(priv->clk_sdmmc);
 	clk_put(priv->clk_sdmmc);
 
+	mmc_free_host(mmc);
+
 	dev_info(&pdev->dev, "WMT MCI device removed\n");
 }
 
+#ifdef CONFIG_PM
 static int wmt_mci_suspend(struct device *dev)
 {
 	u32 reg_tmp;
@@ -962,7 +967,18 @@ static int wmt_mci_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(wmt_mci_pm_ops, wmt_mci_suspend, wmt_mci_resume);
+static const struct dev_pm_ops wmt_mci_pm = {
+	.suspend        = wmt_mci_suspend,
+	.resume         = wmt_mci_resume,
+};
+
+#define wmt_mci_pm_ops (&wmt_mci_pm)
+
+#else	/* !CONFIG_PM */
+
+#define wmt_mci_pm_ops NULL
+
+#endif
 
 static struct platform_driver wmt_mci_driver = {
 	.probe = wmt_mci_probe,
@@ -970,7 +986,7 @@ static struct platform_driver wmt_mci_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		.pm = pm_sleep_ptr(&wmt_mci_pm_ops),
+		.pm = wmt_mci_pm_ops,
 		.of_match_table = wmt_mci_dt_ids,
 	},
 };

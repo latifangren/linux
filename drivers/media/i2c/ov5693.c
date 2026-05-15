@@ -1222,14 +1222,9 @@ static int ov5693_check_hwcfg(struct ov5693_device *ov5693)
 	unsigned int i;
 	int ret;
 
-	/*
-	 * Sometimes the fwnode graph is initialized by the bridge driver
-	 * Bridge drivers doing this may also add GPIO mappings, wait for this.
-	 */
 	endpoint = fwnode_graph_get_next_endpoint(fwnode, NULL);
 	if (!endpoint)
-		return dev_err_probe(ov5693->dev, -EPROBE_DEFER,
-				     "waiting for fwnode graph endpoint\n");
+		return -EPROBE_DEFER; /* Could be provided by cio2-bridge */
 
 	ret = v4l2_fwnode_endpoint_alloc_parse(endpoint, &bus_cfg);
 	fwnode_handle_put(endpoint);
@@ -1289,13 +1284,25 @@ static int ov5693_probe(struct i2c_client *client)
 
 	v4l2_i2c_subdev_init(&ov5693->sd, client, &ov5693_ops);
 
-	ov5693->xvclk = devm_v4l2_sensor_clk_get(&client->dev, "xvclk");
+	ov5693->xvclk = devm_clk_get_optional(&client->dev, "xvclk");
 	if (IS_ERR(ov5693->xvclk))
 		return dev_err_probe(&client->dev, PTR_ERR(ov5693->xvclk),
-				     "failed to get xvclk: %pe\n",
-				     ov5693->xvclk);
+				     "failed to get xvclk: %ld\n",
+				     PTR_ERR(ov5693->xvclk));
 
-	xvclk_rate = clk_get_rate(ov5693->xvclk);
+	if (ov5693->xvclk) {
+		xvclk_rate = clk_get_rate(ov5693->xvclk);
+	} else {
+		ret = fwnode_property_read_u32(dev_fwnode(&client->dev),
+				     "clock-frequency",
+				     &xvclk_rate);
+
+		if (ret) {
+			dev_err(&client->dev, "can't get clock frequency");
+			return ret;
+		}
+	}
+
 	if (xvclk_rate != OV5693_XVCLK_FREQ)
 		dev_warn(&client->dev, "Found clk freq %u, expected %u\n",
 			 xvclk_rate, OV5693_XVCLK_FREQ);

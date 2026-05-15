@@ -7,7 +7,6 @@
  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
  */
 
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
@@ -78,7 +77,7 @@ kbd_alloc(void) {
 	struct kbd_data *kbd;
 	int i;
 
-	kbd = kzalloc_obj(struct kbd_data);
+	kbd = kzalloc(sizeof(struct kbd_data), GFP_KERNEL);
 	if (!kbd)
 		goto out;
 	kbd->key_maps = kzalloc(sizeof(ebc_key_maps), GFP_KERNEL);
@@ -105,7 +104,7 @@ kbd_alloc(void) {
 		}
 	}
 	kbd->fn_handler =
-		kzalloc_objs(fn_handler_fn *, NR_FN_HANDLER);
+		kcalloc(NR_FN_HANDLER, sizeof(fn_handler_fn *), GFP_KERNEL);
 	if (!kbd->fn_handler)
 		goto out_func;
 	kbd->accent_table = kmemdup(ebc_accent_table,

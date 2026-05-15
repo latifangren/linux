@@ -33,7 +33,6 @@ properties:
               - infineon,slb9673
               - nuvoton,npct75x
               - st,st33ktpm2xi2c
-              - st,st33tphf2ei2c
           - const: tcg,tpm-tis-i2c
 
       - description: TPM 1.2 and 2.0 chips with vendor-specific I²C interface

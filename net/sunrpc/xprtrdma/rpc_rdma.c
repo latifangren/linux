@@ -190,7 +190,7 @@ rpcrdma_alloc_sparse_pages(struct xdr_buf *buf)
 	ppages = buf->pages + (buf->page_base >> PAGE_SHIFT);
 	while (len > 0) {
 		if (!*ppages)
-			*ppages = alloc_page(GFP_NOWAIT);
+			*ppages = alloc_page(GFP_NOWAIT | __GFP_NOWARN);
 		if (!*ppages)
 			return -ENOBUFS;
 		ppages++;
@@ -200,30 +200,67 @@ rpcrdma_alloc_sparse_pages(struct xdr_buf *buf)
 	return 0;
 }
 
-static void
-rpcrdma_xdr_cursor_init(struct rpcrdma_xdr_cursor *cur,
-			const struct xdr_buf *xdrbuf,
-			unsigned int pos, enum rpcrdma_chunktype type)
+/* Convert @vec to a single SGL element.
+ *
+ * Returns pointer to next available SGE, and bumps the total number
+ * of SGEs consumed.
+ */
+static struct rpcrdma_mr_seg *
+rpcrdma_convert_kvec(struct kvec *vec, struct rpcrdma_mr_seg *seg,
+		     unsigned int *n)
 {
-	cur->xc_buf = xdrbuf;
-	cur->xc_page_offset = 0;
-	cur->xc_flags = 0;
-
-	if (pos != 0)
-		cur->xc_flags |= XC_HEAD_DONE;
-	if (!xdrbuf->page_len)
-		cur->xc_flags |= XC_PAGES_DONE;
-	if (type == rpcrdma_readch || type == rpcrdma_writech ||
-	    !xdrbuf->tail[0].iov_len)
-		cur->xc_flags |= XC_TAIL_DONE;
+	seg->mr_page = virt_to_page(vec->iov_base);
+	seg->mr_offset = offset_in_page(vec->iov_base);
+	seg->mr_len = vec->iov_len;
+	++seg;
+	++(*n);
+	return seg;
 }
 
-static bool
-rpcrdma_xdr_cursor_done(const struct rpcrdma_xdr_cursor *cur)
+/* Convert @xdrbuf into SGEs no larger than a page each. As they
+ * are registered, these SGEs are then coalesced into RDMA segments
+ * when the selected memreg mode supports it.
+ *
+ * Returns positive number of SGEs consumed, or a negative errno.
+ */
+
+static int
+rpcrdma_convert_iovs(struct rpcrdma_xprt *r_xprt, struct xdr_buf *xdrbuf,
+		     unsigned int pos, enum rpcrdma_chunktype type,
+		     struct rpcrdma_mr_seg *seg)
 {
-	return (cur->xc_flags & (XC_HEAD_DONE | XC_PAGES_DONE |
-				 XC_TAIL_DONE)) ==
-	       (XC_HEAD_DONE | XC_PAGES_DONE | XC_TAIL_DONE);
+	unsigned long page_base;
+	unsigned int len, n;
+	struct page **ppages;
+
+	n = 0;
+	if (pos == 0)
+		seg = rpcrdma_convert_kvec(&xdrbuf->head[0], seg, &n);
+
+	len = xdrbuf->page_len;
+	ppages = xdrbuf->pages + (xdrbuf->page_base >> PAGE_SHIFT);
+	page_base = offset_in_page(xdrbuf->page_base);
+	while (len) {
+		seg->mr_page = *ppages;
+		seg->mr_offset = page_base;
+		seg->mr_len = min_t(u32, PAGE_SIZE - page_base, len);
+		len -= seg->mr_len;
+		++ppages;
+		++seg;
+		++n;
+		page_base = 0;
+	}
+
+	if (type == rpcrdma_readch || type == rpcrdma_writech)
+		goto out;
+
+	if (xdrbuf->tail[0].iov_len)
+		rpcrdma_convert_kvec(&xdrbuf->tail[0], seg, &n);
+
+out:
+	if (unlikely(n > RPCRDMA_MAX_SEGS))
+		return -EIO;
+	return n;
 }
 
 static int
@@ -255,10 +292,11 @@ encode_read_segment(struct xdr_stream *xdr, struct rpcrdma_mr *mr,
 	return 0;
 }
 
-static int rpcrdma_mr_prepare(struct rpcrdma_xprt *r_xprt,
-			      struct rpcrdma_req *req,
-			      struct rpcrdma_xdr_cursor *cur,
-			      bool writing, struct rpcrdma_mr **mr)
+static struct rpcrdma_mr_seg *rpcrdma_mr_prepare(struct rpcrdma_xprt *r_xprt,
+						 struct rpcrdma_req *req,
+						 struct rpcrdma_mr_seg *seg,
+						 int nsegs, bool writing,
+						 struct rpcrdma_mr **mr)
 {
 	*mr = rpcrdma_mr_pop(&req->rl_free_mrs);
 	if (!*mr) {
@@ -269,13 +307,13 @@ static int rpcrdma_mr_prepare(struct rpcrdma_xprt *r_xprt,
 	}
 
 	rpcrdma_mr_push(*mr, &req->rl_registered);
-	return frwr_map(r_xprt, cur, writing, req->rl_slot.rq_xid, *mr);
+	return frwr_map(r_xprt, seg, nsegs, writing, req->rl_slot.rq_xid, *mr);
 
 out_getmr_err:
 	trace_xprtrdma_nomrs_err(r_xprt, req);
 	xprt_wait_for_buffer_space(&r_xprt->rx_xprt);
 	rpcrdma_mrs_refresh(r_xprt);
-	return -EAGAIN;
+	return ERR_PTR(-EAGAIN);
 }
 
 /* Register and XDR encode the Read list. Supports encoding a list of read
@@ -298,10 +336,10 @@ static int rpcrdma_encode_read_list(struct rpcrdma_xprt *r_xprt,
 				    enum rpcrdma_chunktype rtype)
 {
 	struct xdr_stream *xdr = &req->rl_stream;
-	struct rpcrdma_xdr_cursor cur;
+	struct rpcrdma_mr_seg *seg;
 	struct rpcrdma_mr *mr;
 	unsigned int pos;
-	int ret;
+	int nsegs;
 
 	if (rtype == rpcrdma_noch_pullup || rtype == rpcrdma_noch_mapped)
 		goto done;
@@ -309,20 +347,24 @@ static int rpcrdma_encode_read_list(struct rpcrdma_xprt *r_xprt,
 	pos = rqst->rq_snd_buf.head[0].iov_len;
 	if (rtype == rpcrdma_areadch)
 		pos = 0;
-	rpcrdma_xdr_cursor_init(&cur, &rqst->rq_snd_buf, pos, rtype);
+	seg = req->rl_segments;
+	nsegs = rpcrdma_convert_iovs(r_xprt, &rqst->rq_snd_buf, pos,
+				     rtype, seg);
+	if (nsegs < 0)
+		return nsegs;
 
 	do {
-		ret = rpcrdma_mr_prepare(r_xprt, req, &cur, false, &mr);
-		if (ret)
-			return ret;
+		seg = rpcrdma_mr_prepare(r_xprt, req, seg, nsegs, false, &mr);
+		if (IS_ERR(seg))
+			return PTR_ERR(seg);
 
 		if (encode_read_segment(xdr, mr, pos) < 0)
 			return -EMSGSIZE;
 
-		trace_xprtrdma_chunk_read(rqst->rq_task, pos, mr,
-					  rpcrdma_xdr_cursor_done(&cur));
+		trace_xprtrdma_chunk_read(rqst->rq_task, pos, mr, nsegs);
 		r_xprt->rx_stats.read_chunk_count++;
-	} while (!rpcrdma_xdr_cursor_done(&cur));
+		nsegs -= mr->mr_nents;
+	} while (nsegs);
 
 done:
 	if (xdr_stream_encode_item_absent(xdr) < 0)
@@ -352,16 +394,20 @@ static int rpcrdma_encode_write_list(struct rpcrdma_xprt *r_xprt,
 {
 	struct xdr_stream *xdr = &req->rl_stream;
 	struct rpcrdma_ep *ep = r_xprt->rx_ep;
-	struct rpcrdma_xdr_cursor cur;
+	struct rpcrdma_mr_seg *seg;
 	struct rpcrdma_mr *mr;
-	int nchunks, ret;
+	int nsegs, nchunks;
 	__be32 *segcount;
 
 	if (wtype != rpcrdma_writech)
 		goto done;
 
-	rpcrdma_xdr_cursor_init(&cur, &rqst->rq_rcv_buf,
-				rqst->rq_rcv_buf.head[0].iov_len, wtype);
+	seg = req->rl_segments;
+	nsegs = rpcrdma_convert_iovs(r_xprt, &rqst->rq_rcv_buf,
+				     rqst->rq_rcv_buf.head[0].iov_len,
+				     wtype, seg);
+	if (nsegs < 0)
+		return nsegs;
 
 	if (xdr_stream_encode_item_present(xdr) < 0)
 		return -EMSGSIZE;
@@ -372,30 +418,30 @@ static int rpcrdma_encode_write_list(struct rpcrdma_xprt *r_xprt,
 
 	nchunks = 0;
 	do {
-		ret = rpcrdma_mr_prepare(r_xprt, req, &cur, true, &mr);
-		if (ret)
-			return ret;
+		seg = rpcrdma_mr_prepare(r_xprt, req, seg, nsegs, true, &mr);
+		if (IS_ERR(seg))
+			return PTR_ERR(seg);
 
 		if (encode_rdma_segment(xdr, mr) < 0)
 			return -EMSGSIZE;
 
-		trace_xprtrdma_chunk_write(rqst->rq_task, mr,
-					   rpcrdma_xdr_cursor_done(&cur));
+		trace_xprtrdma_chunk_write(rqst->rq_task, mr, nsegs);
 		r_xprt->rx_stats.write_chunk_count++;
 		r_xprt->rx_stats.total_rdma_request += mr->mr_length;
 		nchunks++;
-	} while (!rpcrdma_xdr_cursor_done(&cur));
+		nsegs -= mr->mr_nents;
+	} while (nsegs);
 
 	if (xdr_pad_size(rqst->rq_rcv_buf.page_len)) {
 		if (encode_rdma_segment(xdr, ep->re_write_pad_mr) < 0)
 			return -EMSGSIZE;
 
 		trace_xprtrdma_chunk_wp(rqst->rq_task, ep->re_write_pad_mr,
-					true);
+					nsegs);
 		r_xprt->rx_stats.write_chunk_count++;
-		r_xprt->rx_stats.total_rdma_request +=
-			ep->re_write_pad_mr->mr_length;
+		r_xprt->rx_stats.total_rdma_request += mr->mr_length;
 		nchunks++;
+		nsegs -= mr->mr_nents;
 	}
 
 	/* Update count of segments in this Write chunk */
@@ -425,9 +471,9 @@ static int rpcrdma_encode_reply_chunk(struct rpcrdma_xprt *r_xprt,
 				      enum rpcrdma_chunktype wtype)
 {
 	struct xdr_stream *xdr = &req->rl_stream;
-	struct rpcrdma_xdr_cursor cur;
+	struct rpcrdma_mr_seg *seg;
 	struct rpcrdma_mr *mr;
-	int nchunks, ret;
+	int nsegs, nchunks;
 	__be32 *segcount;
 
 	if (wtype != rpcrdma_replych) {
@@ -436,7 +482,10 @@ static int rpcrdma_encode_reply_chunk(struct rpcrdma_xprt *r_xprt,
 		return 0;
 	}
 
-	rpcrdma_xdr_cursor_init(&cur, &rqst->rq_rcv_buf, 0, wtype);
+	seg = req->rl_segments;
+	nsegs = rpcrdma_convert_iovs(r_xprt, &rqst->rq_rcv_buf, 0, wtype, seg);
+	if (nsegs < 0)
+		return nsegs;
 
 	if (xdr_stream_encode_item_present(xdr) < 0)
 		return -EMSGSIZE;
@@ -447,19 +496,19 @@ static int rpcrdma_encode_reply_chunk(struct rpcrdma_xprt *r_xprt,
 
 	nchunks = 0;
 	do {
-		ret = rpcrdma_mr_prepare(r_xprt, req, &cur, true, &mr);
-		if (ret)
-			return ret;
+		seg = rpcrdma_mr_prepare(r_xprt, req, seg, nsegs, true, &mr);
+		if (IS_ERR(seg))
+			return PTR_ERR(seg);
 
 		if (encode_rdma_segment(xdr, mr) < 0)
 			return -EMSGSIZE;
 
-		trace_xprtrdma_chunk_reply(rqst->rq_task, mr,
-					   rpcrdma_xdr_cursor_done(&cur));
+		trace_xprtrdma_chunk_reply(rqst->rq_task, mr, nsegs);
 		r_xprt->rx_stats.reply_chunk_count++;
 		r_xprt->rx_stats.total_rdma_request += mr->mr_length;
 		nchunks++;
-	} while (!rpcrdma_xdr_cursor_done(&cur));
+		nsegs -= mr->mr_nents;
+	} while (nsegs);
 
 	/* Update count of segments in the Reply chunk */
 	*segcount = cpu_to_be32(nchunks);
@@ -1422,6 +1471,7 @@ void rpcrdma_reply_handler(struct rpcrdma_rep *rep)
 		credits = 1;	/* don't deadlock */
 	else if (credits > r_xprt->rx_ep->re_max_requests)
 		credits = r_xprt->rx_ep->re_max_requests;
+	rpcrdma_post_recvs(r_xprt, credits + (buf->rb_bc_srv_max_requests << 1));
 	if (buf->rb_credits != credits)
 		rpcrdma_update_cwnd(r_xprt, credits);
 
@@ -1440,20 +1490,15 @@ void rpcrdma_reply_handler(struct rpcrdma_rep *rep)
 		/* LocalInv completion will complete the RPC */
 	else
 		kref_put(&req->rl_kref, rpcrdma_reply_done);
-
-out_post:
-	rpcrdma_post_recvs(r_xprt,
-			   credits + (buf->rb_bc_srv_max_requests << 1));
 	return;
+
+out_badversion:
+	trace_xprtrdma_reply_vers_err(rep);
+	goto out;
 
 out_norqst:
 	spin_unlock(&xprt->queue_lock);
 	trace_xprtrdma_reply_rqst_err(rep);
-	rpcrdma_rep_put(buf, rep);
-	goto out_post;
-
-out_badversion:
-	trace_xprtrdma_reply_vers_err(rep);
 	goto out;
 
 out_shortreply:

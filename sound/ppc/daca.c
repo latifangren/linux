@@ -244,7 +244,7 @@ int snd_pmac_daca_init(struct snd_pmac *chip)
 
 	request_module("i2c-powermac");
 
-	mix = kzalloc_obj(*mix);
+	mix = kzalloc(sizeof(*mix), GFP_KERNEL);
 	if (! mix)
 		return -ENOMEM;
 	chip->mixer_data = mix;
@@ -261,7 +261,7 @@ int snd_pmac_daca_init(struct snd_pmac *chip)
 	/*
 	 * build mixers
 	 */
-	strscpy(chip->card->mixername, "PowerMac DACA");
+	strcpy(chip->card->mixername, "PowerMac DACA");
 
 	for (i = 0; i < ARRAY_SIZE(daca_mixers); i++) {
 		err = snd_ctl_add(chip->card, snd_ctl_new1(&daca_mixers[i], chip));

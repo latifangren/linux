@@ -266,10 +266,10 @@ void kgdb_arch_handle_qxfer_pkt(char *remcom_in_buffer,
 {
 	if (!strncmp(remcom_in_buffer, gdb_xfer_read_target,
 		     sizeof(gdb_xfer_read_target)))
-		strscpy(remcom_out_buffer, riscv_gdb_stub_target_desc, BUFMAX);
+		strcpy(remcom_out_buffer, riscv_gdb_stub_target_desc);
 	else if (!strncmp(remcom_in_buffer, gdb_xfer_read_cpuxml,
 			  sizeof(gdb_xfer_read_cpuxml)))
-		strscpy(remcom_out_buffer, riscv_gdb_stub_cpuxml, BUFMAX);
+		strcpy(remcom_out_buffer, riscv_gdb_stub_cpuxml);
 }
 
 static inline void kgdb_arch_update_addr(struct pt_regs *regs,

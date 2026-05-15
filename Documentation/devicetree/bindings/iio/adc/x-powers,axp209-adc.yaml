@@ -57,6 +57,7 @@ description: |
    4 | batt_dischrg_i
    5 | ts_v
 
+
 properties:
   compatible:
     oneOf:

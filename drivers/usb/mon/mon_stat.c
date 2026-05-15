@@ -29,7 +29,7 @@ static int mon_stat_open(struct inode *inode, struct file *file)
 	struct mon_bus *mbus;
 	struct snap *sp;
 
-	sp = kmalloc_obj(struct snap);
+	sp = kmalloc(sizeof(struct snap), GFP_KERNEL);
 	if (sp == NULL)
 		return -ENOMEM;
 

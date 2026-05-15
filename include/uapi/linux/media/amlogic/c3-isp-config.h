@@ -6,12 +6,7 @@
 #ifndef _UAPI_C3_ISP_CONFIG_H_
 #define _UAPI_C3_ISP_CONFIG_H_
 
-#ifdef __KERNEL__
-#include <linux/build_bug.h>
-#endif /* __KERNEL__ */
 #include <linux/types.h>
-
-#include <linux/media/v4l2-isp.h>
 
 /*
  * Frames are split into zones of almost equal width and height - a zone is a
@@ -146,7 +141,7 @@ struct c3_isp_stats_info {
  * @C3_ISP_PARAMS_BUFFER_V0: First version of C3 ISP parameters block
  */
 enum c3_isp_params_buffer_version {
-	C3_ISP_PARAMS_BUFFER_V0 = V4L2_ISP_PARAMS_VERSION_V0,
+	C3_ISP_PARAMS_BUFFER_V0,
 };
 
 /**
@@ -181,23 +176,62 @@ enum c3_isp_params_block_type {
 	C3_ISP_PARAMS_BLOCK_SENTINEL
 };
 
-/* For backward compatibility */
-#define C3_ISP_PARAMS_BLOCK_FL_DISABLE	V4L2_ISP_PARAMS_FL_BLOCK_DISABLE
-#define C3_ISP_PARAMS_BLOCK_FL_ENABLE	V4L2_ISP_PARAMS_FL_BLOCK_ENABLE
+#define C3_ISP_PARAMS_BLOCK_FL_DISABLE (1U << 0)
+#define C3_ISP_PARAMS_BLOCK_FL_ENABLE (1U << 1)
 
 /**
- * c3_isp_params_block_header - C3 ISP parameter block header
+ * struct c3_isp_params_block_header - C3 ISP parameter block header
  *
  * This structure represents the common part of all the ISP configuration
- * blocks and is identical to :c:type:`v4l2_isp_params_block_header`.
+ * blocks. Each parameters block shall embed an instance of this structure type
+ * as its first member, followed by the block-specific configuration data. The
+ * driver inspects this common header to discern the block type and its size and
+ * properly handle the block content by casting it to the correct block-specific
+ * type.
  *
- * The type field is one of the values enumerated by
+ * The @type field is one of the values enumerated by
  * :c:type:`c3_isp_params_block_type` and specifies how the data should be
- * interpreted by the driver.
+ * interpreted by the driver. The @size field specifies the size of the
+ * parameters block and is used by the driver for validation purposes. The
+ * @flags field is a bitmask of per-block flags C3_ISP_PARAMS_FL*.
  *
- * The flags field is a bitmask of per-block flags C3_ISP_PARAMS_FL_*.
+ * When userspace wants to disable an ISP block the
+ * C3_ISP_PARAMS_BLOCK_FL_DISABLED bit should be set in the @flags field. In
+ * this case userspace may optionally omit the remainder of the configuration
+ * block, which will be ignored by the driver.
+ *
+ * When a new configuration of an ISP block needs to be applied userspace
+ * shall fully populate the ISP block and omit setting the
+ * C3_ISP_PARAMS_BLOCK_FL_DISABLED bit in the @flags field.
+ *
+ * Userspace is responsible for correctly populating the parameters block header
+ * fields (@type, @flags and @size) and the block-specific parameters.
+ *
+ * For example:
+ *
+ * .. code-block:: c
+ *
+ *	void populate_pst_gamma(struct c3_isp_params_block_header *block) {
+ *		struct c3_isp_params_pst_gamma *gamma =
+ *			(struct c3_isp_params_pst_gamma *)block;
+ *
+ *		gamma->header.type = C3_ISP_PARAMS_BLOCK_PST_GAMMA;
+ *		gamma->header.flags = C3_ISP_PARAMS_BLOCK_FL_ENABLE;
+ *		gamma->header.size = sizeof(*gamma);
+ *
+ *		for (unsigned int i = 0; i < 129; i++)
+ *			gamma->pst_gamma_lut[i] = i;
+ *	}
+ *
+ * @type: The parameters block type from :c:type:`c3_isp_params_block_type`
+ * @flags: A bitmask of block flags
+ * @size: Size (in bytes) of the parameters block, including this header
  */
-#define c3_isp_params_block_header v4l2_isp_params_block_header
+struct c3_isp_params_block_header {
+	__u16 type;
+	__u16 flags;
+	__u32 size;
+};
 
 /**
  * struct c3_isp_params_awb_gains - Gains for auto-white balance
@@ -464,10 +498,26 @@ struct c3_isp_params_blc {
 /**
  * struct c3_isp_params_cfg - C3 ISP configuration parameters
  *
- * This is the driver-specific implementation of
- * :c:type:`v4l2_isp_params_buffer`.
+ * This struct contains the configuration parameters of the C3 ISP
+ * algorithms, serialized by userspace into an opaque data buffer. Each
+ * configuration parameter block is represented by a block-specific structure
+ * which contains a :c:type:`c3_isp_param_block_header` entry as first
+ * member. Userspace populates the @data buffer with configuration parameters
+ * for the blocks that it intends to configure. As a consequence, the data
+ * buffer effective size changes according to the number of ISP blocks that
+ * userspace intends to configure.
  *
- * Currently only C3_ISP_PARAM_BUFFER_V0 is supported.
+ * The parameters buffer is versioned by the @version field to allow modifying
+ * and extending its definition. Userspace should populate the @version field to
+ * inform the driver about the version it intends to use. The driver will parse
+ * and handle the @data buffer according to the data layout specific to the
+ * indicated revision and return an error if the desired revision is not
+ * supported.
+ *
+ * For each ISP block that userspace wants to configure, a block-specific
+ * structure is appended to the @data buffer, one after the other without gaps
+ * in between nor overlaps. Userspace shall populate the @total_size field with
+ * the effective size, in bytes, of the @data buffer.
  *
  * The expected memory layout of the parameters buffer is::
  *
@@ -510,11 +560,5 @@ struct c3_isp_params_cfg {
 	__u32 data_size;
 	__u8 data[C3_ISP_PARAMS_MAX_SIZE];
 };
-
-#ifdef __KERNEL__
-/* Make sure the header is type-convertible to the generic v4l2 params one */
-static_assert((sizeof(struct c3_isp_params_cfg) - C3_ISP_PARAMS_MAX_SIZE) ==
-	      sizeof(struct v4l2_isp_params_buffer));
-#endif /* __KERNEL__ */
 
 #endif

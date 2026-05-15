@@ -120,18 +120,16 @@ static unsigned long atl_clk_recalc_rate(struct clk_hw *hw,
 	return parent_rate / cdesc->divider;
 }
 
-static int atl_clk_determine_rate(struct clk_hw *hw,
-				  struct clk_rate_request *req)
+static long atl_clk_round_rate(struct clk_hw *hw, unsigned long rate,
+			       unsigned long *parent_rate)
 {
 	unsigned divider;
 
-	divider = (req->best_parent_rate + req->rate / 2) / req->rate;
+	divider = (*parent_rate + rate / 2) / rate;
 	if (divider > DRA7_ATL_DIVIDER_MASK + 1)
 		divider = DRA7_ATL_DIVIDER_MASK + 1;
 
-	req->rate = req->best_parent_rate / divider;
-
-	return 0;
+	return *parent_rate / divider;
 }
 
 static int atl_clk_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -158,7 +156,7 @@ static const struct clk_ops atl_clk_ops = {
 	.disable	= atl_clk_disable,
 	.is_enabled	= atl_clk_is_enabled,
 	.recalc_rate	= atl_clk_recalc_rate,
-	.determine_rate = atl_clk_determine_rate,
+	.round_rate	= atl_clk_round_rate,
 	.set_rate	= atl_clk_set_rate,
 };
 
@@ -170,7 +168,7 @@ static void __init of_dra7_atl_clock_setup(struct device_node *node)
 	const char *name;
 	struct clk *clk;
 
-	clk_hw = kzalloc_obj(*clk_hw);
+	clk_hw = kzalloc(sizeof(*clk_hw), GFP_KERNEL);
 	if (!clk_hw) {
 		pr_err("%s: could not allocate dra7_atl_desc\n", __func__);
 		return;

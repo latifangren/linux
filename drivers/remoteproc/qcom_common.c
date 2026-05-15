@@ -28,6 +28,7 @@
 #define to_ssr_subdev(d) container_of(d, struct qcom_rproc_ssr, subdev)
 #define to_pdm_subdev(d) container_of(d, struct qcom_rproc_pdm, subdev)
 
+#define MAX_NUM_OF_SS           10
 #define MAX_REGION_NAME_LENGTH  16
 #define SBL_MINIDUMP_SMEM_ID	602
 #define MINIDUMP_REGION_VALID		('V' << 24 | 'A' << 16 | 'L' << 8 | 'I' << 0)
@@ -79,7 +80,7 @@ struct minidump_global_toc {
 	__le32				status;
 	__le32				md_revision;
 	__le32				enabled;
-	struct minidump_subsystem	subsystems[];
+	struct minidump_subsystem	subsystems[MAX_NUM_OF_SS];
 };
 
 struct qcom_ssr_subsystem {
@@ -150,25 +151,13 @@ void qcom_minidump(struct rproc *rproc, unsigned int minidump_id,
 	int ret;
 	struct minidump_subsystem *subsystem;
 	struct minidump_global_toc *toc;
-	unsigned int num_ss;
-	size_t toc_size;
 
 	/* Get Global minidump ToC*/
-	toc = qcom_smem_get(QCOM_SMEM_HOST_ANY, SBL_MINIDUMP_SMEM_ID, &toc_size);
+	toc = qcom_smem_get(QCOM_SMEM_HOST_ANY, SBL_MINIDUMP_SMEM_ID, NULL);
 
 	/* check if global table pointer exists and init is set */
 	if (IS_ERR(toc) || !toc->status) {
 		dev_err(&rproc->dev, "Minidump TOC not found in SMEM\n");
-		return;
-	}
-
-	/* Derive the number of subsystems from the actual SMEM item size */
-	num_ss = (toc_size - offsetof(struct minidump_global_toc, subsystems)) /
-		 sizeof(struct minidump_subsystem);
-
-	if (minidump_id >= num_ss) {
-		dev_err(&rproc->dev, "Minidump id %d is out of range: %d\n",
-			minidump_id, num_ss);
 		return;
 	}
 
@@ -381,7 +370,7 @@ static struct qcom_ssr_subsystem *qcom_ssr_get_subsys(const char *name)
 		if (!strcmp(info->name, name))
 			goto out;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info) {
 		info = ERR_PTR(-ENOMEM);
 		goto out;
@@ -545,7 +534,7 @@ static int pdm_notify_prepare(struct rproc_subdev *subdev)
 	struct auxiliary_device *adev;
 	int ret;
 
-	adev = kzalloc_obj(*adev);
+	adev = kzalloc(sizeof(*adev), GFP_KERNEL);
 	if (!adev)
 		return -ENOMEM;
 

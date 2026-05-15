@@ -256,38 +256,33 @@ static int ltc2992_gpio_get_multiple(struct gpio_chip *chip, unsigned long *mask
 	return 0;
 }
 
-static int ltc2992_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			    int value)
+static void ltc2992_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
 {
 	struct ltc2992_state *st = gpiochip_get_data(chip);
 	unsigned long gpio_ctrl;
-	int reg, ret;
+	int reg;
 
 	mutex_lock(&st->gpio_mutex);
 	reg = ltc2992_read_reg(st, ltc2992_gpio_addr_map[offset].ctrl, 1);
 	if (reg < 0) {
 		mutex_unlock(&st->gpio_mutex);
-		return reg;
+		return;
 	}
 
 	gpio_ctrl = reg;
 	assign_bit(ltc2992_gpio_addr_map[offset].ctrl_bit, &gpio_ctrl, value);
 
-	ret = ltc2992_write_reg(st, ltc2992_gpio_addr_map[offset].ctrl, 1,
-				gpio_ctrl);
+	ltc2992_write_reg(st, ltc2992_gpio_addr_map[offset].ctrl, 1, gpio_ctrl);
 	mutex_unlock(&st->gpio_mutex);
-
-	return ret;
 }
 
-static int ltc2992_gpio_set_multiple(struct gpio_chip *chip, unsigned long *mask,
-				     unsigned long *bits)
+static void ltc2992_gpio_set_multiple(struct gpio_chip *chip, unsigned long *mask,
+				      unsigned long *bits)
 {
 	struct ltc2992_state *st = gpiochip_get_data(chip);
 	unsigned long gpio_ctrl_io = 0;
 	unsigned long gpio_ctrl = 0;
 	unsigned int gpio_nr;
-	int ret;
 
 	for_each_set_bit(gpio_nr, mask, LTC2992_GPIO_NR) {
 		if (gpio_nr < 3)
@@ -298,14 +293,9 @@ static int ltc2992_gpio_set_multiple(struct gpio_chip *chip, unsigned long *mask
 	}
 
 	mutex_lock(&st->gpio_mutex);
-	ret = ltc2992_write_reg(st, LTC2992_GPIO_IO_CTRL, 1, gpio_ctrl_io);
-	if (ret)
-		goto out;
-
-	ret = ltc2992_write_reg(st, LTC2992_GPIO_CTRL, 1, gpio_ctrl);
-out:
+	ltc2992_write_reg(st, LTC2992_GPIO_IO_CTRL, 1, gpio_ctrl_io);
+	ltc2992_write_reg(st, LTC2992_GPIO_CTRL, 1, gpio_ctrl);
 	mutex_unlock(&st->gpio_mutex);
-	return ret;
 }
 
 static int ltc2992_config_gpio(struct ltc2992_state *st)
@@ -431,16 +421,10 @@ static int ltc2992_get_voltage(struct ltc2992_state *st, u32 reg, u32 scale, lon
 
 static int ltc2992_set_voltage(struct ltc2992_state *st, u32 reg, u32 scale, long val)
 {
-	u32 reg_val;
-	long vmax;
+	val = DIV_ROUND_CLOSEST(val * 1000, scale);
+	val = val << 4;
 
-	vmax = DIV_ROUND_CLOSEST_ULL(0xFFFULL * scale, 1000);
-	val = max(val, 0L);
-	val = min(val, vmax);
-	reg_val = min(DIV_ROUND_CLOSEST_ULL((u64)val * 1000, scale),
-		      0xFFFULL) << 4;
-
-	return ltc2992_write_reg(st, reg, 2, reg_val);
+	return ltc2992_write_reg(st, reg, 2, val);
 }
 
 static int ltc2992_read_gpio_alarm(struct ltc2992_state *st, int nr_gpio, u32 attr, long *val)
@@ -565,15 +549,9 @@ static int ltc2992_get_current(struct ltc2992_state *st, u32 reg, u32 channel, l
 static int ltc2992_set_current(struct ltc2992_state *st, u32 reg, u32 channel, long val)
 {
 	u32 reg_val;
-	long cmax;
 
-	cmax = DIV_ROUND_CLOSEST_ULL(0xFFFULL * LTC2992_IADC_NANOV_LSB,
-				     st->r_sense_uohm[channel]);
-	val = max(val, 0L);
-	val = min(val, cmax);
-	reg_val = min(DIV_ROUND_CLOSEST_ULL((u64)val * st->r_sense_uohm[channel],
-					    LTC2992_IADC_NANOV_LSB),
-		      0xFFFULL) << 4;
+	reg_val = DIV_ROUND_CLOSEST(val * st->r_sense_uohm[channel], LTC2992_IADC_NANOV_LSB);
+	reg_val = reg_val << 4;
 
 	return ltc2992_write_reg(st, reg, 2, reg_val);
 }
@@ -637,10 +615,8 @@ static int ltc2992_get_power(struct ltc2992_state *st, u32 reg, u32 channel, lon
 	if (reg_val < 0)
 		return reg_val;
 
-	*val = mul_u64_u32_div(reg_val,
-			       LTC2992_VADC_UV_LSB / 1000 *
-			       LTC2992_IADC_NANOV_LSB,
-			       st->r_sense_uohm[channel]);
+	*val = mul_u64_u32_div(reg_val, LTC2992_VADC_UV_LSB * LTC2992_IADC_NANOV_LSB,
+			       st->r_sense_uohm[channel] * 1000);
 
 	return 0;
 }
@@ -648,18 +624,9 @@ static int ltc2992_get_power(struct ltc2992_state *st, u32 reg, u32 channel, lon
 static int ltc2992_set_power(struct ltc2992_state *st, u32 reg, u32 channel, long val)
 {
 	u32 reg_val;
-	u64 pmax, uval;
 
-	uval = max(val, 0L);
-	pmax = mul_u64_u32_div(0xFFFFFFULL,
-			       LTC2992_VADC_UV_LSB / 1000 *
-			       LTC2992_IADC_NANOV_LSB,
-			       st->r_sense_uohm[channel]);
-	uval = min(uval, pmax);
-	reg_val = min(mul_u64_u32_div(uval, st->r_sense_uohm[channel],
-				      LTC2992_VADC_UV_LSB / 1000 *
-				      LTC2992_IADC_NANOV_LSB),
-		      0xFFFFFFULL);
+	reg_val = mul_u64_u32_div(val, st->r_sense_uohm[channel] * 1000,
+				  LTC2992_VADC_UV_LSB * LTC2992_IADC_NANOV_LSB);
 
 	return ltc2992_write_reg(st, reg, 3, reg_val);
 }

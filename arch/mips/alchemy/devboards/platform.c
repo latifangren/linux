@@ -87,7 +87,7 @@ int __init db1x_register_pcmcia_socket(phys_addr_t pcmcia_attr_start,
 	if (stschg_irq)
 		cnt++;
 
-	sr = kzalloc_objs(struct resource, cnt);
+	sr = kcalloc(cnt, sizeof(struct resource), GFP_KERNEL);
 	if (!sr)
 		return -ENOMEM;
 
@@ -162,15 +162,15 @@ int __init db1x_register_norflash(unsigned long size, int width,
 		return -EINVAL;
 
 	ret = -ENOMEM;
-	parts = kzalloc_objs(struct mtd_partition, 5);
+	parts = kcalloc(5, sizeof(struct mtd_partition), GFP_KERNEL);
 	if (!parts)
 		goto out;
 
-	res = kzalloc_obj(struct resource);
+	res = kzalloc(sizeof(struct resource), GFP_KERNEL);
 	if (!res)
 		goto out1;
 
-	pfd = kzalloc_obj(struct physmap_flash_data);
+	pfd = kzalloc(sizeof(struct physmap_flash_data), GFP_KERNEL);
 	if (!pfd)
 		goto out2;
 

@@ -43,10 +43,7 @@
  * cares about its entry, so it's OK if another processor is modifying its
  * entry.
  */
-struct task_struct *cpu_tasks[NR_CPUS] = {
-	[0 ... NR_CPUS - 1] = &init_task,
-};
-EXPORT_SYMBOL(cpu_tasks);
+struct cpu_task cpu_tasks[NR_CPUS] = { [0 ... NR_CPUS - 1] = { NULL } };
 
 void free_stack(unsigned long stack, int order)
 {
@@ -67,7 +64,7 @@ unsigned long alloc_stack(int order, int atomic)
 
 static inline void set_current(struct task_struct *task)
 {
-	cpu_tasks[task_thread_info(task)->cpu] = task;
+	cpu_tasks[task_thread_info(task)->cpu] = ((struct cpu_task) { task });
 }
 
 struct task_struct *__switch_to(struct task_struct *from, struct task_struct *to)
@@ -123,7 +120,7 @@ void new_thread_handler(void)
 	 * callback returns only if the kernel thread execs a process
 	 */
 	fn(arg);
-	userspace(&current->thread.regs.regs);
+	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
 /* Called magically, see new_thread_handler above */
@@ -140,12 +137,12 @@ static void fork_handler(void)
 
 	current->thread.prev_sched = NULL;
 
-	userspace(&current->thread.regs.regs);
+	userspace(&current->thread.regs.regs, current_thread_info()->aux_fp_regs);
 }
 
 int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
 {
-	u64 clone_flags = args->flags;
+	unsigned long clone_flags = args->flags;
 	unsigned long sp = args->stack;
 	unsigned long tls = args->tls;
 	void (*handler)(void);
@@ -187,22 +184,11 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
 
 void initial_thread_cb(void (*proc)(void *), void *arg)
 {
+	int save_kmalloc_ok = kmalloc_ok;
+
+	kmalloc_ok = 0;
 	initial_thread_cb_skas(proc, arg);
-}
-
-int arch_dup_task_struct(struct task_struct *dst,
-			 struct task_struct *src)
-{
-	/* init_task is not dynamically sized (missing FPU state) */
-	if (unlikely(src == &init_task)) {
-		memcpy(dst, src, sizeof(init_task));
-		memset((void *)dst + sizeof(init_task), 0,
-		       arch_task_struct_size - sizeof(init_task));
-	} else {
-		memcpy(dst, src, arch_task_struct_size);
-	}
-
-	return 0;
+	kmalloc_ok = save_kmalloc_ok;
 }
 
 void um_idle_sleep(void)
@@ -218,19 +204,17 @@ void arch_cpu_idle(void)
 	um_idle_sleep();
 }
 
-void arch_cpu_idle_prepare(void)
-{
-	os_idle_prepare();
-}
-
 int __uml_cant_sleep(void) {
 	return in_atomic() || irqs_disabled() || in_interrupt();
 	/* Is in_interrupt() really needed? */
 }
 
-int uml_need_resched(void)
+int user_context(unsigned long sp)
 {
-	return need_resched();
+	unsigned long stack;
+
+	stack = sp & (PAGE_MASK << CONFIG_KERNEL_STACK_ORDER);
+	return stack != (unsigned long) current_thread_info();
 }
 
 extern exitcall_t __uml_exitcall_begin, __uml_exitcall_end;
@@ -307,3 +291,11 @@ unsigned long __get_wchan(struct task_struct *p)
 
 	return 0;
 }
+
+int elf_core_copy_task_fpregs(struct task_struct *t, elf_fpregset_t *fpu)
+{
+	int cpu = current_thread_info()->cpu;
+
+	return save_i387_registers(userspace_pid[cpu], (unsigned long *) fpu) == 0;
+}
+

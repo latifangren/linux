@@ -13,12 +13,10 @@
 #include <linux/io.h>
 #include <linux/irqchip.h>
 #include <linux/irq.h>
-#include <linux/platform_data/pic32.h>
 
-#ifdef CONFIG_MIPS
 #include <asm/irq.h>
 #include <asm/traps.h>
-#endif
+#include <asm/mach-pic32/pic32.h>
 
 #define REG_INTCON	0x0000
 #define REG_INTSTAT	0x0020
@@ -42,7 +40,6 @@ struct evic_chip_data {
 static struct irq_domain *evic_irq_domain;
 static void __iomem *evic_base;
 
-#ifdef CONFIG_MIPS
 asmlinkage void __weak plat_irq_dispatch(void)
 {
 	unsigned int hwirq;
@@ -50,9 +47,6 @@ asmlinkage void __weak plat_irq_dispatch(void)
 	hwirq = readl(evic_base + REG_INTSTAT) & 0xFF;
 	do_domain_IRQ(evic_irq_domain, hwirq);
 }
-#else
-static __maybe_unused void (*board_bind_eic_interrupt)(int irq, int regset);
-#endif
 
 static struct evic_chip_data *irqd_to_priv(struct irq_data *data)
 {
@@ -202,7 +196,7 @@ static void __init pic32_ext_irq_of_init(struct irq_domain *domain)
 
 	of_property_for_each_u32(node, pname, hwirq) {
 		if (i >= ARRAY_SIZE(priv->ext_irqs)) {
-			pr_warn("More than %zu external irq, skip rest\n",
+			pr_warn("More than %d external irq, skip rest\n",
 				ARRAY_SIZE(priv->ext_irqs));
 			break;
 		}
@@ -227,15 +221,15 @@ static int __init pic32_of_init(struct device_node *node,
 	if (!evic_base)
 		return -ENOMEM;
 
-	priv = kzalloc_objs(*priv, nchips);
+	priv = kcalloc(nchips, sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		ret = -ENOMEM;
 		goto err_iounmap;
 	}
 
-	evic_irq_domain = irq_domain_create_linear(of_fwnode_handle(node), nchips * 32,
-						   &pic32_irq_domain_ops,
-						   priv);
+	evic_irq_domain = irq_domain_add_linear(node, nchips * 32,
+						&pic32_irq_domain_ops,
+						priv);
 	if (!evic_irq_domain) {
 		ret = -ENOMEM;
 		goto err_free_priv;
@@ -297,7 +291,7 @@ static int __init pic32_of_init(struct device_node *node,
 		gc->private = &priv[i];
 	}
 
-	irq_set_default_domain(evic_irq_domain);
+	irq_set_default_host(evic_irq_domain);
 
 	/*
 	 * External interrupts have software configurable edge polarity. These

@@ -16,7 +16,7 @@
 		#size-cells = <2>;
 		ranges;
 
-		apb {
+		ap-apb {
 			compatible = "simple-bus";
 			#address-cells = <2>;
 			#size-cells = <2>;

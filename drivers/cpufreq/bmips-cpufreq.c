@@ -71,7 +71,7 @@ bmips_cpufreq_get_freq_table(const struct cpufreq_policy *policy)
 
 	cpu_freq = htp_freq_to_cpu_freq(priv->clk_mult);
 
-	table = kmalloc_objs(*table, priv->max_freqs + 1);
+	table = kmalloc_array(priv->max_freqs + 1, sizeof(*table), GFP_KERNEL);
 	if (!table)
 		return ERR_PTR(-ENOMEM);
 
@@ -150,6 +150,7 @@ static struct cpufreq_driver bmips_cpufreq_driver = {
 	.get		= bmips_cpufreq_get,
 	.init		= bmips_cpufreq_init,
 	.exit		= bmips_cpufreq_exit,
+	.attr		= cpufreq_generic_attr,
 	.name		= BMIPS_CPUFREQ_PREFIX,
 };
 

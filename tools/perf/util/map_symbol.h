@@ -4,13 +4,12 @@
 
 #include <linux/types.h>
 
-struct thread;
 struct maps;
 struct map;
 struct symbol;
 
 struct map_symbol {
-	struct thread *thread;
+	struct maps   *maps;
 	struct map    *map;
 	struct symbol *sym;
 };

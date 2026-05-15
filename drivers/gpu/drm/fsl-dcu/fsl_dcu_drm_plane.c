@@ -15,7 +15,6 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_plane_helper.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 
 #include "fsl_dcu_drm_drv.h"
@@ -209,7 +208,7 @@ struct drm_plane *fsl_dcu_drm_primary_create_plane(struct drm_device *dev)
 	struct drm_plane *primary;
 	int ret;
 
-	primary = kzalloc_obj(*primary);
+	primary = kzalloc(sizeof(*primary), GFP_KERNEL);
 	if (!primary) {
 		DRM_DEBUG_KMS("Failed to allocate primary plane\n");
 		return NULL;

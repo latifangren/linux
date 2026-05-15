@@ -18,6 +18,7 @@ description: |
    - Supported Use Models
    - Constraints
 
+
   Introduction
   ============
 
@@ -29,6 +30,7 @@ description: |
   attempts to include terminology used by both major FPGA manufacturers.  This
   document isn't a replacement for any manufacturers specifications for FPGA
   usage.
+
 
   Terminology
   ===========
@@ -106,6 +108,7 @@ description: |
   a soft logic bridge (Bridge0-2) in the FPGA.  The contents of each PRR can be
   reprogrammed independently while the rest of the system continues to function.
 
+
   Sequence
   ========
 
@@ -120,6 +123,7 @@ description: |
 
   When the overlay is removed, the child nodes will be removed and the FPGA Region
   will disable the bridges.
+
 
   FPGA Region
   ===========
@@ -166,6 +170,7 @@ description: |
   hardware bridges remain enabled.  The PR regions' bridges will be FPGA bridges
   within the static image of the FPGA.
 
+
   Supported Use Models
   ====================
 
@@ -210,9 +215,9 @@ description: |
   FPGA Bridges that exist on the FPGA fabric prior to the partial reconfiguration.
 
   --
-  [1] https://www.intel.com/programmable/technical-pdfs/683404.pdf
+  [1] www.altera.com/content/dam/altera-www/global/en_US/pdfs/literature/ug/ug_partrecon.pdf
   [2] tspace.library.utoronto.ca/bitstream/1807/67932/1/Byma_Stuart_A_201411_MAS_thesis.pdf
-  [3] https://docs.amd.com/v/u/en-US/ug702
+  [3] https://www.xilinx.com/support/documentation/sw_manuals/xilinx14_1/ug702.pdf
 
 properties:
   $nodename:
@@ -311,7 +316,6 @@ examples:
         reg = <0x40000000 0x10000>;
         gpio-controller;
         #gpio-cells = <2>;
-        clocks = <&clk>;
       };
     };
 

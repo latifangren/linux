@@ -714,7 +714,7 @@ static void r5l_submit_current_io(struct r5l_log *log)
 
 	block = page_address(io->meta_page);
 	block->meta_size = cpu_to_le32(io->meta_offset);
-	crc = crc32c(log->uuid_checksum, block, PAGE_SIZE);
+	crc = crc32c_le(log->uuid_checksum, block, PAGE_SIZE);
 	block->checksum = cpu_to_le32(crc);
 
 	log->current_io = NULL;
@@ -1019,10 +1019,10 @@ int r5l_write_stripe(struct r5l_log *log, struct stripe_head *sh)
 		/* checksum is already calculated in last run */
 		if (test_bit(STRIPE_LOG_TRAPPED, &sh->state))
 			continue;
-		addr = kmap_local_page(sh->dev[i].page);
-		sh->dev[i].log_checksum = crc32c(log->uuid_checksum,
-						 addr, PAGE_SIZE);
-		kunmap_local(addr);
+		addr = kmap_atomic(sh->dev[i].page);
+		sh->dev[i].log_checksum = crc32c_le(log->uuid_checksum,
+						    addr, PAGE_SIZE);
+		kunmap_atomic(addr);
 	}
 	parity_pages = 1 + !!(sh->qd_idx >= 0);
 	data_pages = write_disks - parity_pages;
@@ -1741,7 +1741,7 @@ static int r5l_recovery_read_meta_block(struct r5l_log *log,
 	    le64_to_cpu(mb->position) != ctx->pos)
 		return -EINVAL;
 
-	crc = crc32c(log->uuid_checksum, mb, PAGE_SIZE);
+	crc = crc32c_le(log->uuid_checksum, mb, PAGE_SIZE);
 	if (stored_crc != crc)
 		return -EINVAL;
 
@@ -1780,7 +1780,8 @@ static int r5l_log_write_empty_meta_block(struct r5l_log *log, sector_t pos,
 		return -ENOMEM;
 	r5l_recovery_create_empty_meta_block(log, page, pos, seq);
 	mb = page_address(page);
-	mb->checksum = cpu_to_le32(crc32c(log->uuid_checksum, mb, PAGE_SIZE));
+	mb->checksum = cpu_to_le32(crc32c_le(log->uuid_checksum,
+					     mb, PAGE_SIZE));
 	if (!sync_page_io(log->rdev, pos, PAGE_SIZE, page, REQ_OP_WRITE |
 			  REQ_SYNC | REQ_FUA, false)) {
 		__free_page(page);
@@ -1974,9 +1975,9 @@ r5l_recovery_verify_data_checksum(struct r5l_log *log,
 	u32 checksum;
 
 	r5l_recovery_read_page(log, ctx, page, log_offset);
-	addr = kmap_local_page(page);
-	checksum = crc32c(log->uuid_checksum, addr, PAGE_SIZE);
-	kunmap_local(addr);
+	addr = kmap_atomic(page);
+	checksum = crc32c_le(log->uuid_checksum, addr, PAGE_SIZE);
+	kunmap_atomic(addr);
 	return (le32_to_cpu(log_checksum) == checksum) ? 0 : -EINVAL;
 }
 
@@ -2002,27 +2003,15 @@ r5l_recovery_verify_data_checksum_for_mb(struct r5l_log *log,
 		return -ENOMEM;
 
 	while (mb_offset < le32_to_cpu(mb->meta_size)) {
-		sector_t payload_len;
-
 		payload = (void *)mb + mb_offset;
 		payload_flush = (void *)mb + mb_offset;
 
 		if (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_DATA) {
-			payload_len = sizeof(struct r5l_payload_data_parity) +
-				(sector_t)sizeof(__le32) *
-				(le32_to_cpu(payload->size) >> (PAGE_SHIFT - 9));
-			if (mb_offset + payload_len > le32_to_cpu(mb->meta_size))
-				goto mismatch;
 			if (r5l_recovery_verify_data_checksum(
 				    log, ctx, page, log_offset,
 				    payload->checksum[0]) < 0)
 				goto mismatch;
 		} else if (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_PARITY) {
-			payload_len = sizeof(struct r5l_payload_data_parity) +
-				(sector_t)sizeof(__le32) *
-				(le32_to_cpu(payload->size) >> (PAGE_SHIFT - 9));
-			if (mb_offset + payload_len > le32_to_cpu(mb->meta_size))
-				goto mismatch;
 			if (r5l_recovery_verify_data_checksum(
 				    log, ctx, page, log_offset,
 				    payload->checksum[0]) < 0)
@@ -2035,18 +2024,22 @@ r5l_recovery_verify_data_checksum_for_mb(struct r5l_log *log,
 				    payload->checksum[1]) < 0)
 				goto mismatch;
 		} else if (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_FLUSH) {
-			payload_len = sizeof(struct r5l_payload_flush) +
-				(sector_t)le32_to_cpu(payload_flush->size);
-			if (mb_offset + payload_len > le32_to_cpu(mb->meta_size))
-				goto mismatch;
+			/* nothing to do for R5LOG_PAYLOAD_FLUSH here */
 		} else /* not R5LOG_PAYLOAD_DATA/PARITY/FLUSH */
 			goto mismatch;
 
-		if (le16_to_cpu(payload->header.type) != R5LOG_PAYLOAD_FLUSH) {
+		if (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_FLUSH) {
+			mb_offset += sizeof(struct r5l_payload_flush) +
+				le32_to_cpu(payload_flush->size);
+		} else {
+			/* DATA or PARITY payload */
 			log_offset = r5l_ring_add(log, log_offset,
 						  le32_to_cpu(payload->size));
+			mb_offset += sizeof(struct r5l_payload_data_parity) +
+				sizeof(__le32) *
+				(le32_to_cpu(payload->size) >> (PAGE_SHIFT - 9));
 		}
-		mb_offset += payload_len;
+
 	}
 
 	put_page(page);
@@ -2097,7 +2090,6 @@ r5c_recovery_analyze_meta_block(struct r5l_log *log,
 	log_offset = r5l_ring_add(log, ctx->pos, BLOCK_SECTORS);
 
 	while (mb_offset < le32_to_cpu(mb->meta_size)) {
-		sector_t payload_len;
 		int dd;
 
 		payload = (void *)mb + mb_offset;
@@ -2105,12 +2097,6 @@ r5c_recovery_analyze_meta_block(struct r5l_log *log,
 
 		if (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_FLUSH) {
 			int i, count;
-
-			payload_len = sizeof(struct r5l_payload_flush) +
-				(sector_t)le32_to_cpu(payload_flush->size);
-			if (mb_offset + payload_len >
-			    le32_to_cpu(mb->meta_size))
-				return -EINVAL;
 
 			count = le32_to_cpu(payload_flush->size) / sizeof(__le64);
 			for (i = 0; i < count; ++i) {
@@ -2125,17 +2111,12 @@ r5c_recovery_analyze_meta_block(struct r5l_log *log,
 				}
 			}
 
-			mb_offset += payload_len;
+			mb_offset += sizeof(struct r5l_payload_flush) +
+				le32_to_cpu(payload_flush->size);
 			continue;
 		}
 
 		/* DATA or PARITY payload */
-		payload_len = sizeof(struct r5l_payload_data_parity) +
-			(sector_t)sizeof(__le32) *
-			(le32_to_cpu(payload->size) >> (PAGE_SHIFT - 9));
-		if (mb_offset + payload_len > le32_to_cpu(mb->meta_size))
-			return -EINVAL;
-
 		stripe_sect = (le16_to_cpu(payload->header.type) == R5LOG_PAYLOAD_DATA) ?
 			raid5_compute_sector(
 				conf, le64_to_cpu(payload->location), 0, &dd,
@@ -2200,7 +2181,9 @@ r5c_recovery_analyze_meta_block(struct r5l_log *log,
 		log_offset = r5l_ring_add(log, log_offset,
 					  le32_to_cpu(payload->size));
 
-		mb_offset += payload_len;
+		mb_offset += sizeof(struct r5l_payload_data_parity) +
+			sizeof(__le32) *
+			(le32_to_cpu(payload->size) >> (PAGE_SHIFT - 9));
 	}
 
 	return 0;
@@ -2394,11 +2377,11 @@ r5c_recovery_rewrite_data_only_stripes(struct r5l_log *log,
 				payload->size = cpu_to_le32(BLOCK_SECTORS);
 				payload->location = cpu_to_le64(
 					raid5_compute_blocknr(sh, i, 0));
-				addr = kmap_local_page(dev->page);
+				addr = kmap_atomic(dev->page);
 				payload->checksum[0] = cpu_to_le32(
-					crc32c(log->uuid_checksum, addr,
-					       PAGE_SIZE));
-				kunmap_local(addr);
+					crc32c_le(log->uuid_checksum, addr,
+						  PAGE_SIZE));
+				kunmap_atomic(addr);
 				sync_page_io(log->rdev, write_pos, PAGE_SIZE,
 					     dev->page, REQ_OP_WRITE, false);
 				write_pos = r5l_ring_add(log, write_pos,
@@ -2409,8 +2392,8 @@ r5c_recovery_rewrite_data_only_stripes(struct r5l_log *log,
 			}
 		}
 		mb->meta_size = cpu_to_le32(offset);
-		mb->checksum = cpu_to_le32(crc32c(log->uuid_checksum,
-						  mb, PAGE_SIZE));
+		mb->checksum = cpu_to_le32(crc32c_le(log->uuid_checksum,
+						     mb, PAGE_SIZE));
 		sync_page_io(log->rdev, ctx->pos, PAGE_SIZE, page,
 			     REQ_OP_WRITE | REQ_SYNC | REQ_FUA, false);
 		sh->log_start = ctx->pos;
@@ -2465,7 +2448,7 @@ static int r5l_recovery_log(struct r5l_log *log)
 	int ret;
 	sector_t pos;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -2901,10 +2884,10 @@ int r5c_cache_data(struct r5l_log *log, struct stripe_head *sh)
 
 		if (!test_bit(R5_Wantwrite, &sh->dev[i].flags))
 			continue;
-		addr = kmap_local_page(sh->dev[i].page);
-		sh->dev[i].log_checksum = crc32c(log->uuid_checksum,
-						 addr, PAGE_SIZE);
-		kunmap_local(addr);
+		addr = kmap_atomic(sh->dev[i].page);
+		sh->dev[i].log_checksum = crc32c_le(log->uuid_checksum,
+						    addr, PAGE_SIZE);
+		kunmap_atomic(addr);
 		pages++;
 	}
 	WARN_ON(pages == 0);
@@ -2986,7 +2969,7 @@ static int r5l_load_log(struct r5l_log *log)
 	}
 	stored_crc = le32_to_cpu(mb->checksum);
 	mb->checksum = 0;
-	expected_crc = crc32c(log->uuid_checksum, mb, PAGE_SIZE);
+	expected_crc = crc32c_le(log->uuid_checksum, mb, PAGE_SIZE);
 	if (stored_crc != expected_crc) {
 		create_super = true;
 		goto create;
@@ -3089,13 +3072,13 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 		return -EINVAL;
 	}
 
-	log = kzalloc_obj(*log);
+	log = kzalloc(sizeof(*log), GFP_KERNEL);
 	if (!log)
 		return -ENOMEM;
 	log->rdev = rdev;
 	log->need_cache_flush = bdev_write_cache(rdev->bdev);
-	log->uuid_checksum = crc32c(~0, rdev->mddev->uuid,
-				    sizeof(rdev->mddev->uuid));
+	log->uuid_checksum = crc32c_le(~0, rdev->mddev->uuid,
+				       sizeof(rdev->mddev->uuid));
 
 	mutex_init(&log->io_mutex);
 
@@ -3122,7 +3105,7 @@ int r5l_init_log(struct r5conf *conf, struct md_rdev *rdev)
 		goto out_mempool;
 
 	spin_lock_init(&log->tree_lock);
-	INIT_RADIX_TREE(&log->big_stripe_tree, GFP_NOWAIT);
+	INIT_RADIX_TREE(&log->big_stripe_tree, GFP_NOWAIT | __GFP_NOWARN);
 
 	thread = md_register_thread(r5l_reclaim_thread, log->rdev->mddev,
 				    "reclaim");

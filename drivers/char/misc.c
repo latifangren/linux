@@ -212,12 +212,6 @@ int misc_register(struct miscdevice *misc)
 	int err = 0;
 	bool is_dynamic = (misc->minor == MISC_DYNAMIC_MINOR);
 
-	if (misc->minor > MISC_DYNAMIC_MINOR) {
-		pr_err("Invalid fixed minor %d for miscdevice '%s'\n",
-		       misc->minor, misc->name);
-		return -EINVAL;
-	}
-
 	INIT_LIST_HEAD(&misc->list);
 
 	mutex_lock(&misc_mtx);
@@ -283,6 +277,9 @@ EXPORT_SYMBOL(misc_register);
 
 void misc_deregister(struct miscdevice *misc)
 {
+	if (WARN_ON(list_empty(&misc->list)))
+		return;
+
 	mutex_lock(&misc_mtx);
 	list_del_init(&misc->list);
 	device_destroy(&misc_class, MKDEV(MISC_MAJOR, misc->minor));
@@ -296,9 +293,9 @@ EXPORT_SYMBOL(misc_deregister);
 static int __init misc_init(void)
 {
 	int err;
-	struct proc_dir_entry *misc_proc_file;
+	struct proc_dir_entry *ret;
 
-	misc_proc_file = proc_create_seq("misc", 0, NULL, &misc_seq_ops);
+	ret = proc_create_seq("misc", 0, NULL, &misc_seq_ops);
 	err = class_register(&misc_class);
 	if (err)
 		goto fail_remove;
@@ -312,7 +309,7 @@ fail_printk:
 	pr_err("unable to get major %d for misc devices\n", MISC_MAJOR);
 	class_unregister(&misc_class);
 fail_remove:
-	if (misc_proc_file)
+	if (ret)
 		remove_proc_entry("misc", NULL);
 	return err;
 }

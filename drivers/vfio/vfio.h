@@ -90,6 +90,7 @@ struct vfio_group {
 	struct mutex			group_lock;
 	struct kvm			*kvm;
 	struct file			*opened_file;
+	struct blocking_notifier_head	notifier;
 	struct iommufd_ctx		*iommufd;
 	spinlock_t			kvm_ref_lock;
 	unsigned int			cdev_device_open_cnt;
@@ -377,7 +378,7 @@ int vfio_device_fops_cdev_open(struct inode *inode, struct file *filep);
 long vfio_df_ioctl_bind_iommufd(struct vfio_device_file *df,
 				struct vfio_device_bind_iommufd __user *arg);
 void vfio_df_unbind_iommufd(struct vfio_device_file *df);
-int vfio_cdev_init(void);
+int vfio_cdev_init(struct class *device_class);
 void vfio_cdev_cleanup(void);
 #else
 static inline void vfio_init_device_cdev(struct vfio_device *device)
@@ -410,7 +411,7 @@ static inline void vfio_df_unbind_iommufd(struct vfio_device_file *df)
 {
 }
 
-static inline int vfio_cdev_init(void)
+static inline int vfio_cdev_init(struct class *device_class)
 {
 	return 0;
 }

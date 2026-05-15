@@ -120,14 +120,7 @@ static int pcmda12_attach(struct comedi_device *dev,
 	struct comedi_subdevice *s;
 	int ret;
 
-	/*
-	 * The datasheet says it requires 16 contiguous addresses and is
-	 * "configurable on any even sixteen port boundary".  So require
-	 * a 32-byte boundary and assume it uses 10-bit addresses like
-	 * similar boards.
-	 */
-	ret = comedi_check_request_region(dev, it->options[0], 0x10,
-					  0, 0x3ff, 32);
+	ret = comedi_request_region(dev, it->options[0], 0x10);
 	if (ret)
 		return ret;
 

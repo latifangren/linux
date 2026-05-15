@@ -298,7 +298,7 @@ out:
 #ifdef CONFIG_PM_SLEEP
 static u32 cpubiuctrl_reg_save[NUM_CPU_BIUCTRL_REGS];
 
-static int brcmstb_cpu_credit_reg_suspend(void *data)
+static int brcmstb_cpu_credit_reg_suspend(void)
 {
 	unsigned int i;
 
@@ -311,7 +311,7 @@ static int brcmstb_cpu_credit_reg_suspend(void *data)
 	return 0;
 }
 
-static void brcmstb_cpu_credit_reg_resume(void *data)
+static void brcmstb_cpu_credit_reg_resume(void)
 {
 	unsigned int i;
 
@@ -322,13 +322,9 @@ static void brcmstb_cpu_credit_reg_resume(void *data)
 		cbc_writel(cpubiuctrl_reg_save[i], i);
 }
 
-static const struct syscore_ops brcmstb_cpu_credit_syscore_ops = {
+static struct syscore_ops brcmstb_cpu_credit_syscore_ops = {
 	.suspend = brcmstb_cpu_credit_reg_suspend,
 	.resume = brcmstb_cpu_credit_reg_resume,
-};
-
-static struct syscore brcmstb_cpu_credit_syscore = {
-	.ops = &brcmstb_cpu_credit_syscore_ops,
 };
 #endif
 
@@ -358,7 +354,7 @@ static int __init brcmstb_biuctrl_init(void)
 	a72_b53_rac_enable_all(np);
 	mcp_a72_b53_set();
 #ifdef CONFIG_PM_SLEEP
-	register_syscore(&brcmstb_cpu_credit_syscore);
+	register_syscore_ops(&brcmstb_cpu_credit_syscore_ops);
 #endif
 	ret = 0;
 out_put:

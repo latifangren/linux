@@ -6,7 +6,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/ioport.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/ndctl.h>
 #include <linux/sched.h>
@@ -445,7 +444,7 @@ static void papr_scm_pmu_register(struct papr_scm_priv *p)
 	struct nvdimm_pmu *nd_pmu;
 	int rc, nodeid;
 
-	nd_pmu = kzalloc_obj(*nd_pmu);
+	nd_pmu = kzalloc(sizeof(*nd_pmu), GFP_KERNEL);
 	if (!nd_pmu) {
 		rc = -ENOMEM;
 		goto pmu_err_print;
@@ -544,7 +543,7 @@ static int drc_pmem_query_health(struct papr_scm_priv *p)
 
 	/* Jiffies offset for which the health data is assumed to be same */
 	cache_timeout = p->lasthealth_jiffies +
-		secs_to_jiffies(MIN_HEALTH_QUERY_INTERVAL);
+		msecs_to_jiffies(MIN_HEALTH_QUERY_INTERVAL * 1000);
 
 	/* Fetch new health info is its older than MIN_HEALTH_QUERY_INTERVAL */
 	if (time_after(jiffies, cache_timeout))
@@ -1398,7 +1397,7 @@ static int papr_scm_probe(struct platform_device *pdev)
 	 */
 	update_numa_distance(dn);
 
-	p = kzalloc_obj(*p);
+	p = kzalloc(sizeof(*p), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 

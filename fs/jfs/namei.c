@@ -5,7 +5,6 @@
  */
 
 #include <linux/fs.h>
-#include <linux/filelock.h>
 #include <linux/namei.h>
 #include <linux/ctype.h>
 #include <linux/quotaops.h>
@@ -188,13 +187,13 @@ static int jfs_create(struct mnt_idmap *idmap, struct inode *dip,
  *		dentry	- dentry of child directory
  *		mode	- create mode (rwxrwxrwx).
  *
- * RETURN:	ERR_PTR() of errors from subroutines.
+ * RETURN:	Errors from subroutines
  *
  * note:
  * EACCES: user needs search+write permission on the parent directory
  */
-static struct dentry *jfs_mkdir(struct mnt_idmap *idmap, struct inode *dip,
-				struct dentry *dentry, umode_t mode)
+static int jfs_mkdir(struct mnt_idmap *idmap, struct inode *dip,
+		     struct dentry *dentry, umode_t mode)
 {
 	int rc = 0;
 	tid_t tid;		/* transaction id */
@@ -309,7 +308,7 @@ static struct dentry *jfs_mkdir(struct mnt_idmap *idmap, struct inode *dip,
       out1:
 
 	jfs_info("jfs_mkdir: rc:%d", rc);
-	return ERR_PTR(rc);
+	return rc;
 }
 
 /*
@@ -1548,7 +1547,6 @@ const struct file_operations jfs_dir_operations = {
 	.unlocked_ioctl = jfs_ioctl,
 	.compat_ioctl	= compat_ptr_ioctl,
 	.llseek		= generic_file_llseek,
-	.setlease	= generic_setlease,
 };
 
 static int jfs_ci_hash(const struct dentry *dir, struct qstr *this)
@@ -1580,8 +1578,7 @@ out:
 	return result;
 }
 
-static int jfs_ci_revalidate(struct inode *dir, const struct qstr *name,
-			     struct dentry *dentry, unsigned int flags)
+static int jfs_ci_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	/*
 	 * This is not negative dentry. Always valid.

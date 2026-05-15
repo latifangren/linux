@@ -59,14 +59,18 @@ struct fl_flow_key {
 	struct flow_dissector_key_eth_addrs eth;
 	struct flow_dissector_key_vlan vlan;
 	struct flow_dissector_key_vlan cvlan;
-	struct flow_dissector_key_ipv4_addrs ipv4;
-	struct flow_dissector_key_ipv6_addrs ipv6;
+	union {
+		struct flow_dissector_key_ipv4_addrs ipv4;
+		struct flow_dissector_key_ipv6_addrs ipv6;
+	};
 	struct flow_dissector_key_ports tp;
 	struct flow_dissector_key_icmp icmp;
 	struct flow_dissector_key_arp arp;
 	struct flow_dissector_key_keyid enc_key_id;
-	struct flow_dissector_key_ipv4_addrs enc_ipv4;
-	struct flow_dissector_key_ipv6_addrs enc_ipv6;
+	union {
+		struct flow_dissector_key_ipv4_addrs enc_ipv4;
+		struct flow_dissector_key_ipv6_addrs enc_ipv6;
+	};
 	struct flow_dissector_key_ports enc_tp;
 	struct flow_dissector_key_mpls mpls;
 	struct flow_dissector_key_tcp tcp;
@@ -322,7 +326,7 @@ TC_INDIRECT_SCOPE int fl_classify(struct sk_buff *skb,
 				  struct tcf_result *res)
 {
 	struct cls_fl_head *head = rcu_dereference_bh(tp->root);
-	bool post_ct = qdisc_skb_cb(skb)->post_ct;
+	bool post_ct = tc_skb_cb(skb)->post_ct;
 	u16 zone = tc_skb_cb(skb)->zone;
 	struct fl_flow_key skb_key;
 	struct fl_flow_mask *mask;
@@ -359,7 +363,7 @@ static int fl_init(struct tcf_proto *tp)
 {
 	struct cls_fl_head *head;
 
-	head = kzalloc_obj(*head);
+	head = kzalloc(sizeof(*head), GFP_KERNEL);
 	if (!head)
 		return -ENOBUFS;
 
@@ -2233,7 +2237,7 @@ static struct fl_flow_mask *fl_create_new_mask(struct cls_fl_head *head,
 	struct fl_flow_mask *newmask;
 	int err;
 
-	newmask = kzalloc_obj(*newmask);
+	newmask = kzalloc(sizeof(*newmask), GFP_KERNEL);
 	if (!newmask)
 		return ERR_PTR(-ENOMEM);
 
@@ -2372,13 +2376,13 @@ static int fl_change(struct net *net, struct sk_buff *in_skb,
 		goto errout_fold;
 	}
 
-	mask = kzalloc_obj(struct fl_flow_mask);
+	mask = kzalloc(sizeof(struct fl_flow_mask), GFP_KERNEL);
 	if (!mask) {
 		err = -ENOBUFS;
 		goto errout_fold;
 	}
 
-	tb = kzalloc_objs(struct nlattr *, TCA_FLOWER_MAX + 1);
+	tb = kcalloc(TCA_FLOWER_MAX + 1, sizeof(struct nlattr *), GFP_KERNEL);
 	if (!tb) {
 		err = -ENOBUFS;
 		goto errout_mask_alloc;
@@ -2394,7 +2398,7 @@ static int fl_change(struct net *net, struct sk_buff *in_skb,
 		goto errout_tb;
 	}
 
-	fnew = kzalloc_obj(*fnew);
+	fnew = kzalloc(sizeof(*fnew), GFP_KERNEL);
 	if (!fnew) {
 		err = -ENOBUFS;
 		goto errout_tb;
@@ -2811,7 +2815,7 @@ static void *fl_tmplt_create(struct net *net, struct tcf_chain *chain,
 	if (!tca_opts)
 		return ERR_PTR(-EINVAL);
 
-	tb = kzalloc_objs(struct nlattr *, TCA_FLOWER_MAX + 1);
+	tb = kcalloc(TCA_FLOWER_MAX + 1, sizeof(struct nlattr *), GFP_KERNEL);
 	if (!tb)
 		return ERR_PTR(-ENOBUFS);
 	err = nla_parse_nested_deprecated(tb, TCA_FLOWER_MAX,
@@ -2819,7 +2823,7 @@ static void *fl_tmplt_create(struct net *net, struct tcf_chain *chain,
 	if (err)
 		goto errout_tb;
 
-	tmplt = kzalloc_obj(*tmplt);
+	tmplt = kzalloc(sizeof(*tmplt), GFP_KERNEL);
 	if (!tmplt) {
 		err = -ENOMEM;
 		goto errout_tb;

@@ -66,8 +66,7 @@
  * According to the LS1C manual, RTC_CTRL and alarm-related registers are not defined.
  * Accessing the relevant registers will cause the system to hang.
  */
-#define LOONGSON_RTC_CTRL_WORKAROUND	BIT(0)
-#define LOONGSON_RTC_ALARM_WORKAROUND	BIT(1)
+#define LS1C_RTC_CTRL_WORKAROUND	BIT(0)
 
 struct loongson_rtc_config {
 	u32 pm_offset;	/* Offset of PM domain, for RTC alarm wakeup */
@@ -90,17 +89,12 @@ static const struct loongson_rtc_config ls1b_rtc_config = {
 
 static const struct loongson_rtc_config ls1c_rtc_config = {
 	.pm_offset = 0,
-	.flags = LOONGSON_RTC_CTRL_WORKAROUND | LOONGSON_RTC_ALARM_WORKAROUND,
+	.flags = LS1C_RTC_CTRL_WORKAROUND,
 };
 
 static const struct loongson_rtc_config generic_rtc_config = {
 	.pm_offset = 0x100,
 	.flags = 0,
-};
-
-static const struct loongson_rtc_config ls2k0300_rtc_config = {
-	.pm_offset = 0x0,
-	.flags = LOONGSON_RTC_ALARM_WORKAROUND,
 };
 
 static const struct loongson_rtc_config ls2k1000_rtc_config = {
@@ -159,7 +153,7 @@ static int loongson_rtc_set_enabled(struct device *dev)
 {
 	struct loongson_rtc_priv *priv = dev_get_drvdata(dev);
 
-	if (priv->config->flags & LOONGSON_RTC_CTRL_WORKAROUND)
+	if (priv->config->flags & LS1C_RTC_CTRL_WORKAROUND)
 		return 0;
 
 	/* Enable RTC TOY counters and crystal */
@@ -173,7 +167,7 @@ static bool loongson_rtc_get_enabled(struct device *dev)
 	u32 ctrl_data;
 	struct loongson_rtc_priv *priv = dev_get_drvdata(dev);
 
-	if (priv->config->flags & LOONGSON_RTC_CTRL_WORKAROUND)
+	if (priv->config->flags & LS1C_RTC_CTRL_WORKAROUND)
 		return true;
 
 	ret = regmap_read(priv->regmap, RTC_CTRL_REG, &ctrl_data);
@@ -305,41 +299,9 @@ static const struct rtc_class_ops loongson_rtc_ops = {
 	.alarm_irq_enable = loongson_rtc_alarm_irq_enable,
 };
 
-static int loongson_rtc_alarm_setting(struct platform_device *pdev, void __iomem *regs)
-{
-	int ret = 0, alarm_irq;
-	struct device *dev = &pdev->dev;
-	struct loongson_rtc_priv *priv = dev_get_drvdata(dev);
-
-	if (priv->config->flags & LOONGSON_RTC_ALARM_WORKAROUND) {
-		/* Loongson-1C/Loongson-2K0300 RTC does not support alarm */
-		clear_bit(RTC_FEATURE_ALARM, priv->rtcdev->features);
-		return 0;
-	}
-
-	/* Get RTC alarm irq */
-	alarm_irq = platform_get_irq(pdev, 0);
-	if (alarm_irq < 0)
-		return alarm_irq;
-
-	ret = devm_request_irq(dev, alarm_irq, loongson_rtc_isr, 0, "loongson-alarm",
-			       priv);
-	if (ret < 0)
-		return ret;
-
-	priv->pm_base = regs - priv->config->pm_offset;
-	device_init_wakeup(dev, true);
-
-	if (has_acpi_companion(dev))
-		acpi_install_fixed_event_handler(ACPI_EVENT_RTC,
-						 loongson_rtc_handler, priv);
-
-	return ret;
-}
-
 static int loongson_rtc_probe(struct platform_device *pdev)
 {
-	int ret;
+	int ret, alarm_irq;
 	void __iomem *regs;
 	struct loongson_rtc_priv *priv;
 	struct device *dev = &pdev->dev;
@@ -368,9 +330,25 @@ static int loongson_rtc_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(priv->rtcdev),
 				     "devm_rtc_allocate_device failed\n");
 
-	ret = loongson_rtc_alarm_setting(pdev, regs);
-	if (ret)
-		return ret;
+	/* Get RTC alarm irq */
+	alarm_irq = platform_get_irq(pdev, 0);
+	if (alarm_irq > 0) {
+		ret = devm_request_irq(dev, alarm_irq, loongson_rtc_isr,
+				       0, "loongson-alarm", priv);
+		if (ret < 0)
+			return dev_err_probe(dev, ret, "Unable to request irq %d\n",
+					     alarm_irq);
+
+		priv->pm_base = regs - priv->config->pm_offset;
+		device_init_wakeup(dev, true);
+
+		if (has_acpi_companion(dev))
+			acpi_install_fixed_event_handler(ACPI_EVENT_RTC,
+							 loongson_rtc_handler, priv);
+	} else {
+		/* Loongson-1C RTC does not support alarm */
+		clear_bit(RTC_FEATURE_ALARM, priv->rtcdev->features);
+	}
 
 	/* Loongson RTC does not support UIE */
 	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, priv->rtcdev->features);
@@ -401,7 +379,6 @@ static const struct of_device_id loongson_rtc_of_match[] = {
 	{ .compatible = "loongson,ls1b-rtc", .data = &ls1b_rtc_config },
 	{ .compatible = "loongson,ls1c-rtc", .data = &ls1c_rtc_config },
 	{ .compatible = "loongson,ls7a-rtc", .data = &generic_rtc_config },
-	{ .compatible = "loongson,ls2k0300-rtc", .data = &ls2k0300_rtc_config },
 	{ .compatible = "loongson,ls2k1000-rtc", .data = &ls2k1000_rtc_config },
 	{ /* sentinel */ }
 };
@@ -415,7 +392,7 @@ MODULE_DEVICE_TABLE(acpi, loongson_rtc_acpi_match);
 
 static struct platform_driver loongson_rtc_driver = {
 	.probe		= loongson_rtc_probe,
-	.remove		= loongson_rtc_remove,
+	.remove_new	= loongson_rtc_remove,
 	.driver		= {
 		.name	= "loongson-rtc",
 		.of_match_table = loongson_rtc_of_match,

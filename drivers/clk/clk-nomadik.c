@@ -17,7 +17,6 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/spinlock.h>
-#include <linux/string_choices.h>
 #include <linux/reboot.h>
 
 /*
@@ -117,9 +116,9 @@ static void __init nomadik_src_init(void)
 
 	val = readl(src_base + SRC_XTALCR);
 	pr_info("SXTALO is %s\n",
-		str_disabled_enabled(val & SRC_XTALCR_SXTALDIS));
+		(val & SRC_XTALCR_SXTALDIS) ? "disabled" : "enabled");
 	pr_info("MXTAL is %s\n",
-		str_enabled_disabled(val & SRC_XTALCR_MXTALSTAT));
+		(val & SRC_XTALCR_MXTALSTAT) ? "enabled" : "disabled");
 	if (of_property_read_bool(np, "disable-sxtalo")) {
 		/* The machine uses an external oscillator circuit */
 		val |= SRC_XTALCR_SXTALDIS;
@@ -270,7 +269,7 @@ pll_clk_register(struct device *dev, const char *name,
 		return ERR_PTR(-EINVAL);
 	}
 
-	pll = kzalloc_obj(*pll);
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
 	if (!pll)
 		return ERR_PTR(-ENOMEM);
 
@@ -357,7 +356,7 @@ src_clk_register(struct device *dev, const char *name,
 	struct clk_src *sclk;
 	struct clk_init_data init;
 
-	sclk = kzalloc_obj(*sclk);
+	sclk = kzalloc(sizeof(*sclk), GFP_KERNEL);
 	if (!sclk)
 		return ERR_PTR(-ENOMEM);
 

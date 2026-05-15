@@ -560,8 +560,7 @@ static int das6402_attach(struct comedi_device *dev,
 	if (!devpriv)
 		return -ENOMEM;
 
-	ret = comedi_check_request_region(dev, it->options[0], 0x10,
-					  0, 0x3ff, 16);
+	ret = comedi_request_region(dev, it->options[0], 0x10);
 	if (ret)
 		return ret;
 

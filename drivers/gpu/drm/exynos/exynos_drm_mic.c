@@ -379,11 +379,11 @@ static int exynos_mic_probe(struct platform_device *pdev)
 	struct resource res;
 	int ret, i;
 
-	mic = devm_drm_bridge_alloc(dev, struct exynos_mic, bridge, &mic_bridge_funcs);
-	if (IS_ERR(mic)) {
+	mic = devm_kzalloc(dev, sizeof(*mic), GFP_KERNEL);
+	if (!mic) {
 		DRM_DEV_ERROR(dev,
 			      "mic: Failed to allocate memory for MIC object\n");
-		ret = PTR_ERR(mic);
+		ret = -ENOMEM;
 		goto err;
 	}
 
@@ -421,11 +421,10 @@ static int exynos_mic_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, mic);
 
+	mic->bridge.funcs = &mic_bridge_funcs;
 	mic->bridge.of_node = dev->of_node;
 
-	ret = devm_drm_bridge_add(dev, &mic->bridge);
-	if (ret)
-		goto err;
+	drm_bridge_add(&mic->bridge);
 
 	pm_runtime_enable(dev);
 
@@ -445,8 +444,12 @@ err:
 
 static void exynos_mic_remove(struct platform_device *pdev)
 {
+	struct exynos_mic *mic = platform_get_drvdata(pdev);
+
 	component_del(&pdev->dev, &exynos_mic_component_ops);
 	pm_runtime_disable(&pdev->dev);
+
+	drm_bridge_remove(&mic->bridge);
 }
 
 static const struct of_device_id exynos_mic_of_match[] = {
@@ -457,7 +460,7 @@ MODULE_DEVICE_TABLE(of, exynos_mic_of_match);
 
 struct platform_driver mic_driver = {
 	.probe		= exynos_mic_probe,
-	.remove		= exynos_mic_remove,
+	.remove_new	= exynos_mic_remove,
 	.driver		= {
 		.name	= "exynos-mic",
 		.pm	= pm_ptr(&exynos_mic_pm_ops),

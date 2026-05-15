@@ -57,6 +57,7 @@
  */
 struct max31790_data {
 	struct i2c_client *client;
+	struct mutex update_lock;
 	bool valid; /* zero until following fields are valid */
 	unsigned long last_updated; /* in jiffies */
 
@@ -73,27 +74,30 @@ static struct max31790_data *max31790_update_device(struct device *dev)
 {
 	struct max31790_data *data = dev_get_drvdata(dev);
 	struct i2c_client *client = data->client;
-	int i, rv;
+	struct max31790_data *ret = data;
+	int i;
+	int rv;
+
+	mutex_lock(&data->update_lock);
 
 	if (time_after(jiffies, data->last_updated + HZ) || !data->valid) {
-		data->valid = false;
 		rv = i2c_smbus_read_byte_data(client,
 				MAX31790_REG_FAN_FAULT_STATUS1);
 		if (rv < 0)
-			return ERR_PTR(rv);
+			goto abort;
 		data->fault_status |= rv & 0x3F;
 
 		rv = i2c_smbus_read_byte_data(client,
 				MAX31790_REG_FAN_FAULT_STATUS2);
 		if (rv < 0)
-			return ERR_PTR(rv);
+			goto abort;
 		data->fault_status |= (rv & 0x3F) << 6;
 
 		for (i = 0; i < NR_CHANNEL; i++) {
 			rv = i2c_smbus_read_word_swapped(client,
 					MAX31790_REG_TACH_COUNT(i));
 			if (rv < 0)
-				return ERR_PTR(rv);
+				goto abort;
 			data->tach[i] = rv;
 
 			if (data->fan_config[i]
@@ -102,19 +106,19 @@ static struct max31790_data *max31790_update_device(struct device *dev)
 					MAX31790_REG_TACH_COUNT(NR_CHANNEL
 								+ i));
 				if (rv < 0)
-					return ERR_PTR(rv);
+					goto abort;
 				data->tach[NR_CHANNEL + i] = rv;
 			} else {
 				rv = i2c_smbus_read_word_swapped(client,
 						MAX31790_REG_PWM_DUTY_CYCLE(i));
 				if (rv < 0)
-					return ERR_PTR(rv);
+					goto abort;
 				data->pwm[i] = rv;
 
 				rv = i2c_smbus_read_word_swapped(client,
 						MAX31790_REG_TARGET_COUNT(i));
 				if (rv < 0)
-					return ERR_PTR(rv);
+					goto abort;
 				data->target_count[i] = rv;
 			}
 		}
@@ -122,7 +126,16 @@ static struct max31790_data *max31790_update_device(struct device *dev)
 		data->last_updated = jiffies;
 		data->valid = true;
 	}
-	return data;
+	goto done;
+
+abort:
+	data->valid = false;
+	ret = ERR_PTR(rv);
+
+done:
+	mutex_unlock(&data->update_lock);
+
+	return ret;
 }
 
 static const u8 tach_period[8] = { 1, 2, 4, 8, 16, 32, 32, 32 };
@@ -176,6 +189,7 @@ static int max31790_read_fan(struct device *dev, u32 attr, int channel,
 		*val = rpm;
 		return 0;
 	case hwmon_fan_fault:
+		mutex_lock(&data->update_lock);
 		*val = !!(data->fault_status & (1 << channel));
 		data->fault_status &= ~(1 << channel);
 		/*
@@ -186,9 +200,10 @@ static int max31790_read_fan(struct device *dev, u32 attr, int channel,
 		if (*val) {
 			int reg = MAX31790_REG_TARGET_COUNT(channel % NR_CHANNEL);
 
-			return i2c_smbus_write_byte_data(data->client, reg,
-						data->target_count[channel % NR_CHANNEL] >> 8);
+			i2c_smbus_write_byte_data(data->client, reg,
+						  data->target_count[channel % NR_CHANNEL] >> 8);
 		}
+		mutex_unlock(&data->update_lock);
 		return 0;
 	case hwmon_fan_enable:
 		*val = !!(data->fan_config[channel] & MAX31790_FAN_CFG_TACH_INPUT_EN);
@@ -207,6 +222,8 @@ static int max31790_write_fan(struct device *dev, u32 attr, int channel,
 	int err = 0;
 	u8 bits, fan_config;
 	int sr;
+
+	mutex_lock(&data->update_lock);
 
 	switch (attr) {
 	case hwmon_fan_target:
@@ -253,6 +270,9 @@ static int max31790_write_fan(struct device *dev, u32 attr, int channel,
 		err = -EOPNOTSUPP;
 		break;
 	}
+
+	mutex_unlock(&data->update_lock);
+
 	return err;
 }
 
@@ -318,6 +338,8 @@ static int max31790_write_pwm(struct device *dev, u32 attr, int channel,
 	u8 fan_config;
 	int err = 0;
 
+	mutex_lock(&data->update_lock);
+
 	switch (attr) {
 	case hwmon_pwm_input:
 		if (val < 0 || val > 255) {
@@ -367,6 +389,9 @@ static int max31790_write_pwm(struct device *dev, u32 attr, int channel,
 		err = -EOPNOTSUPP;
 		break;
 	}
+
+	mutex_unlock(&data->update_lock);
+
 	return err;
 }
 
@@ -500,6 +525,7 @@ static int max31790_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	data->client = client;
+	mutex_init(&data->update_lock);
 
 	/*
 	 * Initialize the max31790 chip

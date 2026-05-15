@@ -7,10 +7,12 @@
 
 #include <linux/module.h>
 #include <linux/err.h>
+#include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/driver.h>
+#include <linux/regulator/of_regulator.h>
 
 static const struct regulator_ops rzg2l_usb_vbus_reg_ops = {
 	.enable     = regulator_enable_regmap,
@@ -47,10 +49,13 @@ static int rzg2l_usb_vbus_regulator_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -ENODEV, "regulator node not found\n");
 
 	rdev = devm_regulator_register(dev, &rzg2l_usb_vbus_rdesc, &config);
-	of_node_put(config.of_node);
-	if (IS_ERR(rdev))
+	if (IS_ERR(rdev)) {
+		of_node_put(config.of_node);
 		return dev_err_probe(dev, PTR_ERR(rdev),
 				     "not able to register vbus regulator\n");
+	}
+
+	of_node_put(config.of_node);
 
 	return 0;
 }

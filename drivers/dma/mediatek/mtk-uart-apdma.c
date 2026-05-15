@@ -77,7 +77,7 @@
 struct mtk_uart_apdmadev {
 	struct dma_device ddev;
 	struct clk *clk;
-	bool support_ext_addr;
+	bool support_33bits;
 	unsigned int dma_requests;
 };
 
@@ -148,7 +148,7 @@ static void mtk_uart_apdma_start_tx(struct mtk_chan *c)
 		mtk_uart_apdma_write(c, VFF_WPT, 0);
 		mtk_uart_apdma_write(c, VFF_INT_FLAG, VFF_TX_INT_CLR_B);
 
-		if (mtkd->support_ext_addr)
+		if (mtkd->support_33bits)
 			mtk_uart_apdma_write(c, VFF_ADDR2, upper_32_bits(d->addr));
 	}
 
@@ -191,7 +191,7 @@ static void mtk_uart_apdma_start_rx(struct mtk_chan *c)
 		mtk_uart_apdma_write(c, VFF_RPT, 0);
 		mtk_uart_apdma_write(c, VFF_INT_FLAG, VFF_RX_INT_CLR_B);
 
-		if (mtkd->support_ext_addr)
+		if (mtkd->support_33bits)
 			mtk_uart_apdma_write(c, VFF_ADDR2, upper_32_bits(d->addr));
 	}
 
@@ -297,7 +297,7 @@ static int mtk_uart_apdma_alloc_chan_resources(struct dma_chan *chan)
 		goto err_pm;
 	}
 
-	if (mtkd->support_ext_addr)
+	if (mtkd->support_33bits)
 		mtk_uart_apdma_write(c, VFF_ADDR2, VFF_ADDR2_CLR_B);
 
 err_pm:
@@ -351,7 +351,7 @@ static struct dma_async_tx_descriptor *mtk_uart_apdma_prep_slave_sg
 		return NULL;
 
 	/* Now allocate and setup the descriptor */
-	d = kzalloc_obj(*d, GFP_NOWAIT);
+	d = kzalloc(sizeof(*d), GFP_NOWAIT);
 	if (!d)
 		return NULL;
 
@@ -468,10 +468,7 @@ static void mtk_uart_apdma_free(struct mtk_uart_apdmadev *mtkd)
 }
 
 static const struct of_device_id mtk_uart_apdma_match[] = {
-	{ .compatible = "mediatek,mt6577-uart-dma", .data = (void *)32 },
-	{ .compatible = "mediatek,mt6795-uart-dma", .data = (void *)33 },
-	{ .compatible = "mediatek,mt6835-uart-dma", .data = (void *)34 },
-	{ .compatible = "mediatek,mt6985-uart-dma", .data = (void *)35 },
+	{ .compatible = "mediatek,mt6577-uart-dma", },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, mtk_uart_apdma_match);
@@ -480,9 +477,9 @@ static int mtk_uart_apdma_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct mtk_uart_apdmadev *mtkd;
+	int bit_mask = 32, rc;
 	struct mtk_chan *c;
-	unsigned int bit_mask, i;
-	int rc;
+	unsigned int i;
 
 	mtkd = devm_kzalloc(&pdev->dev, sizeof(*mtkd), GFP_KERNEL);
 	if (!mtkd)
@@ -495,9 +492,11 @@ static int mtk_uart_apdma_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	bit_mask = (unsigned int)(uintptr_t)of_device_get_match_data(&pdev->dev);
-	if (bit_mask > 32)
-		mtkd->support_ext_addr = true;
+	if (of_property_read_bool(np, "mediatek,dma-33bits"))
+		mtkd->support_33bits = true;
+
+	if (mtkd->support_33bits)
+		bit_mask = 33;
 
 	rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(bit_mask));
 	if (rc)
@@ -638,7 +637,7 @@ static const struct dev_pm_ops mtk_uart_apdma_pm_ops = {
 
 static struct platform_driver mtk_uart_apdma_driver = {
 	.probe	= mtk_uart_apdma_probe,
-	.remove = mtk_uart_apdma_remove,
+	.remove_new = mtk_uart_apdma_remove,
 	.driver = {
 		.name		= KBUILD_MODNAME,
 		.pm		= &mtk_uart_apdma_pm_ops,

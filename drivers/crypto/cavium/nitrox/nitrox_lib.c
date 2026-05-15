@@ -17,7 +17,7 @@
 
 #define CRYPTO_CTX_SIZE	256
 
-/* packet input ring alignments */
+/* packet inuput ring alignments */
 #define PKTIN_Q_ALIGN_BYTES 16
 /* AQM Queue input alignments */
 #define AQM_Q_ALIGN_BYTES 32
@@ -219,7 +219,7 @@ void *crypto_alloc_context(struct nitrox_device *ndev)
 	void *vaddr;
 	dma_addr_t dma;
 
-	chdr = kmalloc_obj(*chdr);
+	chdr = kmalloc(sizeof(*chdr), GFP_KERNEL);
 	if (!chdr)
 		return NULL;
 

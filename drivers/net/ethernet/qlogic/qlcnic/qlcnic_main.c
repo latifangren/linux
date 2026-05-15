@@ -367,7 +367,7 @@ static int qlcnic_set_mac(struct net_device *netdev, void *p)
 
 static int qlcnic_fdb_del(struct ndmsg *ndm, struct nlattr *tb[],
 			struct net_device *netdev,
-			const unsigned char *addr, u16 vid, bool *notified,
+			const unsigned char *addr, u16 vid,
 			struct netlink_ext_ack *extack)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
@@ -394,7 +394,7 @@ static int qlcnic_fdb_del(struct ndmsg *ndm, struct nlattr *tb[],
 static int qlcnic_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 			struct net_device *netdev,
 			const unsigned char *addr, u16 vid, u16 flags,
-			bool *notified, struct netlink_ext_ack *extack)
+			struct netlink_ext_ack *extack)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
 	int err = 0;
@@ -486,6 +486,7 @@ static int qlcnic_udp_tunnel_sync(struct net_device *dev, unsigned int table)
 
 static const struct udp_tunnel_nic_info qlcnic_udp_tunnels = {
 	.sync_table	= qlcnic_udp_tunnel_sync,
+	.flags		= UDP_TUNNEL_NIC_INFO_MAY_SLEEP,
 	.tables		= {
 		{ .n_entries = 1, .tunnel_types = UDP_TUNNEL_TYPE_VXLAN, },
 	},
@@ -679,8 +680,9 @@ int qlcnic_setup_tss_rss_intr(struct qlcnic_adapter *adapter)
 		num_msix += 1;
 
 	if (!adapter->msix_entries) {
-		adapter->msix_entries = kzalloc_objs(struct msix_entry,
-						     num_msix);
+		adapter->msix_entries = kcalloc(num_msix,
+						sizeof(struct msix_entry),
+						GFP_KERNEL);
 		if (!adapter->msix_entries)
 			return -ENOMEM;
 	}
@@ -733,8 +735,9 @@ int qlcnic_enable_msix(struct qlcnic_adapter *adapter, u32 num_msix)
 	int err, vector;
 
 	if (!adapter->msix_entries) {
-		adapter->msix_entries = kzalloc_objs(struct msix_entry,
-						     num_msix);
+		adapter->msix_entries = kcalloc(num_msix,
+						sizeof(struct msix_entry),
+						GFP_KERNEL);
 		if (!adapter->msix_entries)
 			return -ENOMEM;
 	}
@@ -950,7 +953,7 @@ static int qlcnic_get_act_pci_func(struct qlcnic_adapter *adapter)
 	if (ahw->op_mode == QLCNIC_MGMT_FUNC)
 		return 0;
 
-	pci_info = kzalloc_objs(*pci_info, ahw->max_vnic_func);
+	pci_info = kcalloc(ahw->max_vnic_func, sizeof(*pci_info), GFP_KERNEL);
 	if (!pci_info)
 		return -ENOMEM;
 
@@ -984,7 +987,7 @@ int qlcnic_init_pci_info(struct qlcnic_adapter *adapter)
 	u16 act_pci_func;
 	u8 pfn;
 
-	pci_info = kzalloc_objs(*pci_info, ahw->max_vnic_func);
+	pci_info = kcalloc(ahw->max_vnic_func, sizeof(*pci_info), GFP_KERNEL);
 	if (!pci_info)
 		return -ENOMEM;
 
@@ -994,14 +997,17 @@ int qlcnic_init_pci_info(struct qlcnic_adapter *adapter)
 
 	act_pci_func = ahw->total_nic_func;
 
-	adapter->npars = kzalloc_objs(struct qlcnic_npar_info, act_pci_func);
+	adapter->npars = kcalloc(act_pci_func,
+				 sizeof(struct qlcnic_npar_info),
+				 GFP_KERNEL);
 	if (!adapter->npars) {
 		ret = -ENOMEM;
 		goto err_pci_info;
 	}
 
-	adapter->eswitch = kzalloc_objs(struct qlcnic_eswitch,
-					QLCNIC_NIU_MAX_XG_PORTS);
+	adapter->eswitch = kcalloc(QLCNIC_NIU_MAX_XG_PORTS,
+				   sizeof(struct qlcnic_eswitch),
+				   GFP_KERNEL);
 	if (!adapter->eswitch) {
 		ret = -ENOMEM;
 		goto err_npars;
@@ -2054,7 +2060,8 @@ static int qlcnic_alloc_adapter_resources(struct qlcnic_adapter *adapter)
 	struct qlcnic_hardware_context *ahw = adapter->ahw;
 	int err = 0;
 
-	adapter->recv_ctx = kzalloc_obj(struct qlcnic_recv_context);
+	adapter->recv_ctx = kzalloc(sizeof(struct qlcnic_recv_context),
+				GFP_KERNEL);
 	if (!adapter->recv_ctx) {
 		err = -ENOMEM;
 		goto err_out;
@@ -2350,8 +2357,8 @@ int qlcnic_alloc_tx_rings(struct qlcnic_adapter *adapter,
 	struct qlcnic_host_tx_ring *tx_ring;
 	struct qlcnic_cmd_buffer *cmd_buf_arr;
 
-	tx_ring = kzalloc_objs(struct qlcnic_host_tx_ring,
-			       adapter->drv_tx_rings);
+	tx_ring = kcalloc(adapter->drv_tx_rings,
+			  sizeof(struct qlcnic_host_tx_ring), GFP_KERNEL);
 	if (tx_ring == NULL)
 		return -ENOMEM;
 
@@ -2438,7 +2445,7 @@ qlcnic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_master(pdev);
 
-	ahw = kzalloc_obj(struct qlcnic_hardware_context);
+	ahw = kzalloc(sizeof(struct qlcnic_hardware_context), GFP_KERNEL);
 	if (!ahw) {
 		err = -ENOMEM;
 		goto err_out_free_res;
@@ -2845,8 +2852,8 @@ void qlcnic_alloc_lb_filters_mem(struct qlcnic_adapter *adapter)
 		adapter->fhash.fbucket_size = QLC_83XX_LB_BUCKET_SIZE;
 	}
 
-	head = kzalloc_objs(struct hlist_head, adapter->fhash.fbucket_size,
-		            GFP_ATOMIC);
+	head = kcalloc(adapter->fhash.fbucket_size,
+		       sizeof(struct hlist_head), GFP_ATOMIC);
 
 	if (!head)
 		return;
@@ -2862,8 +2869,8 @@ void qlcnic_alloc_lb_filters_mem(struct qlcnic_adapter *adapter)
 
 	adapter->rx_fhash.fbucket_size = adapter->fhash.fbucket_size;
 
-	head = kzalloc_objs(struct hlist_head, adapter->rx_fhash.fbucket_size,
-		            GFP_ATOMIC);
+	head = kcalloc(adapter->rx_fhash.fbucket_size,
+		       sizeof(struct hlist_head), GFP_ATOMIC);
 
 	if (!head)
 		return;

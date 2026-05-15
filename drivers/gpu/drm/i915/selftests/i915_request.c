@@ -22,15 +22,14 @@
  *
  */
 
-#include <linux/pm_qos.h>
 #include <linux/prime_numbers.h>
+#include <linux/pm_qos.h>
 #include <linux/sort.h>
-
-#include <drm/drm_print.h>
 
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_pm.h"
 #include "gem/selftests/mock_context.h"
+
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_engine_pm.h"
 #include "gt/intel_engine_user.h"
@@ -41,11 +40,11 @@
 
 #include "i915_random.h"
 #include "i915_selftest.h"
-#include "i915_wait_util.h"
 #include "igt_flush_test.h"
 #include "igt_live_test.h"
 #include "igt_spinner.h"
 #include "lib_sw_fence.h"
+
 #include "mock_drm.h"
 #include "mock_gem_device.h"
 
@@ -329,7 +328,7 @@ static void __igt_breadcrumbs_smoketest(struct kthread_work *work)
 	 * that the fences were marked as signaled.
 	 */
 
-	requests = kzalloc_objs(*requests, total);
+	requests = kcalloc(total, sizeof(*requests), GFP_KERNEL);
 	if (!requests) {
 		thread->result = -ENOMEM;
 		return;
@@ -472,11 +471,11 @@ static int mock_breadcrumbs_smoketest(void *arg)
 	 * See __igt_breadcrumbs_smoketest();
 	 */
 
-	threads = kzalloc_objs(*threads, ncpus);
+	threads = kcalloc(ncpus, sizeof(*threads), GFP_KERNEL);
 	if (!threads)
 		return -ENOMEM;
 
-	t.contexts = kzalloc_objs(*t.contexts, t.ncontexts);
+	t.contexts = kcalloc(t.ncontexts, sizeof(*t.contexts), GFP_KERNEL);
 	if (!t.contexts) {
 		ret = -ENOMEM;
 		goto out_threads;
@@ -493,7 +492,7 @@ static int mock_breadcrumbs_smoketest(void *arg)
 	for (n = 0; n < ncpus; n++) {
 		struct kthread_worker *worker;
 
-		worker = kthread_run_worker(0, "igt/%d", n);
+		worker = kthread_create_worker(0, "igt/%d", n);
 		if (IS_ERR(worker)) {
 			ret = PTR_ERR(worker);
 			ncpus = n;
@@ -1203,7 +1202,7 @@ static int live_all_engines(void *arg)
 	 * block doing so, and that they don't complete too soon.
 	 */
 
-	request = kzalloc_objs(*request, nengines);
+	request = kcalloc(nengines, sizeof(*request), GFP_KERNEL);
 	if (!request)
 		return -ENOMEM;
 
@@ -1333,7 +1332,7 @@ static int live_sequential_engines(void *arg)
 	 * they are running on independent engines.
 	 */
 
-	request = kzalloc_objs(*request, nengines);
+	request = kcalloc(nengines, sizeof(*request), GFP_KERNEL);
 	if (!request)
 		return -ENOMEM;
 
@@ -1626,7 +1625,7 @@ static int live_parallel_engines(void *arg)
 	 * tests that we load up the system maximally.
 	 */
 
-	threads = kzalloc_objs(*threads, nengines);
+	threads = kcalloc(nengines, sizeof(*threads), GFP_KERNEL);
 	if (!threads)
 		return -ENOMEM;
 
@@ -1646,7 +1645,7 @@ static int live_parallel_engines(void *arg)
 		for_each_uabi_engine(engine, i915) {
 			struct kthread_worker *worker;
 
-			worker = kthread_run_worker(0, "igt/parallel:%s",
+			worker = kthread_create_worker(0, "igt/parallel:%s",
 						       engine->name);
 			if (IS_ERR(worker)) {
 				err = PTR_ERR(worker);
@@ -1754,13 +1753,13 @@ static int live_breadcrumbs_smoketest(void *arg)
 		goto out_rpm;
 	}
 
-	smoke = kzalloc_objs(*smoke, nengines);
+	smoke = kcalloc(nengines, sizeof(*smoke), GFP_KERNEL);
 	if (!smoke) {
 		ret = -ENOMEM;
 		goto out_file;
 	}
 
-	threads = kzalloc_objs(*threads, ncpus * nengines);
+	threads = kcalloc(ncpus * nengines, sizeof(*threads), GFP_KERNEL);
 	if (!threads) {
 		ret = -ENOMEM;
 		goto out_smoke;
@@ -1768,7 +1767,9 @@ static int live_breadcrumbs_smoketest(void *arg)
 
 	smoke[0].request_alloc = __live_request_alloc;
 	smoke[0].ncontexts = 64;
-	smoke[0].contexts = kzalloc_objs(*smoke[0].contexts, smoke[0].ncontexts);
+	smoke[0].contexts = kcalloc(smoke[0].ncontexts,
+				    sizeof(*smoke[0].contexts),
+				    GFP_KERNEL);
 	if (!smoke[0].contexts) {
 		ret = -ENOMEM;
 		goto out_threads;
@@ -1805,7 +1806,7 @@ static int live_breadcrumbs_smoketest(void *arg)
 			unsigned int i = idx * ncpus + n;
 			struct kthread_worker *worker;
 
-			worker = kthread_run_worker(0, "igt/%d.%d", idx, n);
+			worker = kthread_create_worker(0, "igt/%d.%d", idx, n);
 			if (IS_ERR(worker)) {
 				ret = PTR_ERR(worker);
 				goto out_flush;
@@ -2836,11 +2837,11 @@ static int perf_series_engines(void *arg)
 	unsigned int idx;
 	int err = 0;
 
-	stats = kzalloc_objs(*stats, nengines);
+	stats = kcalloc(nengines, sizeof(*stats), GFP_KERNEL);
 	if (!stats)
 		return -ENOMEM;
 
-	ps = kzalloc_flex(*ps, ce, nengines);
+	ps = kzalloc(struct_size(ps, ce, nengines), GFP_KERNEL);
 	if (!ps) {
 		kfree(stats);
 		return -ENOMEM;
@@ -3192,7 +3193,7 @@ static int perf_parallel_engines(void *arg)
 	struct p_thread *engines;
 	int err = 0;
 
-	engines = kzalloc_objs(*engines, nengines);
+	engines = kcalloc(nengines, sizeof(*engines), GFP_KERNEL);
 	if (!engines)
 		return -ENOMEM;
 
@@ -3218,7 +3219,7 @@ static int perf_parallel_engines(void *arg)
 
 			memset(&engines[idx].p, 0, sizeof(engines[idx].p));
 
-			worker = kthread_run_worker(0, "igt:%s",
+			worker = kthread_create_worker(0, "igt:%s",
 						       engine->name);
 			if (IS_ERR(worker)) {
 				err = PTR_ERR(worker);

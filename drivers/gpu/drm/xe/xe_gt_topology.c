@@ -12,21 +12,23 @@
 #include "regs/xe_gt_regs.h"
 #include "xe_assert.h"
 #include "xe_gt.h"
-#include "xe_gt_mcr.h"
-#include "xe_gt_printk.h"
 #include "xe_mmio.h"
 #include "xe_wa.h"
 
-static void load_dss_mask(struct xe_gt *gt, xe_dss_mask_t mask, int numregs,
-			  const struct xe_reg regs[])
+static void
+load_dss_mask(struct xe_gt *gt, xe_dss_mask_t mask, int numregs, ...)
 {
+	va_list argp;
 	u32 fuse_val[XE_MAX_DSS_FUSE_REGS] = {};
 	int i;
 
-	xe_gt_assert(gt, numregs <= ARRAY_SIZE(fuse_val));
+	if (drm_WARN_ON(&gt_to_xe(gt)->drm, numregs > XE_MAX_DSS_FUSE_REGS))
+		numregs = XE_MAX_DSS_FUSE_REGS;
 
+	va_start(argp, numregs);
 	for (i = 0; i < numregs; i++)
-		fuse_val[i] = xe_mmio_read32(&gt->mmio, regs[i]);
+		fuse_val[i] = xe_mmio_read32(gt, va_arg(argp, struct xe_reg));
+	va_end(argp);
 
 	bitmap_from_arr32(mask, fuse_val, numregs * 32);
 }
@@ -35,7 +37,7 @@ static void
 load_eu_mask(struct xe_gt *gt, xe_eu_mask_t mask, enum xe_gt_eu_type *eu_type)
 {
 	struct xe_device *xe = gt_to_xe(gt);
-	u32 reg_val = xe_mmio_read32(&gt->mmio, XELP_EU_ENABLE);
+	u32 reg_val = xe_mmio_read32(gt, XELP_EU_ENABLE);
 	u32 val = 0;
 	int i;
 
@@ -123,45 +125,25 @@ gen_l3_mask_from_pattern(struct xe_device *xe, xe_l3_bank_mask_t dst,
 	}
 }
 
-bool xe_gt_topology_report_l3(struct xe_gt *gt)
-{
-	/*
-	 * No known userspace needs/uses the L3 bank mask reported by
-	 * the media GT, and the hardware itself is known to report bogus
-	 * values on several platforms.  Only report L3 bank mask as part
-	 * of the media GT's topology on pre-Xe3 platforms since that's
-	 * already part of our ABI.
-	 */
-	if (xe_gt_is_media_type(gt) && MEDIA_VER(gt_to_xe(gt)) >= 30)
-		return false;
-
-	return true;
-}
-
 static void
 load_l3_bank_mask(struct xe_gt *gt, xe_l3_bank_mask_t l3_bank_mask)
 {
 	struct xe_device *xe = gt_to_xe(gt);
-	struct xe_mmio *mmio = &gt->mmio;
-	u32 fuse3 = xe_mmio_read32(mmio, MIRROR_FUSE3);
+	u32 fuse3 = xe_mmio_read32(gt, MIRROR_FUSE3);
 
-	if (!xe_gt_topology_report_l3(gt))
+	/*
+	 * PTL platforms with media version 30.00 do not provide proper values
+	 * for the media GT's L3 bank registers.  Skip the readout since we
+	 * don't have any way to obtain real values.
+	 *
+	 * This may get re-described as an official workaround in the future,
+	 * but there's no tracking number assigned yet so we use a custom
+	 * OOB workaround descriptor.
+	 */
+	if (XE_WA(gt, no_media_l3))
 		return;
 
-	if (GRAPHICS_VER(xe) >= 35) {
-		u32 fuse_val = xe_mmio_read32(mmio, MIRROR_L3BANK_ENABLE);
-
-		bitmap_from_arr32(l3_bank_mask, &fuse_val, 32);
-	} else if (GRAPHICS_VER(xe) >= 30) {
-		xe_l3_bank_mask_t per_node = {};
-		u32 meml3_en = REG_FIELD_GET(XE2_NODE_ENABLE_MASK, fuse3);
-		u32 mirror_l3bank_enable = xe_mmio_read32(mmio, MIRROR_L3BANK_ENABLE);
-		u32 bank_val = REG_FIELD_GET(XE3_L3BANK_ENABLE, mirror_l3bank_enable);
-
-		bitmap_from_arr32(per_node, &bank_val, 32);
-		gen_l3_mask_from_pattern(xe, l3_bank_mask, per_node, 32,
-					 meml3_en);
-	} else if (GRAPHICS_VER(xe) >= 20) {
+	if (GRAPHICS_VER(xe) >= 20) {
 		xe_l3_bank_mask_t per_node = {};
 		u32 meml3_en = REG_FIELD_GET(XE2_NODE_ENABLE_MASK, fuse3);
 		u32 bank_val = REG_FIELD_GET(XE2_GT_L3_MODE_MASK, fuse3);
@@ -173,7 +155,7 @@ load_l3_bank_mask(struct xe_gt *gt, xe_l3_bank_mask_t l3_bank_mask)
 		xe_l3_bank_mask_t per_node = {};
 		xe_l3_bank_mask_t per_mask_bit = {};
 		u32 meml3_en = REG_FIELD_GET(MEML3_EN_MASK, fuse3);
-		u32 fuse4 = xe_mmio_read32(mmio, XEHP_FUSE4);
+		u32 fuse4 = xe_mmio_read32(gt, XEHP_FUSE4);
 		u32 bank_val = REG_FIELD_GET(GT_L3_EXC_MASK, fuse4);
 
 		bitmap_set_value8(per_mask_bit, 0x3, 0);
@@ -205,39 +187,54 @@ load_l3_bank_mask(struct xe_gt *gt, xe_l3_bank_mask_t l3_bank_mask)
 	}
 }
 
+static void
+get_num_dss_regs(struct xe_device *xe, int *geometry_regs, int *compute_regs)
+{
+	if (GRAPHICS_VER(xe) > 20) {
+		*geometry_regs = 3;
+		*compute_regs = 3;
+	} else if (GRAPHICS_VERx100(xe) == 1260) {
+		*geometry_regs = 0;
+		*compute_regs = 2;
+	} else if (GRAPHICS_VERx100(xe) >= 1250) {
+		*geometry_regs = 1;
+		*compute_regs = 1;
+	} else {
+		*geometry_regs = 1;
+		*compute_regs = 0;
+	}
+}
+
 void
 xe_gt_topology_init(struct xe_gt *gt)
 {
-	static const struct xe_reg geometry_regs[] = {
-		XELP_GT_GEOMETRY_DSS_ENABLE,
-		XE2_GT_GEOMETRY_DSS_1,
-		XE2_GT_GEOMETRY_DSS_2,
-		XE3P_XPC_GT_GEOMETRY_DSS_3,
-	};
-	static const struct xe_reg compute_regs[] = {
-		XEHP_GT_COMPUTE_DSS_ENABLE,
-		XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,
-		XE2_GT_COMPUTE_DSS_2,
-		XE3P_XPC_GT_COMPUTE_DSS_3,
-	};
+	struct xe_device *xe = gt_to_xe(gt);
 	struct drm_printer p;
+	int num_geometry_regs, num_compute_regs;
+
+	get_num_dss_regs(xe, &num_geometry_regs, &num_compute_regs);
 
 	/*
 	 * Register counts returned shouldn't exceed the number of registers
 	 * passed as parameters below.
 	 */
-	xe_gt_assert(gt, gt->info.num_geometry_xecore_fuse_regs <= ARRAY_SIZE(geometry_regs));
-	xe_gt_assert(gt, gt->info.num_compute_xecore_fuse_regs <= ARRAY_SIZE(compute_regs));
+	drm_WARN_ON(&xe->drm, num_geometry_regs > 3);
+	drm_WARN_ON(&xe->drm, num_compute_regs > 3);
 
 	load_dss_mask(gt, gt->fuse_topo.g_dss_mask,
-		      gt->info.num_geometry_xecore_fuse_regs, geometry_regs);
-	load_dss_mask(gt, gt->fuse_topo.c_dss_mask,
-		      gt->info.num_compute_xecore_fuse_regs, compute_regs);
-
+		      num_geometry_regs,
+		      XELP_GT_GEOMETRY_DSS_ENABLE,
+		      XE2_GT_GEOMETRY_DSS_1,
+		      XE2_GT_GEOMETRY_DSS_2);
+	load_dss_mask(gt, gt->fuse_topo.c_dss_mask, num_compute_regs,
+		      XEHP_GT_COMPUTE_DSS_ENABLE,
+		      XEHPC_GT_COMPUTE_DSS_ENABLE_EXT,
+		      XE2_GT_COMPUTE_DSS_2);
 	load_eu_mask(gt, gt->fuse_topo.eu_mask_per_dss, &gt->fuse_topo.eu_type);
 	load_l3_bank_mask(gt, gt->fuse_topo.l3_bank_mask);
 
-	p = xe_gt_dbg_printer(gt);
+	p = drm_dbg_printer(&gt_to_xe(gt)->drm, DRM_UT_DRIVER, "GT topology");
+
 	xe_gt_topology_dump(gt, &p);
 }
 
@@ -253,14 +250,8 @@ static const char *eu_type_to_str(enum xe_gt_eu_type eu_type)
 	return NULL;
 }
 
-/**
- * xe_gt_topology_dump() - Dump GT topology into a drm printer.
- * @gt: the &xe_gt
- * @p: the &drm_printer
- *
- * Return: always 0.
- */
-int xe_gt_topology_dump(struct xe_gt *gt, struct drm_printer *p)
+void
+xe_gt_topology_dump(struct xe_gt *gt, struct drm_printer *p)
 {
 	drm_printf(p, "dss mask (geometry): %*pb\n", XE_MAX_DSS_FUSE_BITS,
 		   gt->fuse_topo.g_dss_mask);
@@ -272,10 +263,8 @@ int xe_gt_topology_dump(struct xe_gt *gt, struct drm_printer *p)
 	drm_printf(p, "EU type:             %s\n",
 		   eu_type_to_str(gt->fuse_topo.eu_type));
 
-	if (xe_gt_topology_report_l3(gt))
-		drm_printf(p, "L3 bank mask:        %*pb\n", XE_MAX_L3_BANK_MASK_BITS,
-			   gt->fuse_topo.l3_bank_mask);
-	return 0;
+	drm_printf(p, "L3 bank mask:        %*pb\n", XE_MAX_L3_BANK_MASK_BITS,
+		   gt->fuse_topo.l3_bank_mask);
 }
 
 /*
@@ -289,11 +278,9 @@ xe_dss_mask_group_ffs(const xe_dss_mask_t mask, int groupsize, int groupnum)
 	return find_next_bit(mask, XE_MAX_DSS_FUSE_BITS, groupnum * groupsize);
 }
 
-/* Used to obtain the index of the first L3 bank. */
-unsigned int
-xe_l3_bank_mask_ffs(const xe_l3_bank_mask_t mask)
+bool xe_dss_mask_empty(const xe_dss_mask_t mask)
 {
-	return find_first_bit(mask, XE_MAX_L3_BANK_MASK_BITS);
+	return bitmap_empty(mask, XE_MAX_DSS_FUSE_BITS);
 }
 
 /**
@@ -310,14 +297,15 @@ xe_l3_bank_mask_ffs(const xe_l3_bank_mask_t mask)
  */
 bool xe_gt_topology_has_dss_in_quadrant(struct xe_gt *gt, int quad)
 {
+	struct xe_device *xe = gt_to_xe(gt);
 	xe_dss_mask_t all_dss;
-	int dss_per_quad, quad_first;
+	int g_dss_regs, c_dss_regs, dss_per_quad, quad_first;
 
 	bitmap_or(all_dss, gt->fuse_topo.g_dss_mask, gt->fuse_topo.c_dss_mask,
 		  XE_MAX_DSS_FUSE_BITS);
 
-	dss_per_quad = 32 * max(gt->info.num_geometry_xecore_fuse_regs,
-				gt->info.num_compute_xecore_fuse_regs) / 4;
+	get_num_dss_regs(xe, &g_dss_regs, &c_dss_regs);
+	dss_per_quad = 32 * max(g_dss_regs, c_dss_regs) / 4;
 
 	quad_first = xe_dss_mask_group_ffs(all_dss, dss_per_quad, quad);
 
@@ -332,20 +320,4 @@ bool xe_gt_has_geometry_dss(struct xe_gt *gt, unsigned int dss)
 bool xe_gt_has_compute_dss(struct xe_gt *gt, unsigned int dss)
 {
 	return test_bit(dss, gt->fuse_topo.c_dss_mask);
-}
-
-bool xe_gt_has_discontiguous_dss_groups(const struct xe_gt *gt)
-{
-	unsigned int xecore;
-	int last_group = -1;
-	u16 group, instance;
-
-	for_each_dss_steering(xecore, gt, group, instance) {
-		if (last_group != group) {
-			if (group - last_group > 1)
-				return true;
-			last_group = group;
-		}
-	}
-	return false;
 }

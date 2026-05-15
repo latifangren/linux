@@ -58,7 +58,7 @@
 #define FW_FEATURE_WATCHDOG	ASM_CONST(0x0000080000000000)
 #define FW_FEATURE_PLPKS	ASM_CONST(0x0000100000000000)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 enum {
 #ifdef CONFIG_PPC64
@@ -146,6 +146,6 @@ void pseries_probe_fw_features(void);
 static inline void pseries_probe_fw_features(void) { }
 #endif
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif /* __KERNEL__ */
 #endif /* __ASM_POWERPC_FIRMWARE_H */

@@ -349,7 +349,7 @@ static int spi_st_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, host);
 
-	ret = spi_register_controller(host);
+	ret = devm_spi_register_controller(&pdev->dev, host);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to register host\n");
 		goto rpm_disable;
@@ -371,19 +371,14 @@ static void spi_st_remove(struct platform_device *pdev)
 	struct spi_controller *host = platform_get_drvdata(pdev);
 	struct spi_st *spi_st = spi_controller_get_devdata(host);
 
-	spi_controller_get(host);
-
-	spi_unregister_controller(host);
-
 	pm_runtime_disable(&pdev->dev);
 
 	clk_disable_unprepare(spi_st->clk);
 
-	spi_controller_put(host);
-
 	pinctrl_pm_select_sleep_state(&pdev->dev);
 }
 
+#ifdef CONFIG_PM
 static int spi_st_runtime_suspend(struct device *dev)
 {
 	struct spi_controller *host = dev_get_drvdata(dev);
@@ -408,7 +403,9 @@ static int spi_st_runtime_resume(struct device *dev)
 
 	return ret;
 }
+#endif
 
+#ifdef CONFIG_PM_SLEEP
 static int spi_st_suspend(struct device *dev)
 {
 	struct spi_controller *host = dev_get_drvdata(dev);
@@ -432,10 +429,11 @@ static int spi_st_resume(struct device *dev)
 
 	return pm_runtime_force_resume(dev);
 }
+#endif
 
 static const struct dev_pm_ops spi_st_pm = {
-	SYSTEM_SLEEP_PM_OPS(spi_st_suspend, spi_st_resume)
-	RUNTIME_PM_OPS(spi_st_runtime_suspend, spi_st_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(spi_st_suspend, spi_st_resume)
+	SET_RUNTIME_PM_OPS(spi_st_runtime_suspend, spi_st_runtime_resume, NULL)
 };
 
 static const struct of_device_id stm_spi_match[] = {
@@ -447,7 +445,7 @@ MODULE_DEVICE_TABLE(of, stm_spi_match);
 static struct platform_driver spi_st_driver = {
 	.driver = {
 		.name = "spi-st",
-		.pm = pm_ptr(&spi_st_pm),
+		.pm = &spi_st_pm,
 		.of_match_table = of_match_ptr(stm_spi_match),
 	},
 	.probe = spi_st_probe,

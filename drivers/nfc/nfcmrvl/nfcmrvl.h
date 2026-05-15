@@ -10,8 +10,6 @@
 
 #include "fw_dnld.h"
 
-struct gpio_desc;
-
 /* Define private flags: */
 #define NFCMRVL_NCI_RUNNING			1
 #define NFCMRVL_PHY_ERROR			2
@@ -56,7 +54,7 @@ struct nfcmrvl_platform_data {
 	 */
 
 	/* GPIO that is wired to RESET_N signal */
-	struct gpio_desc *reset_gpio;
+	int reset_n_io;
 	/* Tell if transport is muxed in HCI one */
 	bool hci_muxed;
 

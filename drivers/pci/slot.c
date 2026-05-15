@@ -7,6 +7,7 @@
 
 #include <linux/kobject.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/err.h>
 #include "pci.h"
@@ -42,15 +43,6 @@ static ssize_t address_read_file(struct pci_slot *slot, char *buf)
 				  pci_domain_nr(slot->bus),
 				  slot->bus->number);
 
-	/*
-	 * Preserve legacy ABI expectations that hotplug drivers that manage
-	 * multiple devices per slot emit 0 for the device number.
-	 */
-	if (slot->number == PCI_SLOT_ALL_DEVICES)
-		return sysfs_emit(buf, "%04x:%02x:00\n",
-				  pci_domain_nr(slot->bus),
-				  slot->bus->number);
-
 	return sysfs_emit(buf, "%04x:%02x:%02x\n",
 			  pci_domain_nr(slot->bus),
 			  slot->bus->number,
@@ -82,8 +74,7 @@ static void pci_slot_release(struct kobject *kobj)
 
 	down_read(&pci_bus_sem);
 	list_for_each_entry(dev, &slot->bus->devices, bus_list)
-		if (slot->number == PCI_SLOT_ALL_DEVICES ||
-		    PCI_SLOT(dev->devfn) == slot->number)
+		if (PCI_SLOT(dev->devfn) == slot->number)
 			dev->slot = NULL;
 	up_read(&pci_bus_sem);
 
@@ -106,18 +97,7 @@ static struct attribute *pci_slot_default_attrs[] = {
 	&pci_slot_attr_cur_speed.attr,
 	NULL,
 };
-
-static const struct attribute_group pci_slot_default_group = {
-	.attrs = pci_slot_default_attrs,
-};
-
-static const struct attribute_group *pci_slot_default_groups[] = {
-	&pci_slot_default_group,
-#ifdef ARCH_PCI_SLOT_GROUPS
-	ARCH_PCI_SLOT_GROUPS,
-#endif
-	NULL,
-};
+ATTRIBUTE_GROUPS(pci_slot_default);
 
 static const struct kobj_type pci_slot_ktype = {
 	.sysfs_ops = &pci_slot_sysfs_ops,
@@ -187,8 +167,7 @@ void pci_dev_assign_slot(struct pci_dev *dev)
 
 	mutex_lock(&pci_slot_mutex);
 	list_for_each_entry(slot, &dev->bus->slots, list)
-		if (slot->number == PCI_SLOT_ALL_DEVICES ||
-		    PCI_SLOT(dev->devfn) == slot->number)
+		if (PCI_SLOT(dev->devfn) == slot->number)
 			dev->slot = slot;
 	mutex_unlock(&pci_slot_mutex);
 }
@@ -210,8 +189,7 @@ static struct pci_slot *get_slot(struct pci_bus *parent, int slot_nr)
 /**
  * pci_create_slot - create or increment refcount for physical PCI slot
  * @parent: struct pci_bus of parent bridge
- * @slot_nr: PCI_SLOT(pci_dev->devfn), -1 for placeholder, or
- *	PCI_SLOT_ALL_DEVICES
+ * @slot_nr: PCI_SLOT(pci_dev->devfn) or -1 for placeholder
  * @name: user visible string presented in /sys/bus/pci/slots/<name>
  * @hotplug: set if caller is hotplug driver, NULL otherwise
  *
@@ -245,16 +223,6 @@ static struct pci_slot *get_slot(struct pci_bus *parent, int slot_nr)
  * consist solely of a dddd:bb tuple, where dddd is the PCI domain of the
  * %struct pci_bus and bb is the bus number. In other words, the devfn of
  * the 'placeholder' slot will not be displayed.
- *
- * Bus-wide slots:
- * For PCIe hotplug, the physical slot encompasses the entire secondary
- * bus, not just a single device number. If the device supports ARI and ARI
- * Forwarding is enabled in the upstream bridge, a multi-function device
- * may include functions that appear to have several different device
- * numbers, i.e., PCI_SLOT() values.  Pass @slot_nr == PCI_SLOT_ALL_DEVICES
- * to create a slot that matches all devices on the bus. Unlike placeholder
- * slots, bus-wide slots go through normal slot lookup and reuse existing
- * slots if present.
  */
 struct pci_slot *pci_create_slot(struct pci_bus *parent, int slot_nr,
 				 const char *name,
@@ -277,19 +245,18 @@ struct pci_slot *pci_create_slot(struct pci_bus *parent, int slot_nr,
 	slot = get_slot(parent, slot_nr);
 	if (slot) {
 		if (hotplug) {
-			if (slot->hotplug) {
-				err = -EBUSY;
-				goto put_slot;
+			if ((err = slot->hotplug ? -EBUSY : 0)
+			     || (err = rename_slot(slot, name))) {
+				kobject_put(&slot->kobj);
+				slot = NULL;
+				goto err;
 			}
-			err = rename_slot(slot, name);
-			if (err)
-				goto put_slot;
 		}
 		goto out;
 	}
 
 placeholder:
-	slot = kzalloc_obj(*slot);
+	slot = kzalloc(sizeof(*slot), GFP_KERNEL);
 	if (!slot) {
 		err = -ENOMEM;
 		goto err;
@@ -313,13 +280,14 @@ placeholder:
 
 	err = kobject_init_and_add(&slot->kobj, &pci_slot_ktype, NULL,
 				   "%s", slot_name);
-	if (err)
-		goto put_slot;
+	if (err) {
+		kobject_put(&slot->kobj);
+		goto err;
+	}
 
 	down_read(&pci_bus_sem);
 	list_for_each_entry(dev, &parent->devices, bus_list)
-		if (slot_nr == PCI_SLOT_ALL_DEVICES ||
-		    PCI_SLOT(dev->devfn) == slot_nr)
+		if (PCI_SLOT(dev->devfn) == slot_nr)
 			dev->slot = slot;
 	up_read(&pci_bus_sem);
 
@@ -330,9 +298,6 @@ out:
 	kfree(slot_name);
 	mutex_unlock(&pci_slot_mutex);
 	return slot;
-
-put_slot:
-	kobject_put(&slot->kobj);
 err:
 	slot = ERR_PTR(err);
 	goto out;
@@ -357,6 +322,49 @@ void pci_destroy_slot(struct pci_slot *slot)
 	mutex_unlock(&pci_slot_mutex);
 }
 EXPORT_SYMBOL_GPL(pci_destroy_slot);
+
+#if defined(CONFIG_HOTPLUG_PCI) || defined(CONFIG_HOTPLUG_PCI_MODULE)
+#include <linux/pci_hotplug.h>
+/**
+ * pci_hp_create_module_link - create symbolic link to hotplug driver module
+ * @pci_slot: struct pci_slot
+ *
+ * Helper function for pci_hotplug_core.c to create symbolic link to
+ * the hotplug driver module.
+ */
+void pci_hp_create_module_link(struct pci_slot *pci_slot)
+{
+	struct hotplug_slot *slot = pci_slot->hotplug;
+	struct kobject *kobj = NULL;
+	int ret;
+
+	if (!slot || !slot->ops)
+		return;
+	kobj = kset_find_obj(module_kset, slot->mod_name);
+	if (!kobj)
+		return;
+	ret = sysfs_create_link(&pci_slot->kobj, kobj, "module");
+	if (ret)
+		dev_err(&pci_slot->bus->dev, "Error creating sysfs link (%d)\n",
+			ret);
+	kobject_put(kobj);
+}
+EXPORT_SYMBOL_GPL(pci_hp_create_module_link);
+
+/**
+ * pci_hp_remove_module_link - remove symbolic link to the hotplug driver
+ * 	module.
+ * @pci_slot: struct pci_slot
+ *
+ * Helper function for pci_hotplug_core.c to remove symbolic link to
+ * the hotplug driver module.
+ */
+void pci_hp_remove_module_link(struct pci_slot *pci_slot)
+{
+	sysfs_remove_link(&pci_slot->kobj, "module");
+}
+EXPORT_SYMBOL_GPL(pci_hp_remove_module_link);
+#endif
 
 static int pci_slot_init(void)
 {

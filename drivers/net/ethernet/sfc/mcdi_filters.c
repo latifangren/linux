@@ -459,7 +459,7 @@ static s32 efx_mcdi_filter_insert_locked(struct efx_nic *efx,
 		replacing = true;
 		priv_flags = efx_mcdi_filter_entry_flags(table, ins_index);
 	} else {
-		saved_spec = kmalloc_obj(*spec, GFP_ATOMIC);
+		saved_spec = kmalloc(sizeof(*spec), GFP_ATOMIC);
 		if (!saved_spec) {
 			rc = -ENOMEM;
 			goto out_unlock;
@@ -1310,7 +1310,7 @@ int efx_mcdi_filter_table_probe(struct efx_nic *efx, bool multicast_chaining)
 	if (efx->filter_state) /* already probed */
 		return 0;
 
-	table = kzalloc_obj(*table);
+	table = kzalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		return -ENOMEM;
 
@@ -1586,7 +1586,7 @@ int efx_mcdi_filter_add_vlan(struct efx_nic *efx, u16 vid)
 		return -EALREADY;
 	}
 
-	vlan = kzalloc_obj(*vlan);
+	vlan = kzalloc(sizeof(*vlan), GFP_KERNEL);
 	if (!vlan)
 		return -ENOMEM;
 
@@ -2182,7 +2182,12 @@ int efx_mcdi_rx_pull_rss_context_config(struct efx_nic *efx,
 
 int efx_mcdi_rx_pull_rss_config(struct efx_nic *efx)
 {
-	return efx_mcdi_rx_pull_rss_context_config(efx, &efx->rss_context);
+	int rc;
+
+	mutex_lock(&efx->net_dev->ethtool->rss_lock);
+	rc = efx_mcdi_rx_pull_rss_context_config(efx, &efx->rss_context);
+	mutex_unlock(&efx->net_dev->ethtool->rss_lock);
+	return rc;
 }
 
 void efx_mcdi_rx_restore_rss_contexts(struct efx_nic *efx)

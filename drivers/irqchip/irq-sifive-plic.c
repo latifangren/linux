@@ -49,8 +49,6 @@
 #define CONTEXT_ENABLE_BASE		0x2000
 #define     CONTEXT_ENABLE_SIZE		0x80
 
-#define PENDING_BASE			0x1000
-
 /*
  * Each hart context has a set of control registers associated with it.  Right
  * now there's only two: a source priority threshold over which the hart will
@@ -65,20 +63,17 @@
 #define	PLIC_ENABLE_THRESHOLD		0
 
 #define PLIC_QUIRK_EDGE_INTERRUPT	0
-#define PLIC_QUIRK_CP100_CLAIM_REGISTER_ERRATUM	1
 
 struct plic_priv {
-	struct fwnode_handle	*fwnode;
-	struct cpumask		lmask;
-	struct irq_domain	*irqdomain;
-	void __iomem		*regs;
-	unsigned long		plic_quirks;
-	/* device interrupts + 1 to compensate for the reserved hwirq 0 */
-	unsigned int __private	total_irqs;
-	unsigned int		irq_groups;
-	unsigned long		*prio_save;
-	u32			gsi_base;
-	int			acpi_plic_id;
+	struct fwnode_handle *fwnode;
+	struct cpumask lmask;
+	struct irq_domain *irqdomain;
+	void __iomem *regs;
+	unsigned long plic_quirks;
+	unsigned int nr_irqs;
+	unsigned long *prio_save;
+	u32 gsi_base;
+	int acpi_plic_id;
 };
 
 struct plic_handler {
@@ -93,34 +88,21 @@ struct plic_handler {
 	u32			*enable_save;
 	struct plic_priv	*priv;
 };
-
-/*
- * Macro to deal with the insanity of hardware interrupt 0 being reserved */
-#define for_each_device_irq(iter, priv)	\
-	for (unsigned int iter = 1; iter < ACCESS_PRIVATE(priv, total_irqs); iter++)
-
 static int plic_parent_irq __ro_after_init;
 static bool plic_global_setup_done __ro_after_init;
 static DEFINE_PER_CPU(struct plic_handler, plic_handlers);
 
 static int plic_irq_set_type(struct irq_data *d, unsigned int type);
 
-static void __plic_toggle(struct plic_handler *handler, int hwirq, int enable)
+static void __plic_toggle(void __iomem *enable_base, int hwirq, int enable)
 {
-	u32 __iomem *base = handler->enable_base;
+	u32 __iomem *reg = enable_base + (hwirq / 32) * sizeof(u32);
 	u32 hwirq_mask = 1 << (hwirq % 32);
-	int group = hwirq / 32;
-	u32 value;
-
-	value = readl(base + group);
 
 	if (enable)
-		value |= hwirq_mask;
+		writel(readl(reg) | hwirq_mask, reg);
 	else
-		value &= ~hwirq_mask;
-
-	handler->enable_save[group] = value;
-	writel(value, base + group);
+		writel(readl(reg) & ~hwirq_mask, reg);
 }
 
 static void plic_toggle(struct plic_handler *handler, int hwirq, int enable)
@@ -128,7 +110,7 @@ static void plic_toggle(struct plic_handler *handler, int hwirq, int enable)
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&handler->enable_lock, flags);
-	__plic_toggle(handler, hwirq, enable);
+	__plic_toggle(handler->enable_base, hwirq, enable);
 	raw_spin_unlock_irqrestore(&handler->enable_lock, flags);
 }
 
@@ -268,39 +250,62 @@ static int plic_irq_set_type(struct irq_data *d, unsigned int type)
 	return IRQ_SET_MASK_OK;
 }
 
-static int plic_irq_suspend(void *data)
+static int plic_irq_suspend(void)
 {
-	struct plic_priv *priv = this_cpu_ptr(&plic_handlers)->priv;
-
-	for_each_device_irq(irq, priv) {
-		__assign_bit(irq, priv->prio_save,
-			     readl(priv->regs + PRIORITY_BASE + irq * PRIORITY_PER_ID));
-	}
-
-	return 0;
-}
-
-static void plic_irq_resume(void *data)
-{
-	struct plic_priv *priv = this_cpu_ptr(&plic_handlers)->priv;
-	unsigned int index, cpu;
+	unsigned int i, cpu;
 	unsigned long flags;
 	u32 __iomem *reg;
+	struct plic_priv *priv;
 
-	for_each_device_irq(irq, priv) {
-		index = BIT_WORD(irq);
-		writel((priv->prio_save[index] & BIT_MASK(irq)) ? 1 : 0,
-		       priv->regs + PRIORITY_BASE + irq * PRIORITY_PER_ID);
+	priv = per_cpu_ptr(&plic_handlers, smp_processor_id())->priv;
+
+	/* irq ID 0 is reserved */
+	for (i = 1; i < priv->nr_irqs; i++) {
+		__assign_bit(i, priv->prio_save,
+			     readl(priv->regs + PRIORITY_BASE + i * PRIORITY_PER_ID));
 	}
 
-	for_each_present_cpu(cpu) {
+	for_each_cpu(cpu, cpu_present_mask) {
 		struct plic_handler *handler = per_cpu_ptr(&plic_handlers, cpu);
 
 		if (!handler->present)
 			continue;
 
 		raw_spin_lock_irqsave(&handler->enable_lock, flags);
-		for (unsigned int i = 0; i < priv->irq_groups; i++) {
+		for (i = 0; i < DIV_ROUND_UP(priv->nr_irqs, 32); i++) {
+			reg = handler->enable_base + i * sizeof(u32);
+			handler->enable_save[i] = readl(reg);
+		}
+		raw_spin_unlock_irqrestore(&handler->enable_lock, flags);
+	}
+
+	return 0;
+}
+
+static void plic_irq_resume(void)
+{
+	unsigned int i, index, cpu;
+	unsigned long flags;
+	u32 __iomem *reg;
+	struct plic_priv *priv;
+
+	priv = per_cpu_ptr(&plic_handlers, smp_processor_id())->priv;
+
+	/* irq ID 0 is reserved */
+	for (i = 1; i < priv->nr_irqs; i++) {
+		index = BIT_WORD(i);
+		writel((priv->prio_save[index] & BIT_MASK(i)) ? 1 : 0,
+		       priv->regs + PRIORITY_BASE + i * PRIORITY_PER_ID);
+	}
+
+	for_each_cpu(cpu, cpu_present_mask) {
+		struct plic_handler *handler = per_cpu_ptr(&plic_handlers, cpu);
+
+		if (!handler->present)
+			continue;
+
+		raw_spin_lock_irqsave(&handler->enable_lock, flags);
+		for (i = 0; i < DIV_ROUND_UP(priv->nr_irqs, 32); i++) {
 			reg = handler->enable_base + i * sizeof(u32);
 			writel(handler->enable_save[i], reg);
 		}
@@ -308,13 +313,9 @@ static void plic_irq_resume(void *data)
 	}
 }
 
-static const struct syscore_ops plic_irq_syscore_ops = {
+static struct syscore_ops plic_irq_syscore_ops = {
 	.suspend	= plic_irq_suspend,
 	.resume		= plic_irq_resume,
-};
-
-static struct syscore plic_irq_syscore = {
-	.ops = &plic_irq_syscore_ops,
 };
 
 static int plic_irqdomain_map(struct irq_domain *d, unsigned int irq,
@@ -402,98 +403,6 @@ static void plic_handle_irq(struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
-static u32 cp100_isolate_pending_irq(int nr_irq_groups, struct plic_handler *handler)
-{
-	u32 __iomem *pending = handler->priv->regs + PENDING_BASE;
-	u32 __iomem *enable = handler->enable_base;
-	u32 pending_irqs = 0;
-	int i, j;
-
-	/* Look for first pending interrupt */
-	for (i = 0; i < nr_irq_groups; i++) {
-		/* Any pending interrupts would be annihilated, so skip checking them */
-		if (!handler->enable_save[i])
-			continue;
-
-		pending_irqs = handler->enable_save[i] & readl_relaxed(pending + i);
-		if (pending_irqs)
-			break;
-	}
-
-	if (!pending_irqs)
-		return 0;
-
-	/* Isolate lowest set bit */
-	pending_irqs &= -pending_irqs;
-
-	/* Disable all interrupts but the first pending one */
-	for (j = 0; j < nr_irq_groups; j++) {
-		u32 new_mask = j == i ? pending_irqs : 0;
-
-		if (new_mask != handler->enable_save[j])
-			writel_relaxed(new_mask, enable + j);
-	}
-	return pending_irqs;
-}
-
-static irq_hw_number_t cp100_get_hwirq(struct plic_handler *handler, void __iomem *claim)
-{
-	int nr_irq_groups = handler->priv->irq_groups;
-	u32 __iomem *enable = handler->enable_base;
-	irq_hw_number_t hwirq = 0;
-	u32 iso_mask;
-	int i;
-
-	guard(raw_spinlock)(&handler->enable_lock);
-
-	/* Existing enable state is already cached in enable_save */
-	iso_mask = cp100_isolate_pending_irq(nr_irq_groups, handler);
-	if (!iso_mask)
-		return 0;
-
-	/*
-	 * Interrupts delievered to hardware still become pending, but only
-	 * interrupts that are both pending and enabled can be claimed.
-	 * Clearing the enable bit for all interrupts but the first pending
-	 * one avoids a hardware bug that occurs during read from the claim
-	 * register with more than one eligible interrupt.
-	 */
-	hwirq = readl(claim);
-
-	/* Restore previous state */
-	for (i = 0; i < nr_irq_groups; i++) {
-		u32 written = i == hwirq / 32 ? iso_mask : 0;
-		u32 stored = handler->enable_save[i];
-
-		if (stored != written)
-			writel_relaxed(stored, enable + i);
-	}
-	return hwirq;
-}
-
-static void plic_handle_irq_cp100(struct irq_desc *desc)
-{
-	struct plic_handler *handler = this_cpu_ptr(&plic_handlers);
-	struct irq_chip *chip = irq_desc_get_chip(desc);
-	void __iomem *claim = handler->hart_base + CONTEXT_CLAIM;
-	irq_hw_number_t hwirq;
-
-	WARN_ON_ONCE(!handler->present);
-
-	chained_irq_enter(chip, desc);
-
-	while ((hwirq = cp100_get_hwirq(handler, claim))) {
-		int err = generic_handle_domain_irq(handler->priv->irqdomain, hwirq);
-
-		if (unlikely(err)) {
-			pr_warn_ratelimited("%pfwP: can't find mapping for hwirq %lu\n",
-					    handler->priv->fwnode, hwirq);
-		}
-	}
-
-	chained_irq_exit(chip, desc);
-}
-
 static void plic_set_threshold(struct plic_handler *handler, u32 threshold)
 {
 	/* priority must be > threshold to trigger an interrupt */
@@ -530,8 +439,6 @@ static const struct of_device_id plic_match[] = {
 	  .data = (const void *)BIT(PLIC_QUIRK_EDGE_INTERRUPT) },
 	{ .compatible = "thead,c900-plic",
 	  .data = (const void *)BIT(PLIC_QUIRK_EDGE_INTERRUPT) },
-	{ .compatible = "ultrarisc,cp100-plic",
-	  .data = (const void *)BIT(PLIC_QUIRK_CP100_CLAIM_REGISTER_ERRATUM) },
 	{}
 };
 
@@ -621,6 +528,7 @@ static int plic_probe(struct fwnode_handle *fwnode)
 	struct plic_handler *handler;
 	u32 nr_irqs, parent_hwirq;
 	struct plic_priv *priv;
+	irq_hw_number_t hwirq;
 	void __iomem *regs;
 	int id, context_id;
 	u32 gsi_base;
@@ -645,7 +553,7 @@ static int plic_probe(struct fwnode_handle *fwnode)
 	if (error)
 		goto fail_free_regs;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		error = -ENOMEM;
 		goto fail_free_regs;
@@ -653,16 +561,7 @@ static int plic_probe(struct fwnode_handle *fwnode)
 
 	priv->fwnode = fwnode;
 	priv->plic_quirks = plic_quirks;
-	/*
-	 * The firmware provides the number of device interrupts. As
-	 * hardware interrupt 0 is reserved, the number of total interrupts
-	 * is nr_irqs + 1.
-	 */
-	nr_irqs++;
-	ACCESS_PRIVATE(priv, total_irqs) = nr_irqs;
-	/* Precalculate the number of register groups */
-	priv->irq_groups = DIV_ROUND_UP(nr_irqs, 32);
-
+	priv->nr_irqs = nr_irqs;
 	priv->regs = regs;
 	priv->gsi_base = gsi_base;
 	priv->acpi_plic_id = id;
@@ -698,11 +597,12 @@ static int plic_probe(struct fwnode_handle *fwnode)
 		if (parent_hwirq != RV_IRQ_EXT) {
 			/* Disable S-mode enable bits if running in M-mode. */
 			if (IS_ENABLED(CONFIG_RISCV_M_MODE)) {
-				u32 __iomem *enable_base = priv->regs +	CONTEXT_ENABLE_BASE +
-							   i * CONTEXT_ENABLE_SIZE;
+				void __iomem *enable_base = priv->regs +
+					CONTEXT_ENABLE_BASE +
+					i * CONTEXT_ENABLE_SIZE;
 
-				for (int j = 0; j < priv->irq_groups; j++)
-					writel(0, enable_base + j);
+				for (hwirq = 1; hwirq <= nr_irqs; hwirq++)
+					__plic_toggle(enable_base, hwirq, 0);
 			}
 			continue;
 		}
@@ -733,21 +633,23 @@ static int plic_probe(struct fwnode_handle *fwnode)
 			context_id * CONTEXT_ENABLE_SIZE;
 		handler->priv = priv;
 
-		handler->enable_save = kcalloc(priv->irq_groups, sizeof(*handler->enable_save),
-					       GFP_KERNEL);
+		handler->enable_save = kcalloc(DIV_ROUND_UP(nr_irqs, 32),
+					       sizeof(*handler->enable_save), GFP_KERNEL);
 		if (!handler->enable_save) {
 			error = -ENOMEM;
 			goto fail_cleanup_contexts;
 		}
 done:
-		for_each_device_irq(hwirq, priv) {
+		for (hwirq = 1; hwirq <= nr_irqs; hwirq++) {
 			plic_toggle(handler, hwirq, 0);
-			writel(1, priv->regs + PRIORITY_BASE + hwirq * PRIORITY_PER_ID);
+			writel(1, priv->regs + PRIORITY_BASE +
+				  hwirq * PRIORITY_PER_ID);
 		}
 		nr_handlers++;
 	}
 
-	priv->irqdomain = irq_domain_create_linear(fwnode, nr_irqs, &plic_irqdomain_ops, priv);
+	priv->irqdomain = irq_domain_create_linear(fwnode, nr_irqs + 1,
+						   &plic_irqdomain_ops, priv);
 	if (WARN_ON(!priv->irqdomain)) {
 		error = -ENOMEM;
 		goto fail_cleanup_contexts;
@@ -771,22 +673,17 @@ done:
 		}
 
 		if (global_setup) {
-			void (*handler_fn)(struct irq_desc *) = plic_handle_irq;
-
-			if (test_bit(PLIC_QUIRK_CP100_CLAIM_REGISTER_ERRATUM, &handler->priv->plic_quirks))
-				handler_fn = plic_handle_irq_cp100;
-
 			/* Find parent domain and register chained handler */
 			domain = irq_find_matching_fwnode(riscv_get_intc_hwnode(), DOMAIN_BUS_ANY);
 			if (domain)
 				plic_parent_irq = irq_create_mapping(domain, RV_IRQ_EXT);
 			if (plic_parent_irq)
-				irq_set_chained_handler(plic_parent_irq, handler_fn);
+				irq_set_chained_handler(plic_parent_irq, plic_handle_irq);
 
 			cpuhp_setup_state(CPUHP_AP_IRQ_SIFIVE_PLIC_STARTING,
 					  "irqchip/sifive/plic:starting",
 					  plic_starting_cpu, plic_dying_cpu);
-			register_syscore(&plic_irq_syscore);
+			register_syscore_ops(&plic_irq_syscore_ops);
 			plic_global_setup_done = true;
 		}
 	}

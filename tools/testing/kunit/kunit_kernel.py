@@ -14,9 +14,8 @@ import os
 import shlex
 import shutil
 import signal
-import sys
 import threading
-from typing import Iterator, List, Optional, Tuple, Any
+from typing import Iterator, List, Optional, Tuple
 from types import FrameType
 
 import kunit_config
@@ -73,8 +72,8 @@ class LinuxSourceTreeOperations:
 			raise ConfigError(e.output.decode())
 
 	def make(self, jobs: int, build_dir: str, make_options: Optional[List[str]]) -> None:
-		command = ['make', 'all', 'compile_commands.json', 'scripts_gdb',
-			   'ARCH=' + self._linux_arch, 'O=' + build_dir, '--jobs=' + str(jobs)]
+		command = ['make', 'all', 'compile_commands.json', 'ARCH=' + self._linux_arch,
+			   'O=' + build_dir, '--jobs=' + str(jobs)]
 		if make_options:
 			command.extend(make_options)
 		if self._cross_compile:
@@ -106,9 +105,7 @@ class LinuxSourceTreeOperationsQemu(LinuxSourceTreeOperations):
 		self._kconfig = qemu_arch_params.kconfig
 		self._qemu_arch = qemu_arch_params.qemu_arch
 		self._kernel_path = qemu_arch_params.kernel_path
-		self._kernel_command_line = qemu_arch_params.kernel_command_line
-		if 'kunit_shutdown=' not in self._kernel_command_line:
-			self._kernel_command_line += ' kunit_shutdown=reboot'
+		self._kernel_command_line = qemu_arch_params.kernel_command_line + ' kunit_shutdown=reboot'
 		self._extra_qemu_params = qemu_arch_params.extra_qemu_params
 		self._serial = qemu_arch_params.serial
 
@@ -126,9 +123,6 @@ class LinuxSourceTreeOperationsQemu(LinuxSourceTreeOperations):
 				'-append', ' '.join(params + [self._kernel_command_line]),
 				'-no-reboot',
 				'-nographic',
-				'-accel', 'kvm',
-				'-accel', 'hvf',
-				'-accel', 'tcg',
 				'-serial', self._serial] + self._extra_qemu_params
 		# Note: shlex.join() does what we want, but requires python 3.8+.
 		print('Running tests with:\n$', ' '.join(shlex.quote(arg) for arg in qemu_command))
@@ -202,13 +196,6 @@ def _default_qemu_config_path(arch: str) -> str:
 		return config_path
 
 	options = [f[:-3] for f in os.listdir(QEMU_CONFIGS_DIR) if f.endswith('.py')]
-
-	if arch == 'help':
-		print('um')
-		for option in options:
-			print(option)
-		sys.exit()
-
 	raise ConfigError(arch + ' is not a valid arch, options are ' + str(sorted(options)))
 
 def _get_qemu_ops(config_path: str,
@@ -265,7 +252,6 @@ class LinuxSourceTree:
 		if kconfig_add:
 			kconfig = kunit_config.parse_from_string('\n'.join(kconfig_add))
 			self._kconfig.merge_in_entries(kconfig)
-		self._process : Optional[subprocess.Popen[Any]] = None
 
 	def arch(self) -> str:
 		return self._arch
@@ -346,12 +332,6 @@ class LinuxSourceTree:
 			return False
 		return self.validate_config(build_dir)
 
-	def _restore_terminal_if_tty(self) -> None:
-		# stty requires a controlling terminal; skip headless runs.
-		if sys.stdin is None or not sys.stdin.isatty():
-			return
-		subprocess.call(['stty', 'sane'])
-
 	def run_kernel(self, args: Optional[List[str]]=None, build_dir: str='', filter_glob: str='', filter: str='', filter_action: Optional[str]=None, timeout: Optional[int]=None) -> Iterator[str]:
 		# Copy to avoid mutating the caller-supplied list. exec_tests() reuses
 		# the same args across repeated run_kernel() calls (e.g. --run_isolated),
@@ -365,45 +345,36 @@ class LinuxSourceTree:
 			args.append('kunit.filter_action=' + filter_action)
 		args.append('kunit.enable=1')
 
-		self._process = self._ops.start(args, build_dir)
-		assert self._process is not None # tell mypy it's set
-		assert self._process.stdout is not None  # tell mypy it's set
+		process = self._ops.start(args, build_dir)
+		assert process.stdout is not None  # tell mypy it's set
 
 		# Enforce the timeout in a background thread.
 		def _wait_proc() -> None:
 			try:
-				if self._process:
-					self._process.wait(timeout=timeout)
+				process.wait(timeout=timeout)
 			except Exception as e:
 				print(e)
-				if self._process:
-					self._process.terminate()
-					self._process.wait()
+				process.terminate()
+				process.wait()
 		waiter = threading.Thread(target=_wait_proc)
 		waiter.start()
 
 		output = open(get_outfile_path(build_dir), 'w')
 		try:
 			# Tee the output to the file and to our caller in real time.
-			for line in self._process.stdout:
+			for line in process.stdout:
 				output.write(line)
 				yield line
 		# This runs even if our caller doesn't consume every line.
 		finally:
 			# Flush any leftover output to the file
-			if self._process:
-				if self._process.stdout:
-					output.write(self._process.stdout.read())
-					self._process.stdout.close()
-				self._process = None
+			output.write(process.stdout.read())
 			output.close()
+			process.stdout.close()
 
 			waiter.join()
-			self._restore_terminal_if_tty()
+			subprocess.call(['stty', 'sane'])
 
 	def signal_handler(self, unused_sig: int, unused_frame: Optional[FrameType]) -> None:
 		logging.error('Build interruption occurred. Cleaning console.')
-		if self._process:
-				self._process.terminate()
-				self._process.wait()
-		self._restore_terminal_if_tty()
+		subprocess.call(['stty', 'sane'])

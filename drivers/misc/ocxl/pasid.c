@@ -28,7 +28,7 @@ static int range_alloc(struct list_head *head, u32 size, int max_id,
 	struct id_range *cur, *new;
 	int rc, last_end;
 
-	new = kmalloc_obj(struct id_range);
+	new = kmalloc(sizeof(struct id_range), GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
 

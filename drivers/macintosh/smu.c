@@ -492,7 +492,11 @@ int __init smu_init (void)
 		goto fail_np;
 	}
 
-	smu = memblock_alloc_or_panic(sizeof(struct smu_device), SMP_CACHE_BYTES);
+	smu = memblock_alloc(sizeof(struct smu_device), SMP_CACHE_BYTES);
+	if (!smu)
+		panic("%s: Failed to allocate %zu bytes\n", __func__,
+		      sizeof(struct smu_device));
+
 	spin_lock_init(&smu->lock);
 	INIT_LIST_HEAD(&smu->cmd_list);
 	INIT_LIST_HEAD(&smu->cmd_i2c_list);
@@ -1081,7 +1085,7 @@ static int smu_open(struct inode *inode, struct file *file)
 	struct smu_private *pp;
 	unsigned long flags;
 
-	pp = kzalloc_obj(struct smu_private);
+	pp = kzalloc(sizeof(struct smu_private), GFP_KERNEL);
 	if (!pp)
 		return -ENOMEM;
 	spin_lock_init(&pp->lock);

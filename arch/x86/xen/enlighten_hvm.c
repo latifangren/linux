@@ -151,7 +151,6 @@ static void xen_hvm_crash_shutdown(struct pt_regs *regs)
 
 static int xen_cpu_up_prepare_hvm(unsigned int cpu)
 {
-	u32 cpu_uid;
 	int rc = 0;
 
 	/*
@@ -162,8 +161,8 @@ static int xen_cpu_up_prepare_hvm(unsigned int cpu)
 	 */
 	xen_uninit_lock_cpu(cpu);
 
-	if (acpi_get_cpu_uid(cpu, &cpu_uid) == 0)
-		per_cpu(xen_vcpu_id, cpu) = cpu_uid;
+	if (cpu_acpi_id(cpu) != CPU_ACPIID_INVALID)
+		per_cpu(xen_vcpu_id, cpu) = cpu_acpi_id(cpu);
 	else
 		per_cpu(xen_vcpu_id, cpu) = cpu;
 	xen_vcpu_setup(cpu);

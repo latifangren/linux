@@ -1,5 +1,4 @@
 .. SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
-.. c:namespace:: V4L
 
 .. _v4l2-mbus-format:
 
@@ -159,18 +158,14 @@ formats in memory (a raw Bayer image won't be magically converted to
 JPEG just by storing it to memory), there is no one-to-one
 correspondence between them.
 
-While the media bus pixel codes are named based on how pixels are
-transmitted on parallel buses, serial buses do not define separate
-codes. By convention, they use the codes that transfer a sample on a
-single clock cycle, and whose bit orders from LSB to MSB correspond to
-the order in which colour components are transmitted on the serial bus.
-For instance, the MIPI CSI-2 24-bit RGB (RGB888) format uses the
-MEDIA_BUS_FMT_RGB888_1X24 media bus code because CSI-2 transmits the
-blue colour component first, followed by green and red, and
-MEDIA_BUS_FMT_RGB888_1X24 defines the first bit of blue at bit 0.
-While used for 24-bit RGB data on parallel buses, the
-MEDIA_BUS_FMT_RGB888_3X8 or MEDIA_BUS_FMT_BGR888_1X24 codes must not be
-used for CSI-2.
+The media bus pixel codes document parallel formats. Should the pixel data be
+transported over a serial bus, the media bus pixel code that describes a
+parallel format that transfers a sample on a single clock cycle is used. For
+instance, both MEDIA_BUS_FMT_BGR888_1X24 and MEDIA_BUS_FMT_BGR888_3X8 are used
+on parallel busses for transferring an 8 bits per sample BGR data, whereas on
+serial busses the data in this format is only referred to using
+MEDIA_BUS_FMT_BGR888_1X24. This is because there is effectively only a single
+way to transport that format on the serial busses.
 
 Packed RGB Formats
 ^^^^^^^^^^^^^^^^^^
@@ -2229,176 +2224,8 @@ The following table list existing packed 48bit wide RGB formats.
 
     \endgroup
 
-The following table list existing packed 60bit wide RGB formats.
-
-.. tabularcolumns:: |p{4.0cm}|p{0.7cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|
-
-.. _v4l2-mbus-pixelcode-rgb-60:
-
-.. raw:: latex
-
-    \begingroup
-    \tiny
-    \setlength{\tabcolsep}{2pt}
-
-.. flat-table:: 60bit RGB formats
-    :header-rows:  3
-    :stub-columns: 0
-    :widths: 36 7 3 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
-
-    * - Identifier
-      - Code
-      -
-      - :cspan:`31` Data organization
-    * -
-      -
-      - Bit
-      -
-      -
-      -
-      -
-      - 59
-      - 58
-      - 57
-      - 56
-      - 55
-      - 54
-      - 53
-      - 52
-      - 51
-      - 50
-      - 49
-      - 48
-      - 47
-      - 46
-      - 45
-      - 44
-      - 43
-      - 42
-      - 41
-      - 40
-      - 39
-      - 38
-      - 37
-      - 36
-      - 35
-      - 34
-      - 33
-      - 32
-    * -
-      -
-      -
-      - 31
-      - 30
-      - 29
-      - 28
-      - 27
-      - 26
-      - 25
-      - 24
-      - 23
-      - 22
-      - 21
-      - 20
-      - 19
-      - 18
-      - 17
-      - 16
-      - 15
-      - 14
-      - 13
-      - 12
-      - 11
-      - 10
-      - 9
-      - 8
-      - 7
-      - 6
-      - 5
-      - 4
-      - 3
-      - 2
-      - 1
-      - 0
-    * .. _MEDIA-BUS-FMT-RGB202020-1X60:
-
-      - MEDIA_BUS_FMT_RGB202020_1X60
-      - 0x1026
-      -
-      -
-      -
-      -
-      -
-      - r\ :sub:`19`
-      - r\ :sub:`18`
-      - r\ :sub:`17`
-      - r\ :sub:`16`
-      - r\ :sub:`15`
-      - r\ :sub:`14`
-      - r\ :sub:`13`
-      - r\ :sub:`12`
-      - r\ :sub:`11`
-      - r\ :sub:`10`
-      - r\ :sub:`9`
-      - r\ :sub:`8`
-      - r\ :sub:`7`
-      - r\ :sub:`6`
-      - r\ :sub:`5`
-      - r\ :sub:`4`
-      - r\ :sub:`3`
-      - r\ :sub:`2`
-      - r\ :sub:`1`
-      - r\ :sub:`0`
-      - g\ :sub:`19`
-      - g\ :sub:`18`
-      - g\ :sub:`17`
-      - g\ :sub:`16`
-      - g\ :sub:`15`
-      - g\ :sub:`14`
-      - g\ :sub:`13`
-      - g\ :sub:`12`
-    * -
-      -
-      -
-      - g\ :sub:`11`
-      - g\ :sub:`10`
-      - g\ :sub:`9`
-      - g\ :sub:`8`
-      - g\ :sub:`7`
-      - g\ :sub:`6`
-      - g\ :sub:`5`
-      - g\ :sub:`4`
-      - g\ :sub:`3`
-      - g\ :sub:`2`
-      - g\ :sub:`1`
-      - g\ :sub:`0`
-      - b\ :sub:`19`
-      - b\ :sub:`18`
-      - b\ :sub:`17`
-      - b\ :sub:`16`
-      - b\ :sub:`15`
-      - b\ :sub:`14`
-      - b\ :sub:`13`
-      - b\ :sub:`12`
-      - b\ :sub:`11`
-      - b\ :sub:`10`
-      - b\ :sub:`9`
-      - b\ :sub:`8`
-      - b\ :sub:`7`
-      - b\ :sub:`6`
-      - b\ :sub:`5`
-      - b\ :sub:`4`
-      - b\ :sub:`3`
-      - b\ :sub:`2`
-      - b\ :sub:`1`
-      - b\ :sub:`0`
-
-.. raw:: latex
-
-    \endgroup
-
 On LVDS buses, usually each sample is transferred serialized in seven
-time slots per pixel clock, on three (18-bit) or four (24-bit) or five (30-bit)
+time slots per pixel clock, on three (18-bit) or four (24-bit)
 differential data pairs at the same time. The remaining bits are used
 for control signals as defined by SPWG/PSWG/VESA or JEIDA standards. The
 24-bit RGB format serialized in seven time slots on four lanes using
@@ -2419,12 +2246,11 @@ JEIDA defined bit mapping will be named
       - Code
       -
       -
-      - :cspan:`4` Data organization
+      - :cspan:`3` Data organization
     * -
       -
       - Timeslot
       - Lane
-      - 4
       - 3
       - 2
       - 1
@@ -2436,14 +2262,12 @@ JEIDA defined bit mapping will be named
       - 0
       -
       -
-      -
       - d
       - b\ :sub:`1`
       - g\ :sub:`0`
     * -
       -
       - 1
-      -
       -
       -
       - d
@@ -2454,14 +2278,12 @@ JEIDA defined bit mapping will be named
       - 2
       -
       -
-      -
       - d
       - g\ :sub:`5`
       - r\ :sub:`4`
     * -
       -
       - 3
-      -
       -
       -
       - b\ :sub:`5`
@@ -2472,7 +2294,6 @@ JEIDA defined bit mapping will be named
       - 4
       -
       -
-      -
       - b\ :sub:`4`
       - g\ :sub:`3`
       - r\ :sub:`2`
@@ -2481,14 +2302,12 @@ JEIDA defined bit mapping will be named
       - 5
       -
       -
-      -
       - b\ :sub:`3`
       - g\ :sub:`2`
       - r\ :sub:`1`
     * -
       -
       - 6
-      -
       -
       -
       - b\ :sub:`2`
@@ -2500,7 +2319,6 @@ JEIDA defined bit mapping will be named
       - 0x1011
       - 0
       -
-      -
       - d
       - d
       - b\ :sub:`1`
@@ -2508,7 +2326,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 1
-      -
       -
       - b\ :sub:`7`
       - d
@@ -2518,7 +2335,6 @@ JEIDA defined bit mapping will be named
       -
       - 2
       -
-      -
       - b\ :sub:`6`
       - d
       - g\ :sub:`5`
@@ -2526,7 +2342,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 3
-      -
       -
       - g\ :sub:`7`
       - b\ :sub:`5`
@@ -2536,7 +2351,6 @@ JEIDA defined bit mapping will be named
       -
       - 4
       -
-      -
       - g\ :sub:`6`
       - b\ :sub:`4`
       - g\ :sub:`3`
@@ -2545,7 +2359,6 @@ JEIDA defined bit mapping will be named
       -
       - 5
       -
-      -
       - r\ :sub:`7`
       - b\ :sub:`3`
       - g\ :sub:`2`
@@ -2553,7 +2366,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 6
-      -
       -
       - r\ :sub:`6`
       - b\ :sub:`2`
@@ -2565,7 +2377,6 @@ JEIDA defined bit mapping will be named
       - 0x1012
       - 0
       -
-      -
       - d
       - d
       - b\ :sub:`3`
@@ -2573,7 +2384,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 1
-      -
       -
       - b\ :sub:`1`
       - d
@@ -2583,7 +2393,6 @@ JEIDA defined bit mapping will be named
       -
       - 2
       -
-      -
       - b\ :sub:`0`
       - d
       - g\ :sub:`7`
@@ -2591,7 +2400,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 3
-      -
       -
       - g\ :sub:`1`
       - b\ :sub:`7`
@@ -2601,7 +2409,6 @@ JEIDA defined bit mapping will be named
       -
       - 4
       -
-      -
       - g\ :sub:`0`
       - b\ :sub:`6`
       - g\ :sub:`5`
@@ -2609,7 +2416,6 @@ JEIDA defined bit mapping will be named
     * -
       -
       - 5
-      -
       -
       - r\ :sub:`1`
       - b\ :sub:`5`
@@ -2619,141 +2425,10 @@ JEIDA defined bit mapping will be named
       -
       - 6
       -
-      -
       - r\ :sub:`0`
       - b\ :sub:`4`
       - g\ :sub:`3`
       - r\ :sub:`2`
-    * .. _MEDIA-BUS-FMT-RGB101010-1X7X5-SPWG:
-
-      - MEDIA_BUS_FMT_RGB101010_1X7X5_SPWG
-      - 0x1026
-      - 0
-      -
-      - d
-      - d
-      - d
-      - b\ :sub:`1`
-      - g\ :sub:`0`
-    * -
-      -
-      - 1
-      -
-      - b\ :sub:`9`
-      - b\ :sub:`7`
-      - d
-      - b\ :sub:`0`
-      - r\ :sub:`5`
-    * -
-      -
-      - 2
-      -
-      - b\ :sub:`8`
-      - b\ :sub:`6`
-      - d
-      - g\ :sub:`5`
-      - r\ :sub:`4`
-    * -
-      -
-      - 3
-      -
-      - g\ :sub:`9`
-      - g\ :sub:`7`
-      - b\ :sub:`5`
-      - g\ :sub:`4`
-      - r\ :sub:`3`
-    * -
-      -
-      - 4
-      -
-      - g\ :sub:`8`
-      - g\ :sub:`6`
-      - b\ :sub:`4`
-      - g\ :sub:`3`
-      - r\ :sub:`2`
-    * -
-      -
-      - 5
-      -
-      - r\ :sub:`9`
-      - r\ :sub:`7`
-      - b\ :sub:`3`
-      - g\ :sub:`2`
-      - r\ :sub:`1`
-    * -
-      -
-      - 6
-      -
-      - r\ :sub:`8`
-      - r\ :sub:`6`
-      - b\ :sub:`2`
-      - g\ :sub:`1`
-      - r\ :sub:`0`
-    * .. _MEDIA-BUS-FMT-RGB101010-1X7X5-JEIDA:
-
-      - MEDIA_BUS_FMT_RGB101010_1X7X5_JEIDA
-      - 0x1027
-      - 0
-      -
-      - d
-      - d
-      - d
-      - b\ :sub:`5`
-      - g\ :sub:`4`
-    * -
-      -
-      - 1
-      -
-      - b\ :sub:`1`
-      - b\ :sub:`3`
-      - d
-      - b\ :sub:`4`
-      - r\ :sub:`9`
-    * -
-      -
-      - 2
-      -
-      - b\ :sub:`0`
-      - b\ :sub:`2`
-      - d
-      - g\ :sub:`9`
-      - r\ :sub:`8`
-    * -
-      -
-      - 3
-      -
-      - g\ :sub:`1`
-      - g\ :sub:`3`
-      - b\ :sub:`9`
-      - g\ :sub:`8`
-      - r\ :sub:`7`
-    * -
-      -
-      - 4
-      -
-      - g\ :sub:`0`
-      - g\ :sub:`2`
-      - b\ :sub:`8`
-      - g\ :sub:`7`
-      - r\ :sub:`6`
-    * -
-      -
-      - 5
-      -
-      - r\ :sub:`1`
-      - r\ :sub:`3`
-      - b\ :sub:`7`
-      - g\ :sub:`6`
-      - r\ :sub:`5`
-    * -
-      -
-      - 6
-      -
-      - r\ :sub:`0`
-      - r\ :sub:`2`
-      - b\ :sub:`6`
-      - g\ :sub:`5`
-      - r\ :sub:`4`
 
 .. raw:: latex
 
@@ -2804,7 +2479,7 @@ be named ``MEDIA_BUS_FMT_SRGGB10_2X8_PADHI_LE``.
     :alt:    bayer.svg
     :align:  center
 
-    Bayer Patterns
+    **Figure 4.8 Bayer Patterns**
 
 The following table lists existing packed Bayer formats. The data
 organization is given as an example for the first pixel only.
@@ -2821,7 +2496,7 @@ organization is given as an example for the first pixel only.
     \tiny
     \setlength{\tabcolsep}{2pt}
 
-.. tabularcolumns:: |p{6.0cm}|p{0.7cm}|p{0.3cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|
+.. tabularcolumns:: |p{6.0cm}|p{0.7cm}|p{0.3cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|p{0.22cm}|
 
 .. _v4l2-mbus-pixelcode-bayer:
 
@@ -2834,14 +2509,10 @@ organization is given as an example for the first pixel only.
     * - Identifier
       - Code
       -
-      - :cspan:`19` Data organization
+      - :cspan:`15` Data organization
     * -
       -
       - Bit
-      - 19
-      - 18
-      - 17
-      - 16
       - 15
       - 14
       - 13
@@ -2862,10 +2533,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SBGGR8_1X8
       - 0x3001
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -2896,10 +2563,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -2912,10 +2575,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGRBG8_1X8
       - 0x3002
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -2946,10 +2605,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -2962,10 +2617,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SBGGR10_ALAW8_1X8
       - 0x3015
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -2996,10 +2647,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -3012,10 +2659,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGRBG10_ALAW8_1X8
       - 0x3017
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3046,10 +2689,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -3062,10 +2701,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SBGGR10_DPCM8_1X8
       - 0x300b
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3096,10 +2731,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`7`
       - g\ :sub:`6`
       - g\ :sub:`5`
@@ -3112,10 +2743,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGRBG10_DPCM8_1X8
       - 0x3009
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3146,10 +2773,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - r\ :sub:`7`
       - r\ :sub:`6`
       - r\ :sub:`5`
@@ -3171,10 +2794,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - 0
       - 0
       - 0
@@ -3184,10 +2803,6 @@ organization is given as an example for the first pixel only.
       - b\ :sub:`9`
       - b\ :sub:`8`
     * -
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3219,10 +2834,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`7`
       - b\ :sub:`6`
       - b\ :sub:`5`
@@ -3232,10 +2843,6 @@ organization is given as an example for the first pixel only.
       - b\ :sub:`1`
       - b\ :sub:`0`
     * -
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3267,10 +2874,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`9`
       - b\ :sub:`8`
       - b\ :sub:`7`
@@ -3280,10 +2883,6 @@ organization is given as an example for the first pixel only.
       - b\ :sub:`3`
       - b\ :sub:`2`
     * -
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3315,10 +2914,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`1`
       - b\ :sub:`0`
       - 0
@@ -3328,10 +2923,6 @@ organization is given as an example for the first pixel only.
       - 0
       - 0
     * -
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3361,10 +2952,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`9`
       - b\ :sub:`8`
       - b\ :sub:`7`
@@ -3379,10 +2966,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGBRG10_1X10
       - 0x300e
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3411,10 +2994,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`9`
       - g\ :sub:`8`
       - g\ :sub:`7`
@@ -3429,10 +3008,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SRGGB10_1X10
       - 0x300f
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3459,10 +3034,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`11`
       - b\ :sub:`10`
       - b\ :sub:`9`
@@ -3479,10 +3050,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGBRG12_1X12
       - 0x3010
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3509,10 +3076,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`11`
       - g\ :sub:`10`
       - g\ :sub:`9`
@@ -3529,10 +3092,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SRGGB12_1X12
       - 0x3012
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3557,10 +3116,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`13`
       - b\ :sub:`12`
       - b\ :sub:`11`
@@ -3579,10 +3134,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGBRG14_1X14
       - 0x301a
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3607,10 +3158,6 @@ organization is given as an example for the first pixel only.
       -
       -
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`13`
       - g\ :sub:`12`
       - g\ :sub:`11`
@@ -3629,10 +3176,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SRGGB14_1X14
       - 0x301c
-      -
-      -
-      -
-      -
       -
       -
       -
@@ -3655,10 +3198,6 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SBGGR16_1X16
       - 0x301d
       -
-      -
-      -
-      -
-      -
       - b\ :sub:`15`
       - b\ :sub:`14`
       - b\ :sub:`13`
@@ -3679,10 +3218,6 @@ organization is given as an example for the first pixel only.
 
       - MEDIA_BUS_FMT_SGBRG16_1X16
       - 0x301e
-      -
-      -
-      -
-      -
       -
       - g\ :sub:`15`
       - g\ :sub:`14`
@@ -3705,10 +3240,6 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SGRBG16_1X16
       - 0x301f
       -
-      -
-      -
-      -
-      -
       - g\ :sub:`15`
       - g\ :sub:`14`
       - g\ :sub:`13`
@@ -3730,110 +3261,6 @@ organization is given as an example for the first pixel only.
       - MEDIA_BUS_FMT_SRGGB16_1X16
       - 0x3020
       -
-      -
-      -
-      -
-      -
-      - r\ :sub:`15`
-      - r\ :sub:`14`
-      - r\ :sub:`13`
-      - r\ :sub:`12`
-      - r\ :sub:`11`
-      - r\ :sub:`10`
-      - r\ :sub:`9`
-      - r\ :sub:`8`
-      - r\ :sub:`7`
-      - r\ :sub:`6`
-      - r\ :sub:`5`
-      - r\ :sub:`4`
-      - r\ :sub:`3`
-      - r\ :sub:`2`
-      - r\ :sub:`1`
-      - r\ :sub:`0`
-    * .. _MEDIA-BUS-FMT-SBGGR20-1X20:
-
-      - MEDIA_BUS_FMT_SBGGR20_1X20
-      - 0x3021
-      -
-      - b\ :sub:`19`
-      - b\ :sub:`18`
-      - b\ :sub:`17`
-      - b\ :sub:`16`
-      - b\ :sub:`15`
-      - b\ :sub:`14`
-      - b\ :sub:`13`
-      - b\ :sub:`12`
-      - b\ :sub:`11`
-      - b\ :sub:`10`
-      - b\ :sub:`9`
-      - b\ :sub:`8`
-      - b\ :sub:`7`
-      - b\ :sub:`6`
-      - b\ :sub:`5`
-      - b\ :sub:`4`
-      - b\ :sub:`3`
-      - b\ :sub:`2`
-      - b\ :sub:`1`
-      - b\ :sub:`0`
-    * .. _MEDIA-BUS-FMT-SGBRG20-1X20:
-
-      - MEDIA_BUS_FMT_SGBRG20_1X20
-      - 0x3022
-      -
-      - g\ :sub:`19`
-      - g\ :sub:`18`
-      - g\ :sub:`17`
-      - g\ :sub:`16`
-      - g\ :sub:`15`
-      - g\ :sub:`14`
-      - g\ :sub:`13`
-      - g\ :sub:`12`
-      - g\ :sub:`11`
-      - g\ :sub:`10`
-      - g\ :sub:`9`
-      - g\ :sub:`8`
-      - g\ :sub:`7`
-      - g\ :sub:`6`
-      - g\ :sub:`5`
-      - g\ :sub:`4`
-      - g\ :sub:`3`
-      - g\ :sub:`2`
-      - g\ :sub:`1`
-      - g\ :sub:`0`
-    * .. _MEDIA-BUS-FMT-SGRBG20-1X20:
-
-      - MEDIA_BUS_FMT_SGRBG20_1X20
-      - 0x3023
-      -
-      - g\ :sub:`19`
-      - g\ :sub:`18`
-      - g\ :sub:`17`
-      - g\ :sub:`16`
-      - g\ :sub:`15`
-      - g\ :sub:`14`
-      - g\ :sub:`13`
-      - g\ :sub:`12`
-      - g\ :sub:`11`
-      - g\ :sub:`10`
-      - g\ :sub:`9`
-      - g\ :sub:`8`
-      - g\ :sub:`7`
-      - g\ :sub:`6`
-      - g\ :sub:`5`
-      - g\ :sub:`4`
-      - g\ :sub:`3`
-      - g\ :sub:`2`
-      - g\ :sub:`1`
-      - g\ :sub:`0`
-    * .. _MEDIA-BUS-FMT-SRGGB20-1X20:
-
-      - MEDIA_BUS_FMT_SRGGB20_1X20
-      - 0x3024
-      -
-      - r\ :sub:`19`
-      - r\ :sub:`18`
-      - r\ :sub:`17`
-      - r\ :sub:`16`
       - r\ :sub:`15`
       - r\ :sub:`14`
       - r\ :sub:`13`

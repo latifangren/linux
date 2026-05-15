@@ -6,8 +6,6 @@
  * Based on the work by Paul Menage (menage@google.com) and Balbir Singh
  * (balbir@in.ibm.com).
  */
-#include <linux/sched/cputime.h>
-#include "sched.h"
 
 /* Time spent by the tasks of the CPU accounting group executing in ... */
 enum cpuacct_stat_index {
@@ -61,7 +59,7 @@ cpuacct_css_alloc(struct cgroup_subsys_state *parent_css)
 	if (!parent_css)
 		return &root_cpuacct.css;
 
-	ca = kzalloc_obj(*ca);
+	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 	if (!ca)
 		goto out;
 

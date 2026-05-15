@@ -135,7 +135,7 @@ int fdtv_start_iso(struct firedtv *fdtv)
 	struct fw_device *device = device_of(fdtv);
 	int i, err;
 
-	ctx = kmalloc_obj(*ctx);
+	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -255,7 +255,7 @@ static int node_probe(struct fw_unit *unit, const struct ieee1394_device_id *id)
 	char name[MAX_MODEL_NAME_LEN];
 	int name_len, i, err;
 
-	fdtv = kzalloc_obj(*fdtv);
+	fdtv = kzalloc(sizeof(*fdtv), GFP_KERNEL);
 	if (!fdtv)
 		return -ENOMEM;
 

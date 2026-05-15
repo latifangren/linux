@@ -11,7 +11,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/spi/spi.h>
-#include <linux/sysfs.h>
 
 #define MAX31722_REG_CFG				0x00
 #define MAX31722_REG_TEMP_LSB				0x01
@@ -57,7 +56,7 @@ static ssize_t max31722_temp_show(struct device *dev,
 	if (ret < 0)
 		return ret;
 	/* Keep 12 bits and multiply by the scale of 62.5 millidegrees/bit. */
-	return sysfs_emit(buf, "%d\n", (s16)le16_to_cpu(ret) * 125 / 32);
+	return sprintf(buf, "%d\n", (s16)le16_to_cpu(ret) * 125 / 32);
 }
 
 static SENSOR_DEVICE_ATTR_RO(temp1_input, max31722_temp, 0);

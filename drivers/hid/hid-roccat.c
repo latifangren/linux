@@ -152,7 +152,7 @@ static int roccat_open(struct inode *inode, struct file *file)
 	struct roccat_device *device;
 	int error = 0;
 
-	reader = kzalloc_obj(struct roccat_reader);
+	reader = kzalloc(sizeof(struct roccat_reader), GFP_KERNEL);
 	if (!reader)
 		return -ENOMEM;
 
@@ -303,7 +303,7 @@ int roccat_connect(const struct class *klass, struct hid_device *hid, int report
 	struct roccat_device *device;
 	int temp;
 
-	device = kzalloc_obj(struct roccat_device);
+	device = kzalloc(sizeof(struct roccat_device), GFP_KERNEL);
 	if (!device)
 		return -ENOMEM;
 

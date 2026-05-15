@@ -133,7 +133,7 @@ static int __init mtk_sysirq_of_init(struct device_node *node,
 		return -EINVAL;
 	}
 
-	chip_data = kzalloc_obj(*chip_data);
+	chip_data = kzalloc(sizeof(*chip_data), GFP_KERNEL);
 	if (!chip_data)
 		return -ENOMEM;
 
@@ -154,8 +154,9 @@ static int __init mtk_sysirq_of_init(struct device_node *node,
 		goto out_free_chip;
 	}
 
-	chip_data->intpol_bases = kzalloc_objs(*chip_data->intpol_bases,
-					       nr_intpol_bases);
+	chip_data->intpol_bases = kcalloc(nr_intpol_bases,
+					  sizeof(*chip_data->intpol_bases),
+					  GFP_KERNEL);
 	if (!chip_data->intpol_bases) {
 		ret = -ENOMEM;
 		goto out_free_intpol_words;
@@ -206,8 +207,8 @@ static int __init mtk_sysirq_of_init(struct device_node *node,
 		chip_data->which_word[i] = word;
 	}
 
-	domain = irq_domain_create_hierarchy(domain_parent, 0, intpol_num, of_fwnode_handle(node),
-					     &sysirq_domain_ops, chip_data);
+	domain = irq_domain_add_hierarchy(domain_parent, 0, intpol_num, node,
+					  &sysirq_domain_ops, chip_data);
 	if (!domain) {
 		ret = -ENOMEM;
 		goto out_free_which_word;

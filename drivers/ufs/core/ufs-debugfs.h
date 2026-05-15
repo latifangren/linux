@@ -5,9 +5,6 @@
 #ifndef __UFS_DEBUGFS_H__
 #define __UFS_DEBUGFS_H__
 
-#include <linux/init.h>
-#include <linux/types.h>
-
 struct ufs_hba;
 
 #ifdef CONFIG_DEBUG_FS

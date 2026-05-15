@@ -12,7 +12,8 @@ devlink_rate_is_leaf(struct devlink_rate *devlink_rate)
 	return devlink_rate->type == DEVLINK_RATE_TYPE_LEAF;
 }
 
-bool devlink_rate_is_node(const struct devlink_rate *devlink_rate)
+static inline bool
+devlink_rate_is_node(struct devlink_rate *devlink_rate)
 {
 	return devlink_rate->type == DEVLINK_RATE_TYPE_NODE;
 }
@@ -33,7 +34,7 @@ devlink_rate_leaf_get_from_info(struct devlink *devlink, struct genl_info *info)
 static struct devlink_rate *
 devlink_rate_node_get_by_name(struct devlink *devlink, const char *node_name)
 {
-	struct devlink_rate *devlink_rate;
+	static struct devlink_rate *devlink_rate;
 
 	list_for_each_entry(devlink_rate, &devlink->rate_list, list) {
 		if (devlink_rate_is_node(devlink_rate) &&
@@ -79,29 +80,6 @@ devlink_rate_get_from_info(struct devlink *devlink, struct genl_info *info)
 		return ERR_PTR(-EINVAL);
 }
 
-static int devlink_rate_put_tc_bws(struct sk_buff *msg, u32 *tc_bw)
-{
-	struct nlattr *nla_tc_bw;
-	int i;
-
-	for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++) {
-		nla_tc_bw = nla_nest_start(msg, DEVLINK_ATTR_RATE_TC_BWS);
-		if (!nla_tc_bw)
-			return -EMSGSIZE;
-
-		if (nla_put_u8(msg, DEVLINK_RATE_TC_ATTR_INDEX, i) ||
-		    nla_put_u32(msg, DEVLINK_RATE_TC_ATTR_BW, tc_bw[i]))
-			goto nla_put_failure;
-
-		nla_nest_end(msg, nla_tc_bw);
-	}
-	return 0;
-
-nla_put_failure:
-	nla_nest_cancel(msg, nla_tc_bw);
-	return -EMSGSIZE;
-}
-
 static int devlink_nl_rate_fill(struct sk_buff *msg,
 				struct devlink_rate *devlink_rate,
 				enum devlink_command cmd, u32 portid, u32 seq,
@@ -130,12 +108,12 @@ static int devlink_nl_rate_fill(struct sk_buff *msg,
 			goto nla_put_failure;
 	}
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_RATE_TX_SHARE,
-			       devlink_rate->tx_share))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_RATE_TX_SHARE,
+			      devlink_rate->tx_share, DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_RATE_TX_MAX,
-			       devlink_rate->tx_max))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_RATE_TX_MAX,
+			      devlink_rate->tx_max, DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
 	if (nla_put_u32(msg, DEVLINK_ATTR_RATE_TX_PRIORITY,
@@ -150,9 +128,6 @@ static int devlink_nl_rate_fill(struct sk_buff *msg,
 		if (nla_put_string(msg, DEVLINK_ATTR_RATE_PARENT_NODE_NAME,
 				   devlink_rate->parent->name))
 			goto nla_put_failure;
-
-	if (devlink_rate_put_tc_bws(msg, devlink_rate->tc_bw))
-		goto nla_put_failure;
 
 	genlmsg_end(msg, hdr);
 	return 0;
@@ -341,87 +316,6 @@ devlink_nl_rate_parent_node_set(struct devlink_rate *devlink_rate,
 	return 0;
 }
 
-static int devlink_nl_rate_tc_bw_parse(struct nlattr *parent_nest, u32 *tc_bw,
-				       unsigned long *bitmap,
-				       struct netlink_ext_ack *extack)
-{
-	struct nlattr *tb[DEVLINK_RATE_TC_ATTR_MAX + 1];
-	u8 tc_index;
-	int err;
-
-	err = nla_parse_nested(tb, DEVLINK_RATE_TC_ATTR_MAX, parent_nest,
-			       devlink_dl_rate_tc_bws_nl_policy, extack);
-	if (err)
-		return err;
-
-	if (!tb[DEVLINK_RATE_TC_ATTR_INDEX]) {
-		NL_SET_ERR_ATTR_MISS(extack, parent_nest,
-				     DEVLINK_RATE_TC_ATTR_INDEX);
-		return -EINVAL;
-	}
-
-	tc_index = nla_get_u8(tb[DEVLINK_RATE_TC_ATTR_INDEX]);
-
-	if (!tb[DEVLINK_RATE_TC_ATTR_BW]) {
-		NL_SET_ERR_ATTR_MISS(extack, parent_nest,
-				     DEVLINK_RATE_TC_ATTR_BW);
-		return -EINVAL;
-	}
-
-	if (test_and_set_bit(tc_index, bitmap)) {
-		NL_SET_ERR_MSG_FMT(extack,
-				   "Duplicate traffic class index specified (%u)",
-				   tc_index);
-		return -EINVAL;
-	}
-
-	tc_bw[tc_index] = nla_get_u32(tb[DEVLINK_RATE_TC_ATTR_BW]);
-
-	return 0;
-}
-
-static int devlink_nl_rate_tc_bw_set(struct devlink_rate *devlink_rate,
-				     struct genl_info *info)
-{
-	DECLARE_BITMAP(bitmap, DEVLINK_RATE_TCS_MAX) = {};
-	struct devlink *devlink = devlink_rate->devlink;
-	const struct devlink_ops *ops = devlink->ops;
-	u32 tc_bw[DEVLINK_RATE_TCS_MAX] = {};
-	int rem, err = -EOPNOTSUPP, i;
-	struct nlattr *attr;
-
-	nlmsg_for_each_attr_type(attr, DEVLINK_ATTR_RATE_TC_BWS, info->nlhdr,
-				 GENL_HDRLEN, rem) {
-		err = devlink_nl_rate_tc_bw_parse(attr, tc_bw, bitmap,
-						  info->extack);
-		if (err)
-			return err;
-	}
-
-	for (i = 0; i < DEVLINK_RATE_TCS_MAX; i++) {
-		if (!test_bit(i, bitmap)) {
-			NL_SET_ERR_MSG_FMT(info->extack,
-					   "Bandwidth values must be specified for all %u traffic classes",
-					   DEVLINK_RATE_TCS_MAX);
-			return -EINVAL;
-		}
-	}
-
-	if (devlink_rate_is_leaf(devlink_rate))
-		err = ops->rate_leaf_tc_bw_set(devlink_rate, devlink_rate->priv,
-					       tc_bw, info->extack);
-	else if (devlink_rate_is_node(devlink_rate))
-		err = ops->rate_node_tc_bw_set(devlink_rate, devlink_rate->priv,
-					       tc_bw, info->extack);
-
-	if (err)
-		return err;
-
-	memcpy(devlink_rate->tc_bw, tc_bw, sizeof(tc_bw));
-
-	return 0;
-}
-
 static int devlink_nl_rate_set(struct devlink_rate *devlink_rate,
 			       const struct devlink_ops *ops,
 			       struct genl_info *info)
@@ -494,12 +388,6 @@ static int devlink_nl_rate_set(struct devlink_rate *devlink_rate,
 			return err;
 	}
 
-	if (attrs[DEVLINK_ATTR_RATE_TC_BWS]) {
-		err = devlink_nl_rate_tc_bw_set(devlink_rate, info);
-		if (err)
-			return err;
-	}
-
 	return 0;
 }
 
@@ -535,13 +423,6 @@ static bool devlink_rate_set_ops_supported(const struct devlink_ops *ops,
 					    "TX weight set isn't supported for the leafs");
 			return false;
 		}
-		if (attrs[DEVLINK_ATTR_RATE_TC_BWS] &&
-		    !ops->rate_leaf_tc_bw_set) {
-			NL_SET_ERR_MSG_ATTR(info->extack,
-					    attrs[DEVLINK_ATTR_RATE_TC_BWS],
-					    "TC bandwidth set isn't supported for the leafs");
-			return false;
-		}
 	} else if (type == DEVLINK_RATE_TYPE_NODE) {
 		if (attrs[DEVLINK_ATTR_RATE_TX_SHARE] && !ops->rate_node_tx_share_set) {
 			NL_SET_ERR_MSG(info->extack, "TX share set isn't supported for the nodes");
@@ -566,13 +447,6 @@ static bool devlink_rate_set_ops_supported(const struct devlink_ops *ops,
 			NL_SET_ERR_MSG_ATTR(info->extack,
 					    attrs[DEVLINK_ATTR_RATE_TX_WEIGHT],
 					    "TX weight set isn't supported for the nodes");
-			return false;
-		}
-		if (attrs[DEVLINK_ATTR_RATE_TC_BWS] &&
-		    !ops->rate_node_tc_bw_set) {
-			NL_SET_ERR_MSG_ATTR(info->extack,
-					    attrs[DEVLINK_ATTR_RATE_TC_BWS],
-					    "TC bandwidth set isn't supported for the nodes");
 			return false;
 		}
 	} else {
@@ -627,7 +501,7 @@ int devlink_nl_rate_new_doit(struct sk_buff *skb, struct genl_info *info)
 	else if (rate_node == ERR_PTR(-EINVAL))
 		return -EINVAL;
 
-	rate_node = kzalloc_obj(*rate_node);
+	rate_node = kzalloc(sizeof(*rate_node), GFP_KERNEL);
 	if (!rate_node)
 		return -ENOMEM;
 
@@ -687,16 +561,14 @@ int devlink_nl_rate_del_doit(struct sk_buff *skb, struct genl_info *info)
 	return err;
 }
 
-int devlink_rates_check(struct devlink *devlink,
-			bool (*rate_filter)(const struct devlink_rate *),
-			struct netlink_ext_ack *extack)
+int devlink_rate_nodes_check(struct devlink *devlink, u16 mode,
+			     struct netlink_ext_ack *extack)
 {
 	struct devlink_rate *devlink_rate;
 
 	list_for_each_entry(devlink_rate, &devlink->rate_list, list)
-		if (!rate_filter || rate_filter(devlink_rate)) {
-			if (extack)
-				NL_SET_ERR_MSG(extack, "Rate node(s) exists.");
+		if (devlink_rate_is_node(devlink_rate)) {
+			NL_SET_ERR_MSG(extack, "Rate node(s) exists.");
 			return -EBUSY;
 		}
 	return 0;
@@ -721,7 +593,7 @@ devl_rate_node_create(struct devlink *devlink, void *priv, char *node_name,
 	if (!IS_ERR(rate_node))
 		return ERR_PTR(-EEXIST);
 
-	rate_node = kzalloc_obj(*rate_node);
+	rate_node = kzalloc(sizeof(*rate_node), GFP_KERNEL);
 	if (!rate_node)
 		return ERR_PTR(-ENOMEM);
 
@@ -766,7 +638,7 @@ int devl_rate_leaf_create(struct devlink_port *devlink_port, void *priv,
 	if (WARN_ON(devlink_port->devlink_rate))
 		return -EBUSY;
 
-	devlink_rate = kzalloc_obj(*devlink_rate);
+	devlink_rate = kzalloc(sizeof(*devlink_rate), GFP_KERNEL);
 	if (!devlink_rate)
 		return -ENOMEM;
 
@@ -820,8 +692,8 @@ EXPORT_SYMBOL_GPL(devl_rate_leaf_destroy);
  */
 void devl_rate_nodes_destroy(struct devlink *devlink)
 {
+	static struct devlink_rate *devlink_rate, *tmp;
 	const struct devlink_ops *ops = devlink->ops;
-	struct devlink_rate *devlink_rate, *tmp;
 
 	devl_assert_locked(devlink);
 

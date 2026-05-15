@@ -2,7 +2,7 @@
 /*
  * Pulse Eight HDMI CEC driver
  *
- * Copyright 2016 Hans Verkuil <hverkuil@kernel.org>
+ * Copyright 2016 Hans Verkuil <hverkuil@xs4all.nl
  */
 
 /*
@@ -41,7 +41,7 @@
 
 #include <media/cec.h>
 
-MODULE_AUTHOR("Hans Verkuil <hverkuil@kernel.org>");
+MODULE_AUTHOR("Hans Verkuil <hverkuil@xs4all.nl>");
 MODULE_DESCRIPTION("Pulse Eight HDMI CEC driver");
 MODULE_LICENSE("GPL");
 
@@ -234,9 +234,6 @@ static int pulse8_send_and_wait_once(struct pulse8 *pulse8,
 				     u8 response, u8 size)
 {
 	int err;
-
-	if (!pulse8->serio)
-		return -ENODEV;
 
 	if (debug > 1)
 		dev_info(pulse8->dev, "transmit %s: %*ph\n",
@@ -658,10 +655,6 @@ static void pulse8_disconnect(struct serio *serio)
 {
 	struct pulse8 *pulse8 = serio_get_drvdata(serio);
 
-	cancel_delayed_work_sync(&pulse8->ping_eeprom_work);
-	mutex_lock(&pulse8->lock);
-	pulse8->serio = NULL;
-	mutex_unlock(&pulse8->lock);
 	cec_unregister_adapter(pulse8->adap);
 	serio_set_drvdata(serio, NULL);
 	serio_close(serio);
@@ -847,7 +840,7 @@ static int pulse8_connect(struct serio *serio, struct serio_driver *drv)
 	struct cec_log_addrs log_addrs = {};
 	u16 pa = CEC_PHYS_ADDR_INVALID;
 
-	pulse8 = kzalloc_obj(*pulse8);
+	pulse8 = kzalloc(sizeof(*pulse8), GFP_KERNEL);
 
 	if (!pulse8)
 		return -ENOMEM;

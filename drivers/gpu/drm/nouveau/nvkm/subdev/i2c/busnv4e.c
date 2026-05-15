@@ -76,7 +76,7 @@ nv4e_i2c_bus_new(struct nvkm_i2c_pad *pad, int id, u8 drive,
 {
 	struct nv4e_i2c_bus *bus;
 
-	if (!(bus = kzalloc_obj(*bus)))
+	if (!(bus = kzalloc(sizeof(*bus), GFP_KERNEL)))
 		return -ENOMEM;
 	*pbus = &bus->base;
 

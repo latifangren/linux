@@ -72,6 +72,13 @@ struct aml_rtc_data {
 	const struct aml_rtc_config *config;
 };
 
+static const struct regmap_config aml_rtc_regmap_config = {
+	.reg_bits = 32,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = RTC_REAL_TIME,
+};
+
 static inline u32 gray_to_binary(u32 gray)
 {
 	u32 bcd = gray;
@@ -321,13 +328,6 @@ static int aml_rtc_probe(struct platform_device *pdev)
 	void __iomem *base;
 	int ret = 0;
 
-	const struct regmap_config aml_rtc_regmap_config = {
-		.reg_bits = 32,
-		.val_bits = 32,
-		.reg_stride = 4,
-		.max_register = RTC_REAL_TIME,
-	};
-
 	rtc = devm_kzalloc(dev, sizeof(*rtc), GFP_KERNEL);
 	if (!rtc)
 		return -ENOMEM;
@@ -361,26 +361,39 @@ static int aml_rtc_probe(struct platform_device *pdev)
 				     "failed to get_enable rtc sys clk\n");
 	aml_rtc_init(rtc);
 
-	devm_device_init_wakeup(dev);
+	device_init_wakeup(dev, true);
 	platform_set_drvdata(pdev, rtc);
 
 	rtc->rtc_dev = devm_rtc_allocate_device(dev);
-	if (IS_ERR(rtc->rtc_dev))
-		return PTR_ERR(rtc->rtc_dev);
+	if (IS_ERR(rtc->rtc_dev)) {
+		ret = PTR_ERR(rtc->rtc_dev);
+		goto err_clk;
+	}
 
 	ret = devm_request_irq(dev, rtc->irq, aml_rtc_handler,
-			       0, "aml-rtc alarm", rtc);
+			       IRQF_ONESHOT, "aml-rtc alarm", rtc);
 	if (ret) {
 		dev_err_probe(dev, ret, "IRQ%d request failed, ret = %d\n",
 			      rtc->irq, ret);
-		return ret;
+		goto err_clk;
 	}
 
 	rtc->rtc_dev->ops = &aml_rtc_ops;
 	rtc->rtc_dev->range_min = 0;
 	rtc->rtc_dev->range_max = U32_MAX;
 
-	return devm_rtc_register_device(rtc->rtc_dev);
+	ret = devm_rtc_register_device(rtc->rtc_dev);
+	if (ret) {
+		dev_err_probe(&pdev->dev, ret, "Failed to register RTC device: %d\n", ret);
+		goto err_clk;
+	}
+
+	return 0;
+err_clk:
+	clk_disable_unprepare(rtc->sys_clk);
+	device_init_wakeup(dev, false);
+
+	return ret;
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -408,6 +421,14 @@ static int aml_rtc_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(aml_rtc_pm_ops,
 			 aml_rtc_suspend, aml_rtc_resume);
 
+static void aml_rtc_remove(struct platform_device *pdev)
+{
+	struct aml_rtc_data *rtc = dev_get_drvdata(&pdev->dev);
+
+	clk_disable_unprepare(rtc->sys_clk);
+	device_init_wakeup(&pdev->dev, false);
+}
+
 static const struct aml_rtc_config a5_rtc_config = {
 };
 
@@ -430,6 +451,7 @@ MODULE_DEVICE_TABLE(of, aml_rtc_device_id);
 
 static struct platform_driver aml_rtc_driver = {
 	.probe = aml_rtc_probe,
+	.remove = aml_rtc_remove,
 	.driver = {
 		.name = "aml-rtc",
 		.pm = &aml_rtc_pm_ops,

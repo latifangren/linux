@@ -7,7 +7,6 @@
 
 #include <linux/delay.h>
 #include <linux/errno.h>
-#include <linux/error-injection.h>
 
 #include <drm/drm_managed.h>
 
@@ -32,46 +31,34 @@
 
 static int pcode_mailbox_status(struct xe_tile *tile)
 {
-	const char *err_str;
-	int err_decode;
 	u32 err;
+	static const struct pcode_err_decode err_decode[] = {
+		[PCODE_ILLEGAL_CMD] = {-ENXIO, "Illegal Command"},
+		[PCODE_TIMEOUT] = {-ETIMEDOUT, "Timed out"},
+		[PCODE_ILLEGAL_DATA] = {-EINVAL, "Illegal Data"},
+		[PCODE_ILLEGAL_SUBCOMMAND] = {-ENXIO, "Illegal Subcommand"},
+		[PCODE_LOCKED] = {-EBUSY, "PCODE Locked"},
+		[PCODE_GT_RATIO_OUT_OF_RANGE] = {-EOVERFLOW,
+			"GT ratio out of range"},
+		[PCODE_REJECTED] = {-EACCES, "PCODE Rejected"},
+		[PCODE_ERROR_MASK] = {-EPROTO, "Unknown"},
+	};
 
-#define CASE_ERR(_err, _err_decode, _err_str)	\
-	case _err:				\
-		err_decode = _err_decode;	\
-		err_str = _err_str;		\
-		break
-
-	err = xe_mmio_read32(&tile->mmio, PCODE_MAILBOX) & PCODE_ERROR_MASK;
-	switch (err) {
-	CASE_ERR(PCODE_ILLEGAL_CMD,           -ENXIO,     "Illegal Command");
-	CASE_ERR(PCODE_TIMEOUT,               -ETIMEDOUT, "Timed out");
-	CASE_ERR(PCODE_ILLEGAL_DATA,          -EINVAL,    "Illegal Data");
-	CASE_ERR(PCODE_ILLEGAL_SUBCOMMAND,    -ENXIO,     "Illegal Subcommand");
-	CASE_ERR(PCODE_LOCKED,                -EBUSY,     "PCODE Locked");
-	CASE_ERR(PCODE_GT_RATIO_OUT_OF_RANGE, -EOVERFLOW, "GT ratio out of range");
-	CASE_ERR(PCODE_REJECTED,              -EACCES,    "PCODE Rejected");
-	default:
-		err_decode = -EPROTO;
-		err_str = "Unknown";
-	}
-
+	err = xe_mmio_read32(tile->primary_gt, PCODE_MAILBOX) & PCODE_ERROR_MASK;
 	if (err) {
-		drm_err(&tile_to_xe(tile)->drm, "PCODE Mailbox failed: %d %s",
-			err_decode, err_str);
-
-		return err_decode;
+		drm_err(&tile_to_xe(tile)->drm, "PCODE Mailbox failed: %d %s", err,
+			err_decode[err].str ?: "Unknown");
+		return err_decode[err].errno ?: -EPROTO;
 	}
 
 	return 0;
-#undef CASE_ERR
 }
 
 static int __pcode_mailbox_rw(struct xe_tile *tile, u32 mbox, u32 *data0, u32 *data1,
 			      unsigned int timeout_ms, bool return_data,
 			      bool atomic)
 {
-	struct xe_mmio *mmio = &tile->mmio;
+	struct xe_gt *mmio = tile->primary_gt;
 	int err;
 
 	if (tile_to_xe(tile)->info.skip_pcode)
@@ -116,17 +103,6 @@ int xe_pcode_write_timeout(struct xe_tile *tile, u32 mbox, u32 data, int timeout
 
 	mutex_lock(&tile->pcode.lock);
 	err = pcode_mailbox_rw(tile, mbox, &data, NULL, timeout, false, false);
-	mutex_unlock(&tile->pcode.lock);
-
-	return err;
-}
-
-int xe_pcode_write64_timeout(struct xe_tile *tile, u32 mbox, u32 data0, u32 data1, int timeout)
-{
-	int err;
-
-	mutex_lock(&tile->pcode.lock);
-	err = pcode_mailbox_rw(tile, mbox, &data0, &data1, timeout, false, false);
 	mutex_unlock(&tile->pcode.lock);
 
 	return err;
@@ -241,7 +217,7 @@ out:
  *
  * It returns 0 on success, and -ERROR number on failure, -EINVAL if max
  * frequency is higher then the minimal, and other errors directly translated
- * from the PCODE Error returns:
+ * from the PCODE Error returs:
  * - -ENXIO: "Illegal Command"
  * - -ETIMEDOUT: "Timed out"
  * - -EINVAL: "Illegal Data"
@@ -347,4 +323,3 @@ int xe_pcode_probe_early(struct xe_device *xe)
 {
 	return xe_pcode_ready(xe, false);
 }
-ALLOW_ERROR_INJECTION(xe_pcode_probe_early, ERRNO); /* See xe_pci_probe */

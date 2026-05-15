@@ -13,7 +13,6 @@
 #include <linux/kernel.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
@@ -57,7 +56,7 @@ static struct vpd_section ro_vpd;
 static struct vpd_section rw_vpd;
 
 static ssize_t vpd_attrib_read(struct file *filp, struct kobject *kobp,
-			       const struct bin_attribute *bin_attr, char *buf,
+			       struct bin_attribute *bin_attr, char *buf,
 			       loff_t pos, size_t count)
 {
 	struct vpd_attrib_info *info = bin_attr->private;
@@ -108,7 +107,7 @@ static int vpd_section_attrib_add(const u8 *key, u32 key_len,
 	if (vpd_section_check_key_name(key, key_len) != VPD_OK)
 		return VPD_OK;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -157,7 +156,7 @@ static void vpd_section_attrib_destroy(struct vpd_section *sec)
 }
 
 static ssize_t vpd_section_read(struct file *filp, struct kobject *kobp,
-				const struct bin_attribute *bin_attr, char *buf,
+				struct bin_attribute *bin_attr, char *buf,
 				loff_t pos, size_t count)
 {
 	struct vpd_section *sec = bin_attr->private;

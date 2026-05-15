@@ -46,11 +46,6 @@ struct xsk_queue {
 	u64 invalid_descs;
 	u64 queue_empty_descs;
 	size_t ring_vmalloc_size;
-	/* Mutual exclusion of the completion ring in the SKB mode.
-	 * Protect: when sockets share a single cq when the same netdev
-	 * and queue id is shared.
-	 */
-	spinlock_t cq_cached_prod_lock;
 };
 
 struct parsed_desc {
@@ -290,7 +285,7 @@ u32 xskq_cons_read_desc_batch(struct xsk_queue *q, struct xsk_buff_pool *pool,
 			nr_frags = 0;
 		} else {
 			nr_frags++;
-			if (nr_frags == pool->xdp_zc_max_segs) {
+			if (nr_frags == pool->netdev->xdp_zc_max_segs) {
 				nr_frags = 0;
 				break;
 			}
@@ -374,11 +369,6 @@ static inline u32 xskq_cons_present_entries(struct xsk_queue *q)
 
 /* Functions for producers */
 
-static inline u32 xskq_get_prod(struct xsk_queue *q)
-{
-	return READ_ONCE(q->ring->producer);
-}
-
 static inline u32 xskq_prod_nb_free(struct xsk_queue *q, u32 max)
 {
 	u32 free_entries = q->nentries - (q->cached_prod - q->cached_cons);
@@ -425,13 +415,6 @@ static inline int xskq_prod_reserve_addr(struct xsk_queue *q, u64 addr)
 	return 0;
 }
 
-static inline void xskq_prod_write_addr(struct xsk_queue *q, u32 idx, u64 addr)
-{
-	struct xdp_umem_ring *ring = (struct xdp_umem_ring *)q->ring;
-
-	ring->desc[idx & q->ring_mask] = addr;
-}
-
 static inline void xskq_prod_write_addr_batch(struct xsk_queue *q, struct xdp_desc *descs,
 					      u32 nb_entries)
 {
@@ -445,26 +428,20 @@ static inline void xskq_prod_write_addr_batch(struct xsk_queue *q, struct xdp_de
 	q->cached_prod = cached_prod;
 }
 
-static inline void __xskq_prod_reserve_desc(struct xsk_queue *q,
-					    u64 addr, u32 len, u32 flags)
+static inline int xskq_prod_reserve_desc(struct xsk_queue *q,
+					 u64 addr, u32 len, u32 flags)
 {
 	struct xdp_rxtx_ring *ring = (struct xdp_rxtx_ring *)q->ring;
 	u32 idx;
+
+	if (xskq_prod_is_full(q))
+		return -ENOBUFS;
 
 	/* A, matches D */
 	idx = q->cached_prod++ & q->ring_mask;
 	ring->desc[idx].addr = addr;
 	ring->desc[idx].len = len;
 	ring->desc[idx].options = flags;
-}
-
-static inline int xskq_prod_reserve_desc(struct xsk_queue *q,
-					 u64 addr, u32 len, u32 flags)
-{
-	if (xskq_prod_is_full(q))
-		return -ENOBUFS;
-
-	__xskq_prod_reserve_desc(q, addr, len, flags);
 
 	return 0;
 }

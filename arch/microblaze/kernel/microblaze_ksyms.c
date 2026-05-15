@@ -33,6 +33,8 @@ EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
 #endif
 
+EXPORT_SYMBOL(empty_zero_page);
+
 EXPORT_SYMBOL(mbc);
 
 extern void __divsi3(void);

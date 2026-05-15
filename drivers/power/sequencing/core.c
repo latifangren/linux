@@ -90,7 +90,7 @@ static struct pwrseq_unit *pwrseq_unit_new(const struct pwrseq_unit_data *data)
 {
 	struct pwrseq_unit *unit;
 
-	unit = kzalloc_obj(*unit);
+	unit = kzalloc(sizeof(*unit), GFP_KERNEL);
 	if (!unit)
 		return NULL;
 
@@ -138,7 +138,7 @@ static struct pwrseq_unit_dep *pwrseq_unit_dep_new(struct pwrseq_unit *unit)
 {
 	struct pwrseq_unit_dep *dep;
 
-	dep = kzalloc_obj(*dep);
+	dep = kzalloc(sizeof(*dep), GFP_KERNEL);
 	if (!dep)
 		return NULL;
 
@@ -195,7 +195,7 @@ pwrseq_target_new(const struct pwrseq_target_data *data)
 {
 	struct pwrseq_target *target;
 
-	target = kzalloc_obj(*target);
+	target = kzalloc(sizeof(*target), GFP_KERNEL);
 	if (!target)
 		return NULL;
 
@@ -628,7 +628,7 @@ static int pwrseq_match_device(struct device *pwrseq_dev, void *data)
 		return 0;
 
 	ret = pwrseq->match(pwrseq, match_data->dev);
-	if (ret == PWRSEQ_NO_MATCH || ret < 0)
+	if (ret <= 0)
 		return ret;
 
 	/* We got the matching device, let's find the right target. */
@@ -651,7 +651,7 @@ static int pwrseq_match_device(struct device *pwrseq_dev, void *data)
 
 	match_data->desc->pwrseq = pwrseq_device_get(pwrseq);
 
-	return PWRSEQ_MATCH_OK;
+	return 1;
 }
 
 /**
@@ -669,7 +669,8 @@ struct pwrseq_desc *pwrseq_get(struct device *dev, const char *target)
 	struct pwrseq_match_data match_data;
 	int ret;
 
-	struct pwrseq_desc *desc __free(kfree) = kzalloc_obj(*desc);
+	struct pwrseq_desc *desc __free(kfree) = kzalloc(sizeof(*desc),
+							 GFP_KERNEL);
 	if (!desc)
 		return ERR_PTR(-ENOMEM);
 
@@ -683,7 +684,7 @@ struct pwrseq_desc *pwrseq_get(struct device *dev, const char *target)
 			       pwrseq_match_device);
 	if (ret < 0)
 		return ERR_PTR(ret);
-	if (ret == PWRSEQ_NO_MATCH)
+	if (ret == 0)
 		/* No device matched. */
 		return ERR_PTR(-EPROBE_DEFER);
 

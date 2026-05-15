@@ -228,14 +228,7 @@ enum {
 	MLX5_INTERFACE_PROTOCOL_VNET,
 
 	MLX5_INTERFACE_PROTOCOL_DPLL,
-	MLX5_INTERFACE_PROTOCOL_FWCTL,
 };
-
-static bool is_fwctl_supported(struct mlx5_core_dev *dev)
-{
-	/* fwctl is most useful on PFs, prevent fwctl on SFs for now */
-	return MLX5_CAP_GEN(dev, uctx_cap) && !mlx5_core_is_sf(dev);
-}
 
 static const struct mlx5_adev_device {
 	const char *suffix;
@@ -259,8 +252,6 @@ static const struct mlx5_adev_device {
 					   .is_supported = &is_mp_supported },
 	[MLX5_INTERFACE_PROTOCOL_DPLL] = { .suffix = "dpll",
 					   .is_supported = &is_dpll_supported },
-	[MLX5_INTERFACE_PROTOCOL_FWCTL] = { .suffix = "fwctl",
-					    .is_supported = &is_fwctl_supported },
 };
 
 int mlx5_adev_idx_alloc(void)
@@ -277,8 +268,8 @@ int mlx5_adev_init(struct mlx5_core_dev *dev)
 {
 	struct mlx5_priv *priv = &dev->priv;
 
-	priv->adev = kzalloc_objs(struct mlx5_adev *,
-				  ARRAY_SIZE(mlx5_adev_devices));
+	priv->adev = kcalloc(ARRAY_SIZE(mlx5_adev_devices),
+			     sizeof(struct mlx5_adev *), GFP_KERNEL);
 	if (!priv->adev)
 		return -ENOMEM;
 
@@ -310,7 +301,7 @@ static struct mlx5_adev *add_adev(struct mlx5_core_dev *dev, int idx)
 	struct mlx5_adev *madev;
 	int ret;
 
-	madev = kzalloc_obj(*madev);
+	madev = kzalloc(sizeof(*madev), GFP_KERNEL);
 	if (!madev)
 		return ERR_PTR(-ENOMEM);
 
@@ -564,28 +555,10 @@ int mlx5_rescan_drivers_locked(struct mlx5_core_dev *dev)
 
 bool mlx5_same_hw_devs(struct mlx5_core_dev *dev, struct mlx5_core_dev *peer_dev)
 {
-	u8 fsystem_guid[MLX5_SW_IMAGE_GUID_MAX_BYTES];
-	u8 psystem_guid[MLX5_SW_IMAGE_GUID_MAX_BYTES];
-	u8 flen;
-	u8 plen;
+	u64 fsystem_guid, psystem_guid;
 
-	mlx5_query_nic_sw_system_image_guid(dev, fsystem_guid, &flen);
-	mlx5_query_nic_sw_system_image_guid(peer_dev, psystem_guid, &plen);
+	fsystem_guid = mlx5_query_nic_system_image_guid(dev);
+	psystem_guid = mlx5_query_nic_system_image_guid(peer_dev);
 
-	return plen && flen && flen == plen &&
-		!memcmp(fsystem_guid, psystem_guid, flen);
-}
-
-void mlx5_core_reps_aux_devs_remove(struct mlx5_core_dev *dev)
-{
-	struct mlx5_priv *priv = &dev->priv;
-
-	if (priv->adev[MLX5_INTERFACE_PROTOCOL_ETH])
-		device_lock_assert(&priv->adev[MLX5_INTERFACE_PROTOCOL_ETH]->adev.dev);
-	else
-		mlx5_core_err(dev, "ETH driver already removed\n");
-	if (priv->adev[MLX5_INTERFACE_PROTOCOL_IB_REP])
-		del_adev(&priv->adev[MLX5_INTERFACE_PROTOCOL_IB_REP]->adev);
-	if (priv->adev[MLX5_INTERFACE_PROTOCOL_ETH_REP])
-		del_adev(&priv->adev[MLX5_INTERFACE_PROTOCOL_ETH_REP]->adev);
+	return (fsystem_guid && psystem_guid && fsystem_guid == psystem_guid);
 }

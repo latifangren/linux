@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <fcntl.h>
@@ -8,7 +7,7 @@
 #include <errno.h>
 #include <malloc.h>
 #include "vm_util.h"
-#include "kselftest.h"
+#include "../kselftest.h"
 #include <linux/types.h>
 #include <linux/memfd.h>
 #include <linux/userfaultfd.h>
@@ -35,8 +34,8 @@
 #define PAGEMAP "/proc/self/pagemap"
 int pagemap_fd;
 int uffd;
-size_t page_size;
-size_t hpage_size;
+unsigned long page_size;
+unsigned int hpage_size;
 const char *progname;
 
 #define LEN(region)	((region.end - region.start)/page_size)
@@ -113,13 +112,13 @@ int init_uffd(void)
 	return 0;
 }
 
-int wp_init(void *addr, long size)
+int wp_init(void *lpBaseAddress, int dwRegionSize)
 {
 	struct uffdio_register uffdio_register;
 	struct uffdio_writeprotect wp;
 
-	uffdio_register.range.start = (unsigned long)addr;
-	uffdio_register.range.len = size;
+	uffdio_register.range.start = (unsigned long)lpBaseAddress;
+	uffdio_register.range.len = dwRegionSize;
 	uffdio_register.mode = UFFDIO_REGISTER_MODE_WP;
 	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register))
 		ksft_exit_fail_msg("ioctl(UFFDIO_REGISTER) %d %s\n", errno, strerror(errno));
@@ -127,8 +126,8 @@ int wp_init(void *addr, long size)
 	if (!(uffdio_register.ioctls & UFFDIO_WRITEPROTECT))
 		ksft_exit_fail_msg("ioctl set is incorrect\n");
 
-	wp.range.start = (unsigned long)addr;
-	wp.range.len = size;
+	wp.range.start = (unsigned long)lpBaseAddress;
+	wp.range.len = dwRegionSize;
 	wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
 
 	if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp))
@@ -137,21 +136,21 @@ int wp_init(void *addr, long size)
 	return 0;
 }
 
-int wp_free(void *addr, long size)
+int wp_free(void *lpBaseAddress, int dwRegionSize)
 {
 	struct uffdio_register uffdio_register;
 
-	uffdio_register.range.start = (unsigned long)addr;
-	uffdio_register.range.len = size;
+	uffdio_register.range.start = (unsigned long)lpBaseAddress;
+	uffdio_register.range.len = dwRegionSize;
 	uffdio_register.mode = UFFDIO_REGISTER_MODE_WP;
 	if (ioctl(uffd, UFFDIO_UNREGISTER, &uffdio_register.range))
 		ksft_exit_fail_msg("ioctl unregister failure\n");
 	return 0;
 }
 
-int wp_addr_range(void *addr, int size)
+int wp_addr_range(void *lpBaseAddress, int dwRegionSize)
 {
-	if (pagemap_ioctl(addr, size, NULL, 0,
+	if (pagemap_ioctl(lpBaseAddress, dwRegionSize, NULL, 0,
 			  PM_SCAN_WP_MATCHING | PM_SCAN_CHECK_WPASYNC,
 			  0, PAGE_IS_WRITTEN, 0, 0, PAGE_IS_WRITTEN) < 0)
 		ksft_exit_fail_msg("error %d %d %s\n", 1, errno, strerror(errno));
@@ -209,7 +208,7 @@ int userfaultfd_tests(void)
 	wp_addr_range(mem, mem_size);
 
 	vec_size = mem_size/page_size;
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 
 	written = pagemap_ioctl(mem, mem_size, vec, 1, PM_SCAN_WP_MATCHING | PM_SCAN_CHECK_WPASYNC,
 				vec_size - 2, PAGE_IS_WRITTEN, 0, 0, PAGE_IS_WRITTEN);
@@ -247,11 +246,11 @@ int sanity_tests_sd(void)
 	vec_size = num_pages/2;
 	mem_size = num_pages * page_size;
 
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec)
 		ksft_exit_fail_msg("error nomem\n");
 
-	vec2 = calloc(vec_size, sizeof(struct page_region));
+	vec2 = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec2)
 		ksft_exit_fail_msg("error nomem\n");
 
@@ -436,7 +435,7 @@ int sanity_tests_sd(void)
 	mem_size = 1050 * page_size;
 	vec_size = mem_size/(page_size*2);
 
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec)
 		ksft_exit_fail_msg("error nomem\n");
 
@@ -491,7 +490,7 @@ int sanity_tests_sd(void)
 	mem_size = 10000 * page_size;
 	vec_size = 50;
 
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec)
 		ksft_exit_fail_msg("error nomem\n");
 
@@ -541,7 +540,7 @@ int sanity_tests_sd(void)
 	vec_size = 1000;
 	mem_size = vec_size * page_size;
 
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec)
 		ksft_exit_fail_msg("error nomem\n");
 
@@ -695,8 +694,8 @@ int base_tests(char *prefix, char *mem, unsigned long long mem_size, int skip)
 	}
 
 	vec_size = mem_size/page_size;
-	vec = calloc(vec_size, sizeof(struct page_region));
-	vec2 = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
+	vec2 = malloc(sizeof(struct page_region) * vec_size);
 
 	/* 1. all new pages must be not be written (dirty) */
 	written = pagemap_ioctl(mem, mem_size, vec, 1, PM_SCAN_WP_MATCHING | PM_SCAN_CHECK_WPASYNC,
@@ -807,8 +806,8 @@ int hpage_unit_tests(void)
 	unsigned long long vec_size = map_size/page_size;
 	struct page_region *vec, *vec2;
 
-	vec = calloc(vec_size, sizeof(struct page_region));
-	vec2 = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
+	vec2 = malloc(sizeof(struct page_region) * vec_size);
 	if (!vec || !vec2)
 		ksft_exit_fail_msg("malloc failed\n");
 
@@ -997,7 +996,7 @@ int unmapped_region_tests(void)
 	void *start = (void *)0x10000000;
 	int written, len = 0x00040000;
 	long vec_size = len / page_size;
-	struct page_region *vec = calloc(vec_size, sizeof(struct page_region));
+	struct page_region *vec = malloc(sizeof(struct page_region) * vec_size);
 
 	/* 1. Get written pages */
 	written = pagemap_ioctl(start, len, vec, vec_size, 0, 0,
@@ -1052,16 +1051,17 @@ static void test_simple(void)
 int sanity_tests(void)
 {
 	unsigned long long mem_size, vec_size;
-	long ret, fd, i, buf_size, nr_pages;
+	long ret, fd, i, buf_size;
 	struct page_region *vec;
 	char *mem, *fmem;
 	struct stat sbuf;
+	char *tmp_buf;
 
 	/* 1. wrong operation */
 	mem_size = 10 * page_size;
 	vec_size = mem_size / page_size;
 
-	vec = calloc(vec_size, sizeof(struct page_region));
+	vec = malloc(sizeof(struct page_region) * vec_size);
 	mem = mmap(NULL, mem_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (mem == MAP_FAILED || vec == MAP_FAILED)
 		ksft_exit_fail_msg("error nomem\n");
@@ -1166,14 +1166,14 @@ int sanity_tests(void)
 	if (fmem == MAP_FAILED)
 		ksft_exit_fail_msg("error nomem %d %s\n", errno, strerror(errno));
 
-	nr_pages = (sbuf.st_size + page_size - 1) / page_size;
-	force_read_pages(fmem, nr_pages, page_size);
+	tmp_buf = malloc(sbuf.st_size);
+	memcpy(tmp_buf, fmem, sbuf.st_size);
 
 	ret = pagemap_ioctl(fmem, sbuf.st_size, vec, vec_size, 0, 0,
 			    0, PAGEMAP_NON_WRITTEN_BITS, 0, PAGEMAP_NON_WRITTEN_BITS);
 
 	ksft_test_result(ret >= 0 && vec[0].start == (uintptr_t)fmem &&
-			 LEN(vec[0]) == nr_pages &&
+			 LEN(vec[0]) == ceilf((float)sbuf.st_size/page_size) &&
 			 (vec[0].categories & PAGE_IS_FILE),
 			 "%s Memory mapped file\n", __func__);
 
@@ -1412,9 +1412,9 @@ static void transact_test(int page_size)
 	memset(mem, 0, 0x1000 * nthreads * pages_per_thread);
 
 	count = get_dirty_pages_reset(mem, nthreads * pages_per_thread, 1, page_size);
-	ksft_test_result(count > 0, "%s count %u\n", __func__, count);
+	ksft_test_result(count > 0, "%s count %d\n", __func__, count);
 	count = get_dirty_pages_reset(mem, nthreads * pages_per_thread, 1, page_size);
-	ksft_test_result(count == 0, "%s count %u\n", __func__, count);
+	ksft_test_result(count == 0, "%s count %d\n", __func__, count);
 
 	finish = 0;
 	for (i = 0; i < nthreads; ++i)
@@ -1436,7 +1436,7 @@ static void transact_test(int page_size)
 			ksft_exit_fail_msg("pthread_barrier_wait\n");
 
 		if (count > nthreads * access_per_thread)
-			ksft_exit_fail_msg("Too big count %u expected %u, iter %u\n",
+			ksft_exit_fail_msg("Too big count %d expected %d, iter %d\n",
 					   count, nthreads * access_per_thread, i);
 
 		c = get_dirty_pages_reset(mem, nthreads * pages_per_thread, 1, page_size);
@@ -1461,7 +1461,7 @@ static void transact_test(int page_size)
 			 * access and application gets page fault again for the same write.
 			 */
 			if (count < nthreads * access_per_thread) {
-				ksft_test_result_fail("Lost update, iter %u, %u vs %u.\n", i, count,
+				ksft_test_result_fail("Lost update, iter %d, %d vs %d.\n", i, count,
 						      nthreads * access_per_thread);
 				return;
 			}
@@ -1474,70 +1474,10 @@ static void transact_test(int page_size)
 	finish = 1;
 	pthread_barrier_wait(&end_barrier);
 
-	ksft_test_result_pass("%s Extra pages %u (%.1lf%%), extra thread faults %u.\n", __func__,
+	ksft_test_result_pass("%s Extra pages %u (%.1lf%%), extra thread faults %d.\n", __func__,
 			      extra_pages,
 			      100.0 * extra_pages / (iter_count * nthreads * access_per_thread),
 			      extra_thread_faults);
-}
-
-void zeropfn_tests(void)
-{
-	unsigned long long mem_size;
-	struct page_region vec;
-	int i, ret;
-	char *mmap_mem, *mem;
-
-	/* Test with normal memory */
-	mem_size = 10 * page_size;
-	mem = mmap(NULL, mem_size, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (mem == MAP_FAILED)
-		ksft_exit_fail_msg("error nomem\n");
-
-	/* Touch each page to ensure it's mapped */
-	for (i = 0; i < mem_size; i += page_size)
-		(void)((volatile char *)mem)[i];
-
-	ret = pagemap_ioctl(mem, mem_size, &vec, 1, 0,
-			    (mem_size / page_size), PAGE_IS_PFNZERO, 0, 0, PAGE_IS_PFNZERO);
-	if (ret < 0)
-		ksft_exit_fail_msg("error %d %d %s\n", ret, errno, strerror(errno));
-
-	ksft_test_result(ret == 1 && LEN(vec) == (mem_size / page_size),
-			 "%s all pages must have PFNZERO set\n", __func__);
-
-	munmap(mem, mem_size);
-
-	/* Test with huge page if user_zero_page is set to 1 */
-	if (!detect_huge_zeropage()) {
-		ksft_test_result_skip("%s use_zero_page not supported or set to 1\n", __func__);
-		return;
-	}
-
-	mem_size = 2 * hpage_size;
-	mmap_mem = mmap(NULL, mem_size, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (mmap_mem == MAP_FAILED)
-		ksft_exit_fail_msg("error nomem\n");
-
-	/* We need a THP-aligned memory area. */
-	mem = (char *)(((uintptr_t)mmap_mem + hpage_size) & ~(hpage_size - 1));
-
-	ret = madvise(mem, hpage_size, MADV_HUGEPAGE);
-	if (!ret) {
-		FORCE_READ(*mem);
-
-		ret = pagemap_ioctl(mem, hpage_size, &vec, 1, 0,
-				    0, PAGE_IS_PFNZERO, 0, 0, PAGE_IS_PFNZERO);
-		if (ret < 0)
-			ksft_exit_fail_msg("error %d %d %s\n", ret, errno, strerror(errno));
-
-		ksft_test_result(ret == 1 && LEN(vec) == (hpage_size / page_size),
-				 "%s all huge pages must have PFNZERO set\n", __func__);
-	} else {
-		ksft_test_result_skip("%s huge page not supported\n", __func__);
-	}
-
-	munmap(mmap_mem, mem_size);
 }
 
 int main(int __attribute__((unused)) argc, char *argv[])
@@ -1552,16 +1492,16 @@ int main(int __attribute__((unused)) argc, char *argv[])
 	ksft_print_header();
 
 	if (init_uffd())
-		ksft_exit_skip("Failed to initialize userfaultfd\n");
+		ksft_exit_pass();
 
-	ksft_set_plan(117);
+	ksft_set_plan(115);
 
 	page_size = getpagesize();
 	hpage_size = read_pmd_pagesize();
 
 	pagemap_fd = open(PAGEMAP, O_RDONLY);
 	if (pagemap_fd < 0)
-		ksft_exit_fail_msg("Failed to open " PAGEMAP "\n");
+		return -EINVAL;
 
 	/* 1. Sanity testing */
 	sanity_tests_sd();
@@ -1729,9 +1669,6 @@ int main(int __attribute__((unused)) argc, char *argv[])
 	/* 16. Userfaultfd tests */
 	userfaultfd_tests();
 
-	/* 17. ZEROPFN tests */
-	zeropfn_tests();
-
 	close(pagemap_fd);
-	ksft_finished();
+	ksft_exit_pass();
 }

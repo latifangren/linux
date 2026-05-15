@@ -82,7 +82,7 @@ struct spear_adc_state {
 	 * of register writes, then a wait for a completion callback,
 	 * and finally a register read, during which userspace could issue
 	 * another read request. This lock protects a read access from
-	 * occurring before another one has finished.
+	 * ocurring before another one has finished.
 	 */
 	struct mutex lock;
 	u32 current_clk;
@@ -275,7 +275,8 @@ static int spear_adc_probe(struct platform_device *pdev)
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(struct spear_adc_state));
 	if (!indio_dev)
-		return -ENOMEM;
+		return dev_err_probe(dev, -ENOMEM,
+				     "failed allocating iio device\n");
 
 	st = iio_priv(indio_dev);
 	st->dev = dev;
@@ -345,7 +346,7 @@ static int spear_adc_probe(struct platform_device *pdev)
 
 static const struct of_device_id spear_adc_dt_ids[] = {
 	{ .compatible = "st,spear600-adc", },
-	{ }
+	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, spear_adc_dt_ids);
 

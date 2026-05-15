@@ -4,7 +4,6 @@
 #include <linux/printk.h>
 #include <linux/screen_info.h>
 #include <linux/string.h>
-#include <linux/sysfb.h>
 
 static struct pci_dev *screen_info_lfb_pdev;
 static size_t screen_info_lfb_bar;
@@ -27,7 +26,7 @@ static bool __screen_info_relocation_is_valid(const struct screen_info *si, stru
 
 void screen_info_apply_fixups(void)
 {
-	struct screen_info *si = &sysfb_primary_display.screen;
+	struct screen_info *si = &screen_info;
 
 	if (screen_info_lfb_pdev) {
 		struct resource *pr = &screen_info_lfb_pdev->resource[screen_info_lfb_bar];
@@ -76,7 +75,7 @@ static void screen_info_fixup_lfb(struct pci_dev *pdev)
 		.flags = IORESOURCE_MEM,
 	};
 	const struct resource *pr;
-	const struct screen_info *si = &sysfb_primary_display.screen;
+	const struct screen_info *si = &screen_info;
 
 	if (screen_info_lfb_pdev)
 		return; // already found

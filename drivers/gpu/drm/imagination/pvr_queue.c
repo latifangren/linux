@@ -249,7 +249,7 @@ pvr_queue_fence_alloc(void)
 {
 	struct pvr_queue_fence *fence;
 
-	fence = kzalloc_obj(*fence);
+	fence = kzalloc(sizeof(*fence), GFP_KERNEL);
 	if (!fence)
 		return NULL;
 
@@ -803,7 +803,7 @@ static void pvr_queue_start(struct pvr_queue *queue)
  * the scheduler, and re-assign parent fences in the middle.
  *
  * Return:
- *  * DRM_GPU_SCHED_STAT_RESET.
+ *  * DRM_GPU_SCHED_STAT_NOMINAL.
  */
 static enum drm_gpu_sched_stat
 pvr_queue_timedout_job(struct drm_sched_job *s_job)
@@ -854,7 +854,7 @@ pvr_queue_timedout_job(struct drm_sched_job *s_job)
 
 	drm_sched_start(sched, 0);
 
-	return DRM_GPU_SCHED_STAT_RESET;
+	return DRM_GPU_SCHED_STAT_NOMINAL;
 }
 
 /**
@@ -1073,7 +1073,6 @@ static int pvr_queue_cleanup_fw_context(struct pvr_queue *queue)
 /**
  * pvr_queue_job_init() - Initialize queue related fields in a pvr_job object.
  * @job: The job to initialize.
- * @drm_client_id: drm_file.client_id submitting the job
  *
  * Bind the job to a queue and allocate memory to guarantee pvr_queue_job_arm()
  * and pvr_queue_job_push() can't fail. We also make sure the context type is
@@ -1083,7 +1082,7 @@ static int pvr_queue_cleanup_fw_context(struct pvr_queue *queue)
  *  * 0 on success, or
  *  * An error code if something failed.
  */
-int pvr_queue_job_init(struct pvr_job *job, u64 drm_client_id)
+int pvr_queue_job_init(struct pvr_job *job)
 {
 	/* Fragment jobs need at least one native fence wait on the geometry job fence. */
 	u32 min_native_dep_count = job->type == DRM_PVR_JOB_TYPE_FRAGMENT ? 1 : 0;
@@ -1100,7 +1099,7 @@ int pvr_queue_job_init(struct pvr_job *job, u64 drm_client_id)
 	if (!pvr_cccb_cmdseq_can_fit(&queue->cccb, job_cmds_size(job, min_native_dep_count)))
 		return -E2BIG;
 
-	err = drm_sched_job_init(&job->base, &queue->entity, 1, THIS_MODULE, drm_client_id);
+	err = drm_sched_job_init(&job->base, &queue->entity, 1, THIS_MODULE);
 	if (err)
 		return err;
 
@@ -1266,7 +1265,7 @@ struct pvr_queue *pvr_queue_create(struct pvr_context *ctx,
 	if (ctx_state_size < 0)
 		return ERR_PTR(ctx_state_size);
 
-	queue = kzalloc_obj(*queue);
+	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
 	if (!queue)
 		return ERR_PTR(-ENOMEM);
 

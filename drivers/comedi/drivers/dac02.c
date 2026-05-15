@@ -103,8 +103,7 @@ static int dac02_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_check_request_region(dev, it->options[0], 0x08,
-					  0x200, 0x3ff, 8);
+	ret = comedi_request_region(dev, it->options[0], 0x08);
 	if (ret)
 		return ret;
 

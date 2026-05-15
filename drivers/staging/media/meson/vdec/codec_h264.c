@@ -233,7 +233,7 @@ static int codec_h264_load_extended_firmware(struct amvdec_session *sess,
 	if (len < SIZE_EXT_FW)
 		return -EINVAL;
 
-	h264 = kzalloc_obj(*h264);
+	h264 = kzalloc(sizeof(*h264), GFP_KERNEL);
 	if (!h264)
 		return -ENOMEM;
 
@@ -353,7 +353,8 @@ static void codec_h264_src_change(struct amvdec_session *sess)
 		frame_width, frame_height, crop_right, crop_bottom);
 
 	codec_h264_set_par(sess);
-	amvdec_src_change(sess, frame_width, frame_height, h264->max_refs + 5);
+	amvdec_src_change(sess, frame_width, frame_height,
+			  h264->max_refs + 5, 8);
 }
 
 /*

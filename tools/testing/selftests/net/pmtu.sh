@@ -205,6 +205,7 @@
 #	Check that PMTU exceptions are created for both paths.
 
 source lib.sh
+source net_helper.sh
 
 PAUSE_ON_FAIL=no
 VERBOSE=0
@@ -1089,11 +1090,10 @@ cleanup() {
 
 	cleanup_all_ns
 
-	[ -e "/sys/class/net/veth_A-C"  ] && ip link del veth_A-C
-	[ -e "/sys/class/net/veth_A-R1" ] && ip link del veth_A-R1
-	[ -e "/sys/class/net/ovs_br0"   ] && cleanup_del_ovs_internal
-	[ -e "/sys/class/net/ovs_br0"   ] && cleanup_del_ovs_vswitchd
-
+	ip link del veth_A-C		2>/dev/null
+	ip link del veth_A-R1		2>/dev/null
+	cleanup_del_ovs_internal
+	cleanup_del_ovs_vswitchd
 	rm -f "$tmpoutfile"
 }
 

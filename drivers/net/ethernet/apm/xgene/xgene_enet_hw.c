@@ -421,12 +421,18 @@ static void xgene_enet_configure_clock(struct xgene_enet_pdata *pdata)
 
 	if (dev->of_node) {
 		struct clk *parent = clk_get_parent(pdata->clk);
-		long rate = rgmii_clock(pdata->phy_speed);
 
-		if (rate < 0)
-			rate = 125000000;
-
-		clk_set_rate(parent, rate);
+		switch (pdata->phy_speed) {
+		case SPEED_10:
+			clk_set_rate(parent, 2500000);
+			break;
+		case SPEED_100:
+			clk_set_rate(parent, 25000000);
+			break;
+		default:
+			clk_set_rate(parent, 125000000);
+			break;
+		}
 	}
 #ifdef CONFIG_ACPI
 	else {
@@ -910,9 +916,7 @@ static int xgene_mdiobus_register(struct xgene_enet_pdata *pdata,
 			return -ENXIO;
 		}
 
-		ret = of_mdiobus_register(mdio, mdio_np);
-		of_node_put(mdio_np);
-		return ret;
+		return of_mdiobus_register(mdio, mdio_np);
 	}
 
 	/* Mask out all PHYs from auto probing. */

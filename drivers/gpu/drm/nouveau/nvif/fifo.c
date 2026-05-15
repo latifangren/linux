@@ -25,18 +25,19 @@ static int
 nvif_fifo_runlists(struct nvif_device *device)
 {
 	struct nvif_object *object = &device->object;
-	TRAILING_OVERLAP(struct nv_device_info_v1, m, data,
+	struct {
+		struct nv_device_info_v1 m;
 		struct {
 			struct nv_device_info_v1_data runlists;
 			struct nv_device_info_v1_data runlist[64];
 		} v;
-	) *a;
+	} *a;
 	int ret, i;
 
 	if (device->runlist)
 		return 0;
 
-	if (!(a = kmalloc_obj(*a)))
+	if (!(a = kmalloc(sizeof(*a), GFP_KERNEL)))
 		return -ENOMEM;
 	a->m.version = 1;
 	a->m.count = sizeof(a->v) / sizeof(a->v.runlists);
@@ -51,7 +52,8 @@ nvif_fifo_runlists(struct nvif_device *device)
 		goto done;
 
 	device->runlists = fls64(a->v.runlists.data);
-	device->runlist = kzalloc_objs(*device->runlist, device->runlists);
+	device->runlist = kcalloc(device->runlists, sizeof(*device->runlist),
+				  GFP_KERNEL);
 	if (!device->runlist) {
 		ret = -ENOMEM;
 		goto done;

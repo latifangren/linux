@@ -11,3 +11,10 @@ API.
    :maxdepth: 1
 
    iaa-crypto
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

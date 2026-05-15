@@ -48,6 +48,7 @@ enum scmi_imx_bbm_protocol_cmd {
 #define SCMI_IMX_BBM_EVENT_RTC_MASK		GENMASK(31, 24)
 
 struct scmi_imx_bbm_info {
+	u32 version;
 	int nr_rtc;
 	int nr_gpr;
 };
@@ -344,11 +345,16 @@ static const struct scmi_imx_bbm_proto_ops scmi_imx_bbm_proto_ops = {
 
 static int scmi_imx_bbm_protocol_init(const struct scmi_protocol_handle *ph)
 {
+	u32 version;
 	int ret;
 	struct scmi_imx_bbm_info *binfo;
 
+	ret = ph->xops->version_get(ph, &version);
+	if (ret)
+		return ret;
+
 	dev_info(ph->dev, "NXP SM BBM Version %d.%d\n",
-		 PROTOCOL_REV_MAJOR(ph->version), PROTOCOL_REV_MINOR(ph->version));
+		 PROTOCOL_REV_MAJOR(version), PROTOCOL_REV_MINOR(version));
 
 	binfo = devm_kzalloc(ph->dev, sizeof(*binfo), GFP_KERNEL);
 	if (!binfo)
@@ -358,7 +364,7 @@ static int scmi_imx_bbm_protocol_init(const struct scmi_protocol_handle *ph)
 	if (ret)
 		return ret;
 
-	return ph->set_priv(ph, binfo);
+	return ph->set_priv(ph, binfo, version);
 }
 
 static const struct scmi_protocol scmi_imx_bbm = {
@@ -368,11 +374,10 @@ static const struct scmi_protocol scmi_imx_bbm = {
 	.ops = &scmi_imx_bbm_proto_ops,
 	.events = &scmi_imx_bbm_protocol_events,
 	.supported_version = SCMI_PROTOCOL_SUPPORTED_VERSION,
-	.vendor_id = SCMI_IMX_VENDOR,
-	.sub_vendor_id = SCMI_IMX_SUBVENDOR,
+	.vendor_id = "NXP",
+	.sub_vendor_id = "IMX",
 };
 module_scmi_protocol(scmi_imx_bbm);
 
-MODULE_ALIAS("scmi-protocol-" __stringify(SCMI_PROTOCOL_IMX_BBM) "-" SCMI_IMX_VENDOR);
 MODULE_DESCRIPTION("i.MX SCMI BBM driver");
 MODULE_LICENSE("GPL");

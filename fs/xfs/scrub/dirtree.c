@@ -3,7 +3,7 @@
  * Copyright (c) 2023-2024 Oracle.  All Rights Reserved.
  * Author: Darrick J. Wong <djwong@kernel.org>
  */
-#include "xfs_platform.h"
+#include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -106,7 +106,7 @@ xchk_setup_dirtree(
 			return error;
 	}
 
-	dl = kvzalloc_obj(struct xchk_dirtree, XCHK_GFP_FLAGS);
+	dl = kvzalloc(sizeof(struct xchk_dirtree), XCHK_GFP_FLAGS);
 	if (!dl)
 		return -ENOMEM;
 	dl->sc = sc;
@@ -238,7 +238,7 @@ xchk_dirtree_create_path(
 	 * Create a new xchk_path structure to remember this parent pointer
 	 * and record the first name step.
 	 */
-	path = kmalloc_obj(struct xchk_dirpath, XCHK_GFP_FLAGS);
+	path = kmalloc(sizeof(struct xchk_dirpath), XCHK_GFP_FLAGS);
 	if (!path)
 		return -ENOMEM;
 
@@ -361,8 +361,7 @@ xchk_dirpath_set_outcome(
 STATIC int
 xchk_dirpath_step_up(
 	struct xchk_dirtree	*dl,
-	struct xchk_dirpath	*path,
-	bool			is_metadir)
+	struct xchk_dirpath	*path)
 {
 	struct xfs_scrub	*sc = dl->sc;
 	struct xfs_inode	*dp;
@@ -430,14 +429,6 @@ xchk_dirpath_step_up(
 	/* Parent cannot be an unlinked directory. */
 	if (VFS_I(dp)->i_nlink == 0) {
 		trace_xchk_dirpath_unlinked_parent(dl->sc, dp, path->path_nr,
-				path->nr_steps, &dl->xname, &dl->pptr_rec);
-		error = -EFSCORRUPTED;
-		goto out_scanlock;
-	}
-
-	/* Parent must be in the same directory tree. */
-	if (is_metadir != xfs_is_metadir_inode(dp)) {
-		trace_xchk_dirpath_crosses_tree(dl->sc, dp, path->path_nr,
 				path->nr_steps, &dl->xname, &dl->pptr_rec);
 		error = -EFSCORRUPTED;
 		goto out_scanlock;
@@ -516,7 +507,6 @@ xchk_dirpath_walk_upwards(
 	struct xchk_dirpath	*path)
 {
 	struct xfs_scrub	*sc = dl->sc;
-	bool			is_metadir;
 	int			error;
 
 	ASSERT(sc->ilock_flags & XFS_ILOCK_EXCL);
@@ -547,7 +537,6 @@ xchk_dirpath_walk_upwards(
 	 * ILOCK state is no longer tracked in the scrub context.  Hence we
 	 * must drop @sc->ip's ILOCK during the walk.
 	 */
-	is_metadir = xfs_is_metadir_inode(sc->ip);
 	mutex_unlock(&dl->lock);
 	xchk_iunlock(sc, XFS_ILOCK_EXCL);
 
@@ -557,7 +546,7 @@ xchk_dirpath_walk_upwards(
 	 * If we see any kind of error here (including corruptions), the parent
 	 * pointer of @sc->ip is corrupt.  Stop the whole scan.
 	 */
-	error = xchk_dirpath_step_up(dl, path, is_metadir);
+	error = xchk_dirpath_step_up(dl, path);
 	if (error) {
 		xchk_ilock(sc, XFS_ILOCK_EXCL);
 		mutex_lock(&dl->lock);
@@ -570,7 +559,7 @@ xchk_dirpath_walk_upwards(
 	 * *somewhere* in the path, but we don't need to stop scanning.
 	 */
 	while (!error && path->outcome == XCHK_DIRPATH_SCANNING)
-		error = xchk_dirpath_step_up(dl, path, is_metadir);
+		error = xchk_dirpath_step_up(dl, path);
 
 	/* Retake the locks we had, mark paths, etc. */
 	xchk_ilock(sc, XFS_ILOCK_EXCL);
@@ -927,7 +916,7 @@ xchk_dirtree(
 	 * scan, because the hook doesn't detach until after sc->ip gets
 	 * released during teardown.
 	 */
-	dl->root_ino = xchk_inode_rootdir_inum(sc->ip);
+	dl->root_ino = sc->mp->m_rootip->i_ino;
 	dl->scan_ino = sc->ip->i_ino;
 
 	trace_xchk_dirtree_start(sc->ip, sc->sm, 0);
@@ -992,17 +981,4 @@ out_scanlock:
 out:
 	trace_xchk_dirtree_done(sc->ip, sc->sm, error);
 	return error;
-}
-
-/* Does the directory targetted by this scrub have no parents? */
-bool
-xchk_dirtree_parentless(const struct xchk_dirtree *dl)
-{
-	struct xfs_scrub	*sc = dl->sc;
-
-	if (xchk_inode_is_dirtree_root(sc->ip))
-		return true;
-	if (VFS_I(sc->ip)->i_nlink == 0)
-		return true;
-	return false;
 }

@@ -925,18 +925,19 @@ static int imx412_parse_hw_config(struct imx412 *imx412)
 
 	/* Request optional reset pin */
 	imx412->reset_gpio = devm_gpiod_get_optional(imx412->dev, "reset",
-						     GPIOD_OUT_HIGH);
+						     GPIOD_OUT_LOW);
 	if (IS_ERR(imx412->reset_gpio)) {
-		dev_err(imx412->dev, "failed to get reset gpio %pe\n",
-			imx412->reset_gpio);
+		dev_err(imx412->dev, "failed to get reset gpio %ld\n",
+			PTR_ERR(imx412->reset_gpio));
 		return PTR_ERR(imx412->reset_gpio);
 	}
 
 	/* Get sensor input clock */
-	imx412->inclk = devm_v4l2_sensor_clk_get(imx412->dev, NULL);
-	if (IS_ERR(imx412->inclk))
-		return dev_err_probe(imx412->dev, PTR_ERR(imx412->inclk),
-				     "could not get inclk\n");
+	imx412->inclk = devm_clk_get(imx412->dev, NULL);
+	if (IS_ERR(imx412->inclk)) {
+		dev_err(imx412->dev, "could not get inclk\n");
+		return PTR_ERR(imx412->inclk);
+	}
 
 	rate = clk_get_rate(imx412->inclk);
 	if (rate != IMX412_INCLK_RATE) {
@@ -1037,11 +1038,7 @@ static int imx412_power_on(struct device *dev)
 		goto error_reset;
 	}
 
-	/*
-	 * Certain Arducam IMX577 module variants require a longer reset settle
-	 * time. Increasing the delay from 1ms to 10ms ensures reliable startup.
-	 */
-	usleep_range(10000, 12000);
+	usleep_range(1000, 1200);
 
 	return 0;
 

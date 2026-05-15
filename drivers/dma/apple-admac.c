@@ -260,7 +260,7 @@ static struct dma_async_tx_descriptor *admac_prep_dma_cyclic(
 	if (direction != admac_chan_direction(adchan->no))
 		return NULL;
 
-	adtx = kzalloc_obj(*adtx, GFP_NOWAIT);
+	adtx = kzalloc(sizeof(*adtx), GFP_NOWAIT);
 	if (!adtx)
 		return NULL;
 
@@ -948,7 +948,7 @@ static struct platform_driver apple_admac_driver = {
 		.of_match_table = admac_of_match,
 	},
 	.probe = admac_probe,
-	.remove = admac_remove,
+	.remove_new = admac_remove,
 };
 module_platform_driver(apple_admac_driver);
 

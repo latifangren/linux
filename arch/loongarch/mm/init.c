@@ -36,6 +36,23 @@
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
 
+unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)] __page_aligned_bss;
+EXPORT_SYMBOL(empty_zero_page);
+
+void copy_user_highpage(struct page *to, struct page *from,
+	unsigned long vaddr, struct vm_area_struct *vma)
+{
+	void *vfrom, *vto;
+
+	vfrom = kmap_local_page(from);
+	vto = kmap_local_page(to);
+	copy_page(vto, vfrom);
+	kunmap_local(vfrom);
+	kunmap_local(vto);
+	/* Make sure this page is cleared on other CPU's too before using it */
+	smp_wmb();
+}
+
 int __ref page_is_ram(unsigned long pfn)
 {
 	unsigned long addr = PFN_PHYS(pfn);
@@ -43,65 +60,32 @@ int __ref page_is_ram(unsigned long pfn)
 	return memblock_is_memory(addr) && !memblock_is_reserved(addr);
 }
 
-void __init arch_zone_limits_init(unsigned long *max_zone_pfns)
+#ifndef CONFIG_NUMA
+void __init paging_init(void)
 {
+	unsigned long max_zone_pfns[MAX_NR_ZONES];
+
 #ifdef CONFIG_ZONE_DMA32
 	max_zone_pfns[ZONE_DMA32] = MAX_DMA32_PFN;
 #endif
 	max_zone_pfns[ZONE_NORMAL] = max_low_pfn;
-#ifdef CONFIG_HIGHMEM
-	max_zone_pfns[ZONE_HIGHMEM] = max_pfn;
-#endif
+
+	free_area_init(max_zone_pfns);
 }
+
+void __init mem_init(void)
+{
+	max_mapnr = max_low_pfn;
+	high_memory = (void *) __va(max_low_pfn << PAGE_SHIFT);
+
+	memblock_free_all();
+}
+#endif /* !CONFIG_NUMA */
 
 void __ref free_initmem(void)
 {
 	free_initmem_default(POISON_FREE_INITMEM);
 }
-
-#ifdef CONFIG_HIGHMEM
-
-void __init fixrange_init(unsigned long start, unsigned long end, pgd_t *pgd_base)
-{
-	pgd_t *pgd;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-	int i, j, k;
-	int ptrs_per_pgd;
-	unsigned long vaddr;
-
-	vaddr = start;
-	i = pgd_index(vaddr);
-	j = pud_index(vaddr);
-	k = pmd_index(vaddr);
-	pgd = pgd_base + i;
-	ptrs_per_pgd = min((1 << (BITS_PER_LONG - PGDIR_SHIFT)), PTRS_PER_PGD);
-
-	for ( ; (i < ptrs_per_pgd) && (vaddr < end); pgd++, i++) {
-		pud = (pud_t *)pgd;
-		for ( ; (j < PTRS_PER_PUD) && (vaddr < end); pud++, j++) {
-			pmd = (pmd_t *)pud;
-			for (; (k < PTRS_PER_PMD) && (vaddr < end); pmd++, k++) {
-				if (pmd_none(*pmd)) {
-					pte = (pte_t *) memblock_alloc_low(PAGE_SIZE, PAGE_SIZE);
-					if (!pte)
-						panic("%s: Failed to allocate %lu bytes align=%lx\n",
-						      __func__, PAGE_SIZE, PAGE_SIZE);
-
-					kernel_pte_init(pte);
-					set_pmd(pmd, __pmd((unsigned long)pte));
-					BUG_ON(pte != pte_offset_kernel(pmd, 0));
-				}
-				vaddr += PMD_SIZE;
-			}
-			k = 0;
-		}
-		j = 0;
-	}
-}
-
-#endif
 
 #ifdef CONFIG_MEMORY_HOTPLUG
 int arch_add_memory(int nid, u64 start, u64 size, struct mhp_params *params)
@@ -130,6 +114,14 @@ void arch_remove_memory(u64 start, u64 size, struct vmem_altmap *altmap)
 		page += vmem_altmap_offset(altmap);
 	__remove_pages(start_pfn, nr_pages, altmap);
 }
+
+#ifdef CONFIG_NUMA
+int memory_add_physaddr_to_nid(u64 start)
+{
+	return pa_to_nid(start);
+}
+EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
+#endif
 #endif
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
@@ -179,7 +171,9 @@ pte_t * __init populate_kernel_pte(unsigned long addr)
 	pmd_t *pmd;
 
 	if (p4d_none(p4dp_get(p4d))) {
-		pud = memblock_alloc_or_panic(PAGE_SIZE, PAGE_SIZE);
+		pud = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
+		if (!pud)
+			panic("%s: Failed to allocate memory\n", __func__);
 		p4d_populate(&init_mm, p4d, pud);
 #ifndef __PAGETABLE_PUD_FOLDED
 		pud_init(pud);
@@ -188,7 +182,9 @@ pte_t * __init populate_kernel_pte(unsigned long addr)
 
 	pud = pud_offset(p4d, addr);
 	if (pud_none(pudp_get(pud))) {
-		pmd = memblock_alloc_or_panic(PAGE_SIZE, PAGE_SIZE);
+		pmd = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
+		if (!pmd)
+			panic("%s: Failed to allocate memory\n", __func__);
 		pud_populate(&init_mm, pud, pmd);
 #ifndef __PAGETABLE_PMD_FOLDED
 		pmd_init(pmd);
@@ -199,7 +195,10 @@ pte_t * __init populate_kernel_pte(unsigned long addr)
 	if (!pmd_present(pmdp_get(pmd))) {
 		pte_t *pte;
 
-		pte = memblock_alloc_or_panic(PAGE_SIZE, PAGE_SIZE);
+		pte = memblock_alloc(PAGE_SIZE, PAGE_SIZE);
+		if (!pte)
+			panic("%s: Failed to allocate memory\n", __func__);
+
 		pmd_populate_kernel(&init_mm, pmd, pte);
 		kernel_pte_init(pte);
 	}
@@ -250,7 +249,7 @@ EXPORT_SYMBOL(invalid_pmd_table);
 pte_t invalid_pte_table[PTRS_PER_PTE] __page_aligned_bss;
 EXPORT_SYMBOL(invalid_pte_table);
 
-#if defined(CONFIG_EXECMEM) && defined(MODULES_VADDR)
+#ifdef CONFIG_EXECMEM
 static struct execmem_info execmem_info __ro_after_init;
 
 struct execmem_info __init *execmem_arch_setup(void)
@@ -268,4 +267,4 @@ struct execmem_info __init *execmem_arch_setup(void)
 
 	return &execmem_info;
 }
-#endif /* CONFIG_EXECMEM && MODULES_VADDR */
+#endif /* CONFIG_EXECMEM */

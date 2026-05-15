@@ -251,11 +251,13 @@ static int dvb_create_tsout_entity(struct dvb_device *dvbdev,
 {
 	int i;
 
-	dvbdev->tsout_pads = kzalloc_objs(*dvbdev->tsout_pads, npads);
+	dvbdev->tsout_pads = kcalloc(npads, sizeof(*dvbdev->tsout_pads),
+				     GFP_KERNEL);
 	if (!dvbdev->tsout_pads)
 		return -ENOMEM;
 
-	dvbdev->tsout_entity = kzalloc_objs(*dvbdev->tsout_entity, npads);
+	dvbdev->tsout_entity = kcalloc(npads, sizeof(*dvbdev->tsout_entity),
+				       GFP_KERNEL);
 	if (!dvbdev->tsout_entity)
 		return -ENOMEM;
 
@@ -326,14 +328,15 @@ static int dvb_create_media_entity(struct dvb_device *dvbdev,
 		return 0;
 	}
 
-	dvbdev->entity = kzalloc_obj(*dvbdev->entity);
+	dvbdev->entity = kzalloc(sizeof(*dvbdev->entity), GFP_KERNEL);
 	if (!dvbdev->entity)
 		return -ENOMEM;
 
 	dvbdev->entity->name = dvbdev->name;
 
 	if (npads) {
-		dvbdev->pads = kzalloc_objs(*dvbdev->pads, npads);
+		dvbdev->pads = kcalloc(npads, sizeof(*dvbdev->pads),
+				       GFP_KERNEL);
 		if (!dvbdev->pads) {
 			kfree(dvbdev->entity);
 			dvbdev->entity = NULL;
@@ -469,7 +472,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 		return -ENFILE;
 	}
 
-	*pdvbdev = dvbdev = kzalloc_obj(*dvbdev);
+	*pdvbdev = dvbdev = kzalloc(sizeof(*dvbdev), GFP_KERNEL);
 	if (!dvbdev) {
 		mutex_unlock(&dvbdev_register_lock);
 		return -ENOMEM;
@@ -497,7 +500,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 			return -ENOMEM;
 		}
 
-		new_node = kzalloc_obj(*new_node);
+		new_node = kzalloc(sizeof(*new_node), GFP_KERNEL);
 		if (!new_node) {
 			kfree(dvbdevfops);
 			kfree(dvbdev);
@@ -568,8 +571,8 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 			       MKDEV(DVB_MAJOR, minor),
 			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
 	if (IS_ERR(clsdev)) {
-		pr_err("%s: failed to create device dvb%d.%s%d (%pe)\n",
-		       __func__, adap->num, dnames[type], id, clsdev);
+		pr_err("%s: failed to create device dvb%d.%s%d (%ld)\n",
+		       __func__, adap->num, dnames[type], id, PTR_ERR(clsdev));
 		if (new_node) {
 			list_del(&new_node->list_head);
 			kfree(dvbdevfops);
@@ -709,12 +712,12 @@ int dvb_create_media_graph(struct dvb_adapter *adap,
 		demod = NULL;
 
 	if (create_rf_connector) {
-		conn = kzalloc_obj(*conn);
+		conn = kzalloc(sizeof(*conn), GFP_KERNEL);
 		if (!conn)
 			return -ENOMEM;
 		adap->conn = conn;
 
-		adap->conn_pads = kzalloc_obj(*adap->conn_pads);
+		adap->conn_pads = kzalloc(sizeof(*adap->conn_pads), GFP_KERNEL);
 		if (!adap->conn_pads)
 			return -ENOMEM;
 
@@ -1024,7 +1027,7 @@ struct i2c_client *dvb_module_probe(const char *module_name,
 	struct i2c_client *client;
 	struct i2c_board_info *board_info;
 
-	board_info = kzalloc_obj(*board_info);
+	board_info = kzalloc(sizeof(*board_info), GFP_KERNEL);
 	if (!board_info)
 		return NULL;
 

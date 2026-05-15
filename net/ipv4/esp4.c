@@ -132,8 +132,8 @@ static struct sock *esp_find_tcp_sk(struct xfrm_state *x)
 	dport = encap->encap_dport;
 	spin_unlock_bh(&x->lock);
 
-	sk = inet_lookup_established(net, x->id.daddr.a4, dport,
-				     x->props.saddr.a4, sport, 0);
+	sk = inet_lookup_established(net, net->ipv4.tcp_death_row.hashinfo, x->id.daddr.a4,
+				     dport, x->props.saddr.a4, sport, 0);
 	if (!sk)
 		return ERR_PTR(-ENOENT);
 
@@ -780,8 +780,7 @@ int esp_input_done2(struct sk_buff *skb, int err)
 	}
 
 	skb_pull_rcsum(skb, hlen);
-	if (x->props.mode == XFRM_MODE_TUNNEL ||
-	    x->props.mode == XFRM_MODE_IPTFS)
+	if (x->props.mode == XFRM_MODE_TUNNEL)
 		skb_reset_transport_header(skb);
 	else
 		skb_set_transport_header(skb, -ihl);
@@ -873,8 +872,7 @@ static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
 			nfrags = 1;
 
 			goto skip_cow;
-		} else if (!skb_has_frag_list(skb) &&
-			   !skb_has_shared_frag(skb)) {
+		} else if (!skb_has_frag_list(skb)) {
 			nfrags = skb_shinfo(skb)->nr_frags;
 			nfrags++;
 

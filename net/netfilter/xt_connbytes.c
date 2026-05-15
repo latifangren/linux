@@ -1,6 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
 /* Kernel module to match connection tracking byte counter.
- *  (C) 2002 Martin Devera (devik@cdi.cz).
+ * GPL (C) 2002 Martin Devera (devik@cdi.cz).
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>

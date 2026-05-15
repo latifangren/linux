@@ -35,7 +35,7 @@ static void dwc3_power_off_all_roothub_ports(struct dwc3 *dwc)
 	u32 reg;
 	int i;
 
-	/* xhci regs are not mapped yet, do it temporarily here */
+	/* xhci regs is not mapped yet, do it temperary here */
 	if (dwc->xhci_resources[0].start) {
 		if (dwc->xhci_resources[0].flags & IORESOURCE_MEM_NONPOSTED)
 			xhci_regs = ioremap_np(dwc->xhci_resources[0].start, DWC3_XHCI_REGS_END);
@@ -185,9 +185,6 @@ int dwc3_host_init(struct dwc3 *dwc)
 	if (DWC3_VER_IS_WITHIN(DWC3, ANY, 300A))
 		props[prop_idx++] = PROPERTY_ENTRY_BOOL("quirk-broken-port-ped");
 
-	props[prop_idx++] = PROPERTY_ENTRY_U16("num-hc-interrupters",
-					       dwc->num_hc_interrupters);
-
 	if (prop_idx) {
 		ret = device_create_managed_software_node(&xhci->dev, props, NULL);
 		if (ret) {
@@ -220,7 +217,6 @@ err:
 	platform_device_put(xhci);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(dwc3_host_init);
 
 void dwc3_host_exit(struct dwc3 *dwc)
 {
@@ -231,4 +227,3 @@ void dwc3_host_exit(struct dwc3 *dwc)
 	platform_device_unregister(dwc->xhci);
 	dwc->xhci = NULL;
 }
-EXPORT_SYMBOL_GPL(dwc3_host_exit);

@@ -1220,7 +1220,7 @@ static void printer_attr_release(struct config_item *item)
 	usb_put_function_instance(&opts->func_inst);
 }
 
-static const struct configfs_item_operations printer_item_ops = {
+static struct configfs_item_operations printer_item_ops = {
 	.release	= printer_attr_release,
 };
 
@@ -1374,7 +1374,7 @@ static struct usb_function_instance *gprinter_alloc_inst(void)
 	struct usb_function_instance *ret;
 	int status = 0;
 
-	opts = kzalloc_obj(*opts);
+	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
 	if (!opts)
 		return ERR_PTR(-ENOMEM);
 
@@ -1482,7 +1482,7 @@ static struct usb_function *gprinter_alloc(struct usb_function_instance *fi)
 		return ERR_PTR(-ENOENT);
 	}
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		mutex_unlock(&opts->lock);
 		return ERR_PTR(-ENOMEM);

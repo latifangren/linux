@@ -102,7 +102,7 @@ static int mac_hid_emumouse_connect(struct input_handler *handler,
 	if (dev == mac_hid_emumouse_dev)
 		return -ENODEV;
 
-	handle = kzalloc_obj(struct input_handle);
+	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
 	if (!handle)
 		return -ENOMEM;
 
@@ -216,7 +216,7 @@ static int mac_hid_toggle_emumouse(const struct ctl_table *table, int write,
 }
 
 /* file(s) in /proc/sys/dev/mac_hid */
-static const struct ctl_table mac_hid_files[] = {
+static struct ctl_table mac_hid_files[] = {
 	{
 		.procname	= "mouse_button_emulation",
 		.data		= &mouse_emulate_buttons,

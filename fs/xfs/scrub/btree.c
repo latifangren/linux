@@ -3,7 +3,7 @@
  * Copyright (C) 2017-2023 Oracle.  All Rights Reserved.
  * Author: Darrick J. Wong <djwong@kernel.org>
  */
-#include "xfs_platform.h"
+#include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -308,7 +308,7 @@ xchk_btree_block_check_sibling(
 	if (pbp)
 		xchk_buffer_recheck(bs->sc, pbp);
 
-	if (xfs_btree_cmp_two_ptrs(cur, pp, sibling))
+	if (xfs_btree_diff_two_ptrs(cur, pp, sibling))
 		xchk_btree_set_corrupt(bs->sc, cur, level);
 out:
 	xfs_btree_del_cursor(ncur, XFS_BTREE_ERROR);
@@ -449,7 +449,7 @@ xchk_btree_check_owner(
 	if (xfs_btree_is_bno(cur->bc_ops) || xfs_btree_is_rmap(cur->bc_ops)) {
 		struct check_owner	*co;
 
-		co = kmalloc_obj(struct check_owner, XCHK_GFP_FLAGS);
+		co = kmalloc(sizeof(struct check_owner), XCHK_GFP_FLAGS);
 		if (!co)
 			return -ENOMEM;
 

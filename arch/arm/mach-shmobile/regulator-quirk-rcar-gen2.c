@@ -141,7 +141,7 @@ static struct notifier_block regulator_quirk_nb = {
 static int __init rcar_gen2_regulator_quirk(void)
 {
 	struct regulator_quirk *quirk, *pos, *tmp;
-	struct of_phandle_args *args;
+	struct of_phandle_args *argsa, *argsb;
 	const struct of_device_id *id;
 	struct device_node *np;
 	u32 mon, addr;
@@ -164,21 +164,21 @@ static int __init rcar_gen2_regulator_quirk(void)
 		if (ret)	/* Skip invalid entry and continue */
 			continue;
 
-		quirk = kzalloc_obj(*quirk);
+		quirk = kzalloc(sizeof(*quirk), GFP_KERNEL);
 		if (!quirk) {
 			ret = -ENOMEM;
 			of_node_put(np);
 			goto err_mem;
 		}
 
-		args = &quirk->irq_args;
+		argsa = &quirk->irq_args;
 		memcpy(&quirk->i2c_msg, id->data, sizeof(quirk->i2c_msg));
 
 		quirk->id = id;
 		quirk->np = of_node_get(np);
 		quirk->i2c_msg.addr = addr;
 
-		ret = of_irq_parse_one(np, 0, args);
+		ret = of_irq_parse_one(np, 0, argsa);
 		if (ret) {	/* Skip invalid entry and continue */
 			of_node_put(np);
 			kfree(quirk);
@@ -186,7 +186,15 @@ static int __init rcar_gen2_regulator_quirk(void)
 		}
 
 		list_for_each_entry(pos, &quirk_list, list) {
-			if (of_phandle_args_equal(args, &pos->irq_args)) {
+			argsb = &pos->irq_args;
+
+			if (argsa->args_count != argsb->args_count)
+				continue;
+
+			ret = memcmp(argsa->args, argsb->args,
+				     argsa->args_count *
+				     sizeof(argsa->args[0]));
+			if (!ret) {
 				pos->shared = true;
 				quirk->shared = true;
 			}

@@ -41,7 +41,7 @@ struct mtrr_value {
 
 static struct mtrr_value *mtrr_value;
 
-static int mtrr_save(void *data)
+static int mtrr_save(void)
 {
 	int i;
 
@@ -56,7 +56,7 @@ static int mtrr_save(void *data)
 	return 0;
 }
 
-static void mtrr_restore(void *data)
+static void mtrr_restore(void)
 {
 	int i;
 
@@ -69,18 +69,14 @@ static void mtrr_restore(void *data)
 	}
 }
 
-static const struct syscore_ops mtrr_syscore_ops = {
+static struct syscore_ops mtrr_syscore_ops = {
 	.suspend	= mtrr_save,
 	.resume		= mtrr_restore,
 };
 
-static struct syscore mtrr_syscore = {
-	.ops = &mtrr_syscore_ops,
-};
-
 void mtrr_register_syscore(void)
 {
-	mtrr_value = kzalloc_objs(*mtrr_value, num_var_ranges);
+	mtrr_value = kcalloc(num_var_ranges, sizeof(*mtrr_value), GFP_KERNEL);
 
 	/*
 	 * The CPU has no MTRR and seems to not support SMP. They have
@@ -90,5 +86,5 @@ void mtrr_register_syscore(void)
 	 * TBD: is there any system with such CPU which supports
 	 * suspend/resume? If no, we should remove the code.
 	 */
-	register_syscore(&mtrr_syscore);
+	register_syscore_ops(&mtrr_syscore_ops);
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <linux/export.h>
 #include <linux/types.h>
 #include <linux/interrupt.h>
 #include <linux/irq_work.h>
@@ -6,13 +7,20 @@
 #include <linux/kvm_para.h>
 #include <linux/reboot.h>
 #include <linux/static_call.h>
-#include <linux/sched/cputime.h>
 #include <asm/paravirt.h>
 
 static int has_steal_clock;
-DEFINE_STATIC_KEY_FALSE(virt_preempt_key);
+struct static_key paravirt_steal_enabled;
+struct static_key paravirt_steal_rq_enabled;
+static DEFINE_PER_CPU(struct kvm_steal_time, steal_time) __aligned(64);
 DEFINE_STATIC_KEY_FALSE(virt_spin_lock_key);
-DEFINE_PER_CPU(struct kvm_steal_time, steal_time) __aligned(64);
+
+static u64 native_steal_clock(int cpu)
+{
+	return 0;
+}
+
+DEFINE_STATIC_CALL(pv_steal_clock, native_steal_clock);
 
 static bool steal_acc = true;
 
@@ -301,9 +309,6 @@ int __init pv_time_init(void)
 		pr_err("Failed to install cpu hotplug callbacks\n");
 		return r;
 	}
-
-	if (kvm_para_has_feature(KVM_FEATURE_PREEMPT))
-		static_branch_enable(&virt_preempt_key);
 #endif
 
 	static_call_update(pv_steal_clock, paravt_steal_clock);
@@ -314,10 +319,7 @@ int __init pv_time_init(void)
 		static_key_slow_inc(&paravirt_steal_rq_enabled);
 #endif
 
-	if (static_key_enabled(&virt_preempt_key))
-		pr_info("Using paravirt steal-time with preempt enabled\n");
-	else
-		pr_info("Using paravirt steal-time with preempt disabled\n");
+	pr_info("Using paravirt steal-time\n");
 
 	return 0;
 }

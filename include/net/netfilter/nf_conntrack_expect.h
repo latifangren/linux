@@ -45,11 +45,8 @@ struct nf_conntrack_expect {
 	void (*expectfn)(struct nf_conn *new,
 			 struct nf_conntrack_expect *this);
 
-	/* Helper that created this expectation */
-	struct nf_conntrack_helper __rcu *helper;
-
 	/* Helper to assign to new connection */
-	struct nf_conntrack_helper __rcu *assign_helper;
+	struct nf_conntrack_helper __rcu *helper;
 
 	/* The conntrack of the master connection */
 	struct nf_conn *master;

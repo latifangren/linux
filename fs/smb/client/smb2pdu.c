@@ -26,15 +26,15 @@
 #include <linux/netfs.h>
 #include <trace/events/netfs.h>
 #include "cifsglob.h"
-#include "cifsproto.h"
 #include "cifsacl.h"
+#include "cifsproto.h"
 #include "smb2proto.h"
 #include "cifs_unicode.h"
 #include "cifs_debug.h"
 #include "ntlmssp.h"
-#include "../common/smbfsctl.h"
 #include "../common/smb2status.h"
 #include "smb2glob.h"
+#include "cifspdu.h"
 #include "cifs_spnego.h"
 #include "smbdirect.h"
 #include "trace.h"
@@ -43,7 +43,6 @@
 #endif
 #include "cached_dir.h"
 #include "compress.h"
-#include "fs_context.h"
 
 /*
  *  The following table defines the expected "StructureSize" of SMB2 requests
@@ -167,7 +166,7 @@ out:
 static int
 cifs_chan_skip_or_disable(struct cifs_ses *ses,
 			  struct TCP_Server_Info *server,
-			  bool from_reconnect, bool disable_mchan)
+			  bool from_reconnect)
 {
 	struct TCP_Server_Info *pserver;
 	unsigned int chan_index;
@@ -205,53 +204,22 @@ skip_terminate:
 		return -EHOSTDOWN;
 	}
 
-	cifs_decrease_secondary_channels(ses, disable_mchan);
+	cifs_server_dbg(VFS,
+		"server does not support multichannel anymore. Disable all other channels\n");
+	cifs_disable_secondary_channels(ses);
+
 
 	return 0;
-}
-
-/*
- * smb3_update_ses_channels - Synchronize session channels with new configuration
- * @ses: pointer to the CIFS session structure
- * @server: pointer to the TCP server info structure
- * @from_reconnect: indicates if called from reconnect context
- * @disable_mchan: indicates if called from reconnect to disable multichannel
- *
- * Returns 0 on success or error code on failure.
- *
- * Outside of reconfigure, this function is called from cifs_mount() during mount
- * and from reconnect scenarios to adjust channel count when the
- * server's multichannel support changes.
- */
-int smb3_update_ses_channels(struct cifs_ses *ses, struct TCP_Server_Info *server,
-			bool from_reconnect, bool disable_mchan)
-{
-	int rc = 0;
-	/*
-	 * Manage session channels based on current count vs max:
-	 * - If disable requested, skip or disable the channel
-	 * - If below max channels, attempt to add more
-	 * - If above max channels, skip or disable excess channels
-	 */
-	if (disable_mchan)
-		rc = cifs_chan_skip_or_disable(ses, server, from_reconnect, disable_mchan);
-	else {
-		if (ses->chan_count < ses->chan_max)
-			rc = cifs_try_adding_channels(ses);
-		else if (ses->chan_count > ses->chan_max)
-			rc = cifs_chan_skip_or_disable(ses, server, from_reconnect, disable_mchan);
-	}
-
-	return rc;
 }
 
 static int
 smb2_reconnect(__le16 smb2_command, struct cifs_tcon *tcon,
 	       struct TCP_Server_Info *server, bool from_reconnect)
 {
+	int rc = 0;
+	struct nls_table *nls_codepage = NULL;
 	struct cifs_ses *ses;
 	int xid;
-	int rc = 0;
 
 	/*
 	 * SMB2s NegProt, SessSetup, Logoff do not have tcon yet so
@@ -261,7 +229,11 @@ smb2_reconnect(__le16 smb2_command, struct cifs_tcon *tcon,
 	if (tcon == NULL)
 		return 0;
 
-	if (smb2_command == SMB2_TREE_CONNECT)
+	/*
+	 * Need to also skip SMB2_IOCTL because it is used for checking nested dfs links in
+	 * cifs_tree_connect().
+	 */
+	if (smb2_command == SMB2_TREE_CONNECT || smb2_command == SMB2_IOCTL)
 		return 0;
 
 	spin_lock(&tcon->tc_lock);
@@ -271,8 +243,8 @@ smb2_reconnect(__le16 smb2_command, struct cifs_tcon *tcon,
 		 */
 		if (smb2_command != SMB2_TREE_DISCONNECT) {
 			spin_unlock(&tcon->tc_lock);
-			cifs_tcon_dbg(FYI, "can not send cmd %d while umounting\n",
-				      smb2_command);
+			cifs_dbg(FYI, "can not send cmd %d while umounting\n",
+				 smb2_command);
 			return -ENODEV;
 		}
 	}
@@ -280,15 +252,15 @@ smb2_reconnect(__le16 smb2_command, struct cifs_tcon *tcon,
 
 	ses = tcon->ses;
 	if (!ses)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 	spin_lock(&ses->ses_lock);
 	if (ses->ses_status == SES_EXITING) {
 		spin_unlock(&ses->ses_lock);
-		return smb_EIO(smb_eio_trace_sess_exiting);
+		return -EIO;
 	}
 	spin_unlock(&ses->ses_lock);
 	if (!ses->server || !server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	spin_lock(&server->srv_lock);
 	if (server->tcpStatus == CifsNeedReconnect) {
@@ -327,31 +299,42 @@ again:
 		return 0;
 	}
 	spin_unlock(&ses->chan_lock);
-	cifs_tcon_dbg(FYI, "sess reconnect mask: 0x%lx, tcon reconnect: %d\n",
-		      tcon->ses->chans_need_reconnect,
-		      tcon->need_reconnect);
+	cifs_dbg(FYI, "sess reconnect mask: 0x%lx, tcon reconnect: %d",
+		 tcon->ses->chans_need_reconnect,
+		 tcon->need_reconnect);
 
 	mutex_lock(&ses->session_mutex);
 	/*
-	 * Handle the case where a concurrent thread failed to negotiate or
-	 * killed a channel.
+	 * if this is called by delayed work, and the channel has been disabled
+	 * in parallel, the delayed work can continue to execute in parallel
+	 * there's a chance that this channel may not exist anymore
 	 */
 	spin_lock(&server->srv_lock);
-	switch (server->tcpStatus) {
-	case CifsExiting:
+	if (server->tcpStatus == CifsExiting) {
 		spin_unlock(&server->srv_lock);
 		mutex_unlock(&ses->session_mutex);
-		return -EHOSTDOWN;
-	case CifsNeedReconnect:
+		rc = -EHOSTDOWN;
+		goto out;
+	}
+
+	/*
+	 * Recheck after acquire mutex. If another thread is negotiating
+	 * and the server never sends an answer the socket will be closed
+	 * and tcpStatus set to reconnect.
+	 */
+	if (server->tcpStatus == CifsNeedReconnect) {
 		spin_unlock(&server->srv_lock);
 		mutex_unlock(&ses->session_mutex);
-		if (!tcon->retry)
-			return -EHOSTDOWN;
-		goto again;
-	default:
-		break;
+
+		if (tcon->retry)
+			goto again;
+
+		rc = -EHOSTDOWN;
+		goto out;
 	}
 	spin_unlock(&server->srv_lock);
+
+	nls_codepage = ses->local_nls;
 
 	/*
 	 * need to prevent multiple threads trying to simultaneously
@@ -374,41 +357,43 @@ again:
 	spin_unlock(&ses->ses_lock);
 
 	rc = cifs_negotiate_protocol(0, ses, server);
-	if (rc) {
-		mutex_unlock(&ses->session_mutex);
-		if (!tcon->retry)
-			return -EHOSTDOWN;
-		goto again;
-	}
-	/*
-	 * if server stopped supporting multichannel
-	 * and the first channel reconnected, disable all the others.
-	 */
-	if (ses->chan_count > 1 &&
-	    !(server->capabilities & SMB2_GLOBAL_CAP_MULTI_CHANNEL)) {
-		rc = smb3_update_ses_channels(ses, server,
-					       from_reconnect, true /* disable_mchan */);
-		if (rc) {
+	if (!rc) {
+		/*
+		 * if server stopped supporting multichannel
+		 * and the first channel reconnected, disable all the others.
+		 */
+		if (ses->chan_count > 1 &&
+		    !(server->capabilities & SMB2_GLOBAL_CAP_MULTI_CHANNEL)) {
+			rc = cifs_chan_skip_or_disable(ses, server,
+						       from_reconnect);
+			if (rc) {
+				mutex_unlock(&ses->session_mutex);
+				goto out;
+			}
+		}
+
+		rc = cifs_setup_session(0, ses, server, nls_codepage);
+		if ((rc == -EACCES) || (rc == -EKEYEXPIRED) || (rc == -EKEYREVOKED)) {
+			/*
+			 * Try alternate password for next reconnect (key rotation
+			 * could be enabled on the server e.g.) if an alternate
+			 * password is available and the current password is expired,
+			 * but do not swap on non pwd related errors like host down
+			 */
+			if (ses->password2)
+				swap(ses->password2, ses->password);
+		}
+
+		if ((rc == -EACCES) && !tcon->retry) {
+			mutex_unlock(&ses->session_mutex);
+			rc = -EHOSTDOWN;
+			goto failed;
+		} else if (rc) {
 			mutex_unlock(&ses->session_mutex);
 			goto out;
 		}
-	}
-
-	rc = cifs_setup_session(0, ses, server, ses->local_nls);
-	if ((rc == -EACCES) || (rc == -EKEYEXPIRED) || (rc == -EKEYREVOKED)) {
-		/*
-		 * Try alternate password for next reconnect (key rotation
-		 * could be enabled on the server e.g.) if an alternate
-		 * password is available and the current password is expired,
-		 * but do not swap on non pwd related errors like host down
-		 */
-		if (ses->password2)
-			swap(ses->password2, ses->password);
-	}
-	if (rc) {
+	} else {
 		mutex_unlock(&ses->session_mutex);
-		if (rc == -EACCES && !tcon->retry)
-			return -EHOSTDOWN;
 		goto out;
 	}
 
@@ -421,13 +406,13 @@ skip_sess_setup:
 	if (tcon->use_persistent)
 		tcon->need_reopen_files = true;
 
-	rc = cifs_tree_connect(0, tcon);
+	rc = cifs_tree_connect(0, tcon, nls_codepage);
 
-	cifs_tcon_dbg(FYI, "reconnect tcon rc = %d\n", rc);
+	cifs_dbg(FYI, "reconnect tcon rc = %d\n", rc);
 	if (rc) {
 		/* If sess reconnected but tcon didn't, something strange ... */
 		mutex_unlock(&ses->session_mutex);
-		cifs_tcon_dbg(VFS, "reconnect tcon failed rc = %d\n", rc);
+		cifs_dbg(VFS, "reconnect tcon failed rc = %d\n", rc);
 		goto out;
 	}
 
@@ -469,13 +454,12 @@ skip_sess_setup:
 			 * treat this as server not supporting multichannel
 			 */
 
-			rc = smb3_update_ses_channels(ses, server,
-						       from_reconnect,
-						       true /* disable_mchan */);
+			rc = cifs_chan_skip_or_disable(ses, server,
+						       from_reconnect);
 			goto skip_add_channels;
 		} else if (rc)
-			cifs_tcon_dbg(FYI, "%s: failed to query server interfaces: %d\n",
-				      __func__, rc);
+			cifs_dbg(FYI, "%s: failed to query server interfaces: %d\n",
+				 __func__, rc);
 
 		if (ses->chan_max > ses->chan_count &&
 		    ses->iface_count &&
@@ -483,8 +467,7 @@ skip_sess_setup:
 			if (ses->chan_count == 1)
 				cifs_server_dbg(VFS, "supports multichannel now\n");
 
-			smb3_update_ses_channels(ses, server, from_reconnect,
-						  false /* disable_mchan */);
+			cifs_try_adding_channels(ses);
 		}
 	} else {
 		mutex_unlock(&ses->session_mutex);
@@ -496,7 +479,7 @@ skip_add_channels:
 	spin_unlock(&ses->ses_lock);
 
 	if (smb2_command != SMB2_INTERNAL_CMD)
-		cifs_queue_server_reconn(server);
+		mod_delayed_work(cifsiod_wq, &server->reconnect, 0);
 
 	atomic_inc(&tconInfoReconnectCount);
 out:
@@ -517,9 +500,9 @@ out:
 	case SMB2_CHANGE_NOTIFY:
 	case SMB2_QUERY_INFO:
 	case SMB2_SET_INFO:
-	case SMB2_IOCTL:
 		rc = -EAGAIN;
 	}
+failed:
 	return rc;
 }
 
@@ -1008,7 +991,8 @@ create_posix_buf(umode_t mode)
 {
 	struct create_posix *buf;
 
-	buf = kzalloc_obj(struct create_posix);
+	buf = kzalloc(sizeof(struct create_posix),
+			GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
@@ -1093,7 +1077,7 @@ SMB2_negotiate(const unsigned int xid,
 
 	if (!server) {
 		WARN(1, "%s: server is NULL!\n", __func__);
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 	}
 
 	rc = smb2_plain_req_init(SMB2_NEGOTIATE, NULL, server,
@@ -1137,7 +1121,8 @@ SMB2_negotiate(const unsigned int xid,
 		req->SecurityMode = 0;
 
 	req->Capabilities = cpu_to_le32(server->vals->req_capabilities);
-	req->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
+	if (ses->chan_max > 1)
+		req->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
 
 	/* ClientGUID must be zero for SMB2.02 dialect */
 	if (server->vals->protocol_id == SMB20_PROT_ID)
@@ -1173,84 +1158,64 @@ SMB2_negotiate(const unsigned int xid,
 	} else if (rc != 0)
 		goto neg_exit;
 
-	u16 dialect = le16_to_cpu(rsp->DialectRevision);
+	rc = -EIO;
 	if (strcmp(server->vals->version_string,
 		   SMB3ANY_VERSION_STRING) == 0) {
-		switch (dialect) {
-		case SMB20_PROT_ID:
+		if (rsp->DialectRevision == cpu_to_le16(SMB20_PROT_ID)) {
 			cifs_server_dbg(VFS,
 				"SMB2 dialect returned but not requested\n");
-			rc = smb_EIO2(smb_eio_trace_neg_unreq_dialect, dialect, 3);
 			goto neg_exit;
-		case SMB21_PROT_ID:
+		} else if (rsp->DialectRevision == cpu_to_le16(SMB21_PROT_ID)) {
 			cifs_server_dbg(VFS,
 				"SMB2.1 dialect returned but not requested\n");
-			rc = smb_EIO2(smb_eio_trace_neg_unreq_dialect, dialect, 3);
 			goto neg_exit;
-		case SMB311_PROT_ID:
+		} else if (rsp->DialectRevision == cpu_to_le16(SMB311_PROT_ID)) {
 			/* ops set to 3.0 by default for default so update */
 			server->ops = &smb311_operations;
 			server->vals = &smb311_values;
-			break;
-		default:
-			break;
 		}
 	} else if (strcmp(server->vals->version_string,
-			  SMBDEFAULT_VERSION_STRING) == 0) {
-		switch (dialect) {
-		case SMB20_PROT_ID:
+		   SMBDEFAULT_VERSION_STRING) == 0) {
+		if (rsp->DialectRevision == cpu_to_le16(SMB20_PROT_ID)) {
 			cifs_server_dbg(VFS,
 				"SMB2 dialect returned but not requested\n");
-			rc = smb_EIO2(smb_eio_trace_neg_unreq_dialect, dialect, 0);
 			goto neg_exit;
-		case SMB21_PROT_ID:
+		} else if (rsp->DialectRevision == cpu_to_le16(SMB21_PROT_ID)) {
 			/* ops set to 3.0 by default for default so update */
 			server->ops = &smb21_operations;
 			server->vals = &smb21_values;
-			break;
-		case SMB311_PROT_ID:
+		} else if (rsp->DialectRevision == cpu_to_le16(SMB311_PROT_ID)) {
 			server->ops = &smb311_operations;
 			server->vals = &smb311_values;
-			break;
-		default:
-			break;
 		}
-	} else if (dialect != server->vals->protocol_id) {
+	} else if (le16_to_cpu(rsp->DialectRevision) !=
+				server->vals->protocol_id) {
 		/* if requested single dialect ensure returned dialect matched */
 		cifs_server_dbg(VFS, "Invalid 0x%x dialect returned: not requested\n",
-				dialect);
-		rc = smb_EIO2(smb_eio_trace_neg_unreq_dialect,
-			      dialect, server->vals->protocol_id);
+				le16_to_cpu(rsp->DialectRevision));
 		goto neg_exit;
 	}
 
 	cifs_dbg(FYI, "mode 0x%x\n", rsp->SecurityMode);
 
-	switch (dialect) {
-	case SMB20_PROT_ID:
+	if (rsp->DialectRevision == cpu_to_le16(SMB20_PROT_ID))
 		cifs_dbg(FYI, "negotiated smb2.0 dialect\n");
-		break;
-	case SMB21_PROT_ID:
+	else if (rsp->DialectRevision == cpu_to_le16(SMB21_PROT_ID))
 		cifs_dbg(FYI, "negotiated smb2.1 dialect\n");
-		break;
-	case SMB30_PROT_ID:
+	else if (rsp->DialectRevision == cpu_to_le16(SMB30_PROT_ID))
 		cifs_dbg(FYI, "negotiated smb3.0 dialect\n");
-		break;
-	case SMB302_PROT_ID:
+	else if (rsp->DialectRevision == cpu_to_le16(SMB302_PROT_ID))
 		cifs_dbg(FYI, "negotiated smb3.02 dialect\n");
-		break;
-	case SMB311_PROT_ID:
+	else if (rsp->DialectRevision == cpu_to_le16(SMB311_PROT_ID))
 		cifs_dbg(FYI, "negotiated smb3.1.1 dialect\n");
-		break;
-	default:
+	else {
 		cifs_server_dbg(VFS, "Invalid dialect returned by server 0x%x\n",
-				dialect);
-		rc = smb_EIO1(smb_eio_trace_neg_inval_dialect, dialect);
+				le16_to_cpu(rsp->DialectRevision));
 		goto neg_exit;
 	}
 
 	rc = 0;
-	server->dialect = dialect;
+	server->dialect = le16_to_cpu(rsp->DialectRevision);
 
 	/*
 	 * Keep a copy of the hash after negprot. This hash will be
@@ -1306,10 +1271,10 @@ SMB2_negotiate(const unsigned int xid,
 		if (rc == 1)
 			rc = 0;
 		else if (rc == 0)
-			rc = smb_EIO1(smb_eio_trace_neg_decode_token, rc);
+			rc = -EIO;
 	}
 
-	if (server->dialect == SMB311_PROT_ID) {
+	if (rsp->DialectRevision == cpu_to_le16(SMB311_PROT_ID)) {
 		if (rsp->NegotiateContextCount)
 			rc = smb311_decode_neg_context(rsp, server,
 						       rsp_iov.iov_len);
@@ -1357,13 +1322,14 @@ int smb3_validate_negotiate(const unsigned int xid, struct cifs_tcon *tcon)
 	if (tcon->ses->session_flags & SMB2_SESSION_FLAG_IS_NULL)
 		cifs_tcon_dbg(VFS, "Unexpected null user (anonymous) auth flag sent by server\n");
 
-	pneg_inbuf = kmalloc_obj(*pneg_inbuf, GFP_NOFS);
+	pneg_inbuf = kmalloc(sizeof(*pneg_inbuf), GFP_NOFS);
 	if (!pneg_inbuf)
 		return -ENOMEM;
 
 	pneg_inbuf->Capabilities =
 			cpu_to_le32(server->vals->req_capabilities);
-	pneg_inbuf->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
+	if (tcon->ses->chan_max > 1)
+		pneg_inbuf->Capabilities |= cpu_to_le32(SMB2_GLOBAL_CAP_MULTI_CHANNEL);
 
 	memcpy(pneg_inbuf->Guid, server->client_guid,
 					SMB2_CLIENT_GUID_SIZE);
@@ -1421,47 +1387,32 @@ int smb3_validate_negotiate(const unsigned int xid, struct cifs_tcon *tcon)
 	} else if (rc != 0) {
 		cifs_tcon_dbg(VFS, "validate protocol negotiate failed: %d\n",
 			      rc);
-		rc = smb_EIO1(smb_eio_trace_neg_info_fail, rc);
+		rc = -EIO;
 		goto out_free_inbuf;
 	}
 
+	rc = -EIO;
 	if (rsplen != sizeof(*pneg_rsp)) {
 		cifs_tcon_dbg(VFS, "Invalid protocol negotiate response size: %d\n",
 			      rsplen);
 
 		/* relax check since Mac returns max bufsize allowed on ioctl */
-		if (rsplen > CIFSMaxBufSize || rsplen < sizeof(*pneg_rsp)) {
-			rc = smb_EIO1(smb_eio_trace_neg_bad_rsplen, rsplen);
+		if (rsplen > CIFSMaxBufSize || rsplen < sizeof(*pneg_rsp))
 			goto out_free_rsp;
-		}
 	}
 
 	/* check validate negotiate info response matches what we got earlier */
-	u16 dialect = le16_to_cpu(pneg_rsp->Dialect);
-
-	if (dialect != server->dialect) {
-		rc = smb_EIO2(smb_eio_trace_neg_info_dialect,
-			      dialect, server->dialect);
+	if (pneg_rsp->Dialect != cpu_to_le16(server->dialect))
 		goto vneg_out;
-	}
 
-	u16 sec_mode = le16_to_cpu(pneg_rsp->SecurityMode);
-
-	if (sec_mode != server->sec_mode) {
-		rc = smb_EIO2(smb_eio_trace_neg_info_sec_mode,
-			      sec_mode, server->sec_mode);
+	if (pneg_rsp->SecurityMode != cpu_to_le16(server->sec_mode))
 		goto vneg_out;
-	}
 
 	/* do not validate server guid because not saved at negprot time yet */
-	u32 caps = le32_to_cpu(pneg_rsp->Capabilities);
 
-	if ((caps | SMB2_NT_FIND |
-	     SMB2_LARGE_FILES) != server->capabilities) {
-		rc = smb_EIO2(smb_eio_trace_neg_info_caps,
-			      caps, server->capabilities);
+	if ((le32_to_cpu(pneg_rsp->Capabilities) | SMB2_NT_FIND |
+	      SMB2_LARGE_FILES) != server->capabilities)
 		goto vneg_out;
-	}
 
 	/* validate negotiate successful */
 	rc = 0;
@@ -1693,6 +1644,8 @@ SMB2_auth_kerberos(struct SMB2_sess_data *sess_data)
 	spnego_key = cifs_get_spnego_key(ses, server);
 	if (IS_ERR(spnego_key)) {
 		rc = PTR_ERR(spnego_key);
+		if (rc == -ENOKEY)
+			cifs_dbg(VFS, "Verify user has a krb5 ticket and keyutils is installed\n");
 		spnego_key = NULL;
 		goto out;
 	}
@@ -1713,30 +1666,17 @@ SMB2_auth_kerberos(struct SMB2_sess_data *sess_data)
 	is_binding = (ses->ses_status == SES_GOOD);
 	spin_unlock(&ses->ses_lock);
 
-	/*
-	 * Per MS-SMB2 3.2.5.3, Session.SessionKey is the first 16 bytes of the
-	 * GSS cryptographic key, right-padded with zero bytes if shorter.
-	 * Allocate at least SMB2_NTLMV2_SESSKEY_SIZE bytes (zeroed) so the KDF
-	 * input buffer is always valid for HMAC-SHA256 even with deprecated
-	 * Kerberos enctypes that return a short session key.
-	 */
-	if (unlikely(msg->sesskey_len < SMB2_NTLMV2_SESSKEY_SIZE))
-		cifs_dbg(VFS,
-			 "short GSS session key (%u bytes); zero-padding per MS-SMB2 3.2.5.3\n",
-			 msg->sesskey_len);
-
 	kfree_sensitive(ses->auth_key.response);
-	ses->auth_key.len = max_t(unsigned int, msg->sesskey_len,
-				  SMB2_NTLMV2_SESSKEY_SIZE);
-	ses->auth_key.response = kzalloc(ses->auth_key.len, GFP_KERNEL);
+	ses->auth_key.response = kmemdup(msg->data,
+					 msg->sesskey_len,
+					 GFP_KERNEL);
 	if (!ses->auth_key.response) {
 		cifs_dbg(VFS, "%s: can't allocate (%u bytes) memory\n",
-			 __func__, ses->auth_key.len);
-		ses->auth_key.len = 0;
+			 __func__, msg->sesskey_len);
 		rc = -ENOMEM;
 		goto out_put_spnego_key;
 	}
-	memcpy(ses->auth_key.response, msg->data, msg->sesskey_len);
+	ses->auth_key.len = msg->sesskey_len;
 
 	sess_data->iov[1].iov_base = msg->data + msg->sesskey_len;
 	sess_data->iov[1].iov_len = msg->secblob_len;
@@ -1795,7 +1735,7 @@ SMB2_sess_auth_rawntlmssp_negotiate(struct SMB2_sess_data *sess_data)
 	 * If memory allocation is successful, caller of this function
 	 * frees it.
 	 */
-	ses->ntlmssp = kmalloc_obj(struct ntlmssp_auth);
+	ses->ntlmssp = kmalloc(sizeof(struct ntlmssp_auth), GFP_KERNEL);
 	if (!ses->ntlmssp) {
 		rc = -ENOMEM;
 		goto out_err;
@@ -1832,11 +1772,11 @@ SMB2_sess_auth_rawntlmssp_negotiate(struct SMB2_sess_data *sess_data)
 	if (rc)
 		goto out;
 
-	u16 boff = le16_to_cpu(rsp->SecurityBufferOffset);
-
-	if (offsetof(struct smb2_sess_setup_rsp, Buffer) != boff) {
-		cifs_dbg(VFS, "Invalid security buffer offset %d\n", boff);
-		rc = smb_EIO1(smb_eio_trace_sess_buf_off, boff);
+	if (offsetof(struct smb2_sess_setup_rsp, Buffer) !=
+			le16_to_cpu(rsp->SecurityBufferOffset)) {
+		cifs_dbg(VFS, "Invalid security buffer offset %d\n",
+			le16_to_cpu(rsp->SecurityBufferOffset));
+		rc = -EIO;
 		goto out;
 	}
 	rc = decode_ntlmssp_challenge(rsp->Buffer,
@@ -1990,10 +1930,10 @@ SMB2_sess_setup(const unsigned int xid, struct cifs_ses *ses,
 
 	if (!server) {
 		WARN(1, "%s: server is NULL!\n", __func__);
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 	}
 
-	sess_data = kzalloc_obj(struct SMB2_sess_data);
+	sess_data = kzalloc(sizeof(struct SMB2_sess_data), GFP_KERNEL);
 	if (!sess_data)
 		return -ENOMEM;
 
@@ -2040,9 +1980,10 @@ SMB2_logoff(const unsigned int xid, struct cifs_ses *ses)
 
 	cifs_dbg(FYI, "disconnect session %p\n", ses);
 
-	if (!ses || !ses->server)
-		return smb_EIO(smb_eio_trace_null_pointers);
-	server = ses->server;
+	if (ses && (ses->server))
+		server = ses->server;
+	else
+		return -EIO;
 
 	/* no need to send SMB logoff if uid already closed due to reconnect */
 	spin_lock(&ses->chan_lock);
@@ -2121,7 +2062,7 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	cifs_dbg(FYI, "TCON\n");
 
 	if (!server || !tree)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	unc_path = kmalloc(MAX_SHARENAME_LENGTH * 2, GFP_KERNEL);
 	if (unc_path == NULL)
@@ -2259,7 +2200,7 @@ SMB2_tdis(const unsigned int xid, struct cifs_tcon *tcon)
 	cifs_dbg(FYI, "Tree Disconnect\n");
 
 	if (!ses || !(ses->server))
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	trace_smb3_tdis_enter(xid, tcon->tid, ses->Suid, tcon->tree_name);
 	spin_lock(&ses->chan_lock);
@@ -2270,7 +2211,7 @@ SMB2_tdis(const unsigned int xid, struct cifs_tcon *tcon)
 	}
 	spin_unlock(&ses->chan_lock);
 
-	invalidate_all_cached_dirs(tcon, true);
+	invalidate_all_cached_dirs(tcon);
 
 	rc = smb2_plain_req_init(SMB2_TREE_DISCONNECT, tcon, server,
 				 (void **) &req,
@@ -2302,20 +2243,21 @@ SMB2_tdis(const unsigned int xid, struct cifs_tcon *tcon)
 	return rc;
 }
 
-static create_durable_req_t *
+
+static struct create_durable *
 create_durable_buf(void)
 {
-	create_durable_req_t *buf;
+	struct create_durable *buf;
 
-	buf = kzalloc_obj(create_durable_req_t);
+	buf = kzalloc(sizeof(struct create_durable), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
-					(create_durable_req_t, Data));
+					(struct create_durable, Data));
 	buf->ccontext.DataLength = cpu_to_le32(16);
 	buf->ccontext.NameOffset = cpu_to_le16(offsetof
-				(create_durable_req_t, Name));
+				(struct create_durable, Name));
 	buf->ccontext.NameLength = cpu_to_le16(4);
 	/* SMB2_CREATE_DURABLE_HANDLE_REQUEST is "DHnQ" */
 	buf->Name[0] = 'D';
@@ -2325,20 +2267,20 @@ create_durable_buf(void)
 	return buf;
 }
 
-static create_durable_req_t *
+static struct create_durable *
 create_reconnect_durable_buf(struct cifs_fid *fid)
 {
-	create_durable_req_t *buf;
+	struct create_durable *buf;
 
-	buf = kzalloc_obj(create_durable_req_t);
+	buf = kzalloc(sizeof(struct create_durable), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
-					(create_durable_req_t, Data));
+					(struct create_durable, Data));
 	buf->ccontext.DataLength = cpu_to_le32(16);
 	buf->ccontext.NameOffset = cpu_to_le16(offsetof
-				(create_durable_req_t, Name));
+				(struct create_durable, Name));
 	buf->ccontext.NameLength = cpu_to_le16(4);
 	buf->Data.Fid.PersistentFileId = fid->persistent_fid;
 	buf->Data.Fid.VolatileFileId = fid->volatile_fid;
@@ -2478,16 +2420,11 @@ static int
 add_lease_context(struct TCP_Server_Info *server,
 		  struct smb2_create_req *req,
 		  struct kvec *iov,
-		  unsigned int *num_iovec,
-		  u8 *lease_key,
-		  __u8 *oplock,
-		  u8 *parent_lease_key,
-		  __le32 flags)
+		  unsigned int *num_iovec, u8 *lease_key, __u8 *oplock)
 {
 	unsigned int num = *num_iovec;
 
-	iov[num].iov_base = server->ops->create_lease_buf(lease_key, *oplock,
-							  parent_lease_key, flags);
+	iov[num].iov_base = server->ops->create_lease_buf(lease_key, *oplock);
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
 	iov[num].iov_len = server->vals->create_lease_size;
@@ -2496,21 +2433,21 @@ add_lease_context(struct TCP_Server_Info *server,
 	return 0;
 }
 
-static struct create_durable_req_v2 *
+static struct create_durable_v2 *
 create_durable_v2_buf(struct cifs_open_parms *oparms)
 {
 	struct cifs_fid *pfid = oparms->fid;
-	struct create_durable_req_v2 *buf;
+	struct create_durable_v2 *buf;
 
-	buf = kzalloc_obj(struct create_durable_req_v2);
+	buf = kzalloc(sizeof(struct create_durable_v2), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
 	buf->ccontext.DataOffset = cpu_to_le16(offsetof
-					(struct create_durable_req_v2, dcontext));
-	buf->ccontext.DataLength = cpu_to_le32(sizeof(struct durable_context_v2_req));
+					(struct create_durable_v2, dcontext));
+	buf->ccontext.DataLength = cpu_to_le32(sizeof(struct durable_context_v2));
 	buf->ccontext.NameOffset = cpu_to_le16(offsetof
-				(struct create_durable_req_v2, Name));
+				(struct create_durable_v2, Name));
 	buf->ccontext.NameLength = cpu_to_le16(4);
 
 	/*
@@ -2543,7 +2480,8 @@ create_reconnect_durable_v2_buf(struct cifs_fid *fid)
 {
 	struct create_durable_handle_reconnect_v2 *buf;
 
-	buf = kzalloc_obj(struct create_durable_handle_reconnect_v2);
+	buf = kzalloc(sizeof(struct create_durable_handle_reconnect_v2),
+			GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
@@ -2579,7 +2517,7 @@ add_durable_v2_context(struct kvec *iov, unsigned int *num_iovec,
 	iov[num].iov_base = create_durable_v2_buf(oparms);
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
-	iov[num].iov_len = sizeof(struct create_durable_req_v2);
+	iov[num].iov_len = sizeof(struct create_durable_v2);
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2623,7 +2561,7 @@ add_durable_context(struct kvec *iov, unsigned int *num_iovec,
 		iov[num].iov_base = create_durable_buf();
 	if (iov[num].iov_base == NULL)
 		return -ENOMEM;
-	iov[num].iov_len = sizeof(create_durable_req_t);
+	iov[num].iov_len = sizeof(struct create_durable);
 	*num_iovec = num + 1;
 	return 0;
 }
@@ -2634,7 +2572,7 @@ create_twarp_buf(__u64 timewarp)
 {
 	struct crt_twarp_ctxt *buf;
 
-	buf = kzalloc_obj(struct crt_twarp_ctxt);
+	buf = kzalloc(sizeof(struct crt_twarp_ctxt), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
@@ -2801,7 +2739,7 @@ create_query_id_buf(void)
 {
 	struct crt_query_id_ctxt *buf;
 
-	buf = kzalloc_obj(struct crt_query_id_ctxt);
+	buf = kzalloc(sizeof(struct crt_query_id_ctxt), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
@@ -2912,7 +2850,7 @@ int smb311_posix_mkdir(const unsigned int xid, struct inode *inode,
 	unsigned int total_len;
 	__le16 *utf16_path = NULL;
 	struct TCP_Server_Info *server;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -2929,7 +2867,7 @@ replay_again:
 		return -ENOMEM;
 
 	if (!ses || !server) {
-		rc = smb_EIO(smb_eio_trace_null_pointers);
+		rc = -EIO;
 		goto err_free_path;
 	}
 
@@ -3025,12 +2963,8 @@ replay_again:
 	trace_smb3_posix_mkdir_enter(xid, tcon->tid, ses->Suid, full_path, CREATE_NOT_FILE,
 				    FILE_WRITE_ATTRIBUTES);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	/* resource #4: response buffer */
 	rc = cifs_send_recv(xid, ses, server,
@@ -3050,14 +2984,13 @@ replay_again:
 	 */
 	rsp = (struct smb2_create_rsp *)rsp_iov.iov_base;
 	if (rsp == NULL) {
-		rc = smb_EIO(smb_eio_trace_mkdir_no_rsp);
+		rc = -EIO;
 		kfree(pc_buf);
 		goto err_free_req;
 	}
 
 	trace_smb3_posix_mkdir_done(xid, rsp->PersistentFileId, tcon->tid, ses->Suid,
-				    CREATE_NOT_FILE, FILE_WRITE_ATTRIBUTES,
-				    rsp->OplockLevel);
+				    CREATE_NOT_FILE, FILE_WRITE_ATTRIBUTES);
 
 	SMB2_close(xid, tcon, rsp->PersistentFileId, rsp->VolatileFileId);
 
@@ -3165,9 +3098,7 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 		req->RequestedOplockLevel = *oplock; /* no srv lease support */
 	else {
 		rc = add_lease_context(server, req, iov, &n_iov,
-				       oparms->fid->lease_key, oplock,
-				       oparms->fid->parent_lease_key,
-				       oparms->lease_flags);
+				       oparms->fid->lease_key, oplock);
 		if (rc)
 			return rc;
 	}
@@ -3193,19 +3124,22 @@ SMB2_open_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 	}
 
 	if ((oparms->disposition != FILE_OPEN) && (oparms->cifs_sb)) {
-		unsigned int sbflags = cifs_sb_flags(oparms->cifs_sb);
 		bool set_mode;
 		bool set_owner;
 
-		if ((sbflags & CIFS_MOUNT_MODE_FROM_SID) &&
-		    oparms->mode != ACL_NO_MODE) {
+		if ((oparms->cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MODE_FROM_SID) &&
+		    (oparms->mode != ACL_NO_MODE))
 			set_mode = true;
-		} else {
+		else {
 			set_mode = false;
 			oparms->mode = ACL_NO_MODE;
 		}
 
-		set_owner = sbflags & CIFS_MOUNT_UID_FROM_ACL;
+		if (oparms->cifs_sb->mnt_cifs_flags & CIFS_MOUNT_UID_FROM_ACL)
+			set_owner = true;
+		else
+			set_owner = false;
+
 		if (set_owner | set_mode) {
 			cifs_dbg(FYI, "add sd with mode 0x%x\n", oparms->mode);
 			rc = add_sd_context(iov, &n_iov, oparms->mode, set_owner);
@@ -3276,7 +3210,7 @@ SMB2_open(const unsigned int xid, struct cifs_open_parms *oparms, __le16 *path,
 	int resp_buftype = CIFS_NO_BUFFER;
 	int rc = 0;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -3286,7 +3220,7 @@ replay_again:
 
 	cifs_dbg(FYI, "create/open\n");
 	if (!ses || !server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -3304,12 +3238,8 @@ replay_again:
 	trace_smb3_open_enter(xid, tcon->tid, tcon->ses->Suid, oparms->path,
 		oparms->create_options, oparms->desired_access);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags,
@@ -3334,6 +3264,9 @@ replay_again:
 		goto creat_exit;
 	} else if (rsp == NULL) /* unlikely to happen, but safer to check */
 		goto creat_exit;
+	else
+		trace_smb3_open_done(xid, rsp->PersistentFileId, tcon->tid, ses->Suid,
+				     oparms->create_options, oparms->desired_access);
 
 	atomic_inc(&tcon->num_remote_opens);
 	oparms->fid->persistent_fid = rsp->PersistentFileId;
@@ -3352,16 +3285,12 @@ replay_again:
 		buf->EndOfFile = rsp->EndofFile;
 		buf->Attributes = rsp->FileAttributes;
 		buf->NumberOfLinks = cpu_to_le32(1);
-		buf->DeletePending = 0; /* successful open = not delete pending */
+		buf->DeletePending = 0;
 	}
 
 
 	rc = smb2_parse_contexts(server, &rsp_iov, &oparms->fid->epoch,
 				 oparms->fid->lease_key, oplock, buf, posix);
-
-	trace_smb3_open_done(xid, rsp->PersistentFileId, tcon->tid, ses->Suid,
-			     oparms->create_options, oparms->desired_access,
-			     *oplock);
 creat_exit:
 	SMB2_open_free(&rqst);
 	free_rsp_buf(resp_buftype, rsp);
@@ -3392,6 +3321,15 @@ SMB2_ioctl_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 		return rc;
 
 	if (indatalen) {
+		unsigned int len;
+
+		if (WARN_ON_ONCE(smb3_encryption_required(tcon) &&
+				 (check_add_overflow(total_len - 1,
+						     ALIGN(indatalen, 8), &len) ||
+				  len > MAX_CIFS_SMALL_BUFFER_SIZE))) {
+			cifs_small_buf_release(req);
+			return -EIO;
+		}
 		/*
 		 * indatalen is usually small at a couple of bytes max, so
 		 * just allocate through generic pool
@@ -3494,14 +3432,14 @@ SMB2_ioctl(const unsigned int xid, struct cifs_tcon *tcon, u64 persistent_fid,
 	int resp_buftype = CIFS_NO_BUFFER;
 	int rc = 0;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 	if (!tcon)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	ses = tcon->ses;
 	if (!ses)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -3509,7 +3447,7 @@ replay_again:
 	server = cifs_pick_channel(ses);
 
 	if (!server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	cifs_dbg(FYI, "SMB2 IOCTL\n");
 
@@ -3534,12 +3472,8 @@ replay_again:
 	if (rc)
 		goto ioctl_exit;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags,
@@ -3576,7 +3510,7 @@ replay_again:
 	 * warning)
 	 */
 	if (rsp == NULL) {
-		rc = smb_EIO(smb_eio_trace_ioctl_no_rsp);
+		rc = -EIO;
 		goto ioctl_exit;
 	}
 
@@ -3587,18 +3521,16 @@ replay_again:
 		goto ioctl_exit; /* server returned no data */
 	else if (*plen > rsp_iov.iov_len || *plen > 0xFF00) {
 		cifs_tcon_dbg(VFS, "srv returned invalid ioctl length: %d\n", *plen);
-		rc = smb_EIO2(smb_eio_trace_ioctl_data_len, *plen, rsp_iov.iov_len);
 		*plen = 0;
+		rc = -EIO;
 		goto ioctl_exit;
 	}
 
-	u32 outoff = le32_to_cpu(rsp->OutputOffset);
-
-	if (rsp_iov.iov_len - *plen < outoff) {
-		cifs_tcon_dbg(VFS, "Malformed ioctl resp: len %d offset %d\n",
-			      *plen, outoff);
-		rc = smb_EIO2(smb_eio_trace_ioctl_out_off, rsp_iov.iov_len - *plen, outoff);
+	if (rsp_iov.iov_len - *plen < le32_to_cpu(rsp->OutputOffset)) {
+		cifs_tcon_dbg(VFS, "Malformed ioctl resp: len %d offset %d\n", *plen,
+			le32_to_cpu(rsp->OutputOffset));
 		*plen = 0;
+		rc = -EIO;
 		goto ioctl_exit;
 	}
 
@@ -3695,7 +3627,7 @@ __SMB2_close(const unsigned int xid, struct cifs_tcon *tcon,
 	int rc = 0;
 	int flags = 0;
 	bool query_attrs = false;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -3706,7 +3638,7 @@ replay_again:
 	cifs_dbg(FYI, "Close\n");
 
 	if (!ses || !server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -3727,12 +3659,8 @@ replay_again:
 	if (rc)
 		goto close_exit;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -3902,12 +3830,12 @@ query_info(const unsigned int xid, struct cifs_tcon *tcon,
 	struct TCP_Server_Info *server;
 	int flags = 0;
 	bool allocated = false;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 	cifs_dbg(FYI, "Query Info\n");
 
 	if (!ses)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -3916,7 +3844,7 @@ replay_again:
 	server = cifs_pick_channel(ses);
 
 	if (!server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -3936,12 +3864,8 @@ replay_again:
 	trace_smb3_query_info_enter(xid, persistent_fid, tcon->tid,
 				    ses->Suid, info_class, (__u32)info_type);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -4003,15 +3927,34 @@ int SMB2_query_info(const unsigned int xid, struct cifs_tcon *tcon,
 			  NULL);
 }
 
+#if 0
+/* currently unused, as now we are doing compounding instead (see smb311_posix_query_path_info) */
+int
+SMB311_posix_query_info(const unsigned int xid, struct cifs_tcon *tcon,
+		u64 persistent_fid, u64 volatile_fid, struct smb311_posix_qinfo *data, u32 *plen)
+{
+	size_t output_len = sizeof(struct smb311_posix_qinfo) +
+			(sizeof(struct smb_sid) * 2) + (PATH_MAX * 2);
+	*plen = 0;
+
+	return query_info(xid, tcon, persistent_fid, volatile_fid,
+			  SMB_FIND_FILE_POSIX_INFO, SMB2_O_INFO_FILE, 0,
+			  output_len, sizeof(struct smb311_posix_qinfo), (void **)&data, plen);
+	/* Note caller must free "data" (passed in above). It may be allocated in query_info call */
+}
+#endif
+
 int
 SMB2_query_acl(const unsigned int xid, struct cifs_tcon *tcon,
 	       u64 persistent_fid, u64 volatile_fid,
 	       void **data, u32 *plen, u32 extra_info)
 {
+	__u32 additional_info = OWNER_SECINFO | GROUP_SECINFO | DACL_SECINFO |
+				extra_info;
 	*plen = 0;
 
 	return query_info(xid, tcon, persistent_fid, volatile_fid,
-			  0, SMB2_O_INFO_SECURITY, extra_info,
+			  0, SMB2_O_INFO_SECURITY, additional_info,
 			  SMB2_MAX_BUFFER_SIZE, MIN_SEC_DESC_LEN, data, plen);
 }
 
@@ -4079,7 +4022,7 @@ SMB2_change_notify(const unsigned int xid, struct cifs_tcon *tcon,
 	int resp_buftype = CIFS_NO_BUFFER;
 	int flags = 0;
 	int rc = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -4088,7 +4031,7 @@ replay_again:
 
 	cifs_dbg(FYI, "change notify\n");
 	if (!ses || !server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -4110,12 +4053,8 @@ replay_again:
 	trace_smb3_notify_enter(xid, persistent_fid, tcon->tid, ses->Suid,
 				(u8)watch_tree, completion_filter);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -4172,8 +4111,9 @@ replay_again:
  * FIXME: maybe we should consider checking that the reply matches request?
  */
 static void
-smb2_echo_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
+smb2_echo_callback(struct mid_q_entry *mid)
 {
+	struct TCP_Server_Info *server = mid->callback_data;
 	struct smb2_echo_rsp *rsp = (struct smb2_echo_rsp *)mid->resp_buf;
 	struct cifs_credits credits = { .value = 0, .instance = 0 };
 
@@ -4183,22 +4123,8 @@ smb2_echo_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 		credits.instance = server->reconnect_instance;
 	}
 
-	release_mid(server, mid);
+	release_mid(mid);
 	add_credits(server, &credits, CIFS_ECHO_OP);
-}
-
-static void cifs_renegotiate_iosize(struct TCP_Server_Info *server,
-				    struct cifs_tcon *tcon)
-{
-	struct cifs_sb_info *cifs_sb;
-
-	if (server == NULL || tcon == NULL)
-		return;
-
-	spin_lock(&tcon->sb_list_lock);
-	list_for_each_entry(cifs_sb, &tcon->cifs_sb_list, tcon_sb_link)
-		cifs_negotiate_iosize(server, cifs_sb->ctx, tcon);
-	spin_unlock(&tcon->sb_list_lock);
 }
 
 void smb2_reconnect_server(struct work_struct *work)
@@ -4288,10 +4214,9 @@ void smb2_reconnect_server(struct work_struct *work)
 
 	list_for_each_entry_safe(tcon, tcon2, &tmp_list, rlist) {
 		rc = smb2_reconnect(SMB2_INTERNAL_CMD, tcon, server, true);
-		if (!rc) {
-			cifs_renegotiate_iosize(server, tcon);
+		if (!rc)
 			cifs_reopen_persistent_handles(tcon);
-		} else
+		else
 			resched = true;
 		list_del_init(&tcon->rlist);
 		if (tcon->ipc)
@@ -4330,7 +4255,7 @@ void smb2_reconnect_server(struct work_struct *work)
 done:
 	cifs_dbg(FYI, "Reconnecting tcons and channels finished\n");
 	if (resched)
-		cifs_requeue_server_reconn(server);
+		queue_delayed_work(cifsiod_wq, &server->reconnect, 2 * HZ);
 	mutex_unlock(&pserver->reconnect_mutex);
 
 	/* now we can safely release srv struct */
@@ -4354,7 +4279,7 @@ SMB2_echo(struct TCP_Server_Info *server)
 	    server->ops->need_neg(server)) {
 		spin_unlock(&server->srv_lock);
 		/* No need to send echo on newly established connections */
-		cifs_queue_server_reconn(server);
+		mod_delayed_work(cifsiod_wq, &server->reconnect, 0);
 		return rc;
 	}
 	spin_unlock(&server->srv_lock);
@@ -4421,7 +4346,7 @@ SMB2_flush(const unsigned int xid, struct cifs_tcon *tcon, u64 persistent_fid,
 	int resp_buftype = CIFS_NO_BUFFER;
 	int flags = 0;
 	int rc = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -4430,7 +4355,7 @@ replay_again:
 
 	cifs_dbg(FYI, "flush\n");
 	if (!ses || !(ses->server))
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -4447,12 +4372,8 @@ replay_again:
 
 	trace_smb3_flush_enter(xid, persistent_fid, tcon->tid, ses->Suid);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -4499,7 +4420,7 @@ static inline bool smb3_use_rdma_offload(struct cifs_io_parms *io_parms)
 		return false;
 
 	/* offload also has its overhead, so only do it if desired */
-	if (io_parms->length < server->rdma_readwrite_threshold)
+	if (io_parms->length < server->smbd_conn->rdma_readwrite_threshold)
 		return false;
 
 	return true;
@@ -4549,10 +4470,10 @@ smb2_new_read_req(void **buf, unsigned int *total_len,
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	/*
 	 * If we want to do a RDMA write, fill in and append
-	 * smbdirect_buffer_descriptor_v1 to the end of read request
+	 * smbd_buffer_descriptor_v1 to the end of read request
 	 */
 	if (rdata && smb3_use_rdma_offload(io_parms)) {
-		struct smbdirect_buffer_descriptor_v1 *v1;
+		struct smbd_buffer_descriptor_v1 *v1;
 		bool need_invalidate = server->dialect == SMB30_PROT_ID;
 
 		rdata->mr = smbd_register_mr(server->smbd_conn, &rdata->subreq.io_iter,
@@ -4566,9 +4487,11 @@ smb2_new_read_req(void **buf, unsigned int *total_len,
 		req->ReadChannelInfoOffset =
 			cpu_to_le16(offsetof(struct smb2_read_req, Buffer));
 		req->ReadChannelInfoLength =
-			cpu_to_le16(sizeof(struct smbdirect_buffer_descriptor_v1));
-		v1 = (struct smbdirect_buffer_descriptor_v1 *) &req->Buffer[0];
-		smbd_mr_fill_buffer_descriptor(rdata->mr, v1);
+			cpu_to_le16(sizeof(struct smbd_buffer_descriptor_v1));
+		v1 = (struct smbd_buffer_descriptor_v1 *) &req->Buffer[0];
+		v1->offset = cpu_to_le64(rdata->mr->mr->iova);
+		v1->token = cpu_to_le32(rdata->mr->mr->rkey);
+		v1->length = cpu_to_le32(rdata->mr->mr->length);
 
 		*total_len += sizeof(*v1) - 1;
 	}
@@ -4601,20 +4524,30 @@ smb2_new_read_req(void **buf, unsigned int *total_len,
 	return rc;
 }
 
+static void smb2_readv_worker(struct work_struct *work)
+{
+	struct cifs_io_subrequest *rdata =
+		container_of(work, struct cifs_io_subrequest, subreq.work);
+
+	netfs_read_subreq_terminated(&rdata->subreq, rdata->result, false);
+}
+
 static void
-smb2_readv_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
+smb2_readv_callback(struct mid_q_entry *mid)
 {
 	struct cifs_io_subrequest *rdata = mid->callback_data;
 	struct netfs_inode *ictx = netfs_inode(rdata->rreq->inode);
 	struct cifs_tcon *tcon = tlink_tcon(rdata->req->cfile->tlink);
-	struct smb2_hdr *shdr = (struct smb2_hdr *)rdata->iov[0].iov_base;
+	struct TCP_Server_Info *server = rdata->server;
+	struct smb2_hdr *shdr =
+				(struct smb2_hdr *)rdata->iov[0].iov_base;
 	struct cifs_credits credits = {
 		.value = 0,
 		.instance = 0,
 		.rreq_debug_id = rdata->rreq->debug_id,
 		.rreq_debug_index = rdata->subreq.debug_index,
 	};
-	struct smb_rqst rqst = { .rq_iov = &rdata->iov[0], .rq_nvec = 1 };
+	struct smb_rqst rqst = { .rq_iov = &rdata->iov[1], .rq_nvec = 1 };
 	unsigned int rreq_debug_id = rdata->rreq->debug_id;
 	unsigned int subreq_debug_index = rdata->subreq.debug_index;
 
@@ -4622,9 +4555,9 @@ smb2_readv_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 		rqst.rq_iter	  = rdata->subreq.io_iter;
 	}
 
-	WARN_ONCE(rdata->server != server,
+	WARN_ONCE(rdata->server != mid->server,
 		  "rdata server %p != mid server %p",
-		  rdata->server, server);
+		  rdata->server, mid->server);
 
 	cifs_dbg(FYI, "%s: mid=%llu state=%d result=%d bytes=%zu/%zu\n",
 		 __func__, mid->mid, mid->mid_state, rdata->result,
@@ -4640,30 +4573,16 @@ smb2_readv_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 
 			iov_iter_truncate(&rqst.rq_iter, rdata->got_bytes);
 			rc = smb2_verify_signature(&rqst, server);
-			if (rc) {
+			if (rc)
 				cifs_tcon_dbg(VFS, "SMB signature verification returned error = %d\n",
-					      rc);
-				rdata->subreq.error = rc;
-				rdata->result = rc;
-
-				if (is_replayable_error(rc)) {
-					trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_retry_needed);
-					__set_bit(NETFS_SREQ_NEED_RETRY, &rdata->subreq.flags);
-				} else
-					trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_bad);
-			} else
-				trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_progress);
+					 rc);
 		}
 		/* FIXME: should this be counted toward the initiating task? */
 		task_io_account_read(rdata->got_bytes);
 		cifs_stats_bytes_read(tcon, rdata->got_bytes);
 		break;
 	case MID_REQUEST_SUBMITTED:
-		trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_req_submitted);
-		goto do_retry;
 	case MID_RETRY_NEEDED:
-		trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_retry_needed);
-do_retry:
 		__set_bit(NETFS_SREQ_NEED_RETRY, &rdata->subreq.flags);
 		rdata->result = -EAGAIN;
 		if (server->sign && rdata->got_bytes)
@@ -4674,16 +4593,11 @@ do_retry:
 		cifs_stats_bytes_read(tcon, rdata->got_bytes);
 		break;
 	case MID_RESPONSE_MALFORMED:
-		trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_malformed);
 		credits.value = le16_to_cpu(shdr->CreditRequest);
 		credits.instance = server->reconnect_instance;
-		rdata->result = smb_EIO(smb_eio_trace_read_rsp_malformed);
-		break;
+		fallthrough;
 	default:
-		trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_unknown);
-		rdata->result = smb_EIO1(smb_eio_trace_read_mid_state_unknown,
-					 mid->mid_state);
-		break;
+		rdata->result = -EIO;
 	}
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	/*
@@ -4725,26 +4639,16 @@ do_retry:
 			__set_bit(NETFS_SREQ_HIT_EOF, &rdata->subreq.flags);
 			rdata->result = 0;
 		}
-		if (rdata->got_bytes)
-			__set_bit(NETFS_SREQ_MADE_PROGRESS, &rdata->subreq.flags);
 	}
-
-	/* see if we need to retry */
-	if (is_replayable_error(rdata->result) &&
-	    smb2_should_replay(tcon,
-			       &rdata->retries,
-			       &rdata->cur_sleep))
-		rdata->replay = true;
-
 	trace_smb3_rw_credits(rreq_debug_id, subreq_debug_index, rdata->credits.value,
 			      server->credits, server->in_flight,
 			      0, cifs_trace_rw_credits_read_response_clear);
 	rdata->credits.value = 0;
-	rdata->subreq.error = rdata->result;
 	rdata->subreq.transferred += rdata->got_bytes;
 	trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_progress);
-	netfs_read_subreq_terminated(&rdata->subreq);
-	release_mid(server, mid);
+	INIT_WORK(&rdata->subreq.work, smb2_readv_worker);
+	queue_work(cifsiod_wq, &rdata->subreq.work);
+	release_mid(mid);
 	trace_smb3_rw_credits(rreq_debug_id, subreq_debug_index, 0,
 			      server->credits, server->in_flight,
 			      credits.value, cifs_trace_rw_credits_read_response_add);
@@ -4784,7 +4688,7 @@ smb2_async_readv(struct cifs_io_subrequest *rdata)
 	rc = smb2_new_read_req(
 		(void **) &buf, &total_len, &io_parms, rdata, 0, 0);
 	if (rc)
-		goto out;
+		return rc;
 
 	if (smb3_encryption_required(io_parms.tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -4795,13 +4699,6 @@ smb2_async_readv(struct cifs_io_subrequest *rdata)
 	rdata->result = 0;
 
 	shdr = (struct smb2_hdr *)buf;
-
-	if (rdata->replay) {
-		/* Back-off before retry */
-		if (rdata->cur_sleep)
-			msleep(rdata->cur_sleep);
-		smb2_set_replay(server, &rqst);
-	}
 
 	if (rdata->credits.value > 0) {
 		shdr->CreditCharge = cpu_to_le16(DIV_ROUND_UP(io_parms.length,
@@ -4838,17 +4735,6 @@ smb2_async_readv(struct cifs_io_subrequest *rdata)
 
 async_readv_out:
 	cifs_small_buf_release(buf);
-
-out:
-	/* if the send error is retryable, let netfs know about it */
-	if (is_replayable_error(rc) &&
-	    smb2_should_replay(tcon,
-			       &rdata->retries,
-			       &rdata->cur_sleep)) {
-		trace_netfs_sreq(&rdata->subreq, netfs_sreq_trace_io_retry_needed);
-		__set_bit(NETFS_SREQ_NEED_RETRY, &rdata->subreq.flags);
-	}
-
 	return rc;
 }
 
@@ -4917,8 +4803,7 @@ SMB2_read(const unsigned int xid, struct cifs_io_parms *io_parms,
 	    (*nbytes > io_parms->length)) {
 		cifs_dbg(FYI, "bad length %d for count %d\n",
 			 *nbytes, io_parms->length);
-		rc = smb_EIO2(smb_eio_trace_read_overlarge,
-			      *nbytes, io_parms->length);
+		rc = -EIO;
 		*nbytes = 0;
 	}
 
@@ -4940,10 +4825,11 @@ SMB2_read(const unsigned int xid, struct cifs_io_parms *io_parms,
  * workqueue completion task.
  */
 static void
-smb2_writev_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
+smb2_writev_callback(struct mid_q_entry *mid)
 {
 	struct cifs_io_subrequest *wdata = mid->callback_data;
 	struct cifs_tcon *tcon = tlink_tcon(wdata->req->cfile->tlink);
+	struct TCP_Server_Info *server = wdata->server;
 	struct smb2_write_rsp *rsp = (struct smb2_write_rsp *)mid->resp_buf;
 	struct cifs_credits credits = {
 		.value = 0,
@@ -4956,26 +4842,17 @@ smb2_writev_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 	ssize_t result = 0;
 	size_t written;
 
-	WARN_ONCE(wdata->server != server,
+	WARN_ONCE(wdata->server != mid->server,
 		  "wdata server %p != mid server %p",
-		  wdata->server, server);
+		  wdata->server, mid->server);
 
 	switch (mid->mid_state) {
 	case MID_RESPONSE_RECEIVED:
 		credits.value = le16_to_cpu(rsp->hdr.CreditRequest);
 		credits.instance = server->reconnect_instance;
 		result = smb2_check_receive(mid, server, 0);
-		if (result != 0) {
-			if (is_replayable_error(result)) {
-				trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_retry_needed);
-				__set_bit(NETFS_SREQ_NEED_RETRY, &wdata->subreq.flags);
-			} else {
-				wdata->subreq.error = result;
-				trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_bad);
-			}
+		if (result != 0)
 			break;
-		}
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_progress);
 
 		written = le32_to_cpu(rsp->DataLength);
 		/*
@@ -4989,33 +4866,22 @@ smb2_writev_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 
 		cifs_stats_bytes_written(tcon, written);
 
-		if (written < wdata->subreq.len) {
-			result = -ENOSPC;
-		} else if (written > 0) {
+		if (written < wdata->subreq.len)
+			wdata->result = -ENOSPC;
+		else
 			wdata->subreq.len = written;
-			__set_bit(NETFS_SREQ_MADE_PROGRESS, &wdata->subreq.flags);
-		}
 		break;
 	case MID_REQUEST_SUBMITTED:
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_req_submitted);
-		__set_bit(NETFS_SREQ_NEED_RETRY, &wdata->subreq.flags);
-		result = -EAGAIN;
-		break;
 	case MID_RETRY_NEEDED:
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_retry_needed);
 		__set_bit(NETFS_SREQ_NEED_RETRY, &wdata->subreq.flags);
 		result = -EAGAIN;
 		break;
 	case MID_RESPONSE_MALFORMED:
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_malformed);
 		credits.value = le16_to_cpu(rsp->hdr.CreditRequest);
 		credits.instance = server->reconnect_instance;
-		result = smb_EIO(smb_eio_trace_write_rsp_malformed);
-		break;
+		fallthrough;
 	default:
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_unknown);
-		result = smb_EIO1(smb_eio_trace_write_mid_state_unknown,
-				  mid->mid_state);
+		result = -EIO;
 		break;
 	}
 #ifdef CONFIG_CIFS_SMB_DIRECT
@@ -5032,7 +4898,6 @@ smb2_writev_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 	}
 #endif
 	if (result) {
-		wdata->result = result;
 		cifs_stats_fail_inc(tcon, SMB2_WRITE_HE);
 		trace_smb3_write_err(wdata->rreq->debug_id,
 				     wdata->subreq.debug_index,
@@ -5055,16 +4920,9 @@ smb2_writev_callback(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 			      server->credits, server->in_flight,
 			      0, cifs_trace_rw_credits_write_response_clear);
 	wdata->credits.value = 0;
-
-	/* see if we need to retry */
-	if (is_replayable_error(wdata->result) &&
-	    smb2_should_replay(tcon,
-			       &wdata->retries,
-			       &wdata->cur_sleep))
-		wdata->replay = true;
-
-	cifs_write_subrequest_terminated(wdata, result ?: written);
-	release_mid(server, mid);
+	trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_progress);
+	cifs_write_subrequest_terminated(wdata, result ?: written, true);
+	release_mid(mid);
 	trace_smb3_rw_credits(rreq_debug_id, subreq_debug_index, 0,
 			      server->credits, server->in_flight,
 			      credits.value, cifs_trace_rw_credits_write_response_add);
@@ -5143,10 +5001,10 @@ smb2_async_writev(struct cifs_io_subrequest *wdata)
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	/*
 	 * If we want to do a server RDMA read, fill in and append
-	 * smbdirect_buffer_descriptor_v1 to the end of write request
+	 * smbd_buffer_descriptor_v1 to the end of write request
 	 */
 	if (smb3_use_rdma_offload(io_parms)) {
-		struct smbdirect_buffer_descriptor_v1 *v1;
+		struct smbd_buffer_descriptor_v1 *v1;
 		bool need_invalidate = server->dialect == SMB30_PROT_ID;
 
 		wdata->mr = smbd_register_mr(server->smbd_conn, &wdata->subreq.io_iter,
@@ -5165,9 +5023,11 @@ smb2_async_writev(struct cifs_io_subrequest *wdata)
 		req->WriteChannelInfoOffset =
 			cpu_to_le16(offsetof(struct smb2_write_req, Buffer));
 		req->WriteChannelInfoLength =
-			cpu_to_le16(sizeof(struct smbdirect_buffer_descriptor_v1));
-		v1 = (struct smbdirect_buffer_descriptor_v1 *) &req->Buffer[0];
-		smbd_mr_fill_buffer_descriptor(wdata->mr, v1);
+			cpu_to_le16(sizeof(struct smbd_buffer_descriptor_v1));
+		v1 = (struct smbd_buffer_descriptor_v1 *) &req->Buffer[0];
+		v1->offset = cpu_to_le64(wdata->mr->mr->iova);
+		v1->token = cpu_to_le32(wdata->mr->mr->rkey);
+		v1->length = cpu_to_le32(wdata->mr->mr->length);
 
 		rqst.rq_iov[0].iov_len += sizeof(*v1);
 
@@ -5179,12 +5039,8 @@ smb2_async_writev(struct cifs_io_subrequest *wdata)
 	}
 #endif
 
-	if (wdata->replay) {
-		/* Back-off before retry */
-		if (wdata->cur_sleep)
-			msleep(wdata->cur_sleep);
+	if (test_bit(NETFS_SREQ_RETRYING, &wdata->subreq.flags))
 		smb2_set_replay(server, &rqst);
-	}
 
 	cifs_dbg(FYI, "async write at %llu %u bytes iter=%zx\n",
 		 io_parms->offset, io_parms->length, iov_iter_count(&wdata->subreq.io_iter));
@@ -5230,16 +5086,6 @@ smb2_async_writev(struct cifs_io_subrequest *wdata)
 async_writev_out:
 	cifs_small_buf_release(req);
 out:
-	/* if the send error is retryable, let netfs know about it */
-	if (is_replayable_error(rc) &&
-	    smb2_should_replay(tcon,
-			       &wdata->retries,
-			       &wdata->cur_sleep)) {
-		wdata->replay = true;
-		trace_netfs_sreq(&wdata->subreq, netfs_sreq_trace_io_retry_needed);
-		__set_bit(NETFS_SREQ_NEED_RETRY, &wdata->subreq.flags);
-	}
-
 	if (rc) {
 		trace_smb3_rw_credits(wdata->rreq->debug_id,
 				      wdata->subreq.debug_index,
@@ -5248,7 +5094,7 @@ out:
 				      -(int)wdata->credits.value,
 				      cifs_trace_rw_credits_write_response_clear);
 		add_credits_and_wake_if(wdata->server, &wdata->credits, 0);
-		cifs_write_subrequest_terminated(wdata, rc);
+		cifs_write_subrequest_terminated(wdata, rc, true);
 	}
 }
 
@@ -5271,7 +5117,7 @@ SMB2_write(const unsigned int xid, struct cifs_io_parms *io_parms,
 	int flags = 0;
 	unsigned int total_len;
 	struct TCP_Server_Info *server;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -5322,12 +5168,8 @@ replay_again:
 	iov_iter_kvec(&rqst.rq_iter, ITER_SOURCE, &iov[1], n_vec,
 		      io_parms->length);
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, io_parms->tcon->ses, server,
 			    &rqst,
@@ -5607,7 +5449,7 @@ smb2_parse_query_directory(struct cifs_tcon *tcon,
 		info_buf_size = sizeof(FILE_DIRECTORY_INFO);
 		break;
 	case SMB_FIND_FILE_ID_FULL_DIR_INFO:
-		info_buf_size = sizeof(FILE_ID_FULL_DIR_INFO);
+		info_buf_size = sizeof(SEARCH_ID_FULL_DIR_INFO);
 		break;
 	case SMB_FIND_FILE_POSIX_INFO:
 		/* note that posix payload are variable size */
@@ -5678,7 +5520,7 @@ SMB2_query_directory(const unsigned int xid, struct cifs_tcon *tcon,
 	struct cifs_ses *ses = tcon->ses;
 	struct TCP_Server_Info *server;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -5686,7 +5528,7 @@ replay_again:
 	server = cifs_pick_channel(ses);
 
 	if (!ses || !(ses->server))
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -5703,12 +5545,8 @@ replay_again:
 	if (rc)
 		goto qdir_exit;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -5817,7 +5655,7 @@ send_set_info(const unsigned int xid, struct cifs_tcon *tcon,
 	struct cifs_ses *ses = tcon->ses;
 	struct TCP_Server_Info *server;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -5825,7 +5663,7 @@ replay_again:
 	server = cifs_pick_channel(ses);
 
 	if (!ses || !server)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	if (!num)
 		return -EINVAL;
@@ -5833,7 +5671,7 @@ replay_again:
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
 
-	iov = kmalloc_objs(struct kvec, num);
+	iov = kmalloc_array(num, sizeof(struct kvec), GFP_KERNEL);
 	if (!iov)
 		return -ENOMEM;
 
@@ -5850,12 +5688,8 @@ replay_again:
 		return rc;
 	}
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags,
@@ -5934,7 +5768,7 @@ SMB2_oplock_break(const unsigned int xid, struct cifs_tcon *tcon,
 	struct kvec iov[1];
 	struct kvec rsp_iov;
 	int resp_buf_type;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -5964,12 +5798,8 @@ replay_again:
 	rqst.rq_iov = iov;
 	rqst.rq_nvec = 1;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buf_type, flags, &rsp_iov);
@@ -6030,7 +5860,7 @@ build_qfs_info_req(struct kvec *iov, struct cifs_tcon *tcon,
 	cifs_dbg(FYI, "Query FSInfo level %d\n", level);
 
 	if ((tcon->ses == NULL) || server == NULL)
-		return smb_EIO(smb_eio_trace_null_pointers);
+		return -EIO;
 
 	rc = smb2_plain_req_init(SMB2_QUERY_INFO, tcon, server,
 				 (void **) &req, &total_len);
@@ -6071,7 +5901,7 @@ SMB311_posix_qfs_info(const unsigned int xid, struct cifs_tcon *tcon,
 	struct TCP_Server_Info *server;
 	FILE_SYSTEM_POSIX_INFO *info = NULL;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -6092,12 +5922,8 @@ replay_again:
 	rqst.rq_iov = &iov;
 	rqst.rq_nvec = 1;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -6127,6 +5953,71 @@ posix_qfsinf_exit:
 }
 
 int
+SMB2_QFS_info(const unsigned int xid, struct cifs_tcon *tcon,
+	      u64 persistent_fid, u64 volatile_fid, struct kstatfs *fsdata)
+{
+	struct smb_rqst rqst;
+	struct smb2_query_info_rsp *rsp = NULL;
+	struct kvec iov;
+	struct kvec rsp_iov;
+	int rc = 0;
+	int resp_buftype;
+	struct cifs_ses *ses = tcon->ses;
+	struct TCP_Server_Info *server;
+	struct smb2_fs_full_size_info *info = NULL;
+	int flags = 0;
+	int retries = 0, cur_sleep = 1;
+
+replay_again:
+	/* reinitialize for possible replay */
+	flags = 0;
+	server = cifs_pick_channel(ses);
+
+	rc = build_qfs_info_req(&iov, tcon, server,
+				FS_FULL_SIZE_INFORMATION,
+				sizeof(struct smb2_fs_full_size_info),
+				persistent_fid, volatile_fid);
+	if (rc)
+		return rc;
+
+	if (smb3_encryption_required(tcon))
+		flags |= CIFS_TRANSFORM_REQ;
+
+	memset(&rqst, 0, sizeof(struct smb_rqst));
+	rqst.rq_iov = &iov;
+	rqst.rq_nvec = 1;
+
+	if (retries)
+		smb2_set_replay(server, &rqst);
+
+	rc = cifs_send_recv(xid, ses, server,
+			    &rqst, &resp_buftype, flags, &rsp_iov);
+	free_qfs_info_req(&iov);
+	if (rc) {
+		cifs_stats_fail_inc(tcon, SMB2_QUERY_INFO_HE);
+		goto qfsinf_exit;
+	}
+	rsp = (struct smb2_query_info_rsp *)rsp_iov.iov_base;
+
+	info = (struct smb2_fs_full_size_info *)(
+		le16_to_cpu(rsp->OutputBufferOffset) + (char *)rsp);
+	rc = smb2_validate_iov(le16_to_cpu(rsp->OutputBufferOffset),
+			       le32_to_cpu(rsp->OutputBufferLength), &rsp_iov,
+			       sizeof(struct smb2_fs_full_size_info));
+	if (!rc)
+		smb2_copy_fs_info_to_kstatfs(info, fsdata);
+
+qfsinf_exit:
+	free_rsp_buf(resp_buftype, rsp_iov.iov_base);
+
+	if (is_replayable_error(rc) &&
+	    smb2_should_replay(tcon, &retries, &cur_sleep))
+		goto replay_again;
+
+	return rc;
+}
+
+int
 SMB2_QFS_attr(const unsigned int xid, struct cifs_tcon *tcon,
 	      u64 persistent_fid, u64 volatile_fid, int level)
 {
@@ -6140,7 +6031,7 @@ SMB2_QFS_attr(const unsigned int xid, struct cifs_tcon *tcon,
 	struct TCP_Server_Info *server;
 	unsigned int rsp_len, offset;
 	int flags = 0;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -6151,14 +6042,14 @@ replay_again:
 		max_len = sizeof(FILE_SYSTEM_DEVICE_INFO);
 		min_len = sizeof(FILE_SYSTEM_DEVICE_INFO);
 	} else if (level == FS_ATTRIBUTE_INFORMATION) {
-		max_len = sizeof(FILE_SYSTEM_ATTRIBUTE_INFO) + MAX_FS_NAME_LEN;
-		min_len = sizeof(FILE_SYSTEM_ATTRIBUTE_INFO);
+		max_len = sizeof(FILE_SYSTEM_ATTRIBUTE_INFO);
+		min_len = MIN_FS_ATTR_INFO_SIZE;
 	} else if (level == FS_SECTOR_SIZE_INFORMATION) {
 		max_len = sizeof(struct smb3_fs_ss_info);
 		min_len = sizeof(struct smb3_fs_ss_info);
 	} else if (level == FS_VOLUME_INFORMATION) {
-		max_len = sizeof(struct filesystem_vol_info) + MAX_VOL_LABEL_LEN;
-		min_len = sizeof(struct filesystem_vol_info);
+		max_len = sizeof(struct smb3_fs_vol_info) + MAX_VOL_LABEL_LEN;
+		min_len = sizeof(struct smb3_fs_vol_info);
 	} else {
 		cifs_dbg(FYI, "Invalid qfsinfo level %d\n", level);
 		return -EINVAL;
@@ -6177,12 +6068,8 @@ replay_again:
 	rqst.rq_iov = &iov;
 	rqst.rq_nvec = 1;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
 
 	rc = cifs_send_recv(xid, ses, server,
 			    &rqst, &resp_buftype, flags, &rsp_iov);
@@ -6202,7 +6089,7 @@ replay_again:
 	if (level == FS_ATTRIBUTE_INFORMATION)
 		memcpy(&tcon->fsAttrInfo, offset
 			+ (char *)rsp, min_t(unsigned int,
-			rsp_len, min_len));
+			rsp_len, max_len));
 	else if (level == FS_DEVICE_INFORMATION)
 		memcpy(&tcon->fsDevInfo, offset
 			+ (char *)rsp, sizeof(FILE_SYSTEM_DEVICE_INFO));
@@ -6213,9 +6100,9 @@ replay_again:
 		tcon->perf_sector_size =
 			le32_to_cpu(ss_info->PhysicalBytesPerSectorForPerf);
 	} else if (level == FS_VOLUME_INFORMATION) {
-		struct filesystem_vol_info *vol_info = (struct filesystem_vol_info *)
+		struct smb3_fs_vol_info *vol_info = (struct smb3_fs_vol_info *)
 			(offset + (char *)rsp);
-		tcon->vol_serial_number = le32_to_cpu(vol_info->VolumeSerialNumber);
+		tcon->vol_serial_number = vol_info->VolumeSerialNumber;
 		tcon->vol_create_time = vol_info->VolumeCreationTime;
 	}
 
@@ -6244,7 +6131,7 @@ smb2_lockv(const unsigned int xid, struct cifs_tcon *tcon,
 	int flags = CIFS_NO_RSP_BUF;
 	unsigned int total_len;
 	struct TCP_Server_Info *server;
-	int retries = 0, cur_sleep = 0;
+	int retries = 0, cur_sleep = 1;
 
 replay_again:
 	/* reinitialize for possible replay */
@@ -6280,17 +6167,8 @@ replay_again:
 	rqst.rq_iov = iov;
 	rqst.rq_nvec = 2;
 
-	if (retries) {
-		/* Back-off before retry */
-		if (cur_sleep)
-			msleep(cur_sleep);
+	if (retries)
 		smb2_set_replay(server, &rqst);
-	}
-
-	trace_smb3_lock_enter(xid, persist_fid, tcon->tid, tcon->ses->Suid,
-			      le64_to_cpu(buf[0].Offset),
-			      le64_to_cpu(buf[0].Length),
-			      le32_to_cpu(buf[0].Flags), num_lock, 0);
 
 	rc = cifs_send_recv(xid, tcon->ses, server,
 			    &rqst, &resp_buf_type, flags,
@@ -6300,15 +6178,7 @@ replay_again:
 		cifs_dbg(FYI, "Send error in smb2_lockv = %d\n", rc);
 		cifs_stats_fail_inc(tcon, SMB2_LOCK_HE);
 		trace_smb3_lock_err(xid, persist_fid, tcon->tid,
-				    tcon->ses->Suid,
-				    le64_to_cpu(buf[0].Offset),
-				    le64_to_cpu(buf[0].Length),
-				    le32_to_cpu(buf[0].Flags), num_lock, rc);
-	} else {
-		trace_smb3_lock_done(xid, persist_fid, tcon->tid, tcon->ses->Suid,
-				     le64_to_cpu(buf[0].Offset),
-				     le64_to_cpu(buf[0].Length),
-				     le32_to_cpu(buf[0].Flags), num_lock, 0);
+				    tcon->ses->Suid, rc);
 	}
 
 	if (is_replayable_error(rc) &&
@@ -6365,7 +6235,7 @@ SMB2_lease_break(const unsigned int xid, struct cifs_tcon *tcon,
 	req->StructureSize = cpu_to_le16(36);
 	total_len += 12;
 
-	memcpy(req->LeaseKey, lease_key, SMB2_LEASE_KEY_SIZE);
+	memcpy(req->LeaseKey, lease_key, 16);
 	req->LeaseState = lease_state;
 
 	flags |= CIFS_NO_RSP_BUF;
@@ -6385,11 +6255,11 @@ SMB2_lease_break(const unsigned int xid, struct cifs_tcon *tcon,
 	please_key_high = (__u64 *)(lease_key+8);
 	if (rc) {
 		cifs_stats_fail_inc(tcon, SMB2_OPLOCK_BREAK_HE);
-		trace_smb3_lease_ack_err(le32_to_cpu(lease_state), tcon->tid,
+		trace_smb3_lease_err(le32_to_cpu(lease_state), tcon->tid,
 			ses->Suid, *please_key_low, *please_key_high, rc);
 		cifs_dbg(FYI, "Send error in Lease Break = %d\n", rc);
 	} else
-		trace_smb3_lease_ack_done(le32_to_cpu(lease_state), tcon->tid,
+		trace_smb3_lease_done(le32_to_cpu(lease_state), tcon->tid,
 			ses->Suid, *please_key_low, *please_key_high);
 
 	return rc;

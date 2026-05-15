@@ -55,7 +55,3 @@
 &mscm_ir {
 	interrupt-parent = <&nvic>;
 };
-
-&nvic {
-	arm,num-irq-priority-bits = <4>;
-};

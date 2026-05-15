@@ -279,7 +279,7 @@ static int lpc32xx_ts_suspend(struct device *dev)
 	 * avoid calling the TSC stop and start functions as the TSC
 	 * isn't yet clocked.
 	 */
-	guard(mutex)(&input->mutex);
+	mutex_lock(&input->mutex);
 
 	if (input_device_enabled(input)) {
 		if (device_may_wakeup(dev))
@@ -287,6 +287,8 @@ static int lpc32xx_ts_suspend(struct device *dev)
 		else
 			lpc32xx_stop_tsc(tsc);
 	}
+
+	mutex_unlock(&input->mutex);
 
 	return 0;
 }
@@ -296,7 +298,7 @@ static int lpc32xx_ts_resume(struct device *dev)
 	struct lpc32xx_tsc *tsc = dev_get_drvdata(dev);
 	struct input_dev *input = tsc->dev;
 
-	guard(mutex)(&input->mutex);
+	mutex_lock(&input->mutex);
 
 	if (input_device_enabled(input)) {
 		if (device_may_wakeup(dev))
@@ -304,6 +306,8 @@ static int lpc32xx_ts_resume(struct device *dev)
 		else
 			lpc32xx_setup_tsc(tsc);
 	}
+
+	mutex_unlock(&input->mutex);
 
 	return 0;
 }

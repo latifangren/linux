@@ -122,7 +122,7 @@ struct uv_systab {
 	struct {
 		u32 type:8;	/* type of entry */
 		u32 offset:24;	/* byte offset from struct start to entry */
-	} entry[];		/* additional entries follow */
+	} entry[1];		/* additional entries follow */
 };
 extern struct uv_systab *uv_systab;
 

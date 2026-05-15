@@ -574,7 +574,7 @@ static void ioat_enumerate_channels(struct ioatdma_device *ioat_dma)
 	dev_dbg(dev, "%s: xfercap = %d\n", __func__, 1 << xfercap_log);
 
 	for (i = 0; i < chancnt; i++) {
-		ioat_chan = kzalloc_obj(*ioat_chan);
+		ioat_chan = kzalloc(sizeof(*ioat_chan), GFP_KERNEL);
 		if (!ioat_chan)
 			break;
 
@@ -1224,12 +1224,12 @@ static void ioat_shutdown(struct pci_dev *pdev)
 		set_bit(IOAT_CHAN_DOWN, &ioat_chan->state);
 		spin_unlock_bh(&ioat_chan->prep_lock);
 		/*
-		 * Synchronization rule for timer_delete_sync():
+		 * Synchronization rule for del_timer_sync():
 		 *  - The caller must not hold locks which would prevent
 		 *    completion of the timer's handler.
 		 * So prep_lock cannot be held before calling it.
 		 */
-		timer_delete_sync(&ioat_chan->timer);
+		del_timer_sync(&ioat_chan->timer);
 
 		/* this should quiesce then reset */
 		ioat_reset_hw(ioat_chan);
@@ -1286,6 +1286,7 @@ static pci_ers_result_t ioat_pcie_error_slot_reset(struct pci_dev *pdev)
 	} else {
 		pci_set_master(pdev);
 		pci_restore_state(pdev);
+		pci_save_state(pdev);
 		pci_wake_from_d3(pdev, false);
 	}
 
@@ -1332,7 +1333,7 @@ static void release_ioatdma(struct dma_device *device)
 static struct ioatdma_device *
 alloc_ioatdma(struct pci_dev *pdev, void __iomem *iobase)
 {
-	struct ioatdma_device *d = kzalloc_obj(*d);
+	struct ioatdma_device *d = kzalloc(sizeof(*d), GFP_KERNEL);
 
 	if (!d)
 		return NULL;

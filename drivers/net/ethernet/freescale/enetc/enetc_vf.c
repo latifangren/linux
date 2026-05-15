@@ -17,36 +17,11 @@ static void enetc_msg_vsi_write_msg(struct enetc_hw *hw,
 	enetc_wr(hw, ENETC_VSIMSGSNDAR0, val);
 }
 
-static void enetc_msg_dma_free(struct device *dev, struct enetc_msg_swbd *msg)
-{
-	if (msg->vaddr) {
-		dma_free_coherent(dev, msg->size, msg->vaddr, msg->dma);
-		msg->vaddr = NULL;
-	}
-}
-
 static int enetc_msg_vsi_send(struct enetc_si *si, struct enetc_msg_swbd *msg)
 {
-	struct device *dev = &si->pdev->dev;
 	int timeout = 100;
 	u32 vsimsgsr;
 
-	/* The VSI mailbox may be busy if last message was not yet processed
-	 * by PSI. So need to check the mailbox status before sending.
-	 */
-	vsimsgsr = enetc_rd(&si->hw, ENETC_VSIMSGSR);
-	if (vsimsgsr & ENETC_VSIMSGSR_MB) {
-		/* It is safe to free the DMA buffer here, the caller does
-		 * not access the DMA buffer if enetc_msg_vsi_send() fails.
-		 */
-		enetc_msg_dma_free(dev, msg);
-		dev_err(dev, "VSI mailbox is busy\n");
-		return -EIO;
-	}
-
-	/* Free the DMA buffer of the last message */
-	enetc_msg_dma_free(dev, &si->msg);
-	si->msg = *msg;
 	enetc_msg_vsi_write_msg(&si->hw, msg);
 
 	do {
@@ -57,15 +32,12 @@ static int enetc_msg_vsi_send(struct enetc_si *si, struct enetc_msg_swbd *msg)
 		usleep_range(1000, 2000);
 	} while (--timeout);
 
-	if (!timeout) {
-		dev_err(dev, "VSI mailbox timeout\n");
-
+	if (!timeout)
 		return -ETIMEDOUT;
-	}
 
 	/* check for message delivery error */
 	if (vsimsgsr & ENETC_VSIMSGSR_MS) {
-		dev_err(dev, "VSI command execute error: %d\n",
+		dev_err(&si->pdev->dev, "VSI command execute error: %d\n",
 			ENETC_SIMSGSR_GET_MC(vsimsgsr));
 		return -EIO;
 	}
@@ -78,6 +50,7 @@ static int enetc_msg_vsi_set_primary_mac_addr(struct enetc_ndev_priv *priv,
 {
 	struct enetc_msg_cmd_set_primary_mac *cmd;
 	struct enetc_msg_swbd msg;
+	int err;
 
 	msg.size = ALIGN(sizeof(struct enetc_msg_cmd_set_primary_mac), 64);
 	msg.vaddr = dma_alloc_coherent(priv->dev, msg.size, &msg.dma,
@@ -94,7 +67,11 @@ static int enetc_msg_vsi_set_primary_mac_addr(struct enetc_ndev_priv *priv,
 	memcpy(&cmd->mac, saddr, sizeof(struct sockaddr));
 
 	/* send the command and wait */
-	return enetc_msg_vsi_send(priv->si, &msg);
+	err = enetc_msg_vsi_send(priv->si, &msg);
+
+	dma_free_coherent(priv->dev, msg.size, msg.vaddr, msg.dma);
+
+	return err;
 }
 
 static int enetc_vf_set_mac_addr(struct net_device *ndev, void *addr)
@@ -144,8 +121,6 @@ static const struct net_device_ops enetc_ndev_ops = {
 	.ndo_set_features	= enetc_vf_set_features,
 	.ndo_eth_ioctl		= enetc_ioctl,
 	.ndo_setup_tc		= enetc_vf_setup_tc,
-	.ndo_hwtstamp_get	= enetc_hwtstamp_get,
-	.ndo_hwtstamp_set	= enetc_hwtstamp_set,
 };
 
 static void enetc_vf_netdev_setup(struct enetc_si *si, struct net_device *ndev,
@@ -160,8 +135,6 @@ static void enetc_vf_netdev_setup(struct enetc_si *si, struct net_device *ndev,
 	si->ndev = ndev;
 
 	priv->msg_enable = (NETIF_MSG_IFUP << 1) - 1;
-	priv->sysclk_freq = si->drvdata->sysclk_freq;
-	priv->max_frags = si->drvdata->max_frags;
 	ndev->netdev_ops = ndev_ops;
 	enetc_set_ethtool_ops(ndev);
 	ndev->watchdog_timeo = 5 * HZ;
@@ -170,29 +143,20 @@ static void enetc_vf_netdev_setup(struct enetc_si *si, struct net_device *ndev,
 	ndev->hw_features = NETIF_F_SG | NETIF_F_RXCSUM |
 			    NETIF_F_HW_VLAN_CTAG_TX |
 			    NETIF_F_HW_VLAN_CTAG_RX |
-			    NETIF_F_HW_CSUM | NETIF_F_TSO | NETIF_F_TSO6 |
-			    NETIF_F_GSO_UDP_L4;
+			    NETIF_F_HW_CSUM | NETIF_F_TSO | NETIF_F_TSO6;
 	ndev->features = NETIF_F_HIGHDMA | NETIF_F_SG | NETIF_F_RXCSUM |
 			 NETIF_F_HW_VLAN_CTAG_TX |
 			 NETIF_F_HW_VLAN_CTAG_RX |
-			 NETIF_F_HW_CSUM | NETIF_F_TSO | NETIF_F_TSO6 |
-			 NETIF_F_GSO_UDP_L4;
+			 NETIF_F_HW_CSUM | NETIF_F_TSO | NETIF_F_TSO6;
 	ndev->vlan_features = NETIF_F_SG | NETIF_F_HW_CSUM |
 			      NETIF_F_TSO | NETIF_F_TSO6;
 
-	if (si->num_rss) {
+	if (si->num_rss)
 		ndev->hw_features |= NETIF_F_RXHASH;
-		ndev->features |= NETIF_F_RXHASH;
-	}
 
 	/* pick up primary MAC address from SI */
 	enetc_load_primary_mac_addr(&si->hw, ndev);
 }
-
-static const struct enetc_si_ops enetc_vsi_ops = {
-	.get_rss_table = enetc_get_rss_table,
-	.set_rss_table = enetc_set_rss_table,
-};
 
 static int enetc_vf_probe(struct pci_dev *pdev,
 			  const struct pci_device_id *ent)
@@ -207,14 +171,6 @@ static int enetc_vf_probe(struct pci_dev *pdev,
 		return dev_err_probe(&pdev->dev, err, "PCI probing failed\n");
 
 	si = pci_get_drvdata(pdev);
-	si->revision = ENETC_REV_1_0;
-	si->ops = &enetc_vsi_ops;
-	err = enetc_get_driver_data(si);
-	if (err) {
-		dev_err_probe(&pdev->dev, err,
-			      "Could not get VF driver data\n");
-		goto err_alloc_netdev;
-	}
 
 	enetc_get_si_caps(si);
 
@@ -282,7 +238,6 @@ static void enetc_vf_remove(struct pci_dev *pdev)
 {
 	struct enetc_si *si = pci_get_drvdata(pdev);
 	struct enetc_ndev_priv *priv;
-	struct enetc_msg_swbd msg;
 
 	priv = netdev_priv(si->ndev);
 	unregister_netdev(si->ndev);
@@ -294,9 +249,7 @@ static void enetc_vf_remove(struct pci_dev *pdev)
 
 	free_netdev(si->ndev);
 
-	msg = si->msg;
 	enetc_pci_remove(pdev);
-	enetc_msg_dma_free(&pdev->dev, &msg);
 }
 
 static const struct pci_device_id enetc_vf_id_table[] = {

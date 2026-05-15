@@ -43,7 +43,9 @@
 #define RTC_MSEC               1000
 #define RTC_FR_MASK		0xF0000
 #define RTC_FR_MAX_TICKS	16
-#define RTC_PPB			1000000000
+#define RTC_PPB			1000000000LL
+#define RTC_MIN_OFFSET		-32768000
+#define RTC_MAX_OFFSET		32767000
 
 struct xlnx_rtc_dev {
 	struct rtc_device	*rtc;
@@ -176,28 +178,21 @@ static void xlnx_init_rtc(struct xlnx_rtc_dev *xrtcdev)
 static int xlnx_rtc_read_offset(struct device *dev, long *offset)
 {
 	struct xlnx_rtc_dev *xrtcdev = dev_get_drvdata(dev);
-	unsigned int calibval, fract_data, fract_part;
-	int freq = xrtcdev->freq;
-	int max_tick, tick_mult;
+	unsigned long long rtc_ppb = RTC_PPB;
+	unsigned int tick_mult = do_div(rtc_ppb, xrtcdev->freq);
+	unsigned int calibval;
 	long offset_val;
-
-	/* Tick to offset multiplier */
-	tick_mult = DIV_ROUND_CLOSEST(RTC_PPB, freq);
 
 	calibval = readl(xrtcdev->reg_base + RTC_CALIB_RD);
 	/* Offset with seconds ticks */
-	max_tick = calibval & RTC_TICK_MASK;
-	offset_val = max_tick - freq;
-	/* Convert to ppb */
-	offset_val *= tick_mult;
+	offset_val = calibval & RTC_TICK_MASK;
+	offset_val = offset_val - RTC_CALIB_DEF;
+	offset_val = offset_val * tick_mult;
 
 	/* Offset with fractional ticks */
-	if (calibval & RTC_FR_EN) {
-		fract_data = (calibval & RTC_FR_MASK) >> RTC_FR_DATSHIFT;
-		fract_part = DIV_ROUND_UP(tick_mult, RTC_FR_MAX_TICKS);
-		offset_val += (fract_part * fract_data);
-	}
-
+	if (calibval & RTC_FR_EN)
+		offset_val += ((calibval & RTC_FR_MASK) >> RTC_FR_DATSHIFT)
+			* (tick_mult / RTC_FR_MAX_TICKS);
 	*offset = offset_val;
 
 	return 0;
@@ -206,38 +201,44 @@ static int xlnx_rtc_read_offset(struct device *dev, long *offset)
 static int xlnx_rtc_set_offset(struct device *dev, long offset)
 {
 	struct xlnx_rtc_dev *xrtcdev = dev_get_drvdata(dev);
-	int max_tick, tick_mult, fract_offset, fract_part;
-	int freq = xrtcdev->freq;
+	unsigned long long rtc_ppb = RTC_PPB;
+	unsigned int tick_mult = do_div(rtc_ppb, xrtcdev->freq);
+	unsigned char fract_tick = 0;
 	unsigned int calibval;
-	int fract_data = 0;
+	short int  max_tick;
+	int fract_offset;
 
-	/* Tick to offset multiplier */
-	tick_mult = DIV_ROUND_CLOSEST(RTC_PPB, freq);
+	if (offset < RTC_MIN_OFFSET || offset > RTC_MAX_OFFSET)
+		return -ERANGE;
 
 	/* Number ticks for given offset */
 	max_tick = div_s64_rem(offset, tick_mult, &fract_offset);
 
-	if (freq + max_tick > RTC_TICK_MASK || (freq + max_tick < 1))
-		return -ERANGE;
-
 	/* Number fractional ticks for given offset */
 	if (fract_offset) {
-		fract_part = DIV_ROUND_UP(tick_mult, RTC_FR_MAX_TICKS);
-		fract_data = fract_offset / fract_part;
-		/* Subtract one from max_tick while adding fract_offset */
-		if (fract_offset < 0 && fract_data) {
+		if (fract_offset < 0) {
+			fract_offset = fract_offset + tick_mult;
 			max_tick--;
-			fract_data += RTC_FR_MAX_TICKS;
+		}
+		if (fract_offset > (tick_mult / RTC_FR_MAX_TICKS)) {
+			for (fract_tick = 1; fract_tick < 16; fract_tick++) {
+				if (fract_offset <=
+				    (fract_tick *
+				     (tick_mult / RTC_FR_MAX_TICKS)))
+					break;
+			}
 		}
 	}
 
 	/* Zynqmp RTC uses second and fractional tick
 	 * counters for compensation
 	 */
-	calibval = max_tick + freq;
+	calibval = max_tick + RTC_CALIB_DEF;
 
-	if (fract_data)
-		calibval |= (RTC_FR_EN | (fract_data << RTC_FR_DATSHIFT));
+	if (fract_tick)
+		calibval |= RTC_FR_EN;
+
+	calibval |= (fract_tick << RTC_FR_DATSHIFT);
 
 	writel(calibval, (xrtcdev->reg_base + RTC_CALIB_WR));
 
@@ -276,10 +277,6 @@ static irqreturn_t xlnx_rtc_interrupt(int irq, void *id)
 static int xlnx_rtc_probe(struct platform_device *pdev)
 {
 	struct xlnx_rtc_dev *xrtcdev;
-	bool is_alarm_set = false;
-	u32 pending_alrm_irq;
-	u32 current_time;
-	u32 alarm_time;
 	int ret;
 
 	xrtcdev = devm_kzalloc(&pdev->dev, sizeof(*xrtcdev), GFP_KERNEL);
@@ -298,17 +295,6 @@ static int xlnx_rtc_probe(struct platform_device *pdev)
 	xrtcdev->reg_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(xrtcdev->reg_base))
 		return PTR_ERR(xrtcdev->reg_base);
-
-	/* Clear any pending alarm interrupts from previous kernel/boot */
-	pending_alrm_irq = readl(xrtcdev->reg_base + RTC_INT_STS) & RTC_INT_ALRM;
-	if (pending_alrm_irq)
-		writel(pending_alrm_irq, xrtcdev->reg_base + RTC_INT_STS);
-
-	/* Check if a valid alarm is already set from previous kernel/boot */
-	alarm_time = readl(xrtcdev->reg_base + RTC_ALRM);
-	current_time = readl(xrtcdev->reg_base + RTC_CUR_TM);
-	if (alarm_time > current_time && alarm_time != 0)
-		is_alarm_set = true;
 
 	xrtcdev->alarm_irq = platform_get_irq_byname(pdev, "alarm");
 	if (xrtcdev->alarm_irq < 0)
@@ -348,20 +334,11 @@ static int xlnx_rtc_probe(struct platform_device *pdev)
 		xrtcdev->freq--;
 	}
 
-	if (xrtcdev->freq > RTC_TICK_MASK) {
-		dev_err(&pdev->dev, "Invalid RTC calibration value\n");
-		return -EINVAL;
-	}
-
 	ret = readl(xrtcdev->reg_base + RTC_CALIB_RD);
 	if (!ret)
 		writel(xrtcdev->freq, (xrtcdev->reg_base + RTC_CALIB_WR));
 
 	xlnx_init_rtc(xrtcdev);
-
-	/* Re-enable alarm interrupt if a valid alarm was found */
-	if (is_alarm_set)
-		writel(RTC_INT_ALRM, xrtcdev->reg_base + RTC_INT_EN);
 
 	device_init_wakeup(&pdev->dev, true);
 
@@ -408,7 +385,7 @@ MODULE_DEVICE_TABLE(of, xlnx_rtc_of_match);
 
 static struct platform_driver xlnx_rtc_driver = {
 	.probe		= xlnx_rtc_probe,
-	.remove		= xlnx_rtc_remove,
+	.remove_new	= xlnx_rtc_remove,
 	.driver		= {
 		.name	= KBUILD_MODNAME,
 		.pm	= &xlnx_rtc_pm_ops,

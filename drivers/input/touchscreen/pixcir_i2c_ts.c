@@ -44,7 +44,7 @@ enum pixcir_power_mode {
 
 /*
  * Interrupt modes:
- * periodical: interrupt is asserted periodically
+ * periodical: interrupt is asserted periodicaly
  * diff coordinates: interrupt is asserted when coordinates change
  * level on touch: interrupt level asserted during touch
  * pulse on touch: interrupt pulse asserted during touch
@@ -410,25 +410,26 @@ static int pixcir_i2c_ts_suspend(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pixcir_i2c_ts_data *ts = i2c_get_clientdata(client);
 	struct input_dev *input = ts->input;
-	int error;
+	int ret = 0;
 
-	guard(mutex)(&input->mutex);
+	mutex_lock(&input->mutex);
 
 	if (device_may_wakeup(&client->dev)) {
 		if (!input_device_enabled(input)) {
-			error = pixcir_start(ts);
-			if (error) {
+			ret = pixcir_start(ts);
+			if (ret) {
 				dev_err(dev, "Failed to start\n");
-				return error;
+				goto unlock;
 			}
 		}
 	} else if (input_device_enabled(input)) {
-		error = pixcir_stop(ts);
-		if (error)
-			return error;
+		ret = pixcir_stop(ts);
 	}
 
-	return 0;
+unlock:
+	mutex_unlock(&input->mutex);
+
+	return ret;
 }
 
 static int pixcir_i2c_ts_resume(struct device *dev)
@@ -436,25 +437,26 @@ static int pixcir_i2c_ts_resume(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pixcir_i2c_ts_data *ts = i2c_get_clientdata(client);
 	struct input_dev *input = ts->input;
-	int error;
+	int ret = 0;
 
-	guard(mutex)(&input->mutex);
+	mutex_lock(&input->mutex);
 
 	if (device_may_wakeup(&client->dev)) {
 		if (!input_device_enabled(input)) {
-			error = pixcir_stop(ts);
-			if (error) {
+			ret = pixcir_stop(ts);
+			if (ret) {
 				dev_err(dev, "Failed to stop\n");
-				return error;
+				goto unlock;
 			}
 		}
 	} else if (input_device_enabled(input)) {
-		error = pixcir_start(ts);
-		if (error)
-			return error;
+		ret = pixcir_start(ts);
 	}
 
-	return 0;
+unlock:
+	mutex_unlock(&input->mutex);
+
+	return ret;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(pixcir_dev_pm_ops,

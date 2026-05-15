@@ -14,7 +14,6 @@
 
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_print.h>
 #include <drm/drm_simple_kms_helper.h>
 
 #include "cdv_device.h"
@@ -154,7 +153,7 @@ static void cdv_intel_lvds_restore(struct drm_connector *connector)
 }
 
 static enum drm_mode_status cdv_intel_lvds_mode_valid(struct drm_connector *connector,
-			      const struct drm_display_mode *mode)
+			      struct drm_display_mode *mode)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
@@ -501,15 +500,17 @@ void cdv_intel_lvds_init(struct drm_device *dev,
 		return;
 	}
 
-	gma_encoder = kzalloc_obj(struct gma_encoder);
+	gma_encoder = kzalloc(sizeof(struct gma_encoder),
+				    GFP_KERNEL);
 	if (!gma_encoder)
 		return;
 
-	gma_connector = kzalloc_obj(struct gma_connector);
+	gma_connector = kzalloc(sizeof(struct gma_connector),
+				      GFP_KERNEL);
 	if (!gma_connector)
 		goto err_free_encoder;
 
-	lvds_priv = kzalloc_obj(struct cdv_intel_lvds_priv);
+	lvds_priv = kzalloc(sizeof(struct cdv_intel_lvds_priv), GFP_KERNEL);
 	if (!lvds_priv)
 		goto err_free_connector;
 

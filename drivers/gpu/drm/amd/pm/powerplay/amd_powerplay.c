@@ -20,6 +20,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  *
  */
+#include "pp_debug.h"
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/gfp.h>
@@ -27,10 +28,12 @@
 #include <linux/firmware.h>
 #include <linux/reboot.h>
 #include "amd_shared.h"
+#include "amd_powerplay.h"
 #include "power_state.h"
 #include "amdgpu.h"
 #include "hwmgr.h"
 #include "amdgpu_dpm_internal.h"
+#include "amdgpu_display.h"
 
 static const struct amd_pm_funcs pp_dpm_funcs;
 
@@ -41,7 +44,7 @@ static int amd_powerplay_create(struct amdgpu_device *adev)
 	if (adev == NULL)
 		return -EINVAL;
 
-	hwmgr = kzalloc_obj(struct pp_hwmgr);
+	hwmgr = kzalloc(sizeof(struct pp_hwmgr), GFP_KERNEL);
 	if (hwmgr == NULL)
 		return -ENOMEM;
 
@@ -77,10 +80,11 @@ static void amd_powerplay_destroy(struct amdgpu_device *adev)
 	hwmgr = NULL;
 }
 
-static int pp_early_init(struct amdgpu_ip_block *ip_block)
+static int pp_early_init(void *handle)
 {
 	int ret;
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
+
 	ret = amd_powerplay_create(adev);
 
 	if (ret != 0)
@@ -132,9 +136,9 @@ static void pp_swctf_delayed_work_handler(struct work_struct *work)
 	orderly_poweroff(true);
 }
 
-static int pp_sw_init(struct amdgpu_ip_block *ip_block)
+static int pp_sw_init(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 	int ret = 0;
 
@@ -149,9 +153,9 @@ static int pp_sw_init(struct amdgpu_ip_block *ip_block)
 	return ret;
 }
 
-static int pp_sw_fini(struct amdgpu_ip_block *ip_block)
+static int pp_sw_fini(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	hwmgr_sw_fini(hwmgr);
@@ -161,10 +165,10 @@ static int pp_sw_fini(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static int pp_hw_init(struct amdgpu_ip_block *ip_block)
+static int pp_hw_init(void *handle)
 {
 	int ret = 0;
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	ret = hwmgr_hw_init(hwmgr);
@@ -175,9 +179,10 @@ static int pp_hw_init(struct amdgpu_ip_block *ip_block)
 	return ret;
 }
 
-static int pp_hw_fini(struct amdgpu_ip_block *ip_block)
+static int pp_hw_fini(void *handle)
 {
-	struct pp_hwmgr *hwmgr = ip_block->adev->powerplay.pp_handle;
+	struct amdgpu_device *adev = handle;
+	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	cancel_delayed_work_sync(&hwmgr->swctf_delayed_work);
 
@@ -198,7 +203,7 @@ static void pp_reserve_vram_for_smu(struct amdgpu_device *adev)
 						&adev->pm.smu_prv_buffer,
 						&gpu_addr,
 						&cpu_ptr)) {
-		drm_err(adev_to_drm(adev), "failed to create smu prv buffer\n");
+		DRM_ERROR("amdgpu: failed to create smu prv buffer\n");
 		return;
 	}
 
@@ -213,13 +218,13 @@ static void pp_reserve_vram_for_smu(struct amdgpu_device *adev)
 	if (r) {
 		amdgpu_bo_free_kernel(&adev->pm.smu_prv_buffer, NULL, NULL);
 		adev->pm.smu_prv_buffer = NULL;
-		drm_err(adev_to_drm(adev), "failed to notify SMU buffer address\n");
+		DRM_ERROR("amdgpu: failed to notify SMU buffer address\n");
 	}
 }
 
-static int pp_late_init(struct amdgpu_ip_block *ip_block)
+static int pp_late_init(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	if (hwmgr && hwmgr->pm_en)
@@ -231,9 +236,9 @@ static int pp_late_init(struct amdgpu_ip_block *ip_block)
 	return 0;
 }
 
-static void pp_late_fini(struct amdgpu_ip_block *ip_block)
+static void pp_late_fini(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 
 	if (adev->pm.smu_prv_buffer)
 		amdgpu_bo_free_kernel(&adev->pm.smu_prv_buffer, NULL, NULL);
@@ -241,20 +246,30 @@ static void pp_late_fini(struct amdgpu_ip_block *ip_block)
 }
 
 
-static bool pp_is_idle(struct amdgpu_ip_block *ip_block)
+static bool pp_is_idle(void *handle)
 {
 	return false;
 }
 
-static int pp_set_powergating_state(struct amdgpu_ip_block *ip_block,
+static int pp_wait_for_idle(void *handle)
+{
+	return 0;
+}
+
+static int pp_sw_reset(void *handle)
+{
+	return 0;
+}
+
+static int pp_set_powergating_state(void *handle,
 				    enum amd_powergating_state state)
 {
 	return 0;
 }
 
-static int pp_suspend(struct amdgpu_ip_block *ip_block)
+static int pp_suspend(void *handle)
 {
-	struct amdgpu_device *adev = ip_block->adev;
+	struct amdgpu_device *adev = handle;
 	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	cancel_delayed_work_sync(&hwmgr->swctf_delayed_work);
@@ -262,14 +277,15 @@ static int pp_suspend(struct amdgpu_ip_block *ip_block)
 	return hwmgr_suspend(hwmgr);
 }
 
-static int pp_resume(struct amdgpu_ip_block *ip_block)
+static int pp_resume(void *handle)
 {
-	struct pp_hwmgr *hwmgr = ip_block->adev->powerplay.pp_handle;
+	struct amdgpu_device *adev = handle;
+	struct pp_hwmgr *hwmgr = adev->powerplay.pp_handle;
 
 	return hwmgr_resume(hwmgr);
 }
 
-static int pp_set_clockgating_state(struct amdgpu_ip_block *ip_block,
+static int pp_set_clockgating_state(void *handle,
 					  enum amd_clockgating_state state)
 {
 	return 0;
@@ -287,8 +303,12 @@ static const struct amd_ip_funcs pp_ip_funcs = {
 	.suspend = pp_suspend,
 	.resume = pp_resume,
 	.is_idle = pp_is_idle,
+	.wait_for_idle = pp_wait_for_idle,
+	.soft_reset = pp_sw_reset,
 	.set_clockgating_state = pp_set_clockgating_state,
 	.set_powergating_state = pp_set_powergating_state,
+	.dump_ip_state = NULL,
+	.print_ip_state = NULL,
 };
 
 const struct amdgpu_ip_block_version pp_smu_ip_block =
@@ -631,11 +651,8 @@ static int pp_dpm_get_pp_table(void *handle, char **table)
 {
 	struct pp_hwmgr *hwmgr = handle;
 
-	if (!hwmgr || !hwmgr->pm_en || !table)
+	if (!hwmgr || !hwmgr->pm_en || !hwmgr->soft_pp_table)
 		return -EINVAL;
-
-	if (!hwmgr->soft_pp_table)
-		return -EOPNOTSUPP;
 
 	*table = (char *)hwmgr->soft_pp_table;
 	return hwmgr->soft_pp_table_size;
@@ -722,6 +739,21 @@ static int pp_dpm_emit_clock_levels(void *handle,
 		return -ENOENT;
 
 	return hwmgr->hwmgr_func->emit_clock_levels(hwmgr, type, buf, offset);
+}
+
+static int pp_dpm_print_clock_levels(void *handle,
+		enum pp_clock_type type, char *buf)
+{
+	struct pp_hwmgr *hwmgr = handle;
+
+	if (!hwmgr || !hwmgr->pm_en)
+		return -EINVAL;
+
+	if (hwmgr->hwmgr_func->print_clock_levels == NULL) {
+		pr_info_ratelimited("%s was not implemented.\n", __func__);
+		return 0;
+	}
+	return hwmgr->hwmgr_func->print_clock_levels(hwmgr, type, buf);
 }
 
 static int pp_dpm_get_sclk_od(void *handle)
@@ -940,7 +972,7 @@ static int pp_dpm_switch_power_profile(void *handle,
 	return 0;
 }
 
-static int pp_set_power_limit(void *handle, uint32_t limit_type, uint32_t limit)
+static int pp_set_power_limit(void *handle, uint32_t limit)
 {
 	struct pp_hwmgr *hwmgr = handle;
 	uint32_t max_power_limit;
@@ -1053,8 +1085,7 @@ static int pp_get_current_clocks(void *handle,
 					&hw_clocks, PHM_PerformanceLevelDesignation_Activity);
 
 	if (ret) {
-		drm_err(adev_to_drm(hwmgr->adev),
-		       "Error in phm_get_clock_info\n");
+		pr_debug("Error in phm_get_clock_info \n");
 		return -EINVAL;
 	}
 
@@ -1218,9 +1249,7 @@ static void pp_dpm_powergate_sdma(void *handle, bool gate)
 }
 
 static int pp_set_powergating_by_smu(void *handle,
-				uint32_t block_type,
-				bool gate,
-				int inst)
+				uint32_t block_type, bool gate)
 {
 	int ret = 0;
 
@@ -1568,6 +1597,7 @@ static const struct amd_pm_funcs pp_dpm_funcs = {
 	.set_pp_table = pp_dpm_set_pp_table,
 	.force_clock_level = pp_dpm_force_clock_level,
 	.emit_clock_levels = pp_dpm_emit_clock_levels,
+	.print_clock_levels = pp_dpm_print_clock_levels,
 	.get_sclk_od = pp_dpm_get_sclk_od,
 	.set_sclk_od = pp_dpm_set_sclk_od,
 	.get_mclk_od = pp_dpm_get_mclk_od,

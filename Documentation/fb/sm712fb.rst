@@ -1,6 +1,6 @@
-==========================================================
-sm712fb - Silicon Motion SM712 graphics framebuffer driver
-==========================================================
+================
+What is sm712fb?
+================
 
 This is a graphics framebuffer driver for Silicon Motion SM712 based processors.
 

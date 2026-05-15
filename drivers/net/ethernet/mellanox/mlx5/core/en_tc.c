@@ -35,12 +35,12 @@
 #include <net/sch_generic.h>
 #include <net/pkt_cls.h>
 #include <linux/mlx5/fs.h>
-#include <linux/mlx5/lag.h>
 #include <linux/mlx5/device.h>
 #include <linux/rhashtable.h>
 #include <linux/refcount.h>
 #include <linux/completion.h>
 #include <net/arp.h>
+#include <net/ipv6_stubs.h>
 #include <net/bareudp.h>
 #include <net/bonding.h>
 #include <net/dst_metadata.h>
@@ -66,7 +66,6 @@
 #include "lib/devcom.h"
 #include "lib/geneve.h"
 #include "lib/fs_chains.h"
-#include "lib/mlx5.h"
 #include "diag/en_tc_tracepoint.h"
 #include <asm/div64.h>
 #include "lag/lag.h"
@@ -153,7 +152,7 @@ struct mlx5e_tc_table *mlx5e_tc_table_alloc(void)
 {
 	struct mlx5e_tc_table *tc;
 
-	tc = kvzalloc_obj(*tc);
+	tc = kvzalloc(sizeof(*tc), GFP_KERNEL);
 	return tc ? tc : ERR_PTR(-ENOMEM);
 }
 
@@ -758,11 +757,11 @@ static int mlx5e_hairpin_create_indirect_rqt(struct mlx5e_hairpin *hp)
 	struct mlx5e_priv *priv = hp->func_priv;
 	struct mlx5_core_dev *mdev = priv->mdev;
 	struct mlx5e_rss_params_indir indir;
-	u32 rqt_size;
 	int err;
 
-	rqt_size = mlx5e_rqt_size(mdev, hp->num_channels);
-	err = mlx5e_rss_params_indir_init(&indir, rqt_size, rqt_size);
+	err = mlx5e_rss_params_indir_init(&indir, mdev,
+					  mlx5e_rqt_size(mdev, hp->num_channels),
+					  mlx5e_rqt_size(mdev, hp->num_channels));
 	if (err)
 		return err;
 
@@ -838,9 +837,6 @@ static void mlx5e_hairpin_set_ttc_params(struct mlx5e_hairpin *hp,
 
 	ttc_params->ns_type = MLX5_FLOW_NAMESPACE_KERNEL;
 	for (tt = 0; tt < MLX5_NUM_TT; tt++) {
-		if (mlx5_ttc_is_decrypted_esp_tt(tt))
-			continue;
-
 		ttc_params->dests[tt].type = MLX5_FLOW_DESTINATION_TYPE_TIR;
 		ttc_params->dests[tt].tir_num =
 			tt == MLX5_TT_ANY ?
@@ -905,7 +901,7 @@ mlx5e_hairpin_create(struct mlx5e_priv *priv, struct mlx5_hairpin_params *params
 	struct mlx5_hairpin *pair;
 	int err;
 
-	hp = kzalloc_obj(*hp);
+	hp = kzalloc(sizeof(*hp), GFP_KERNEL);
 	if (!hp)
 		return ERR_PTR(-ENOMEM);
 
@@ -1139,7 +1135,7 @@ static int mlx5e_hairpin_flow_add(struct mlx5e_priv *priv,
 		goto attach_flow;
 	}
 
-	hpe = kzalloc_obj(*hpe);
+	hpe = kzalloc(sizeof(*hpe), GFP_KERNEL);
 	if (!hpe) {
 		mutex_unlock(&tc->hairpin_tbl_lock);
 		return -ENOMEM;
@@ -1286,7 +1282,7 @@ mlx5e_add_offloaded_nic_rule(struct mlx5e_priv *priv,
 
 	if (flow_act.action & MLX5_FLOW_CONTEXT_ACTION_COUNT) {
 		dest[dest_ix].type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-		dest[dest_ix].counter = attr->counter;
+		dest[dest_ix].counter_id = mlx5_fc_id(attr->counter);
 		dest_ix++;
 	}
 
@@ -1794,7 +1790,7 @@ extra_split_attr_dests(struct mlx5e_tc_flow *flow,
 		return PTR_ERR(post_act);
 
 	attr2 = mlx5_alloc_flow_attr(mlx5e_get_flow_namespace(flow));
-	parse_attr2 = kvzalloc_obj(*parse_attr);
+	parse_attr2 = kvzalloc(sizeof(*parse_attr), GFP_KERNEL);
 	if (!attr2 || !parse_attr2) {
 		err = -ENOMEM;
 		goto err_free;
@@ -2131,7 +2127,7 @@ static void mlx5e_tc_del_fdb_peer_flow(struct mlx5e_tc_flow *flow,
 	mutex_unlock(&esw->offloads.peer_mutex);
 
 	list_for_each_entry_safe(peer_flow, tmp, &flow->peer_flows, peer_flows) {
-		if (peer_index != mlx5_lag_get_dev_seq(peer_flow->priv->mdev))
+		if (peer_index != mlx5_get_dev_index(peer_flow->priv->mdev))
 			continue;
 
 		list_del(&peer_flow->peer_flows);
@@ -2154,7 +2150,7 @@ static void mlx5e_tc_del_fdb_peers_flow(struct mlx5e_tc_flow *flow)
 
 	devcom = flow->priv->mdev->priv.eswitch->devcom;
 	mlx5_devcom_for_each_peer_entry(devcom, peer_esw, pos) {
-		i = mlx5_lag_get_dev_seq(peer_esw->dev);
+		i = mlx5_get_dev_index(peer_esw->dev);
 		mlx5e_tc_del_fdb_peer_flow(flow, i);
 	}
 }
@@ -2570,7 +2566,7 @@ static int parse_tunnel_attr(struct mlx5e_priv *priv,
 	} else if (tunnel) {
 		struct mlx5_flow_spec *tmp_spec;
 
-		tmp_spec = kvzalloc_obj(*tmp_spec);
+		tmp_spec = kvzalloc(sizeof(*tmp_spec), GFP_KERNEL);
 		if (!tmp_spec) {
 			NL_SET_ERR_MSG_MOD(extack, "Failed to allocate memory for tunnel tmp spec");
 			netdev_warn(priv->netdev, "Failed to allocate memory for tunnel tmp spec");
@@ -3617,11 +3613,15 @@ static bool same_port_devs(struct mlx5e_priv *priv, struct mlx5e_priv *peer_priv
 bool mlx5e_same_hw_devs(struct mlx5e_priv *priv, struct mlx5e_priv *peer_priv)
 {
 	struct mlx5_core_dev *fmdev, *pmdev;
+	u64 fsystem_guid, psystem_guid;
 
 	fmdev = priv->mdev;
 	pmdev = peer_priv->mdev;
 
-	return mlx5_same_hw_devs(fmdev, pmdev);
+	fsystem_guid = mlx5_query_nic_system_image_guid(fmdev);
+	psystem_guid = mlx5_query_nic_system_image_guid(pmdev);
+
+	return (fsystem_guid == psystem_guid);
 }
 
 static int
@@ -3671,7 +3671,7 @@ mlx5e_clone_flow_attr_for_post_act(struct mlx5_flow_attr *attr,
 	struct mlx5_flow_attr *attr2;
 
 	attr2 = mlx5_alloc_flow_attr(ns_type);
-	parse_attr = kvzalloc_obj(*parse_attr);
+	parse_attr = kvzalloc(sizeof(*parse_attr), GFP_KERNEL);
 	if (!attr2 || !parse_attr) {
 		kvfree(parse_attr);
 		kfree(attr2);
@@ -4448,8 +4448,8 @@ mlx5e_alloc_flow(struct mlx5e_priv *priv, int attr_size,
 	int err = -ENOMEM;
 	int out_index;
 
-	flow = kzalloc_obj(*flow);
-	parse_attr = kvzalloc_obj(*parse_attr);
+	flow = kzalloc(sizeof(*flow), GFP_KERNEL);
+	parse_attr = kvzalloc(sizeof(*parse_attr), GFP_KERNEL);
 	if (!parse_attr || !flow)
 		goto err_free;
 
@@ -4584,7 +4584,7 @@ static int mlx5e_tc_add_fdb_peer_flow(struct flow_cls_offload *f,
 	struct mlx5_eswitch *esw = priv->mdev->priv.eswitch;
 	struct mlx5_esw_flow_attr *attr = flow->attr->esw_attr;
 	struct mlx5e_tc_flow_parse_attr *parse_attr;
-	int i = mlx5_lag_get_dev_seq(peer_esw->dev);
+	int i = mlx5_get_dev_index(peer_esw->dev);
 	struct mlx5e_rep_priv *peer_urpriv;
 	struct mlx5e_tc_flow *peer_flow;
 	struct mlx5_core_dev *in_mdev;
@@ -5236,11 +5236,10 @@ static void mlx5e_tc_nic_destroy_miss_table(struct mlx5e_priv *priv)
 int mlx5e_tc_nic_init(struct mlx5e_priv *priv)
 {
 	struct mlx5e_tc_table *tc = mlx5e_fs_get_tc(priv->fs);
-	u8 mapping_id[MLX5_SW_IMAGE_GUID_MAX_BYTES];
 	struct mlx5_core_dev *dev = priv->mdev;
 	struct mapping_ctx *chains_mapping;
 	struct mlx5_chains_attr attr = {};
-	u8 id_len;
+	u64 mapping_id;
 	int err;
 
 	mlx5e_mod_hdr_tbl_init(&tc->mod_hdr);
@@ -5256,13 +5255,11 @@ int mlx5e_tc_nic_init(struct mlx5e_priv *priv)
 	lockdep_set_class(&tc->ht.mutex, &tc_ht_lock_key);
 	lockdep_init_map(&tc->ht.run_work.lockdep_map, "tc_ht_wq_key", &tc_ht_wq_key, 0);
 
-	mlx5_query_nic_sw_system_image_guid(dev, mapping_id, &id_len);
+	mapping_id = mlx5_query_nic_system_image_guid(dev);
 
-	chains_mapping = mapping_create_for_id(mapping_id, id_len,
-					       MAPPING_TYPE_CHAIN,
+	chains_mapping = mapping_create_for_id(mapping_id, MAPPING_TYPE_CHAIN,
 					       sizeof(struct mlx5_mapped_obj),
-					       MLX5E_TC_TABLE_CHAIN_TAG_MASK,
-					       true);
+					       MLX5E_TC_TABLE_CHAIN_TAG_MASK, true);
 
 	if (IS_ERR(chains_mapping)) {
 		err = PTR_ERR(chains_mapping);
@@ -5393,15 +5390,13 @@ void mlx5e_tc_ht_cleanup(struct rhashtable *tc_ht)
 int mlx5e_tc_esw_init(struct mlx5_rep_uplink_priv *uplink_priv)
 {
 	const size_t sz_enc_opts = sizeof(struct tunnel_match_enc_opts);
-	u8 mapping_id[MLX5_SW_IMAGE_GUID_MAX_BYTES];
-	struct mlx5_devcom_match_attr attr = {};
 	struct netdev_phys_item_id ppid;
 	struct mlx5e_rep_priv *rpriv;
 	struct mapping_ctx *mapping;
 	struct mlx5_eswitch *esw;
 	struct mlx5e_priv *priv;
+	u64 mapping_id, key;
 	int err = 0;
-	u8 id_len;
 
 	rpriv = container_of(uplink_priv, struct mlx5e_rep_priv, uplink_priv);
 	priv = netdev_priv(rpriv->netdev);
@@ -5419,9 +5414,9 @@ int mlx5e_tc_esw_init(struct mlx5_rep_uplink_priv *uplink_priv)
 
 	uplink_priv->tc_psample = mlx5e_tc_sample_init(esw, uplink_priv->post_act);
 
-	mlx5_query_nic_sw_system_image_guid(esw->dev, mapping_id, &id_len);
+	mapping_id = mlx5_query_nic_system_image_guid(esw->dev);
 
-	mapping = mapping_create_for_id(mapping_id, id_len, MAPPING_TYPE_TUNNEL,
+	mapping = mapping_create_for_id(mapping_id, MAPPING_TYPE_TUNNEL,
 					sizeof(struct tunnel_match_key),
 					TUNNEL_INFO_BITS_MASK, true);
 
@@ -5434,10 +5429,8 @@ int mlx5e_tc_esw_init(struct mlx5_rep_uplink_priv *uplink_priv)
 	/* Two last values are reserved for stack devices slow path table mark
 	 * and bridge ingress push mark.
 	 */
-	mapping = mapping_create_for_id(mapping_id, id_len,
-					MAPPING_TYPE_TUNNEL_ENC_OPTS,
-					sz_enc_opts, ENC_OPTS_BITS_MASK - 2,
-					true);
+	mapping = mapping_create_for_id(mapping_id, MAPPING_TYPE_TUNNEL_ENC_OPTS,
+					sz_enc_opts, ENC_OPTS_BITS_MASK - 2, true);
 	if (IS_ERR(mapping)) {
 		err = PTR_ERR(mapping);
 		goto err_enc_opts_mapping;
@@ -5456,12 +5449,10 @@ int mlx5e_tc_esw_init(struct mlx5_rep_uplink_priv *uplink_priv)
 		goto err_action_counter;
 	}
 
-	err = netif_get_port_parent_id(priv->netdev, &ppid, false);
+	err = dev_get_port_parent_id(priv->netdev, &ppid, false);
 	if (!err) {
-		memcpy(&attr.key.buf, &ppid.id, ppid.id_len);
-		attr.flags = MLX5_DEVCOM_MATCH_FLAGS_NS;
-		attr.net = mlx5_core_net(esw->dev);
-		mlx5_esw_offloads_devcom_init(esw, &attr);
+		memcpy(&key, &ppid.id, sizeof(key));
+		mlx5_esw_offloads_devcom_init(esw, key);
 	}
 
 	return 0;
@@ -5525,7 +5516,7 @@ void mlx5e_tc_clean_fdb_peer_flows(struct mlx5_eswitch *esw)
 	devcom = esw->devcom;
 
 	mlx5_devcom_for_each_peer_entry(devcom, peer_esw, pos) {
-		i = mlx5_lag_get_dev_seq(peer_esw->dev);
+		i = mlx5_get_dev_index(peer_esw->dev);
 		list_for_each_entry_safe(flow, tmp, &esw->offloads.peer_flows[i], peer[i])
 			mlx5e_tc_del_fdb_peers_flow(flow);
 	}

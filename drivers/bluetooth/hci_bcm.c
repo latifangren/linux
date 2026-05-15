@@ -326,6 +326,7 @@ static irqreturn_t bcm_host_wake(int irq, void *data)
 	bt_dev_dbg(bdev, "Host wake IRQ");
 
 	pm_runtime_get(bdev->dev);
+	pm_runtime_mark_last_busy(bdev->dev);
 	pm_runtime_put_autosuspend(bdev->dev);
 
 	return IRQ_HANDLED;
@@ -448,7 +449,7 @@ static int bcm_open(struct hci_uart *hu)
 	if (!hci_uart_has_flow_control(hu))
 		return -EOPNOTSUPP;
 
-	bcm = kzalloc_obj(*bcm);
+	bcm = kzalloc(sizeof(*bcm), GFP_KERNEL);
 	if (!bcm)
 		return -ENOMEM;
 
@@ -642,8 +643,8 @@ static int bcm_setup(struct hci_uart *hu)
 	 * Allow the bootloader to set a valid address through the
 	 * device tree.
 	 */
-	if (hci_test_quirk(hu->hdev, HCI_QUIRK_INVALID_BDADDR))
-		hci_set_quirk(hu->hdev, HCI_QUIRK_USE_BDADDR_PROPERTY);
+	if (test_bit(HCI_QUIRK_INVALID_BDADDR, &hu->hdev->quirks))
+		set_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hu->hdev->quirks);
 
 	if (!bcm_request_irq(bcm))
 		err = bcm_setup_sleep(hu);
@@ -697,7 +698,7 @@ static int bcm_recv(struct hci_uart *hu, const void *data, int count)
 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
 		return -EUNATCH;
 
-	bcm->rx_skb = h4_recv_buf(hu, bcm->rx_skb, data, count,
+	bcm->rx_skb = h4_recv_buf(hu->hdev, bcm->rx_skb, data, count,
 				  bcm_recv_pkts, ARRAY_SIZE(bcm_recv_pkts));
 	if (IS_ERR(bcm->rx_skb)) {
 		int err = PTR_ERR(bcm->rx_skb);
@@ -709,6 +710,7 @@ static int bcm_recv(struct hci_uart *hu, const void *data, int count)
 		mutex_lock(&bcm_device_lock);
 		if (bcm->dev && bcm_device_exists(bcm->dev)) {
 			pm_runtime_get(bcm->dev->dev);
+			pm_runtime_mark_last_busy(bcm->dev->dev);
 			pm_runtime_put_autosuspend(bcm->dev->dev);
 		}
 		mutex_unlock(&bcm_device_lock);
@@ -746,8 +748,10 @@ static struct sk_buff *bcm_dequeue(struct hci_uart *hu)
 
 	skb = skb_dequeue(&bcm->txq);
 
-	if (bdev)
+	if (bdev) {
+		pm_runtime_mark_last_busy(bdev->dev);
 		pm_runtime_put_autosuspend(bdev->dev);
+	}
 
 	mutex_unlock(&bcm_device_lock);
 
@@ -1064,17 +1068,17 @@ static struct clk *bcm_get_txco(struct device *dev)
 	struct clk *clk;
 
 	/* New explicit name */
-	clk = devm_clk_get_optional(dev, "txco");
-	if (clk)
+	clk = devm_clk_get(dev, "txco");
+	if (!IS_ERR(clk) || PTR_ERR(clk) == -EPROBE_DEFER)
 		return clk;
 
 	/* Deprecated name */
-	clk = devm_clk_get_optional(dev, "extclk");
-	if (clk)
+	clk = devm_clk_get(dev, "extclk");
+	if (!IS_ERR(clk) || PTR_ERR(clk) == -EPROBE_DEFER)
 		return clk;
 
 	/* Original code used no name at all */
-	return devm_clk_get_optional(dev, NULL);
+	return devm_clk_get(dev, NULL);
 }
 
 static int bcm_get_resources(struct bcm_device *dev)
@@ -1089,12 +1093,21 @@ static int bcm_get_resources(struct bcm_device *dev)
 		return 0;
 
 	dev->txco_clk = bcm_get_txco(dev->dev);
-	if (IS_ERR(dev->txco_clk))
+
+	/* Handle deferred probing */
+	if (dev->txco_clk == ERR_PTR(-EPROBE_DEFER))
 		return PTR_ERR(dev->txco_clk);
 
-	dev->lpo_clk = devm_clk_get_optional(dev->dev, "lpo");
-	if (IS_ERR(dev->lpo_clk))
+	/* Ignore all other errors as before */
+	if (IS_ERR(dev->txco_clk))
+		dev->txco_clk = NULL;
+
+	dev->lpo_clk = devm_clk_get(dev->dev, "lpo");
+	if (dev->lpo_clk == ERR_PTR(-EPROBE_DEFER))
 		return PTR_ERR(dev->lpo_clk);
+
+	if (IS_ERR(dev->lpo_clk))
+		dev->lpo_clk = NULL;
 
 	/* Check if we accidentally fetched the lpo clock twice */
 	if (dev->lpo_clk && clk_is_match(dev->lpo_clk, dev->txco_clk)) {
@@ -1494,7 +1507,7 @@ static const struct dev_pm_ops bcm_pm_ops = {
 
 static struct platform_driver bcm_driver = {
 	.probe = bcm_probe,
-	.remove = bcm_remove,
+	.remove_new = bcm_remove,
 	.driver = {
 		.name = "hci_bcm",
 		.acpi_match_table = ACPI_PTR(bcm_acpi_match),

@@ -317,7 +317,7 @@ static struct platform_driver tps6586x_rtc_driver = {
 		.pm	= &tps6586x_pm_ops,
 	},
 	.probe	= tps6586x_rtc_probe,
-	.remove = tps6586x_rtc_remove,
+	.remove_new = tps6586x_rtc_remove,
 };
 module_platform_driver(tps6586x_rtc_driver);
 

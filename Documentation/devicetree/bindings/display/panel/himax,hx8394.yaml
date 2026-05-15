@@ -17,24 +17,22 @@ description:
 
 properties:
   compatible:
-    oneOf:
-      - items:
-          - enum:
-              - hannstar,hsd060bhw4
-              - microchip,ac40t08a-mipi-panel
-              - powkiddy,x55-panel
-          - const: himax,hx8394
-      - items:
-          - enum:
-              - huiling,hl055fhav028c
-          - const: himax,hx8399c
+    items:
+      - enum:
+          - hannstar,hsd060bhw4
+          - microchip,ac40t08a-mipi-panel
+          - powkiddy,x55-panel
+      - const: himax,hx8394
 
   reg:
     maxItems: 1
 
   reset-gpios: true
+
   backlight: true
+
   rotation: true
+
   port: true
 
   vcc-supply:
@@ -51,6 +49,8 @@ required:
   - vcc-supply
   - iovcc-supply
 
+additionalProperties: false
+
 allOf:
   - $ref: panel-common.yaml#
   - if:
@@ -62,8 +62,6 @@ allOf:
     then:
       required:
         - reset-gpios
-
-additionalProperties: false
 
 examples:
   - |

@@ -588,11 +588,13 @@ static int e1000_set_ringparam(struct net_device *netdev,
 	rx_old = adapter->rx_ring;
 
 	err = -ENOMEM;
-	txdr = kzalloc_objs(struct e1000_tx_ring, adapter->num_tx_queues);
+	txdr = kcalloc(adapter->num_tx_queues, sizeof(struct e1000_tx_ring),
+		       GFP_KERNEL);
 	if (!txdr)
 		goto err_alloc_tx;
 
-	rxdr = kzalloc_objs(struct e1000_rx_ring, adapter->num_rx_queues);
+	rxdr = kcalloc(adapter->num_rx_queues, sizeof(struct e1000_rx_ring),
+		       GFP_KERNEL);
 	if (!rxdr)
 		goto err_alloc_rx;
 
@@ -810,7 +812,7 @@ static int e1000_eeprom_test(struct e1000_adapter *adapter, u64 *data)
 	}
 
 	/* If Checksum is not Correct return error else test passed */
-	if (checksum != EEPROM_SUM && !(*data))
+	if ((checksum != (u16)EEPROM_SUM) && !(*data))
 		*data = 2;
 
 	return *data;
@@ -988,7 +990,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 	if (!txdr->count)
 		txdr->count = E1000_DEFAULT_TXD;
 
-	txdr->buffer_info = kzalloc_objs(struct e1000_tx_buffer, txdr->count);
+	txdr->buffer_info = kcalloc(txdr->count, sizeof(struct e1000_tx_buffer),
+				    GFP_KERNEL);
 	if (!txdr->buffer_info) {
 		ret_val = 1;
 		goto err_nomem;
@@ -1046,7 +1049,8 @@ static int e1000_setup_desc_rings(struct e1000_adapter *adapter)
 	if (!rxdr->count)
 		rxdr->count = E1000_DEFAULT_RXD;
 
-	rxdr->buffer_info = kzalloc_objs(struct e1000_rx_buffer, rxdr->count);
+	rxdr->buffer_info = kcalloc(rxdr->count, sizeof(struct e1000_rx_buffer),
+				    GFP_KERNEL);
 	if (!rxdr->buffer_info) {
 		ret_val = 5;
 		goto err_nomem;

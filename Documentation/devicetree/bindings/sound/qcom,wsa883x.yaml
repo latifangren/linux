@@ -29,10 +29,6 @@ properties:
     description: GPIO spec for Powerdown/Shutdown line to use (pin SD_N)
     maxItems: 1
 
-  reset-gpios:
-    description: Powerdown/Shutdown line to use (pin SD_N)
-    maxItems: 1
-
   vdd-supply:
     description: VDD Supply for the Codec
 
@@ -54,14 +50,9 @@ required:
   - compatible
   - reg
   - vdd-supply
+  - powerdown-gpios
   - "#thermal-sensor-cells"
   - "#sound-dai-cells"
-
-oneOf:
-  - required:
-      - powerdown-gpios
-  - required:
-      - reset-gpios
 
 unevaluatedProperties: false
 

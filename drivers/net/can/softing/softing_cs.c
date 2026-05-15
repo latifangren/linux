@@ -256,7 +256,7 @@ static int softingcs_probe(struct pcmcia_device *pcmcia)
 	}
 
 	/* create softing platform device */
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto mem_failed;

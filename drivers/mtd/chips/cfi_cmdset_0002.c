@@ -604,7 +604,7 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 	struct mtd_info *mtd;
 	int i;
 
-	mtd = kzalloc_obj(*mtd);
+	mtd = kzalloc(sizeof(*mtd), GFP_KERNEL);
 	if (!mtd)
 		return NULL;
 	mtd->priv = map;
@@ -776,8 +776,9 @@ static struct mtd_info *cfi_amdstd_setup(struct mtd_info *mtd)
 	mtd->size = devsize * cfi->numchips;
 
 	mtd->numeraseregions = cfi->cfiq->NumEraseRegions * cfi->numchips;
-	mtd->eraseregions = kmalloc_objs(struct mtd_erase_region_info,
-					 mtd->numeraseregions);
+	mtd->eraseregions = kmalloc_array(mtd->numeraseregions,
+					  sizeof(struct mtd_erase_region_info),
+					  GFP_KERNEL);
 	if (!mtd->eraseregions)
 		goto setup_err;
 
@@ -1778,8 +1779,10 @@ static int __xipram do_write_oneword_retry(struct map_info *map,
 		map_write(map, CMD(0xF0), chip->start);
 		/* FIXME - should have reset delay before continuing */
 
-		if (++retry_cnt <= MAX_RETRIES)
+		if (++retry_cnt <= MAX_RETRIES) {
+			ret = 0;
 			goto retry;
+		}
 	}
 	xip_enable(map, chip, adr);
 
@@ -2818,7 +2821,7 @@ static int __maybe_unused cfi_ppb_unlock(struct mtd_info *mtd, loff_t ofs,
 	for (i = 0; i < mtd->numeraseregions; i++)
 		max_sectors += regions[i].numblocks;
 
-	sect = kzalloc_objs(struct ppb_lock, max_sectors);
+	sect = kcalloc(max_sectors, sizeof(struct ppb_lock), GFP_KERNEL);
 	if (!sect)
 		return -ENOMEM;
 

@@ -48,7 +48,6 @@ EXPORT_SYMBOL_GPL(mtk_afe_combine_sub_dai);
 
 int mtk_afe_add_sub_dai_control(struct snd_soc_component *component)
 {
-	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	struct mtk_base_afe_dai *dai;
 
@@ -59,19 +58,19 @@ int mtk_afe_add_sub_dai_control(struct snd_soc_component *component)
 						       dai->num_controls);
 
 		if (dai->dapm_widgets)
-			snd_soc_dapm_new_controls(dapm,
+			snd_soc_dapm_new_controls(&component->dapm,
 						  dai->dapm_widgets,
 						  dai->num_dapm_widgets);
 	}
 	/* add routes after all widgets are added */
 	list_for_each_entry(dai, &afe->sub_dais, list) {
 		if (dai->dapm_routes)
-			snd_soc_dapm_add_routes(dapm,
+			snd_soc_dapm_add_routes(&component->dapm,
 						dai->dapm_routes,
 						dai->num_dapm_routes);
 	}
 
-	snd_soc_dapm_new_widgets(component->card);
+	snd_soc_dapm_new_widgets(component->dapm.card);
 
 	return 0;
 
@@ -149,7 +148,7 @@ static int mtk_afe_component_probe(struct snd_soc_component *component)
 const struct snd_soc_component_driver mtk_afe_pcm_platform = {
 	.name		= AFE_PCM_NAME,
 	.pointer	= mtk_afe_pcm_pointer,
-	.pcm_new	= mtk_afe_pcm_new,
+	.pcm_construct	= mtk_afe_pcm_new,
 	.probe		= mtk_afe_component_probe,
 };
 EXPORT_SYMBOL_GPL(mtk_afe_pcm_platform);

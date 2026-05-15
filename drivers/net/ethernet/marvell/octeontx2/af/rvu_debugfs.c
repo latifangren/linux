@@ -21,10 +21,6 @@
 #include "rvu_npc_hash.h"
 #include "mcs.h"
 
-#include "cn20k/reg.h"
-#include "cn20k/debugfs.h"
-#include "cn20k/npc.h"
-
 #define DEBUGFS_DIR_NAME "octeontx2"
 
 enum {
@@ -47,6 +43,33 @@ enum {
 	CGX_STAT16,
 	CGX_STAT17,
 	CGX_STAT18,
+};
+
+/* NIX TX stats */
+enum nix_stat_lf_tx {
+	TX_UCAST	= 0x0,
+	TX_BCAST	= 0x1,
+	TX_MCAST	= 0x2,
+	TX_DROP		= 0x3,
+	TX_OCTS		= 0x4,
+	TX_STATS_ENUM_LAST,
+};
+
+/* NIX RX stats */
+enum nix_stat_lf_rx {
+	RX_OCTS		= 0x0,
+	RX_UCAST	= 0x1,
+	RX_BCAST	= 0x2,
+	RX_MCAST	= 0x3,
+	RX_DROP		= 0x4,
+	RX_DROP_OCTS	= 0x5,
+	RX_FCS		= 0x6,
+	RX_ERR		= 0x7,
+	RX_DRP_BCAST	= 0x8,
+	RX_DRP_MCAST	= 0x9,
+	RX_DRP_L3BCAST	= 0xa,
+	RX_DRP_L3MCAST	= 0xb,
+	RX_STATS_ENUM_LAST,
 };
 
 static char *cgx_rx_stats_fields[] = {
@@ -645,16 +668,16 @@ static ssize_t rvu_dbg_lmtst_map_table_display(struct file *filp,
 
 RVU_DEBUG_FOPS(lmtst_map_table, lmtst_map_table_display, NULL);
 
-static void get_lf_str_list(const struct rvu_block *block, int pcifunc,
+static void get_lf_str_list(struct rvu_block block, int pcifunc,
 			    char *lfs)
 {
-	int lf = 0, seq = 0, len = 0, prev_lf = block->lf.max;
+	int lf = 0, seq = 0, len = 0, prev_lf = block.lf.max;
 
-	for_each_set_bit(lf, block->lf.bmap, block->lf.max) {
-		if (lf >= block->lf.max)
+	for_each_set_bit(lf, block.lf.bmap, block.lf.max) {
+		if (lf >= block.lf.max)
 			break;
 
-		if (block->fn_map[lf] != pcifunc)
+		if (block.fn_map[lf] != pcifunc)
 			continue;
 
 		if (lf == prev_lf + 1) {
@@ -692,7 +715,7 @@ static int get_max_column_width(struct rvu *rvu)
 
 	for (pf = 0; pf < rvu->hw->total_pfs; pf++) {
 		for (vf = 0; vf <= rvu->hw->total_vfs; vf++) {
-			pcifunc = rvu_make_pcifunc(rvu->pdev, pf, vf);
+			pcifunc = pf << 10 | vf;
 			if (!pcifunc)
 				continue;
 
@@ -701,7 +724,7 @@ static int get_max_column_width(struct rvu *rvu)
 				if (!strlen(block.name))
 					continue;
 
-				get_lf_str_list(&block, pcifunc, buf);
+				get_lf_str_list(block, pcifunc, buf);
 				if (lf_str_size <= strlen(buf))
 					lf_str_size = strlen(buf) + 1;
 			}
@@ -763,7 +786,7 @@ static ssize_t rvu_dbg_rsrc_attach_status(struct file *filp,
 		for (vf = 0; vf <= rvu->hw->total_vfs; vf++) {
 			off = 0;
 			flag = 0;
-			pcifunc = rvu_make_pcifunc(rvu->pdev, pf, vf);
+			pcifunc = pf << 10 | vf;
 			if (!pcifunc)
 				continue;
 
@@ -785,7 +808,7 @@ static ssize_t rvu_dbg_rsrc_attach_status(struct file *filp,
 					continue;
 				len = 0;
 				lfs[len] = '\0';
-				get_lf_str_list(&block, pcifunc, lfs);
+				get_lf_str_list(block, pcifunc, lfs);
 				if (strlen(lfs))
 					flag = 1;
 
@@ -846,7 +869,7 @@ static int rvu_dbg_rvu_pf_cgx_map_display(struct seq_file *filp, void *unused)
 
 		cgx[0] = 0;
 		lmac[0] = 0;
-		pcifunc = rvu_make_pcifunc(rvu->pdev, pf, 0);
+		pcifunc = pf << 10;
 		pfvf = rvu_get_pfvf(rvu, pcifunc);
 
 		if (pfvf->nix_blkaddr == BLKADDR_NIX0)
@@ -870,71 +893,6 @@ static int rvu_dbg_rvu_pf_cgx_map_display(struct seq_file *filp, void *unused)
 }
 
 RVU_DEBUG_SEQ_FOPS(rvu_pf_cgx_map, rvu_pf_cgx_map_display, NULL);
-
-static int rvu_dbg_rvu_fwdata_display(struct seq_file *s, void *unused)
-{
-	struct rvu *rvu = s->private;
-	struct rvu_fwdata *fwdata;
-	u8 mac[ETH_ALEN];
-	int count = 0, i;
-
-	if (!rvu->fwdata)
-		return -EAGAIN;
-
-	fwdata = rvu->fwdata;
-	seq_puts(s, "\nRVU Firmware Data:\n");
-	seq_puts(s, "\n\t\tPTP INFORMATION\n");
-	seq_puts(s, "\t\t===============\n");
-	seq_printf(s, "\t\texternal clockrate \t :%x\n",
-		   fwdata->ptp_ext_clk_rate);
-	seq_printf(s, "\t\texternal timestamp \t :%x\n",
-		   fwdata->ptp_ext_tstamp);
-	seq_puts(s, "\n");
-
-	seq_puts(s, "\n\t\tSDP CHANNEL INFORMATION\n");
-	seq_puts(s, "\t\t=======================\n");
-	seq_printf(s, "\t\tValid \t\t\t :%x\n", fwdata->channel_data.valid);
-	seq_printf(s, "\t\tNode ID \t\t :%x\n",
-		   fwdata->channel_data.info.node_id);
-	seq_printf(s, "\t\tNumber of VFs  \t\t :%x\n",
-		   fwdata->channel_data.info.max_vfs);
-	seq_printf(s, "\t\tNumber of PF-Rings \t :%x\n",
-		   fwdata->channel_data.info.num_pf_rings);
-	seq_printf(s, "\t\tPF SRN \t\t\t :%x\n",
-		   fwdata->channel_data.info.pf_srn);
-	seq_puts(s, "\n");
-
-	seq_puts(s, "\n\t\tPF-INDEX  MACADDRESS\n");
-	seq_puts(s, "\t\t====================\n");
-	for (i = 0; i < PF_MACNUM_MAX; i++) {
-		u64_to_ether_addr(fwdata->pf_macs[i], mac);
-		if (!is_zero_ether_addr(mac)) {
-			seq_printf(s, "\t\t  %d       %pM\n", i, mac);
-			count++;
-		}
-	}
-
-	if (!count)
-		seq_puts(s, "\t\tNo valid address found\n");
-
-	seq_puts(s, "\n\t\tVF-INDEX  MACADDRESS\n");
-	seq_puts(s, "\t\t====================\n");
-	count = 0;
-	for (i = 0; i < VF_MACNUM_MAX; i++) {
-		u64_to_ether_addr(fwdata->vf_macs[i], mac);
-		if (!is_zero_ether_addr(mac)) {
-			seq_printf(s, "\t\t  %d       %pM\n", i, mac);
-			count++;
-		}
-	}
-
-	if (!count)
-		seq_puts(s, "\t\tNo valid address found\n");
-
-	return 0;
-}
-
-RVU_DEBUG_SEQ_FOPS(rvu_fwdata, rvu_fwdata_display, NULL);
 
 static bool rvu_dbg_is_valid_lf(struct rvu *rvu, int blkaddr, int lf,
 				u16 *pcifunc)
@@ -962,38 +920,48 @@ static bool rvu_dbg_is_valid_lf(struct rvu *rvu, int blkaddr, int lf,
 
 static void print_npa_qsize(struct seq_file *m, struct rvu_pfvf *pfvf)
 {
+	char *buf;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf)
+		return;
+
 	if (!pfvf->aura_ctx) {
 		seq_puts(m, "Aura context is not initialized\n");
 	} else {
+		bitmap_print_to_pagebuf(false, buf, pfvf->aura_bmap,
+					pfvf->aura_ctx->qsize);
 		seq_printf(m, "Aura count : %d\n", pfvf->aura_ctx->qsize);
-		seq_printf(m, "Aura context ena/dis bitmap : %*pb\n",
-			   pfvf->aura_ctx->qsize, pfvf->aura_bmap);
+		seq_printf(m, "Aura context ena/dis bitmap : %s\n", buf);
 	}
 
 	if (!pfvf->pool_ctx) {
 		seq_puts(m, "Pool context is not initialized\n");
 	} else {
+		bitmap_print_to_pagebuf(false, buf, pfvf->pool_bmap,
+					pfvf->pool_ctx->qsize);
 		seq_printf(m, "Pool count : %d\n", pfvf->pool_ctx->qsize);
-		seq_printf(m, "Pool context ena/dis bitmap : %*pb\n",
-			   pfvf->pool_ctx->qsize, pfvf->pool_bmap);
+		seq_printf(m, "Pool context ena/dis bitmap : %s\n", buf);
 	}
+	kfree(buf);
 }
 
 /* The 'qsize' entry dumps current Aura/Pool context Qsize
  * and each context's current enable/disable status in a bitmap.
  */
-static int rvu_dbg_qsize_display(struct seq_file *s, void *unsused,
+static int rvu_dbg_qsize_display(struct seq_file *filp, void *unsused,
 				 int blktype)
 {
-	void (*print_qsize)(struct seq_file *s,
+	void (*print_qsize)(struct seq_file *filp,
 			    struct rvu_pfvf *pfvf) = NULL;
+	struct dentry *current_dir;
 	struct rvu_pfvf *pfvf;
 	struct rvu *rvu;
 	int qsize_id;
 	u16 pcifunc;
 	int blkaddr;
 
-	rvu = s->private;
+	rvu = filp->private;
 	switch (blktype) {
 	case BLKTYPE_NPA:
 		qsize_id = rvu->rvu_dbg.npa_qsize_id;
@@ -1009,28 +977,32 @@ static int rvu_dbg_qsize_display(struct seq_file *s, void *unsused,
 		return -EINVAL;
 	}
 
-	if (blktype == BLKTYPE_NPA)
+	if (blktype == BLKTYPE_NPA) {
 		blkaddr = BLKADDR_NPA;
-	else
-		blkaddr = debugfs_get_aux_num(s->file);
+	} else {
+		current_dir = filp->file->f_path.dentry->d_parent;
+		blkaddr = (!strcmp(current_dir->d_name.name, "nix1") ?
+				   BLKADDR_NIX1 : BLKADDR_NIX0);
+	}
 
 	if (!rvu_dbg_is_valid_lf(rvu, blkaddr, qsize_id, &pcifunc))
 		return -EINVAL;
 
 	pfvf = rvu_get_pfvf(rvu, pcifunc);
-	print_qsize(s, pfvf);
+	print_qsize(filp, pfvf);
 
 	return 0;
 }
 
-static ssize_t rvu_dbg_qsize_write(struct file *file,
+static ssize_t rvu_dbg_qsize_write(struct file *filp,
 				   const char __user *buffer, size_t count,
 				   loff_t *ppos, int blktype)
 {
 	char *blk_string = (blktype == BLKTYPE_NPA) ? "npa" : "nix";
-	struct seq_file *seqfile = file->private_data;
+	struct seq_file *seqfile = filp->private_data;
 	char *cmd_buf, *cmd_buf_tmp, *subtoken;
 	struct rvu *rvu = seqfile->private;
+	struct dentry *current_dir;
 	int blkaddr;
 	u16 pcifunc;
 	int ret, lf;
@@ -1056,10 +1028,13 @@ static ssize_t rvu_dbg_qsize_write(struct file *file,
 		goto qsize_write_done;
 	}
 
-	if (blktype == BLKTYPE_NPA)
+	if (blktype == BLKTYPE_NPA) {
 		blkaddr = BLKADDR_NPA;
-	else
-		blkaddr = debugfs_get_aux_num(file);
+	} else {
+		current_dir = filp->f_path.dentry->d_parent;
+		blkaddr = (!strcmp(current_dir->d_name.name, "nix1") ?
+				   BLKADDR_NIX1 : BLKADDR_NIX0);
+	}
 
 	if (!rvu_dbg_is_valid_lf(rvu, blkaddr, lf, &pcifunc)) {
 		ret = -EINVAL;
@@ -1095,11 +1070,6 @@ static void print_npa_aura_ctx(struct seq_file *m, struct npa_aq_enq_rsp *rsp)
 {
 	struct npa_aura_s *aura = &rsp->aura;
 	struct rvu *rvu = m->private;
-
-	if (is_cn20k(rvu->pdev)) {
-		print_npa_cn20k_aura_ctx(m, (struct npa_cn20k_aq_enq_rsp *)rsp);
-		return;
-	}
 
 	seq_printf(m, "W0: Pool addr\t\t%llx\n", aura->pool_addr);
 
@@ -1148,11 +1118,6 @@ static void print_npa_pool_ctx(struct seq_file *m, struct npa_aq_enq_rsp *rsp)
 {
 	struct npa_pool_s *pool = &rsp->pool;
 	struct rvu *rvu = m->private;
-
-	if (is_cn20k(rvu->pdev)) {
-		print_npa_cn20k_pool_ctx(m, (struct npa_cn20k_aq_enq_rsp *)rsp);
-		return;
-	}
 
 	seq_printf(m, "W0: Stack base\t\t%llx\n", pool->stack_base);
 
@@ -1656,9 +1621,6 @@ static void print_tm_tree(struct seq_file *m,
 	int blkaddr;
 	u64 cfg;
 
-	if (!sq_ctx->ena)
-		return;
-
 	blkaddr = nix_hw->blkaddr;
 	schq = sq_ctx->smq;
 
@@ -2017,16 +1979,10 @@ static void print_nix_sq_ctx(struct seq_file *m, struct nix_aq_enq_rsp *rsp)
 	struct nix_hw *nix_hw = m->private;
 	struct rvu *rvu = nix_hw->rvu;
 
-	if (is_cn20k(rvu->pdev)) {
-		print_nix_cn20k_sq_ctx(m, (struct nix_cn20k_sq_ctx_s *)sq_ctx);
-		return;
-	}
-
 	if (!is_rvu_otx2(rvu)) {
 		print_nix_cn10k_sq_ctx(m, (struct nix_cn10k_sq_ctx_s *)sq_ctx);
 		return;
 	}
-
 	seq_printf(m, "W0: sqe_way_mask \t\t%d\nW0: cq \t\t\t\t%d\n",
 		   sq_ctx->sqe_way_mask, sq_ctx->cq);
 	seq_printf(m, "W0: sdp_mcast \t\t\t%d\nW0: substream \t\t\t0x%03x\n",
@@ -2117,9 +2073,7 @@ static void print_nix_cn10k_rq_ctx(struct seq_file *m,
 	seq_printf(m, "W1: ipsecd_drop_ena \t\t%d\nW1: chi_ena \t\t\t%d\n\n",
 		   rq_ctx->ipsecd_drop_ena, rq_ctx->chi_ena);
 
-	seq_printf(m, "W2: band_prof_id \t\t%d\n",
-		   (u16)rq_ctx->band_prof_id_h << 10 | rq_ctx->band_prof_id);
-
+	seq_printf(m, "W2: band_prof_id \t\t%d\n", rq_ctx->band_prof_id);
 	seq_printf(m, "W2: policer_ena \t\t%d\n", rq_ctx->policer_ena);
 	seq_printf(m, "W2: spb_sizem1 \t\t\t%d\n", rq_ctx->spb_sizem1);
 	seq_printf(m, "W2: wqe_skip \t\t\t%d\nW2: sqb_ena \t\t\t%d\n",
@@ -2241,11 +2195,6 @@ static void print_nix_cq_ctx(struct seq_file *m, struct nix_aq_enq_rsp *rsp)
 	struct nix_hw *nix_hw = m->private;
 	struct rvu *rvu = nix_hw->rvu;
 
-	if (is_cn20k(rvu->pdev)) {
-		print_nix_cn20k_cq_ctx(m, (struct nix_cn20k_aq_enq_rsp *)rsp);
-		return;
-	}
-
 	seq_printf(m, "W0: base \t\t\t%llx\n\n", cq_ctx->base);
 
 	seq_printf(m, "W1: wrptr \t\t\t%llx\n", (u64)cq_ctx->wrptr);
@@ -2275,7 +2224,6 @@ static void print_nix_cq_ctx(struct seq_file *m, struct nix_aq_enq_rsp *rsp)
 		   cq_ctx->cq_err_int_ena, cq_ctx->cq_err_int);
 	seq_printf(m, "W3: qsize \t\t\t%d\nW3:caching \t\t\t%d\n",
 		   cq_ctx->qsize, cq_ctx->caching);
-
 	seq_printf(m, "W3: substream \t\t\t0x%03x\nW3: ena \t\t\t%d\n",
 		   cq_ctx->substream, cq_ctx->ena);
 	if (!is_rvu_otx2(rvu)) {
@@ -2538,8 +2486,17 @@ RVU_DEBUG_SEQ_FOPS(nix_cq_ctx, nix_cq_ctx_display, nix_cq_ctx_write);
 static void print_nix_qctx_qsize(struct seq_file *filp, int qsize,
 				 unsigned long *bmap, char *qtype)
 {
+	char *buf;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf)
+		return;
+
+	bitmap_print_to_pagebuf(false, buf, bmap, qsize);
 	seq_printf(filp, "%s context count : %d\n", qtype, qsize);
-	seq_printf(filp, "%s context ena/dis bitmap : %*pb\n", qtype, qsize, bmap);
+	seq_printf(filp, "%s context ena/dis bitmap : %s\n",
+		   qtype, buf);
+	kfree(buf);
 }
 
 static void print_nix_qsize(struct seq_file *filp, struct rvu_pfvf *pfvf)
@@ -2628,10 +2585,7 @@ static void print_band_prof_ctx(struct seq_file *m,
 		(prof->rc_action == 1) ? "DROP" : "RED";
 	seq_printf(m, "W1: rc_action\t\t%s\n", str);
 	seq_printf(m, "W1: meter_algo\t\t%d\n", prof->meter_algo);
-
-	seq_printf(m, "W1: band_prof_id\t%d\n",
-		   (u16)prof->band_prof_id_h << 7 | prof->band_prof_id);
-
+	seq_printf(m, "W1: band_prof_id\t%d\n", prof->band_prof_id);
 	seq_printf(m, "W1: hl_en\t\t%d\n", prof->hl_en);
 
 	seq_printf(m, "W2: ts\t\t\t%lld\n", (u64)prof->ts);
@@ -2704,10 +2658,10 @@ static int rvu_dbg_nix_band_prof_ctx_display(struct seq_file *m, void *unused)
 			pcifunc = ipolicer->pfvf_map[idx];
 			if (!(pcifunc & RVU_PFVF_FUNC_MASK))
 				seq_printf(m, "Allocated to :: PF %d\n",
-					   rvu_get_pf(rvu->pdev, pcifunc));
+					   rvu_get_pf(pcifunc));
 			else
 				seq_printf(m, "Allocated to :: PF %d VF %d\n",
-					   rvu_get_pf(rvu->pdev, pcifunc),
+					   rvu_get_pf(pcifunc),
 					   (pcifunc & RVU_PFVF_FUNC_MASK) - 1);
 			print_band_prof_ctx(m, &aq_rsp.prof);
 		}
@@ -2782,8 +2736,8 @@ static void rvu_dbg_nix_init(struct rvu *rvu, int blkaddr)
 			    &rvu_dbg_nix_ndc_tx_hits_miss_fops);
 	debugfs_create_file("ndc_rx_hits_miss", 0600, rvu->rvu_dbg.nix, nix_hw,
 			    &rvu_dbg_nix_ndc_rx_hits_miss_fops);
-	debugfs_create_file_aux_num("qsize", 0600, rvu->rvu_dbg.nix, rvu,
-			    blkaddr, &rvu_dbg_nix_qsize_fops);
+	debugfs_create_file("qsize", 0600, rvu->rvu_dbg.nix, rvu,
+			    &rvu_dbg_nix_qsize_fops);
 	debugfs_create_file("ingress_policer_ctx", 0600, rvu->rvu_dbg.nix, nix_hw,
 			    &rvu_dbg_nix_band_prof_ctx_fops);
 	debugfs_create_file("ingress_policer_rsrc", 0600, rvu->rvu_dbg.nix, nix_hw,
@@ -2800,9 +2754,6 @@ static void rvu_dbg_npa_init(struct rvu *rvu)
 			    &rvu_dbg_npa_aura_ctx_fops);
 	debugfs_create_file("pool_ctx", 0600, rvu->rvu_dbg.npa, rvu,
 			    &rvu_dbg_npa_pool_ctx_fops);
-
-	if (is_cn20k(rvu->pdev)) /* NDC not appliable for cn20k */
-		return;
 	debugfs_create_file("ndc_cache", 0600, rvu->rvu_dbg.npa, rvu,
 			    &rvu_dbg_npa_ndc_cache_fops);
 	debugfs_create_file("ndc_hits_miss", 0600, rvu->rvu_dbg.npa, rvu,
@@ -2935,14 +2886,28 @@ static int cgx_print_stats(struct seq_file *s, int lmac_id)
 	return err;
 }
 
-static int rvu_dbg_derive_lmacid(struct seq_file *s)
+static int rvu_dbg_derive_lmacid(struct seq_file *filp, int *lmac_id)
 {
-	return debugfs_get_aux_num(s->file);
+	struct dentry *current_dir;
+	char *buf;
+
+	current_dir = filp->file->f_path.dentry->d_parent;
+	buf = strrchr(current_dir->d_name.name, 'c');
+	if (!buf)
+		return -EINVAL;
+
+	return kstrtoint(buf + 1, 10, lmac_id);
 }
 
-static int rvu_dbg_cgx_stat_display(struct seq_file *s, void *unused)
+static int rvu_dbg_cgx_stat_display(struct seq_file *filp, void *unused)
 {
-	return cgx_print_stats(s, rvu_dbg_derive_lmacid(s));
+	int lmac_id, err;
+
+	err = rvu_dbg_derive_lmacid(filp, &lmac_id);
+	if (!err)
+		return cgx_print_stats(filp, lmac_id);
+
+	return err;
 }
 
 RVU_DEBUG_SEQ_FOPS(cgx_stat, cgx_stat_display, NULL);
@@ -3000,103 +2965,18 @@ static int cgx_print_dmac_flt(struct seq_file *s, int lmac_id)
 	return 0;
 }
 
-static int rvu_dbg_cgx_dmac_flt_display(struct seq_file *s, void *unused)
+static int rvu_dbg_cgx_dmac_flt_display(struct seq_file *filp, void *unused)
 {
-	return cgx_print_dmac_flt(s, rvu_dbg_derive_lmacid(s));
+	int err, lmac_id;
+
+	err = rvu_dbg_derive_lmacid(filp, &lmac_id);
+	if (!err)
+		return cgx_print_dmac_flt(filp, lmac_id);
+
+	return err;
 }
 
 RVU_DEBUG_SEQ_FOPS(cgx_dmac_flt, cgx_dmac_flt_display, NULL);
-
-static int cgx_print_fwdata(struct seq_file *s, int lmac_id)
-{
-	struct cgx_lmac_fwdata_s *fwdata;
-	void *cgxd = s->private;
-	struct phy_s *phy;
-	struct rvu *rvu;
-	int cgx_id, i;
-
-	rvu = pci_get_drvdata(pci_get_device(PCI_VENDOR_ID_CAVIUM,
-					     PCI_DEVID_OCTEONTX2_RVU_AF, NULL));
-	if (!rvu)
-		return -ENODEV;
-
-	if (!rvu->fwdata)
-		return -EAGAIN;
-
-	cgx_id = cgx_get_cgxid(cgxd);
-
-	if (rvu->hw->lmac_per_cgx == CGX_LMACS_USX)
-		fwdata =  &rvu->fwdata->cgx_fw_data_usx[cgx_id][lmac_id];
-	else
-		fwdata =  &rvu->fwdata->cgx_fw_data[cgx_id][lmac_id];
-
-	seq_puts(s, "\nFIRMWARE SHARED:\n");
-	seq_puts(s, "\t\tSUPPORTED LINK INFORMATION\t\t\n");
-	seq_puts(s, "\t\t==========================\n");
-	seq_printf(s, "\t\t Link modes \t\t :%llx\n",
-		   fwdata->supported_link_modes);
-	seq_printf(s, "\t\t Autoneg \t\t :%llx\n", fwdata->supported_an);
-	seq_printf(s, "\t\t FEC \t\t\t :%llx\n", fwdata->supported_fec);
-	seq_puts(s, "\n");
-
-	seq_puts(s, "\t\tADVERTISED LINK INFORMATION\t\t\n");
-	seq_puts(s, "\t\t==========================\n");
-	seq_printf(s, "\t\t Link modes \t\t :%llx\n",
-		   (u64)fwdata->advertised_link_modes);
-	seq_printf(s, "\t\t Autoneg \t\t :%x\n", fwdata->advertised_an);
-	seq_printf(s, "\t\t FEC \t\t\t :%llx\n", fwdata->advertised_fec);
-	seq_puts(s, "\n");
-
-	seq_puts(s, "\t\tLMAC CONFIG\t\t\n");
-	seq_puts(s, "\t\t============\n");
-	seq_printf(s, "\t\t rw_valid  \t\t :%x\n",  fwdata->rw_valid);
-	seq_printf(s, "\t\t lmac_type \t\t :%x\n", fwdata->lmac_type);
-	seq_printf(s, "\t\t portm_idx \t\t :%x\n", fwdata->portm_idx);
-	seq_printf(s, "\t\t mgmt_port \t\t :%x\n", fwdata->mgmt_port);
-	seq_printf(s, "\t\t Link modes own \t :%llx\n",
-		   (u64)fwdata->advertised_link_modes_own);
-	seq_puts(s, "\n");
-
-	seq_puts(s, "\n\t\tEEPROM DATA\n");
-	seq_puts(s, "\t\t===========\n");
-	seq_printf(s, "\t\t sff_id \t\t :%x\n", fwdata->sfp_eeprom.sff_id);
-	seq_puts(s, "\t\t data \t\t\t :\n");
-	seq_puts(s, "\t\t");
-	for (i = 0; i < SFP_EEPROM_SIZE; i++) {
-		seq_printf(s, "%x", fwdata->sfp_eeprom.buf[i]);
-		if ((i + 1) % 16 == 0) {
-			seq_puts(s, "\n");
-			seq_puts(s, "\t\t");
-		}
-	}
-	seq_puts(s, "\n");
-
-	phy = &fwdata->phy;
-	seq_puts(s, "\n\t\tPHY INFORMATION\n");
-	seq_puts(s, "\t\t===============\n");
-	seq_printf(s, "\t\t Mod type configurable \t\t :%x\n",
-		   phy->misc.can_change_mod_type);
-	seq_printf(s, "\t\t Mod type \t\t\t :%x\n", phy->misc.mod_type);
-	seq_printf(s, "\t\t Support FEC \t\t\t :%x\n", phy->misc.has_fec_stats);
-	seq_printf(s, "\t\t RSFEC corrected words \t\t :%x\n",
-		   phy->fec_stats.rsfec_corr_cws);
-	seq_printf(s, "\t\t RSFEC uncorrected words \t :%x\n",
-		   phy->fec_stats.rsfec_uncorr_cws);
-	seq_printf(s, "\t\t BRFEC corrected words \t\t :%x\n",
-		   phy->fec_stats.brfec_corr_blks);
-	seq_printf(s, "\t\t BRFEC uncorrected words \t :%x\n",
-		   phy->fec_stats.brfec_uncorr_blks);
-	seq_puts(s, "\n");
-
-	return 0;
-}
-
-static int rvu_dbg_cgx_fwdata_display(struct seq_file *s, void *unused)
-{
-	return cgx_print_fwdata(s, rvu_dbg_derive_lmacid(s));
-}
-
-RVU_DEBUG_SEQ_FOPS(cgx_fwdata, cgx_fwdata_display, NULL);
 
 static void rvu_dbg_cgx_init(struct rvu *rvu)
 {
@@ -3132,14 +3012,11 @@ static void rvu_dbg_cgx_init(struct rvu *rvu)
 			rvu->rvu_dbg.lmac =
 				debugfs_create_dir(dname, rvu->rvu_dbg.cgx);
 
-			debugfs_create_file_aux_num("stats", 0600, rvu->rvu_dbg.lmac,
-					    cgx, lmac_id, &rvu_dbg_cgx_stat_fops);
-			debugfs_create_file_aux_num("mac_filter", 0600,
-					    rvu->rvu_dbg.lmac, cgx, lmac_id,
-					    &rvu_dbg_cgx_dmac_flt_fops);
-			debugfs_create_file("fwdata", 0600,
+			debugfs_create_file("stats", 0600, rvu->rvu_dbg.lmac,
+					    cgx, &rvu_dbg_cgx_stat_fops);
+			debugfs_create_file("mac_filter", 0600,
 					    rvu->rvu_dbg.lmac, cgx,
-					    &rvu_dbg_cgx_fwdata_fops);
+					    &rvu_dbg_cgx_dmac_flt_fops);
 		}
 	}
 }
@@ -3161,10 +3038,10 @@ static void rvu_print_npc_mcam_info(struct seq_file *s,
 
 	if (!(pcifunc & RVU_PFVF_FUNC_MASK))
 		seq_printf(s, "\n\t\t Device \t\t: PF%d\n",
-			   rvu_get_pf(rvu->pdev, pcifunc));
+			   rvu_get_pf(pcifunc));
 	else
 		seq_printf(s, "\n\t\t Device \t\t: PF%d VF%d\n",
-			   rvu_get_pf(rvu->pdev, pcifunc),
+			   rvu_get_pf(pcifunc),
 			   (pcifunc & RVU_PFVF_FUNC_MASK) - 1);
 
 	if (entry_acnt) {
@@ -3180,9 +3057,7 @@ static void rvu_print_npc_mcam_info(struct seq_file *s,
 static int rvu_dbg_npc_mcam_info_display(struct seq_file *filp, void *unsued)
 {
 	struct rvu *rvu = filp->private;
-	int x4_free, x2_free, sb_free;
 	int pf, vf, numvfs, blkaddr;
-	struct npc_priv_t *npc_priv;
 	struct npc_mcam *mcam;
 	u16 pcifunc, counters;
 	u64 cfg;
@@ -3196,34 +3071,16 @@ static int rvu_dbg_npc_mcam_info_display(struct seq_file *filp, void *unsued)
 
 	seq_puts(filp, "\nNPC MCAM info:\n");
 	/* MCAM keywidth on receive and transmit sides */
-	if (is_cn20k(rvu->pdev)) {
-		npc_priv = npc_priv_get();
-		seq_printf(filp, "\t\t RX keywidth \t: %s\n",
-			   (npc_priv->kw == NPC_MCAM_KEY_X1) ?
-			   "256bits" : "512bits");
-
-		npc_cn20k_subbank_calc_free(rvu, &x2_free, &x4_free, &sb_free);
-		seq_printf(filp, "\t\t free x4 slots\t: %d\n", x4_free);
-
-		seq_printf(filp, "\t\t free x2 slots\t: %d\n", x2_free);
-
-		seq_printf(filp, "\t\t free subbanks\t: %d\n", sb_free);
-	} else {
-		cfg = rvu_read64(rvu, blkaddr,
-				 NPC_AF_INTFX_KEX_CFG(NIX_INTF_RX));
-		cfg = (cfg >> 32) & 0x07;
-		seq_printf(filp, "\t\t RX keywidth \t: %s\n",
-			   (cfg == NPC_MCAM_KEY_X1) ?
-			   "112bits" : ((cfg == NPC_MCAM_KEY_X2) ?
-					"224bits" : "448bits"));
-		cfg = rvu_read64(rvu, blkaddr,
-				 NPC_AF_INTFX_KEX_CFG(NIX_INTF_TX));
-		cfg = (cfg >> 32) & 0x07;
-		seq_printf(filp, "\t\t TX keywidth \t: %s\n",
-			   (cfg == NPC_MCAM_KEY_X1) ?
-			   "112bits" : ((cfg == NPC_MCAM_KEY_X2) ?
-					"224bits" : "448bits"));
-	}
+	cfg = rvu_read64(rvu, blkaddr, NPC_AF_INTFX_KEX_CFG(NIX_INTF_RX));
+	cfg = (cfg >> 32) & 0x07;
+	seq_printf(filp, "\t\t RX keywidth \t: %s\n", (cfg == NPC_MCAM_KEY_X1) ?
+		   "112bits" : ((cfg == NPC_MCAM_KEY_X2) ?
+		   "224bits" : "448bits"));
+	cfg = rvu_read64(rvu, blkaddr, NPC_AF_INTFX_KEX_CFG(NIX_INTF_TX));
+	cfg = (cfg >> 32) & 0x07;
+	seq_printf(filp, "\t\t TX keywidth \t: %s\n", (cfg == NPC_MCAM_KEY_X1) ?
+		   "112bits" : ((cfg == NPC_MCAM_KEY_X2) ?
+		   "224bits" : "448bits"));
 
 	mutex_lock(&mcam->lock);
 	/* MCAM entries */
@@ -3247,13 +3104,13 @@ static int rvu_dbg_npc_mcam_info_display(struct seq_file *filp, void *unsued)
 	seq_puts(filp, "\n\t\t Current allocation\n");
 	seq_puts(filp, "\t\t====================\n");
 	for (pf = 0; pf < rvu->hw->total_pfs; pf++) {
-		pcifunc = rvu_make_pcifunc(rvu->pdev, pf, 0);
+		pcifunc = (pf << RVU_PFVF_PF_SHIFT);
 		rvu_print_npc_mcam_info(filp, pcifunc, blkaddr);
 
 		cfg = rvu_read64(rvu, BLKADDR_RVUM, RVU_PRIV_PFX_CFG(pf));
 		numvfs = (cfg >> 12) & 0xFF;
 		for (vf = 0; vf < numvfs; vf++) {
-			pcifunc = rvu_make_pcifunc(rvu->pdev, pf, (vf + 1));
+			pcifunc = (pf << RVU_PFVF_PF_SHIFT) | (vf + 1);
 			rvu_print_npc_mcam_info(filp, pcifunc, blkaddr);
 		}
 	}
@@ -3510,11 +3367,11 @@ static int rvu_dbg_npc_mcam_show_rules(struct seq_file *s, void *unused)
 	struct rvu_npc_mcam_rule *iter;
 	struct rvu *rvu = s->private;
 	struct npc_mcam *mcam;
-	int pf, vf = -1, bank;
-	u16 target, index;
+	int pf, vf = -1;
 	bool enabled;
-	u64 hits, off;
 	int blkaddr;
+	u16 target;
+	u64 hits;
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NPC, 0);
 	if (blkaddr < 0)
@@ -3524,7 +3381,7 @@ static int rvu_dbg_npc_mcam_show_rules(struct seq_file *s, void *unused)
 
 	mutex_lock(&mcam->lock);
 	list_for_each_entry(iter, &mcam->mcam_rules, list) {
-		pf = rvu_get_pf(rvu->pdev, iter->owner);
+		pf = (iter->owner >> RVU_PFVF_PF_SHIFT) & RVU_PFVF_PF_MASK;
 		seq_printf(s, "\n\tInstalled by: PF%d ", pf);
 
 		if (iter->owner & RVU_PFVF_FUNC_MASK) {
@@ -3542,7 +3399,7 @@ static int rvu_dbg_npc_mcam_show_rules(struct seq_file *s, void *unused)
 		rvu_dbg_npc_mcam_show_flows(s, iter);
 		if (is_npc_intf_rx(iter->intf)) {
 			target = iter->rx_action.pf_func;
-			pf = rvu_get_pf(rvu->pdev, target);
+			pf = (target >> RVU_PFVF_PF_SHIFT) & RVU_PFVF_PF_MASK;
 			seq_printf(s, "\tForward to: PF%d ", pf);
 
 			if (target & RVU_PFVF_FUNC_MASK) {
@@ -3558,15 +3415,6 @@ static int rvu_dbg_npc_mcam_show_rules(struct seq_file *s, void *unused)
 
 		enabled = is_mcam_entry_enabled(rvu, mcam, blkaddr, iter->entry);
 		seq_printf(s, "\tenabled: %s\n", enabled ? "yes" : "no");
-		if (is_cn20k(rvu->pdev)) {
-			seq_printf(s, "\tpriority: %u\n", iter->hw_prio);
-			index = iter->entry & (mcam->banksize - 1);
-			bank = npc_get_bank(mcam, iter->entry);
-			off = NPC_AF_CN20K_MCAMEX_BANKX_STAT_EXT(index, bank);
-			hits = rvu_read64(rvu, blkaddr, off);
-			seq_printf(s, "\thits: %lld\n", hits);
-			continue;
-		}
 
 		if (!iter->has_cntr)
 			continue;
@@ -3711,9 +3559,9 @@ static int rvu_dbg_npc_exact_drop_cnt(struct seq_file *s, void *unused)
 	struct npc_exact_table *table;
 	struct rvu *rvu = s->private;
 	struct npc_key_field *field;
-	u64 cfg, cam1, off;
 	u16 chan, pcifunc;
 	int blkaddr, i;
+	u64 cfg, cam1;
 	char *str;
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NPC, 0);
@@ -3734,17 +3582,11 @@ static int rvu_dbg_npc_exact_drop_cnt(struct seq_file *s, void *unused)
 		chan = field->kw_mask[0] & cam1;
 
 		str = (cfg & 1) ? "enabled" : "disabled";
-		if (is_cn20k(rvu->pdev)) {
-			off = NPC_AF_CN20K_MCAMEX_BANKX_STAT_EXT(i, 0);
-		seq_printf(s, "0x%x\t%d\t\t%llu\t0x%x\t%s\n", pcifunc,
-			   i, rvu_read64(rvu, blkaddr, off), chan, str);
-		} else {
-			off = NPC_AF_MATCH_STATX(table->counter_idx[i]);
-			seq_printf(s, "0x%x\t%d\t\t%llu\t0x%x\t%s\n", pcifunc,
-				   i, rvu_read64(rvu, blkaddr, off),
-				   chan, str);
-		}
 
+		seq_printf(s, "0x%x\t%d\t\t%llu\t0x%x\t%s\n", pcifunc, i,
+			   rvu_read64(rvu, blkaddr,
+				      NPC_AF_MATCH_STATX(table->counter_idx[i])),
+			   chan, str);
 	}
 
 	return 0;
@@ -3763,9 +3605,6 @@ static void rvu_dbg_npc_init(struct rvu *rvu)
 
 	debugfs_create_file("rx_miss_act_stats", 0444, rvu->rvu_dbg.npc, rvu,
 			    &rvu_dbg_npc_rx_miss_act_fops);
-
-	if (is_cn20k(rvu->pdev))
-		npc_cn20k_debugfs_init(rvu);
 
 	if (!rvu->hw->cap.npc_exact_match_enabled)
 		return;
@@ -4007,9 +3846,6 @@ static void rvu_dbg_cpt_init(struct rvu *rvu, int blkaddr)
 
 static const char *rvu_get_dbg_dir_name(struct rvu *rvu)
 {
-	if (is_cn20k(rvu->pdev))
-		return "cn20k";
-
 	if (!is_rvu_otx2(rvu))
 		return "cn10k";
 	else
@@ -4026,9 +3862,6 @@ void rvu_dbg_init(struct rvu *rvu)
 	if (!is_rvu_otx2(rvu))
 		debugfs_create_file("lmtst_map_table", 0444, rvu->rvu_dbg.root,
 				    rvu, &rvu_dbg_lmtst_map_table_fops);
-
-	debugfs_create_file("rvu_fwdata", 0444, rvu->rvu_dbg.root, rvu,
-			    &rvu_dbg_rvu_fwdata_fops);
 
 	if (!cgx_get_cgxcnt_max())
 		goto create;

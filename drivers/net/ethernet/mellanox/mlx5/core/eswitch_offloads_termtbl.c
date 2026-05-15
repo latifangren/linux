@@ -132,7 +132,7 @@ mlx5_eswitch_termtbl_get_create(struct mlx5_eswitch *esw,
 	if (found)
 		goto tt_add_ref;
 
-	tt = kzalloc_obj(*tt);
+	tt = kzalloc(sizeof(*tt), GFP_KERNEL);
 	if (!tt) {
 		err = -ENOMEM;
 		goto tt_create_err;

@@ -26,7 +26,7 @@
 #ifndef __DC_LINK_DP_IRQ_HANDLER_H__
 #define __DC_LINK_DP_IRQ_HANDLER_H__
 
-#include "link_service.h"
+#include "link.h"
 bool dp_parse_link_loss_status(
 	struct dc_link *link,
 	union hpd_irq_data *hpd_irq_dpcd_data);

@@ -204,7 +204,7 @@ int br_dev_siocdevprivate(struct net_device *dev, struct ifreq *rq,
 		if (num > BR_MAX_PORTS)
 			num = BR_MAX_PORTS;
 
-		indices = kzalloc_objs(int, num);
+		indices = kcalloc(num, sizeof(int), GFP_KERNEL);
 		if (indices == NULL)
 			return -ENOMEM;
 
@@ -357,7 +357,7 @@ static int old_deviceless(struct net *net, void __user *data)
 
 		if (args[2] >= 2048)
 			return -ENOMEM;
-		indices = kzalloc_objs(int, args[2]);
+		indices = kcalloc(args[2], sizeof(int), GFP_KERNEL);
 		if (indices == NULL)
 			return -ENOMEM;
 

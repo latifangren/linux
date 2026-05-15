@@ -96,7 +96,6 @@ static const struct cfg_param {
 	{"nvidia,slew-rate-falling",	TEGRA_PINCONF_PARAM_SLEW_RATE_FALLING},
 	{"nvidia,slew-rate-rising",	TEGRA_PINCONF_PARAM_SLEW_RATE_RISING},
 	{"nvidia,drive-type",		TEGRA_PINCONF_PARAM_DRIVE_TYPE},
-	{"nvidia,gpio-mode",		TEGRA_PINCONF_PARAM_GPIO_MODE},
 };
 
 static int tegra_pinctrl_dt_subnode_to_map(struct pinctrl_dev *pctldev,
@@ -509,16 +508,6 @@ static int tegra_pinconf_reg(struct tegra_pmx *pmx,
 		*bit = g->drvtype_bit;
 		*width = 2;
 		break;
-	case TEGRA_PINCONF_PARAM_GPIO_MODE:
-		if (pmx->soc->sfsel_in_mux) {
-			*bank = g->mux_bank;
-			*reg = g->mux_reg;
-			*bit = g->sfsel_bit;
-			*width = 1;
-		} else {
-			*reg = -EINVAL;
-		}
-		break;
 	default:
 		dev_err(pmx->dev, "Invalid config param %04x\n", param);
 		return -ENOTSUPP;
@@ -832,14 +821,18 @@ int tegra_pinctrl_probe(struct platform_device *pdev,
 	int fn, gn, gfn;
 	unsigned long backup_regs_size = 0;
 
-	pmx = devm_kzalloc(&pdev->dev,
-			struct_size(pmx, pingroup_configs, soc_data->ngroups), GFP_KERNEL);
+	pmx = devm_kzalloc(&pdev->dev, sizeof(*pmx), GFP_KERNEL);
 	if (!pmx)
 		return -ENOMEM;
 
 	pmx->dev = &pdev->dev;
 	pmx->soc = soc_data;
-	pmx->num_pingroup_configs = soc_data->ngroups;
+
+	pmx->pingroup_configs = devm_kcalloc(&pdev->dev,
+					     pmx->soc->ngroups, sizeof(*pmx->pingroup_configs),
+					     GFP_KERNEL);
+	if (!pmx->pingroup_configs)
+		return -ENOMEM;
 
 	/*
 	 * Each mux group will appear in 4 functions' list of groups.

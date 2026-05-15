@@ -414,7 +414,7 @@ static int log_super(struct log_writes_c *lc)
 	}
 
 	/*
-	 * Super sector should be written in-order, otherwise the
+	 * Super sector should be writen in-order, otherwise the
 	 * nr_entries could be rewritten incorrectly by an old bio.
 	 */
 	wait_for_completion_io(&lc->super_done);
@@ -519,7 +519,7 @@ static int log_writes_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		return -EINVAL;
 	}
 
-	lc = kzalloc_obj(struct log_writes_c);
+	lc = kzalloc(sizeof(struct log_writes_c), GFP_KERNEL);
 	if (!lc) {
 		ti->error = "Cannot allocate context";
 		return -ENOMEM;
@@ -587,7 +587,7 @@ static int log_mark(struct log_writes_c *lc, char *data)
 	struct pending_block *block;
 	size_t maxsize = lc->sectorsize - sizeof(struct log_write_entry);
 
-	block = kzalloc_obj(struct pending_block);
+	block = kzalloc(sizeof(struct pending_block), GFP_KERNEL);
 	if (!block) {
 		DMERR("Error allocating pending block");
 		return -ENOMEM;
@@ -819,9 +819,7 @@ static void log_writes_status(struct dm_target *ti, status_type_t type,
 }
 
 static int log_writes_prepare_ioctl(struct dm_target *ti,
-				    struct block_device **bdev,
-				    unsigned int cmd, unsigned long arg,
-				    bool *forward)
+				    struct block_device **bdev)
 {
 	struct log_writes_c *lc = ti->private;
 	struct dm_dev *dev = lc->dev;
@@ -894,7 +892,7 @@ static struct dax_device *log_writes_dax_pgoff(struct dm_target *ti,
 
 static long log_writes_dax_direct_access(struct dm_target *ti, pgoff_t pgoff,
 		long nr_pages, enum dax_access_mode mode, void **kaddr,
-		unsigned long *pfn)
+		pfn_t *pfn)
 {
 	struct dax_device *dax_dev = log_writes_dax_pgoff(ti, &pgoff);
 

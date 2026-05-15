@@ -8,11 +8,11 @@
 #include <linux/skbuff.h>
 #include <linux/types.h>
 #include <linux/bpf.h>
-#include <net/flow.h>
 #include <net/lwtunnel.h>
 #include <net/gre.h>
-#include <net/ip.h>
 #include <net/ip6_route.h>
+#include <net/ipv6_stubs.h>
+#include <net/inet_dscp.h>
 
 struct bpf_lwt_prog {
 	struct bpf_prog *prog;
@@ -87,27 +87,20 @@ static int run_lwt_bpf(struct sk_buff *skb, struct bpf_lwt_prog *lwt,
 
 static int bpf_lwt_input_reroute(struct sk_buff *skb)
 {
-	enum skb_drop_reason reason;
 	int err = -EINVAL;
 
 	if (skb->protocol == htons(ETH_P_IP)) {
 		struct net_device *dev = skb_dst(skb)->dev;
-		const struct iphdr *iph = ip_hdr(skb);
+		struct iphdr *iph = ip_hdr(skb);
 
 		dev_hold(dev);
 		skb_dst_drop(skb);
-		reason = ip_route_input_noref(skb, iph->daddr, iph->saddr,
-					      ip4h_dscp(iph), dev);
-		err = reason ? -EINVAL : 0;
+		err = ip_route_input_noref(skb, iph->daddr, iph->saddr,
+					   iph->tos, dev);
 		dev_put(dev);
 	} else if (skb->protocol == htons(ETH_P_IPV6)) {
 		skb_dst_drop(skb);
-		if (IS_ENABLED(CONFIG_IPV6)) {
-			ip6_route_input(skb);
-			err = skb_dst(skb)->error;
-		} else {
-			err = -EAFNOSUPPORT;
-		}
+		err = ipv6_stub->ipv6_route_input(skb);
 	} else {
 		err = -EAFNOSUPPORT;
 	}
@@ -213,7 +206,7 @@ static int bpf_lwt_xmit_reroute(struct sk_buff *skb)
 		fl4.flowi4_oif = oif;
 		fl4.flowi4_mark = skb->mark;
 		fl4.flowi4_uid = sock_net_uid(net, sk);
-		fl4.flowi4_dscp = ip4h_dscp(iph);
+		fl4.flowi4_tos = iph->tos & INET_DSCP_MASK;
 		fl4.flowi4_flags = FLOWI_FLAG_ANYSRC;
 		fl4.flowi4_proto = iph->protocol;
 		fl4.daddr = iph->daddr;
@@ -237,7 +230,7 @@ static int bpf_lwt_xmit_reroute(struct sk_buff *skb)
 		fl6.daddr = iph6->daddr;
 		fl6.saddr = iph6->saddr;
 
-		dst = ip6_dst_lookup_flow(net, skb->sk, &fl6, NULL);
+		dst = ipv6_stub->ipv6_dst_lookup_flow(net, skb->sk, &fl6, NULL);
 		if (IS_ERR(dst)) {
 			err = PTR_ERR(dst);
 			goto err;

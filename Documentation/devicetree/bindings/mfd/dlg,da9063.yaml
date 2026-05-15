@@ -81,8 +81,6 @@ properties:
   watchdog:
     $ref: /schemas/watchdog/dlg,da9062-watchdog.yaml
 
-  wakeup-source: true
-
 patternProperties:
   "^(.+-hog(-[0-9]+)?)$":
     type: object

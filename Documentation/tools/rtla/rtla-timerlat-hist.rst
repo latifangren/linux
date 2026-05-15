@@ -1,5 +1,3 @@
-.. |tool| replace:: timerlat hist
-
 =====================
 rtla-timerlat-hist
 =====================
@@ -16,7 +14,7 @@ SYNOPSIS
 DESCRIPTION
 ===========
 
-.. include:: common_timerlat_description.txt
+.. include:: common_timerlat_description.rst
 
 The **rtla timerlat hist** displays a histogram of each tracer event
 occurrence. This tool uses the periodic information, and the
@@ -25,13 +23,13 @@ occurrence. This tool uses the periodic information, and the
 OPTIONS
 =======
 
-.. include:: common_timerlat_options.txt
+.. include:: common_timerlat_options.rst
 
-.. include:: common_hist_options.txt
+.. include:: common_hist_options.rst
 
-.. include:: common_options.txt
+.. include:: common_options.rst
 
-.. include:: common_timerlat_aa.txt
+.. include:: common_timerlat_aa.rst
 
 EXAMPLE
 =======
@@ -104,10 +102,8 @@ SEE ALSO
 ========
 **rtla-timerlat**\(1), **rtla-timerlat-top**\(1)
 
-`Timerlat tracer <https://docs.kernel.org/trace/timerlat-tracer.html>`__
+*timerlat* tracer documentation: <https://www.kernel.org/doc/html/latest/trace/timerlat-tracer.html>
 
 AUTHOR
 ======
 Written by Daniel Bristot de Oliveira <bristot@kernel.org>
-
-.. include:: common_appendix.txt

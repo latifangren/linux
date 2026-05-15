@@ -33,7 +33,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
-#include <linux/hex.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/err.h>
@@ -43,7 +42,6 @@
 #include <linux/jiffies.h>
 #include <linux/lockdep.h>
 #include <linux/inet.h>
-#include <net/net_namespace.h>
 #include <rdma/ib_cache.h>
 
 #include <linux/atomic.h>
@@ -226,7 +224,7 @@ static struct srp_iu *srp_alloc_iu(struct srp_host *host, size_t size,
 {
 	struct srp_iu *iu;
 
-	iu = kmalloc_obj(*iu, gfp_mask);
+	iu = kmalloc(sizeof *iu, gfp_mask);
 	if (!iu)
 		goto out;
 
@@ -275,7 +273,7 @@ static int srp_init_ib_qp(struct srp_target_port *target,
 	struct ib_qp_attr *attr;
 	int ret;
 
-	attr = kmalloc_obj(*attr);
+	attr = kmalloc(sizeof *attr, GFP_KERNEL);
 	if (!attr)
 		return -ENOMEM;
 
@@ -419,7 +417,7 @@ static struct srp_fr_pool *srp_create_fr_pool(struct ib_device *device,
 	if (pool_size <= 0)
 		goto err;
 	ret = -ENOMEM;
-	pool = kzalloc_flex(*pool, desc, pool_size);
+	pool = kzalloc(struct_size(pool, desc, pool_size), GFP_KERNEL);
 	if (!pool)
 		goto err;
 	pool->size = pool_size;
@@ -534,7 +532,7 @@ static int srp_create_ch_ib(struct srp_rdma_ch *ch)
 	const int m = 1 + dev->use_fast_reg * target->mr_per_cmd * 2;
 	int ret;
 
-	init_attr = kzalloc_obj(*init_attr);
+	init_attr = kzalloc(sizeof *init_attr, GFP_KERNEL);
 	if (!init_attr)
 		return -ENOMEM;
 
@@ -807,7 +805,7 @@ static int srp_send_req(struct srp_rdma_ch *ch, uint32_t max_iu_len,
 	char *ipi, *tpi;
 	int status;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof *req, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
@@ -1049,7 +1047,7 @@ static void srp_remove_target(struct srp_target_port *target)
 	scsi_remove_host(target->scsi_host);
 	srp_stop_rport_timers(target->rport);
 	srp_disconnect_target(target);
-	kobj_ns_drop(KOBJ_NS_TYPE_NET, to_ns_common(target->net));
+	kobj_ns_drop(KOBJ_NS_TYPE_NET, target->net);
 	for (i = 0; i < target->ch_count; i++) {
 		ch = &target->ch[i];
 		srp_free_ch_ib(target, ch);
@@ -2150,8 +2148,7 @@ static void srp_handle_qp_err(struct ib_cq *cq, struct ib_wc *wc,
 	target->qp_in_error = true;
 }
 
-static enum scsi_qc_status srp_queuecommand(struct Scsi_Host *shost,
-					    struct scsi_cmnd *scmnd)
+static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 {
 	struct request *rq = scsi_cmd_to_rq(scmnd);
 	struct srp_target_port *target = host_to_target(shost);
@@ -2258,10 +2255,12 @@ static int srp_alloc_iu_bufs(struct srp_rdma_ch *ch)
 	struct srp_target_port *target = ch->target;
 	int i;
 
-	ch->rx_ring = kzalloc_objs(*ch->rx_ring, target->queue_size);
+	ch->rx_ring = kcalloc(target->queue_size, sizeof(*ch->rx_ring),
+			      GFP_KERNEL);
 	if (!ch->rx_ring)
 		goto err_no_ring;
-	ch->tx_ring = kzalloc_objs(*ch->tx_ring, target->queue_size);
+	ch->tx_ring = kcalloc(target->queue_size, sizeof(*ch->tx_ring),
+			      GFP_KERNEL);
 	if (!ch->tx_ring)
 		goto err_no_ring;
 
@@ -2386,7 +2385,7 @@ static void srp_cm_rep_handler(struct ib_cm_id *cm_id,
 
 	if (!target->using_rdma_cm) {
 		ret = -ENOMEM;
-		qp_attr = kmalloc_obj(*qp_attr);
+		qp_attr = kmalloc(sizeof(*qp_attr), GFP_KERNEL);
 		if (!qp_attr)
 			goto error;
 
@@ -2845,8 +2844,7 @@ static int srp_target_alloc(struct scsi_target *starget)
 	return 0;
 }
 
-static int srp_sdev_configure(struct scsi_device *sdev,
-			      struct queue_limits *lim)
+static int srp_slave_configure(struct scsi_device *sdev)
 {
 	struct Scsi_Host *shost = sdev->host;
 	struct srp_target_port *target = host_to_target(shost);
@@ -3069,7 +3067,7 @@ static const struct scsi_host_template srp_template = {
 	.name				= "InfiniBand SRP initiator",
 	.proc_name			= DRV_NAME,
 	.target_alloc			= srp_target_alloc,
-	.sdev_configure			= srp_sdev_configure,
+	.slave_configure		= srp_slave_configure,
 	.info				= srp_target_info,
 	.init_cmd_priv			= srp_init_cmd_priv,
 	.exit_cmd_priv			= srp_exit_cmd_priv,
@@ -3706,15 +3704,14 @@ static ssize_t add_target_store(struct device *dev,
 	target_host->max_id      = 1;
 	target_host->max_lun     = -1LL;
 	target_host->max_cmd_len = sizeof ((struct srp_cmd *) (void *) 0L)->cdb;
+	target_host->max_segment_size = ib_dma_max_seg_size(ibdev);
 
-	if (ibdev->attrs.kernel_cap_flags & IBK_SG_GAPS_REG)
-		target_host->max_segment_size = ib_dma_max_seg_size(ibdev);
-	else
+	if (!(ibdev->attrs.kernel_cap_flags & IBK_SG_GAPS_REG))
 		target_host->virt_boundary_mask = ~srp_dev->mr_page_mask;
 
 	target = host_to_target(target_host);
 
-	target->net		= to_net_ns(kobj_ns_grab_current(KOBJ_NS_TYPE_NET));
+	target->net		= kobj_ns_grab_current(KOBJ_NS_TYPE_NET);
 	target->io_class	= SRP_REV16A_IB_IO_CLASS;
 	target->scsi_host	= target_host;
 	target->srp_host	= host;
@@ -3823,7 +3820,8 @@ static ssize_t add_target_store(struct device *dev,
 				num_online_cpus());
 	}
 
-	target->ch = kzalloc_objs(*target->ch, target->ch_count);
+	target->ch = kcalloc(target->ch_count, sizeof(*target->ch),
+			     GFP_KERNEL);
 	if (!target->ch)
 		goto out;
 
@@ -3906,7 +3904,7 @@ put:
 		 * earlier in this function.
 		 */
 		if (target->state != SRP_TARGET_REMOVED)
-			kobj_ns_drop(KOBJ_NS_TYPE_NET, to_ns_common(target->net));
+			kobj_ns_drop(KOBJ_NS_TYPE_NET, target->net);
 		scsi_host_put(target->scsi_host);
 	}
 
@@ -3958,7 +3956,7 @@ static struct srp_host *srp_add_port(struct srp_device *device, u32 port)
 {
 	struct srp_host *host;
 
-	host = kzalloc_obj(*host);
+	host = kzalloc(sizeof *host, GFP_KERNEL);
 	if (!host)
 		return NULL;
 
@@ -4008,7 +4006,7 @@ static int srp_add_one(struct ib_device *device)
 	u64 max_pages_per_mr;
 	unsigned int flags = 0;
 
-	srp_dev = kzalloc_obj(*srp_dev);
+	srp_dev = kzalloc(sizeof(*srp_dev), GFP_KERNEL);
 	if (!srp_dev)
 		return -ENOMEM;
 

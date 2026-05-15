@@ -476,7 +476,8 @@ static int modes_setup(struct mmpfb_info *fbi)
 		return 0;
 	}
 	/* put videomode list to info structure */
-	videomodes = kzalloc_objs(struct fb_videomode, videomode_num);
+	videomodes = kcalloc(videomode_num, sizeof(struct fb_videomode),
+			     GFP_KERNEL);
 	if (!videomodes)
 		return -ENOMEM;
 

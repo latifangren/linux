@@ -382,7 +382,7 @@ static int __init fsl_gtm_init(void)
 		const u32 *clock;
 		int size;
 
-		gtm = kzalloc_obj(*gtm);
+		gtm = kzalloc(sizeof(*gtm), GFP_KERNEL);
 		if (!gtm) {
 			pr_err("%pOF: unable to allocate memory\n",
 				np);

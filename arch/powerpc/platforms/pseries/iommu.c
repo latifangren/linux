@@ -1000,7 +1000,7 @@ static void copy_property(struct device_node *pdn, const char *from, const char 
 	if (!src)
 		return;
 
-	dst = kzalloc_obj(*dst);
+	dst = kzalloc(sizeof(*dst), GFP_KERNEL);
 	if (!dst)
 		return;
 
@@ -1089,7 +1089,7 @@ static struct dma_win *ddw_list_new_entry(struct device_node *pdn,
 {
 	struct dma_win *window;
 
-	window = kzalloc_obj(*window);
+	window = kzalloc(sizeof(*window), GFP_KERNEL);
 	if (!window)
 		return NULL;
 
@@ -1409,12 +1409,12 @@ static struct property *ddw_property_create(const char *propname, u32 liobn, u64
 	struct dynamic_dma_window_prop *ddwprop;
 	struct property *win64;
 
-	win64 = kzalloc_obj(*win64);
+	win64 = kzalloc(sizeof(*win64), GFP_KERNEL);
 	if (!win64)
 		return NULL;
 
 	win64->name = kstrdup(propname, GFP_KERNEL);
-	ddwprop = kzalloc_obj(*ddwprop);
+	ddwprop = kzalloc(sizeof(*ddwprop), GFP_KERNEL);
 	win64->value = ddwprop;
 	win64->length = sizeof(*ddwprop);
 	if (!win64->name || !win64->value) {
@@ -1760,7 +1760,7 @@ out_failed:
 	if (default_win_removed || limited_addr_enabled)
 		reset_dma_window(dev, pdn);
 
-	fpdn = kzalloc_obj(*fpdn);
+	fpdn = kzalloc(sizeof(*fpdn), GFP_KERNEL);
 	if (!fpdn)
 		goto out_unlock;
 	fpdn->pdn = pdn;
@@ -1769,8 +1769,10 @@ out_failed:
 out_unlock:
 	mutex_unlock(&dma_win_init_mutex);
 
-	/* For pre-mapped memory, set bus_dma_limit to the max RAM */
-	if (direct_mapping)
+	/* If we have persistent memory and the window size is not big enough
+	 * to directly map both RAM and vPMEM, then we need to set DMA limit.
+	 */
+	if (pmem_present && direct_mapping && len != MAX_PHYSMEM_BITS)
 		dev->dev.bus_dma_limit = dev->dev.archdata.dma_offset +
 						(1ULL << max_ram_len);
 
@@ -2235,7 +2237,7 @@ remove_window:
 	__remove_dma_window(pdn, ddw_avail, create.liobn);
 
 out_failed:
-	fpdn = kzalloc_obj(*fpdn);
+	fpdn = kzalloc(sizeof(*fpdn), GFP_KERNEL);
 	if (!fpdn)
 		goto out_unlock;
 	fpdn->pdn = pdn;
@@ -2322,7 +2324,7 @@ static long spapr_tce_unset_window(struct iommu_table_group *table_group, int nu
 	goto out_unlock;
 
 out_failed:
-	fpdn = kzalloc_obj(*fpdn);
+	fpdn = kzalloc(sizeof(*fpdn), GFP_KERNEL);
 	if (!fpdn)
 		goto out_unlock;
 	fpdn->pdn = pdn;

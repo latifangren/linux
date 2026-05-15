@@ -28,7 +28,6 @@
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/gfp.h>
-#include <linux/rmap.h>
 #include <linux/swap.h>
 #include <linux/compaction.h>
 
@@ -161,8 +160,6 @@ nfs_file_read(struct kiocb *iocb, struct iov_iter *to)
 	struct inode *inode = file_inode(iocb->ki_filp);
 	ssize_t result;
 
-	trace_nfs_file_read(iocb, to);
-
 	if (iocb->ki_flags & IOCB_DIRECT)
 		return nfs_file_direct_read(iocb, to, false);
 
@@ -210,25 +207,24 @@ nfs_file_splice_read(struct file *in, loff_t *ppos, struct pipe_inode_info *pipe
 EXPORT_SYMBOL_GPL(nfs_file_splice_read);
 
 int
-nfs_file_mmap_prepare(struct vm_area_desc *desc)
+nfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct file *file = desc->file;
 	struct inode *inode = file_inode(file);
 	int	status;
 
 	dprintk("NFS: mmap(%pD2)\n", file);
 
-	/* Note: generic_file_mmap_prepare() returns ENOSYS on nommu systems
+	/* Note: generic_file_mmap() returns ENOSYS on nommu systems
 	 *       so we call that before revalidating the mapping
 	 */
-	status = generic_file_mmap_prepare(desc);
+	status = generic_file_mmap(file, vma);
 	if (!status) {
-		desc->vm_ops = &nfs_file_vm_ops;
+		vma->vm_ops = &nfs_file_vm_ops;
 		status = nfs_revalidate_mapping(inode, file->f_mapping);
 	}
 	return status;
 }
-EXPORT_SYMBOL_GPL(nfs_file_mmap_prepare);
+EXPORT_SYMBOL_GPL(nfs_file_mmap);
 
 /*
  * Flush any dirty pages for this process, and check for write errors.
@@ -283,37 +279,6 @@ nfs_file_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 }
 EXPORT_SYMBOL_GPL(nfs_file_fsync);
 
-void nfs_truncate_last_folio(struct address_space *mapping, loff_t from,
-			     loff_t to)
-{
-	struct folio *folio;
-
-	if (from >= to)
-		return;
-
-	folio = filemap_lock_folio(mapping, from >> PAGE_SHIFT);
-	if (IS_ERR(folio))
-		return;
-
-	if (folio_mkclean(folio))
-		folio_mark_dirty(folio);
-
-	if (folio_test_uptodate(folio)) {
-		loff_t fpos = folio_pos(folio);
-		size_t offset = from - fpos;
-		size_t end = folio_size(folio);
-
-		if (to - fpos < end)
-			end = to - fpos;
-		folio_zero_segment(folio, offset, end);
-		trace_nfs_size_truncate_folio(mapping->host, to);
-	}
-
-	folio_unlock(folio);
-	folio_put(folio);
-}
-EXPORT_SYMBOL_GPL(nfs_truncate_last_folio);
-
 /*
  * Decide whether a read/modify/write cycle may be more efficient
  * then a modify/write/read cycle when writing to a page in the
@@ -363,8 +328,6 @@ static bool nfs_want_read_modify_write(struct file *file, struct folio *folio,
 
 	if (pnfs_ld_read_whole_page(file_inode(file)))
 		return true;
-	if (folio_test_dropbehind(folio))
-		return false;
 	/* Open for reading too? */
 	if (file->f_mode & FMODE_READ)
 		return true;
@@ -379,28 +342,24 @@ static bool nfs_want_read_modify_write(struct file *file, struct folio *folio,
  * If the writer ends up delaying the write, the writer needs to
  * increment the page use counts until he is done with the page.
  */
-static int nfs_write_begin(const struct kiocb *iocb,
-			   struct address_space *mapping,
+static int nfs_write_begin(struct file *file, struct address_space *mapping,
 			   loff_t pos, unsigned len, struct folio **foliop,
 			   void **fsdata)
 {
+	fgf_t fgp = FGP_WRITEBEGIN;
 	struct folio *folio;
-	struct file *file = iocb->ki_filp;
 	int once_thru = 0;
 	int ret;
 
-	trace_nfs_write_begin(file_inode(file), pos, len);
-
-	dfprintk(PAGECACHE, "NFS: write_begin(%pD2(%llu), %u@%lld)\n",
+	dfprintk(PAGECACHE, "NFS: write_begin(%pD2(%lu), %u@%lld)\n",
 		file, mapping->host->i_ino, len, (long long) pos);
-	nfs_truncate_last_folio(mapping, i_size_read(mapping->host), pos);
 
+	fgp |= fgf_set_order(len);
 start:
-	folio = write_begin_get_folio(iocb, mapping, pos >> PAGE_SHIFT, len);
-	if (IS_ERR(folio)) {
-		ret = PTR_ERR(folio);
-		goto out;
-	}
+	folio = __filemap_get_folio(mapping, pos >> PAGE_SHIFT, fgp,
+				    mapping_gfp_mask(mapping));
+	if (IS_ERR(folio))
+		return PTR_ERR(folio);
 	*foliop = folio;
 
 	ret = nfs_flush_incompatible(file, folio);
@@ -410,29 +369,23 @@ start:
 	} else if (!once_thru &&
 		   nfs_want_read_modify_write(file, folio, pos, len)) {
 		once_thru = 1;
-		folio_clear_dropbehind(folio);
 		ret = nfs_read_folio(file, folio);
 		folio_put(folio);
 		if (!ret)
 			goto start;
 	}
-out:
-	trace_nfs_write_begin_done(file_inode(file), pos, len, ret);
 	return ret;
 }
 
-static int nfs_write_end(const struct kiocb *iocb,
-			 struct address_space *mapping,
+static int nfs_write_end(struct file *file, struct address_space *mapping,
 			 loff_t pos, unsigned len, unsigned copied,
 			 struct folio *folio, void *fsdata)
 {
-	struct file *file = iocb->ki_filp;
 	struct nfs_open_context *ctx = nfs_file_open_context(file);
 	unsigned offset = offset_in_folio(folio, pos);
 	int status;
 
-	trace_nfs_write_end(file_inode(file), pos, len);
-	dfprintk(PAGECACHE, "NFS: write_end(%pD2(%llu), %u@%lld)\n",
+	dfprintk(PAGECACHE, "NFS: write_end(%pD2(%lu), %u@%lld)\n",
 		file, mapping->host->i_ino, len, (long long) pos);
 
 	/*
@@ -460,16 +413,13 @@ static int nfs_write_end(const struct kiocb *iocb,
 	folio_unlock(folio);
 	folio_put(folio);
 
-	if (status < 0) {
-		trace_nfs_write_end_done(file_inode(file), pos, len, status);
+	if (status < 0)
 		return status;
-	}
 	NFS_I(mapping->host)->write_io += copied;
 
 	if (nfs_ctx_key_to_expire(ctx, mapping->host))
 		nfs_wb_all(mapping->host);
 
-	trace_nfs_write_end_done(file_inode(file), pos, len, copied);
 	return copied;
 }
 
@@ -557,7 +507,7 @@ static int nfs_launder_folio(struct folio *folio)
 	struct inode *inode = folio->mapping->host;
 	int ret;
 
-	dfprintk(PAGECACHE, "NFS: launder_folio(%llu, %llu)\n",
+	dfprintk(PAGECACHE, "NFS: launder_folio(%ld, %llu)\n",
 		inode->i_ino, folio_pos(folio));
 
 	folio_wait_private_2(folio); /* [DEPRECATED] */
@@ -647,7 +597,7 @@ static vm_fault_t nfs_vm_page_mkwrite(struct vm_fault *vmf)
 	struct address_space *mapping;
 	struct folio *folio = page_folio(vmf->page);
 
-	dfprintk(PAGECACHE, "NFS: vm_page_mkwrite(%pD2(%llu), offset %lld)\n",
+	dfprintk(PAGECACHE, "NFS: vm_page_mkwrite(%pD2(%lu), offset %lld)\n",
 		 filp, filp->f_mapping->host->i_ino,
 		 (long long)folio_pos(folio));
 
@@ -702,8 +652,6 @@ ssize_t nfs_file_write(struct kiocb *iocb, struct iov_iter *from)
 	ssize_t result, written;
 	errseq_t since;
 	int error;
-
-	trace_nfs_file_write(iocb, from);
 
 	result = nfs_key_timeout_notify(file, inode);
 	if (result)
@@ -953,7 +901,7 @@ const struct file_operations nfs_file_operations = {
 	.llseek		= nfs_file_llseek,
 	.read_iter	= nfs_file_read,
 	.write_iter	= nfs_file_write,
-	.mmap_prepare	= nfs_file_mmap_prepare,
+	.mmap		= nfs_file_mmap,
 	.open		= nfs_file_open,
 	.flush		= nfs_file_flush,
 	.release	= nfs_file_release,
@@ -963,6 +911,6 @@ const struct file_operations nfs_file_operations = {
 	.splice_read	= nfs_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 	.check_flags	= nfs_check_flags,
-	.fop_flags	= FOP_DONTCACHE,
+	.setlease	= simple_nosetlease,
 };
 EXPORT_SYMBOL_GPL(nfs_file_operations);

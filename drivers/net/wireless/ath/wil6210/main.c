@@ -245,6 +245,7 @@ __acquires(&sta->tid_rx_lock) __releases(&sta->tid_rx_lock)
 {
 	uint i;
 	struct wil6210_priv *wil = vif_to_wil(vif);
+	struct net_device *ndev = vif_to_ndev(vif);
 	struct wireless_dev *wdev = vif_to_wdev(vif);
 	struct wil_sta_info *sta = &wil->sta[cid];
 	int min_ring_id = wil_get_min_tx_ring_id(wil);
@@ -264,7 +265,7 @@ __acquires(&sta->tid_rx_lock) __releases(&sta->tid_rx_lock)
 		case NL80211_IFTYPE_AP:
 		case NL80211_IFTYPE_P2P_GO:
 			/* AP-like interface */
-			cfg80211_del_sta(wdev, sta->addr, GFP_KERNEL);
+			cfg80211_del_sta(ndev, sta->addr, GFP_KERNEL);
 			break;
 		default:
 			break;
@@ -797,7 +798,7 @@ void wil6210_disconnect(struct wil6210_vif *vif, const u8 *bssid,
 
 	wil_dbg_misc(wil, "disconnecting\n");
 
-	timer_delete_sync(&vif->connect_timer);
+	del_timer_sync(&vif->connect_timer);
 	_wil6210_disconnect(vif, bssid, reason_code);
 }
 
@@ -817,7 +818,7 @@ void wil6210_disconnect_complete(struct wil6210_vif *vif, const u8 *bssid,
 
 	wil_dbg_misc(wil, "got disconnect\n");
 
-	timer_delete_sync(&vif->connect_timer);
+	del_timer_sync(&vif->connect_timer);
 	_wil6210_disconnect_complete(vif, bssid, reason_code);
 }
 
@@ -1464,7 +1465,7 @@ void wil_abort_scan(struct wil6210_vif *vif, bool sync)
 		return;
 
 	wil_dbg_misc(wil, "Abort scan_request 0x%p\n", vif->scan_request);
-	timer_delete_sync(&vif->scan_timer);
+	del_timer_sync(&vif->scan_timer);
 	mutex_unlock(&wil->vif_mutex);
 	rc = wmi_abort_scan(vif);
 	if (!rc && sync)

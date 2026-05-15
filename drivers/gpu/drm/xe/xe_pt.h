@@ -10,7 +10,6 @@
 #include "xe_pt_types.h"
 
 struct dma_fence;
-struct drm_exec;
 struct xe_bo;
 struct xe_device;
 struct xe_exec_queue;
@@ -30,7 +29,7 @@ struct xe_vma_ops;
 unsigned int xe_pt_shift(unsigned int level);
 
 struct xe_pt *xe_pt_create(struct xe_vm *vm, struct xe_tile *tile,
-			   unsigned int level, struct drm_exec *exec);
+			   unsigned int level);
 
 void xe_pt_populate_empty(struct xe_tile *tile, struct xe_vm *vm,
 			  struct xe_pt *pt);
@@ -46,7 +45,5 @@ void xe_pt_update_ops_fini(struct xe_tile *tile, struct xe_vma_ops *vops);
 void xe_pt_update_ops_abort(struct xe_tile *tile, struct xe_vma_ops *vops);
 
 bool xe_pt_zap_ptes(struct xe_tile *tile, struct xe_vma *vma);
-bool xe_pt_zap_ptes_range(struct xe_tile *tile, struct xe_vm *vm,
-			  struct xe_svm_range *range);
 
 #endif

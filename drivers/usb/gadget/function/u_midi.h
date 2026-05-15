@@ -19,7 +19,7 @@ struct f_midi_opts {
 	struct usb_function_instance	func_inst;
 	int				index;
 	char				*id;
-	char				*interface_string;
+	bool				id_allocated;
 	unsigned int			in_ports;
 	unsigned int			out_ports;
 	unsigned int			buflen;

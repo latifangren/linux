@@ -195,10 +195,15 @@ static int fill_gate_entry(struct nlattr **tb, struct tcfg_gate_entry *entry,
 
 	entry->interval = interval;
 
-	entry->ipv = nla_get_s32_default(tb[TCA_GATE_ENTRY_IPV], -1);
+	if (tb[TCA_GATE_ENTRY_IPV])
+		entry->ipv = nla_get_s32(tb[TCA_GATE_ENTRY_IPV]);
+	else
+		entry->ipv = -1;
 
-	entry->maxoctets = nla_get_s32_default(tb[TCA_GATE_ENTRY_MAX_OCTETS],
-					       -1);
+	if (tb[TCA_GATE_ENTRY_MAX_OCTETS])
+		entry->maxoctets = nla_get_s32(tb[TCA_GATE_ENTRY_MAX_OCTETS]);
+	else
+		entry->maxoctets = -1;
 
 	return 0;
 }
@@ -277,7 +282,7 @@ static int parse_gate_list(struct nlattr *list_attr,
 			continue;
 		}
 
-		entry = kzalloc_obj(*entry, GFP_ATOMIC);
+		entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
 		if (!entry) {
 			NL_SET_ERR_MSG(extack, "Not enough memory for entry");
 			err = -ENOMEM;
@@ -340,8 +345,8 @@ static void gate_setup_timer(struct tcf_gate *gact, s32 clockid,
 			     enum tk_offsets tko)
 {
 	WRITE_ONCE(gact->tk_offset, tko);
-	hrtimer_setup(&gact->hitimer, gate_timer_func, clockid,
-		      HRTIMER_MODE_ABS_SOFT);
+	hrtimer_init(&gact->hitimer, clockid, HRTIMER_MODE_ABS_SOFT);
+	gact->hitimer.function = gate_timer_func;
 }
 
 static int tcf_gate_init(struct net *net, struct nlattr *nla,

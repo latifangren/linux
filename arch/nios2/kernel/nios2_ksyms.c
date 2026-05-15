@@ -20,6 +20,7 @@ EXPORT_SYMBOL(memmove);
 
 /* memory management */
 
+EXPORT_SYMBOL(empty_zero_page);
 EXPORT_SYMBOL(flush_icache_range);
 
 /*

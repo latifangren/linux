@@ -12,3 +12,10 @@ MIPS-specific Documentation
    ingenic-tcu
 
    features
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

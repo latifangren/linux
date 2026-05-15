@@ -1,5 +1,4 @@
 .. SPDX-License-Identifier: GPL-2.0
-.. c:namespace:: V4L
 
 .. _stateless_decoder:
 

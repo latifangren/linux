@@ -68,7 +68,7 @@ static int cros_ec_pd_command(struct cros_ec_extcon_info *info,
 	struct cros_ec_command *msg;
 	int ret;
 
-	msg = kzalloc_flex(*msg, data, max(outsize, insize));
+	msg = kzalloc(struct_size(msg, data, max(outsize, insize)), GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
@@ -529,7 +529,7 @@ static struct platform_driver extcon_cros_ec_driver = {
 		.of_match_table = of_match_ptr(extcon_cros_ec_of_match),
 		.pm = DEV_PM_OPS,
 	},
-	.remove  = extcon_cros_ec_remove,
+	.remove_new = extcon_cros_ec_remove,
 	.probe   = extcon_cros_ec_probe,
 };
 

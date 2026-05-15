@@ -62,14 +62,19 @@ static int phys_package_first_cpu(int cpu)
 	return 0;
 }
 
-static bool cpu_has_cpufreq(unsigned int cpu)
+static int cpu_has_cpufreq(unsigned int cpu)
 {
+	struct cpufreq_policy *policy;
+
 	if (!acpi_processor_cpufreq_init)
 		return 0;
 
-	struct cpufreq_policy *policy __free(put_cpufreq_policy) = cpufreq_cpu_get(cpu);
-
-	return policy != NULL;
+	policy = cpufreq_cpu_get(cpu);
+	if (policy) {
+		cpufreq_cpu_put(policy);
+		return 1;
+	}
+	return 0;
 }
 
 static int cpufreq_get_max_state(unsigned int cpu)
@@ -88,31 +93,12 @@ static int cpufreq_get_cur_state(unsigned int cpu)
 	return reduction_step(cpu);
 }
 
-static bool cpufreq_update_thermal_limit(unsigned int cpu, struct acpi_processor *pr)
-{
-	unsigned long max_freq;
-	int ret;
-
-	struct cpufreq_policy *policy __free(put_cpufreq_policy) = cpufreq_cpu_get(cpu);
-	if (!policy)
-		return false;
-
-	max_freq = (policy->cpuinfo.max_freq *
-		(100 - reduction_step(cpu) * cpufreq_thermal_reduction_pctg)) / 100;
-
-	ret = freq_qos_update_request(&pr->thermal_req, max_freq);
-	if (ret < 0) {
-		pr_warn("Failed to update thermal freq constraint: CPU%d (%d)\n",
-			pr->id, ret);
-	}
-
-	return true;
-}
-
 static int cpufreq_set_cur_state(unsigned int cpu, int state)
 {
+	struct cpufreq_policy *policy;
 	struct acpi_processor *pr;
-	int i;
+	unsigned long max_freq;
+	int i, ret;
 
 	if (!cpu_has_cpufreq(cpu))
 		return 0;
@@ -134,8 +120,20 @@ static int cpufreq_set_cur_state(unsigned int cpu, int state)
 		if (unlikely(!freq_qos_request_active(&pr->thermal_req)))
 			continue;
 
-		if (!cpufreq_update_thermal_limit(i, pr))
+		policy = cpufreq_cpu_get(i);
+		if (!policy)
 			return -EINVAL;
+
+		max_freq = (policy->cpuinfo.max_freq *
+			    (100 - reduction_step(i) * cpufreq_thermal_reduction_pctg)) / 100;
+
+		cpufreq_cpu_put(policy);
+
+		ret = freq_qos_update_request(&pr->thermal_req, max_freq);
+		if (ret < 0) {
+			pr_warn("Failed to update thermal freq constraint: CPU%d (%d)\n",
+				pr->id, ret);
+		}
 	}
 	return 0;
 }

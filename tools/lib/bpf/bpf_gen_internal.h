@@ -4,7 +4,6 @@
 #define __BPF_GEN_INTERNAL_H
 
 #include "bpf.h"
-#include "libbpf_internal.h"
 
 struct ksym_relo_desc {
 	const char *name;
@@ -35,7 +34,6 @@ struct bpf_gen {
 	void *data_cur;
 	void *insn_start;
 	void *insn_cur;
-	bool swapped_endian;
 	ssize_t cleanup_label;
 	__u32 nr_progs;
 	__u32 nr_maps;
@@ -51,7 +49,6 @@ struct bpf_gen {
 	__u32 nr_ksyms;
 	int fd_array;
 	int nr_fd_array;
-	int hash_insn_offset[SHA256_DWORD_SIZE];
 };
 
 void bpf_gen__init(struct bpf_gen *gen, int log_level, int nr_progs, int nr_maps);

@@ -136,12 +136,14 @@ static int snd_msndmix_volume_get(struct snd_kcontrol *kcontrol,
 {
 	struct snd_msnd *msnd = snd_kcontrol_chip(kcontrol);
 	int addr = kcontrol->private_value;
+	unsigned long flags;
 
-	guard(spinlock_irqsave)(&msnd->mixer_lock);
+	spin_lock_irqsave(&msnd->mixer_lock, flags);
 	ucontrol->value.integer.value[0] = msnd->left_levels[addr] * 100;
 	ucontrol->value.integer.value[0] /= 0xFFFF;
 	ucontrol->value.integer.value[1] = msnd->right_levels[addr] * 100;
 	ucontrol->value.integer.value[1] /= 0xFFFF;
+	spin_unlock_irqrestore(&msnd->mixer_lock, flags);
 	return 0;
 }
 
@@ -251,13 +253,15 @@ static int snd_msndmix_volume_put(struct snd_kcontrol *kcontrol,
 	struct snd_msnd *msnd = snd_kcontrol_chip(kcontrol);
 	int change, addr = kcontrol->private_value;
 	int left, right;
+	unsigned long flags;
 
 	left = ucontrol->value.integer.value[0] % 101;
 	right = ucontrol->value.integer.value[1] % 101;
-	guard(spinlock_irqsave)(&msnd->mixer_lock);
+	spin_lock_irqsave(&msnd->mixer_lock, flags);
 	change = msnd->left_levels[addr] != left
 		|| msnd->right_levels[addr] != right;
 	snd_msndmix_set(msnd, addr, left, right);
+	spin_unlock_irqrestore(&msnd->mixer_lock, flags);
 	return change;
 }
 
@@ -295,7 +299,7 @@ int snd_msndmix_new(struct snd_card *card)
 	if (snd_BUG_ON(!chip))
 		return -EINVAL;
 	spin_lock_init(&chip->mixer_lock);
-	strscpy(card->mixername, "MSND Pinnacle Mixer");
+	strcpy(card->mixername, "MSND Pinnacle Mixer");
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_msnd_controls); idx++) {
 		err = snd_ctl_add(card,
@@ -310,10 +314,6 @@ EXPORT_SYMBOL(snd_msndmix_new);
 
 void snd_msndmix_setup(struct snd_msnd *dev)
 {
-	writew(dev->left_levels[MSND_MIXER_VOLUME],
-	       dev->SMA + SMA_wCurrMastVolLeft);
-	writew(dev->right_levels[MSND_MIXER_VOLUME],
-	       dev->SMA + SMA_wCurrMastVolRight);
 	update_pot(MSND_MIXER_LINE, bInPotPos, HDEXAR_IN_SET_POTS);
 	update_potm(MSND_MIXER_AUX, bAuxPotPos, HDEXAR_AUX_SET_POTS);
 	update_volm(MSND_MIXER_PCM, wCurrPlayVol);

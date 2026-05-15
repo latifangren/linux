@@ -667,8 +667,7 @@ static int pcmmio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_check_request_region(dev, it->options[0], 32,
-					  0, 0xffff, 32);
+	ret = comedi_request_region(dev, it->options[0], 32);
 	if (ret)
 		return ret;
 

@@ -5,7 +5,8 @@
  * Copyright (C) 2011  Chris Boot <bootc@bootc.net>
  */
 
-#define pr_fmt(fmt) "sbp_target: " fmt
+#define KMSG_COMPONENT "sbp_target"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -186,7 +187,7 @@ static struct sbp_session *sbp_session_create(
 
 	snprintf(guid_str, sizeof(guid_str), "%016llx", guid);
 
-	sess = kmalloc_obj(*sess);
+	sess = kmalloc(sizeof(*sess), GFP_KERNEL);
 	if (!sess)
 		return ERR_PTR(-ENOMEM);
 
@@ -391,7 +392,7 @@ static void sbp_management_request_login(
 		1 << LOGIN_ORB_RECONNECT(be32_to_cpu(req->orb.misc)),
 		tport->max_reconnect_timeout) - 1;
 
-	login = kmalloc_obj(*login);
+	login = kmalloc(sizeof(*login), GFP_KERNEL);
 	if (!login) {
 		pr_err("failed to allocate login descriptor\n");
 
@@ -428,7 +429,7 @@ static void sbp_management_request_login(
 	spin_unlock_bh(&sess->lock);
 
 already_logged_in:
-	response = kzalloc_obj(*response);
+	response = kzalloc(sizeof(*response), GFP_KERNEL);
 	if (!response) {
 		pr_err("failed to allocate login response block\n");
 
@@ -729,7 +730,7 @@ static int tgt_agent_rw_orb_pointer(struct fw_card *card, int tcode, void *data,
 		pr_debug("tgt_agent ORB_POINTER write: 0x%llx\n",
 				agent->orb_pointer);
 
-		queue_work(system_dfl_wq, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 
 		return RCODE_COMPLETE;
 
@@ -763,7 +764,7 @@ static int tgt_agent_rw_doorbell(struct fw_card *card, int tcode, void *data,
 
 		pr_debug("tgt_agent DOORBELL\n");
 
-		queue_work(system_dfl_wq, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 
 		return RCODE_COMPLETE;
 
@@ -989,7 +990,7 @@ static void tgt_agent_fetch_work(struct work_struct *work)
 
 		if (tgt_agent_check_active(agent) && !doorbell) {
 			INIT_WORK(&req->work, tgt_agent_process_work);
-			queue_work(system_dfl_wq, &req->work);
+			queue_work(system_unbound_wq, &req->work);
 		} else {
 			/* don't process this request, just check next_ORB */
 			sbp_free_request(req);
@@ -1014,7 +1015,7 @@ static struct sbp_target_agent *sbp_target_agent_register(
 	struct sbp_target_agent *agent;
 	int ret;
 
-	agent = kmalloc_obj(*agent);
+	agent = kmalloc(sizeof(*agent), GFP_KERNEL);
 	if (!agent)
 		return ERR_PTR(-ENOMEM);
 
@@ -1603,7 +1604,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 			rcode = RCODE_CONFLICT_ERROR;
 			goto out;
 		}
-		req = kzalloc_obj(*req, GFP_ATOMIC);
+		req = kzalloc(sizeof(*req), GFP_ATOMIC);
 		if (!req) {
 			rcode = RCODE_CONFLICT_ERROR;
 			goto out;
@@ -1617,7 +1618,7 @@ static void sbp_mgt_agent_rw(struct fw_card *card,
 		agent->orb_offset = sbp2_pointer_to_addr(ptr);
 		agent->request = req;
 
-		queue_work(system_dfl_wq, &agent->work);
+		queue_work(system_unbound_wq, &agent->work);
 		rcode = RCODE_COMPLETE;
 	} else if (tcode == TCODE_READ_BLOCK_REQUEST) {
 		addr_to_sbp2_pointer(agent->orb_offset, ptr);
@@ -1636,7 +1637,7 @@ static struct sbp_management_agent *sbp_management_agent_register(
 	int ret;
 	struct sbp_management_agent *agent;
 
-	agent = kmalloc_obj(*agent);
+	agent = kmalloc(sizeof(*agent), GFP_KERNEL);
 	if (!agent)
 		return ERR_PTR(-ENOMEM);
 
@@ -1973,7 +1974,7 @@ static struct se_portal_group *sbp_make_tpg(struct se_wwn *wwn,
 		return ERR_PTR(-EBUSY);
 	}
 
-	tpg = kzalloc_obj(*tpg);
+	tpg = kzalloc(sizeof(*tpg), GFP_KERNEL);
 	if (!tpg)
 		return ERR_PTR(-ENOMEM);
 
@@ -2030,7 +2031,7 @@ static struct se_wwn *sbp_make_tport(
 	if (sbp_parse_wwn(name, &guid) < 0)
 		return ERR_PTR(-EINVAL);
 
-	tport = kzalloc_obj(*tport);
+	tport = kzalloc(sizeof(*tport), GFP_KERNEL);
 	if (!tport)
 		return ERR_PTR(-ENOMEM);
 
@@ -2278,7 +2279,6 @@ static const struct target_core_fabric_ops sbp_ops = {
 	.tfc_tpg_base_attrs		= sbp_tpg_base_attrs,
 	.tfc_tpg_attrib_attrs		= sbp_tpg_attrib_attrs,
 
-	.default_compl_type		= TARGET_QUEUE_COMPL,
 	.default_submit_type		= TARGET_DIRECT_SUBMIT,
 	.direct_submit_supp		= 1,
 };

@@ -564,7 +564,7 @@ static int pru_handle_intrmap(struct rproc *rproc)
 		return -ENODEV;
 	}
 
-	fwspec.fwnode = of_fwnode_handle(irq_parent);
+	fwspec.fwnode = of_node_to_fwnode(irq_parent);
 	fwspec.param_count = 3;
 	for (i = 0; i < pru->evt_count; i++) {
 		fwspec.param[0] = rsc->pru_intc_map[i].event;
@@ -1003,9 +1003,11 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	if (!data)
 		return -ENODEV;
 
-	ret = rproc_of_parse_firmware(dev, 0, &fw_name);
-	if (ret)
-		return dev_err_probe(dev, ret, "unable to retrieve firmware-name\n");
+	ret = of_property_read_string(np, "firmware-name", &fw_name);
+	if (ret) {
+		dev_err(dev, "unable to retrieve firmware-name %d\n", ret);
+		return ret;
+	}
 
 	rproc = devm_rproc_alloc(dev, pdev->name, &pru_rproc_ops, fw_name,
 				 sizeof(*pru));
@@ -1054,7 +1056,7 @@ static int pru_rproc_probe(struct platform_device *pdev)
 		pru->mem_regions[i].pa = res->start;
 		pru->mem_regions[i].size = resource_size(res);
 
-		dev_dbg(dev, "memory %8s: pa %pa size 0x%zx va %p\n",
+		dev_dbg(dev, "memory %8s: pa %pa size 0x%zx va %pK\n",
 			mem_names[i], &pru->mem_regions[i].pa,
 			pru->mem_regions[i].size, pru->mem_regions[i].va);
 	}
@@ -1076,6 +1078,14 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	dev_dbg(dev, "PRU rproc node %pOF probed successfully\n", np);
 
 	return 0;
+}
+
+static void pru_rproc_remove(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct rproc *rproc = platform_get_drvdata(pdev);
+
+	dev_dbg(dev, "%s: removing rproc %s\n", __func__, rproc->name);
 }
 
 static const struct pru_private_data pru_data = {
@@ -1123,6 +1133,7 @@ static struct platform_driver pru_rproc_driver = {
 		.suppress_bind_attrs = true,
 	},
 	.probe  = pru_rproc_probe,
+	.remove = pru_rproc_remove,
 };
 module_platform_driver(pru_rproc_driver);
 

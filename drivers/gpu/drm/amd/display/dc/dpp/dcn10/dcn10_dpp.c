@@ -172,14 +172,10 @@ bool dpp1_get_optimal_number_of_taps(
 		scl_data->taps.h_taps_c = in_taps->h_taps_c;
 
 	if (!dpp->ctx->dc->debug.always_scale) {
-		if (IDENTITY_RATIO(scl_data->ratios.horz)) {
+		if (IDENTITY_RATIO(scl_data->ratios.horz))
 			scl_data->taps.h_taps = 1;
-			scl_data->taps.h_taps_c = 1;
-		}
-		if (IDENTITY_RATIO(scl_data->ratios.vert)) {
+		if (IDENTITY_RATIO(scl_data->ratios.vert))
 			scl_data->taps.v_taps = 1;
-			scl_data->taps.v_taps_c = 1;
-		}
 		if (IDENTITY_RATIO(scl_data->ratios.horz_c))
 			scl_data->taps.h_taps_c = 1;
 		if (IDENTITY_RATIO(scl_data->ratios.vert_c))
@@ -203,8 +199,6 @@ void dpp_reset(struct dpp *dpp_base)
 
 	memset(&dpp->scl_data, 0, sizeof(dpp->scl_data));
 	memset(&dpp->pwl_data, 0, sizeof(dpp->pwl_data));
-
-	dpp_base->cursor_offload = false;
 }
 
 
@@ -288,7 +282,6 @@ void dpp1_cnv_setup (
 		enum dc_color_space input_color_space,
 		struct cnv_alpha_2bit_lut *alpha_2bit_lut)
 {
-	(void)alpha_2bit_lut;
 	uint32_t pixel_format;
 	uint32_t alpha_en;
 	enum pixel_format_description fmt ;
@@ -490,13 +483,10 @@ void dpp1_set_cursor_position(
 	if (src_y_offset + cursor_height <= 0)
 		cur_en = 0;  /* not visible beyond top edge*/
 
-	if (dpp_base->pos.cur0_ctl.bits.cur0_enable != cur_en) {
-		if (!dpp_base->cursor_offload)
-			REG_UPDATE(CURSOR0_CONTROL, CUR0_ENABLE, cur_en);
-	}
+	REG_UPDATE(CURSOR0_CONTROL,
+			CUR0_ENABLE, cur_en);
 
 	dpp_base->pos.cur0_ctl.bits.cur0_enable = cur_en;
-	dpp_base->att.cur0_ctl.bits.cur0_enable = cur_en;
 }
 
 void dpp1_cnv_set_optional_cursor_attributes(
@@ -506,13 +496,8 @@ void dpp1_cnv_set_optional_cursor_attributes(
 	struct dcn10_dpp *dpp = TO_DCN10_DPP(dpp_base);
 
 	if (attr) {
-		if (!dpp_base->cursor_offload) {
-			REG_UPDATE(CURSOR0_FP_SCALE_BIAS,  CUR0_FP_BIAS,  attr->bias);
-			REG_UPDATE(CURSOR0_FP_SCALE_BIAS,  CUR0_FP_SCALE, attr->scale);
-		}
-
-		dpp_base->att.fp_scale_bias.bits.fp_bias = attr->bias;
-		dpp_base->att.fp_scale_bias.bits.fp_scale = attr->scale;
+		REG_UPDATE(CURSOR0_FP_SCALE_BIAS,  CUR0_FP_BIAS,  attr->bias);
+		REG_UPDATE(CURSOR0_FP_SCALE_BIAS,  CUR0_FP_SCALE, attr->scale);
 	}
 }
 

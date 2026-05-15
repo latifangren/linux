@@ -75,7 +75,7 @@ int phy_create_lookup(struct phy *phy, const char *con_id, const char *dev_id)
 	if (!phy || !dev_id || !con_id)
 		return -EINVAL;
 
-	pl = kzalloc_obj(*pl);
+	pl = kzalloc(sizeof(*pl), GFP_KERNEL);
 	if (!pl)
 		return -ENOMEM;
 
@@ -138,14 +138,17 @@ static struct phy *phy_find(struct device *dev, const char *con_id)
 static struct phy_provider *of_phy_provider_lookup(struct device_node *node)
 {
 	struct phy_provider *phy_provider;
+	struct device_node *child;
 
 	list_for_each_entry(phy_provider, &phy_provider_list, list) {
 		if (phy_provider->dev->of_node == node)
 			return phy_provider;
 
-		for_each_child_of_node_scoped(phy_provider->children, child)
-			if (child == node)
+		for_each_child_of_node(phy_provider->children, child)
+			if (child == node) {
+				of_node_put(child);
 				return phy_provider;
+			}
 	}
 
 	return ERR_PTR(-EPROBE_DEFER);
@@ -187,15 +190,15 @@ int phy_pm_runtime_get_sync(struct phy *phy)
 }
 EXPORT_SYMBOL_GPL(phy_pm_runtime_get_sync);
 
-void phy_pm_runtime_put(struct phy *phy)
+int phy_pm_runtime_put(struct phy *phy)
 {
 	if (!phy)
-		return;
+		return 0;
 
 	if (!pm_runtime_enabled(&phy->dev))
-		return;
+		return -ENOTSUPP;
 
-	pm_runtime_put(&phy->dev);
+	return pm_runtime_put(&phy->dev);
 }
 EXPORT_SYMBOL_GPL(phy_pm_runtime_put);
 
@@ -210,6 +213,30 @@ int phy_pm_runtime_put_sync(struct phy *phy)
 	return pm_runtime_put_sync(&phy->dev);
 }
 EXPORT_SYMBOL_GPL(phy_pm_runtime_put_sync);
+
+void phy_pm_runtime_allow(struct phy *phy)
+{
+	if (!phy)
+		return;
+
+	if (!pm_runtime_enabled(&phy->dev))
+		return;
+
+	pm_runtime_allow(&phy->dev);
+}
+EXPORT_SYMBOL_GPL(phy_pm_runtime_allow);
+
+void phy_pm_runtime_forbid(struct phy *phy)
+{
+	if (!phy)
+		return;
+
+	if (!pm_runtime_enabled(&phy->dev))
+		return;
+
+	pm_runtime_forbid(&phy->dev);
+}
+EXPORT_SYMBOL_GPL(phy_pm_runtime_forbid);
 
 /**
  * phy_init - phy internal initialization before phy operation
@@ -358,7 +385,7 @@ int phy_power_off(struct phy *phy)
 
 	mutex_lock(&phy->mutex);
 	if (phy->power_count == 1 && phy->ops->power_off) {
-		ret = phy->ops->power_off(phy);
+		ret =  phy->ops->power_off(phy);
 		if (ret < 0) {
 			dev_err(&phy->dev, "phy poweroff failed --> %d\n", ret);
 			mutex_unlock(&phy->mutex);
@@ -516,31 +543,6 @@ int phy_notify_disconnect(struct phy *phy, int port)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(phy_notify_disconnect);
-
-/**
- * phy_notify_state() - phy state notification
- * @phy: the PHY returned by phy_get()
- * @state: the PHY state
- *
- * Notify the PHY of a state transition. Used to notify and
- * configure the PHY accordingly.
- *
- * Returns: %0 if successful, a negative error code otherwise
- */
-int phy_notify_state(struct phy *phy, union phy_notify state)
-{
-	int ret;
-
-	if (!phy || !phy->ops->notify_phystate)
-		return 0;
-
-	mutex_lock(&phy->mutex);
-	ret = phy->ops->notify_phystate(phy, state);
-	mutex_unlock(&phy->mutex);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(phy_notify_state);
 
 /**
  * phy_configure() - Changes the phy parameters
@@ -748,8 +750,8 @@ EXPORT_SYMBOL_GPL(devm_phy_put);
 
 /**
  * of_phy_simple_xlate() - returns the phy instance from phy provider
- * @dev: the PHY provider device (not used here)
- * @args: of_phandle_args
+ * @dev: the PHY provider device
+ * @args: of_phandle_args (not used here)
  *
  * Intended to be used by phy provider for the common case where #phy-cells is
  * 0. For other cases where #phy-cells is greater than '0', the phy provider
@@ -759,14 +761,21 @@ EXPORT_SYMBOL_GPL(devm_phy_put);
 struct phy *of_phy_simple_xlate(struct device *dev,
 				const struct of_phandle_args *args)
 {
-	struct device *target_dev;
+	struct phy *phy;
+	struct class_dev_iter iter;
 
-	target_dev = class_find_device_by_of_node(&phy_class, args->np);
-	if (!target_dev)
-		return ERR_PTR(-ENODEV);
+	class_dev_iter_init(&iter, &phy_class, NULL, NULL);
+	while ((dev = class_dev_iter_next(&iter))) {
+		phy = to_phy(dev);
+		if (args->np != phy->dev.of_node)
+			continue;
 
-	put_device(target_dev);
-	return to_phy(target_dev);
+		class_dev_iter_exit(&iter);
+		return phy;
+	}
+
+	class_dev_iter_exit(&iter);
+	return ERR_PTR(-ENODEV);
 }
 EXPORT_SYMBOL_GPL(of_phy_simple_xlate);
 
@@ -1004,7 +1013,7 @@ struct phy *phy_create(struct device *dev, struct device_node *node,
 	if (WARN_ON(!dev))
 		return ERR_PTR(-EINVAL);
 
-	phy = kzalloc_obj(*phy);
+	phy = kzalloc(sizeof(*phy), GFP_KERNEL);
 	if (!phy)
 		return ERR_PTR(-ENOMEM);
 
@@ -1016,8 +1025,7 @@ struct phy *phy_create(struct device *dev, struct device_node *node,
 	}
 
 	device_initialize(&phy->dev);
-	lockdep_register_key(&phy->lockdep_key);
-	mutex_init_with_key(&phy->mutex, &phy->lockdep_key);
+	mutex_init(&phy->mutex);
 
 	phy->dev.class = &phy_class;
 	phy->dev.parent = dev;
@@ -1174,7 +1182,7 @@ struct phy_provider *__of_phy_provider_register(struct device *dev,
 		children = dev->of_node;
 	}
 
-	phy_provider = kzalloc_obj(*phy_provider);
+	phy_provider = kzalloc(sizeof(*phy_provider), GFP_KERNEL);
 	if (!phy_provider)
 		return ERR_PTR(-ENOMEM);
 
@@ -1282,8 +1290,6 @@ static void phy_release(struct device *dev)
 	dev_vdbg(dev, "releasing '%s'\n", dev_name(dev));
 	debugfs_remove_recursive(phy->debugfs);
 	regulator_put(phy->pwr);
-	mutex_destroy(&phy->mutex);
-	lockdep_unregister_key(&phy->lockdep_key);
 	ida_free(&phy_ida, phy->id);
 	kfree(phy);
 }

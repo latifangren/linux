@@ -104,15 +104,15 @@ static int minix_link(struct dentry * old_dentry, struct inode * dir,
 	return add_nondir(dentry, inode);
 }
 
-static struct dentry *minix_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-				  struct dentry *dentry, umode_t mode)
+static int minix_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+		       struct dentry *dentry, umode_t mode)
 {
 	struct inode * inode;
 	int err;
 
 	inode = minix_new_inode(dir, S_IFDIR | mode);
 	if (IS_ERR(inode))
-		return ERR_CAST(inode);
+		return PTR_ERR(inode);
 
 	inode_inc_link_count(dir);
 	minix_set_inode(inode, 0);
@@ -128,7 +128,7 @@ static struct dentry *minix_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 
 	d_instantiate(dentry, inode);
 out:
-	return ERR_PTR(err);
+	return err;
 
 out_fail:
 	inode_dec_link_count(inode);
@@ -144,11 +144,6 @@ static int minix_unlink(struct inode * dir, struct dentry *dentry)
 	struct folio *folio;
 	struct minix_dir_entry * de;
 	int err;
-
-	if (inode->i_nlink == 0) {
-		minix_error_inode(inode, "inode has corrupted nlink");
-		return -EFSCORRUPTED;
-	}
 
 	de = minix_find_entry(dentry, &folio);
 	if (!de)
@@ -166,24 +161,15 @@ static int minix_unlink(struct inode * dir, struct dentry *dentry)
 static int minix_rmdir(struct inode * dir, struct dentry *dentry)
 {
 	struct inode * inode = d_inode(dentry);
-	int err = -EFSCORRUPTED;
+	int err = -ENOTEMPTY;
 
-	if (dir->i_nlink <= 2) {
-		minix_error_inode(dir, "inode has corrupted nlink");
-		goto out;
+	if (minix_empty_dir(inode)) {
+		err = minix_unlink(dir, dentry);
+		if (!err) {
+			inode_dec_link_count(dir);
+			inode_dec_link_count(inode);
+		}
 	}
-
-	err = -ENOTEMPTY;
-	if (!minix_empty_dir(inode))
-		goto out;
-
-	err = minix_unlink(dir, dentry);
-	if (!err) {
-		inode_dec_link_count(dir);
-		inode_dec_link_count(inode);
-	}
-
-out:
 	return err;
 }
 
@@ -221,17 +207,6 @@ static int minix_rename(struct mnt_idmap *idmap,
 		err = -ENOTEMPTY;
 		if (dir_de && !minix_empty_dir(new_inode))
 			goto out_dir;
-
-		err = -EFSCORRUPTED;
-		if (new_inode->i_nlink == 0 || (dir_de && new_inode->i_nlink != 2)) {
-			minix_error_inode(new_inode, "inode has corrupted nlink");
-			goto out_dir;
-		}
-
-		if (dir_de && old_dir->i_nlink <= 2) {
-			minix_error_inode(old_dir, "inode has corrupted nlink");
-			goto out_dir;
-		}
 
 		err = -ENOENT;
 		new_de = minix_find_entry(new_dentry, &new_folio);

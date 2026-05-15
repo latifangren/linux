@@ -2272,7 +2272,7 @@ static void aty_bl_init(struct atyfb_par *par)
 			    0xFF * FB_BACKLIGHT_MAX / MAX_LEVEL);
 
 	bd->props.brightness = bd->props.max_brightness;
-	bd->props.power = BACKLIGHT_POWER_ON;
+	bd->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(bd);
 
 	printk("aty: Backlight initialized (%s)\n", name);
@@ -2323,6 +2323,8 @@ static void aty_calc_mem_refresh(struct atyfb_par *par, int xclk)
 /*
  * Initialisation
  */
+
+static struct fb_info *fb_list = NULL;
 
 #if defined(__i386__) && defined(CONFIG_FB_ATY_GENERIC_LCD)
 static int atyfb_get_timings_from_lcd(struct atyfb_par *par,
@@ -2756,6 +2758,8 @@ static int aty_init(struct fb_info *info)
 #endif
 	}
 
+	fb_list = info;
+
 	PRINTKI("fb%d: %s frame buffer device on %s\n",
 		info->node, info->fix.id, par->bus_type == ISA ? "ISA" : "PCI");
 	return 0;
@@ -2972,7 +2976,7 @@ static int atyfb_setup_sparc(struct pci_dev *pdev, struct fb_info *info,
 		/* nothing */ ;
 	j = i + 4;
 
-	par->mmap_map = kzalloc_objs(*par->mmap_map, j, GFP_ATOMIC);
+	par->mmap_map = kcalloc(j, sizeof(*par->mmap_map), GFP_ATOMIC);
 	if (!par->mmap_map) {
 		PRINTKE("atyfb_setup_sparc() can't alloc mmap_map\n");
 		return -ENOMEM;

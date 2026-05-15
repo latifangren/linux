@@ -53,18 +53,13 @@ properties:
   "#size-cells": true
 
   compatible:
-    oneOf:
-      - enum:
-          - ti,am642-cpsw-nuss
-          - ti,am654-cpsw-nuss
-          - ti,j7200-cpswxg-nuss
-          - ti,j721e-cpsw-nuss
-          - ti,j721e-cpswxg-nuss
-          - ti,j784s4-cpswxg-nuss
-      - items:
-          - enum:
-              - ti,j722s-cpsw-nuss
-          - const: ti,am642-cpsw-nuss
+    enum:
+      - ti,am642-cpsw-nuss
+      - ti,am654-cpsw-nuss
+      - ti,j7200-cpswxg-nuss
+      - ti,j721e-cpsw-nuss
+      - ti,j721e-cpswxg-nuss
+      - ti,j784s4-cpswxg-nuss
 
   reg:
     maxItems: 1
@@ -147,8 +142,6 @@ properties:
 
           label:
             description: label associated with this port
-
-          fixed-link: true
 
           ti,mac-only:
             $ref: /schemas/types.yaml#/definitions/flag
@@ -289,7 +282,7 @@ examples:
                     ti,syscon-efuse = <&mcu_conf 0x200>;
                     phys = <&phy_gmii_sel 1>;
 
-                    phy-mode = "rgmii-id";
+                    phy-mode = "rgmii-rxid";
                     phy-handle = <&phy0>;
                 };
             };

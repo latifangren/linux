@@ -64,6 +64,8 @@ static int effective_prio(struct task_struct *p)
 
 void set_user_nice(struct task_struct *p, long nice)
 {
+	bool queued, running;
+	struct rq *rq;
 	int old_prio;
 
 	if (task_nice(p) == nice || nice < MIN_NICE || nice > MAX_NICE)
@@ -72,7 +74,10 @@ void set_user_nice(struct task_struct *p, long nice)
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
 	 */
-	guard(task_rq_lock)(p);
+	CLASS(task_rq_lock, rq_guard)(p);
+	rq = rq_guard.rq;
+
+	update_rq_clock(rq);
 
 	/*
 	 * The RT priorities are set via sched_setscheduler(), but we still
@@ -85,12 +90,28 @@ void set_user_nice(struct task_struct *p, long nice)
 		return;
 	}
 
-	scoped_guard (sched_change, p, DEQUEUE_SAVE) {
-		p->static_prio = NICE_TO_PRIO(nice);
-		set_load_weight(p, true);
-		old_prio = p->prio;
-		p->prio = effective_prio(p);
-	}
+	queued = task_on_rq_queued(p);
+	running = task_current(rq, p);
+	if (queued)
+		dequeue_task(rq, p, DEQUEUE_SAVE | DEQUEUE_NOCLOCK);
+	if (running)
+		put_prev_task(rq, p);
+
+	p->static_prio = NICE_TO_PRIO(nice);
+	set_load_weight(p, true);
+	old_prio = p->prio;
+	p->prio = effective_prio(p);
+
+	if (queued)
+		enqueue_task(rq, p, ENQUEUE_RESTORE | ENQUEUE_NOCLOCK);
+	if (running)
+		set_next_task(rq, p);
+
+	/*
+	 * If the task increased its priority or is running and
+	 * lowered its priority, then reschedule its CPU:
+	 */
+	p->sched_class->prio_changed(rq, p, old_prio);
 }
 EXPORT_SYMBOL(set_user_nice);
 
@@ -153,7 +174,7 @@ SYSCALL_DEFINE1(nice, int, increment)
 	return 0;
 }
 
-#endif /* __ARCH_WANT_SYS_NICE */
+#endif
 
 /**
  * task_prio - return the priority value of a given task.
@@ -180,7 +201,37 @@ int task_prio(const struct task_struct *p)
  */
 int idle_cpu(int cpu)
 {
-	return idle_rq(cpu_rq(cpu));
+	struct rq *rq = cpu_rq(cpu);
+
+	if (rq->curr != rq->idle)
+		return 0;
+
+	if (rq->nr_running)
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (rq->ttwu_pending)
+		return 0;
+#endif
+
+	return 1;
+}
+
+/**
+ * available_idle_cpu - is a given CPU idle for enqueuing work.
+ * @cpu: the CPU in question.
+ *
+ * Return: 1 if the CPU is currently idle. 0 otherwise.
+ */
+int available_idle_cpu(int cpu)
+{
+	if (!idle_cpu(cpu))
+		return 0;
+
+	if (vcpu_is_preempted(cpu))
+		return 0;
+
+	return 1;
 }
 
 /**
@@ -204,7 +255,8 @@ int sched_core_idle_cpu(int cpu)
 
 	return idle_cpu(cpu);
 }
-#endif /* CONFIG_SCHED_CORE */
+
+#endif
 
 /**
  * find_process_by_pid - find a process with a matching PID value.
@@ -248,10 +300,20 @@ static void __setscheduler_params(struct task_struct *p,
 
 	p->policy = policy;
 
-	if (dl_policy(policy))
+	if (dl_policy(policy)) {
 		__setparam_dl(p, attr);
-	else if (fair_policy(policy))
-		__setparam_fair(p, attr);
+	} else if (fair_policy(policy)) {
+		p->static_prio = NICE_TO_PRIO(attr->sched_nice);
+		if (attr->sched_runtime) {
+			p->se.custom_slice = 1;
+			p->se.slice = clamp_t(u64, attr->sched_runtime,
+					      NSEC_PER_MSEC/10,   /* HZ=1000 * 10 */
+					      NSEC_PER_MSEC*100); /* HZ=100  / 10 */
+		} else {
+			p->se.custom_slice = 0;
+			p->se.slice = sysctl_sched_base_slice;
+		}
+	}
 
 	/* rt-policy tasks do not have a timerslack */
 	if (rt_or_dl_task_policy(p)) {
@@ -283,35 +345,6 @@ static bool check_same_owner(struct task_struct *p)
 	return (uid_eq(cred->euid, pcred->euid) ||
 		uid_eq(cred->euid, pcred->uid));
 }
-
-#ifdef CONFIG_RT_MUTEXES
-static inline void __setscheduler_dl_pi(int newprio, int policy,
-			      struct task_struct *p,
-			      struct sched_change_ctx *scope)
-{
-	/*
-	 * In case a DEADLINE task (either proper or boosted) gets
-	 * setscheduled to a lower priority class, check if it neeeds to
-	 * inherit parameters from a potential pi_task. In that case make
-	 * sure replenishment happens with the next enqueue.
-	 */
-
-	if (dl_prio(newprio) && !dl_policy(policy)) {
-		struct task_struct *pi_task = rt_mutex_get_top_task(p);
-
-		if (pi_task) {
-			p->dl.pi_se = pi_task->dl.pi_se;
-			scope->flags |= ENQUEUE_REPLENISH;
-		}
-	}
-}
-#else /* !CONFIG_RT_MUTEXES */
-static inline void __setscheduler_dl_pi(int newprio, int policy,
-			      struct task_struct *p,
-			      struct sched_change_ctx *scope)
-{
-}
-#endif /* !CONFIG_RT_MUTEXES */
 
 #ifdef CONFIG_UCLAMP_TASK
 
@@ -345,7 +378,7 @@ static int uclamp_validate(struct task_struct *p,
 	 * blocking operation which obviously cannot be done while holding
 	 * scheduler locks.
 	 */
-	sched_uclamp_enable();
+	static_branch_enable(&sched_uclamp_used);
 
 	return 0;
 }
@@ -425,7 +458,7 @@ static inline int uclamp_validate(struct task_struct *p,
 }
 static void __setscheduler_uclamp(struct task_struct *p,
 				  const struct sched_attr *attr) { }
-#endif /* !CONFIG_UCLAMP_TASK */
+#endif
 
 /*
  * Allow unprivileged RT tasks to decrease priority.
@@ -495,7 +528,7 @@ int __sched_setscheduler(struct task_struct *p,
 			 bool user, bool pi)
 {
 	int oldpolicy = -1, policy = attr->sched_policy;
-	int retval, oldprio, newprio;
+	int retval, oldprio, newprio, queued, running;
 	const struct sched_class *prev_class, *next_class;
 	struct balance_callback *head;
 	struct rq_flags rf;
@@ -611,14 +644,14 @@ change:
 		 * Do not allow real-time tasks into groups that have no runtime
 		 * assigned.
 		 */
-		if (rt_group_sched_enabled() &&
-				rt_bandwidth_enabled() && rt_policy(policy) &&
+		if (rt_bandwidth_enabled() && rt_policy(policy) &&
 				task_group(p)->rt_bandwidth.rt_runtime == 0 &&
 				!task_group_is_autogroup(task_group(p))) {
 			retval = -EPERM;
 			goto unlock;
 		}
-#endif /* CONFIG_RT_GROUP_SCHED */
+#endif
+#ifdef CONFIG_SMP
 		if (dl_bandwidth_enabled() && dl_policy(policy) &&
 				!(attr->sched_flags & SCHED_FLAG_SUGOV)) {
 			cpumask_t *span = rq->rd->span;
@@ -634,6 +667,7 @@ change:
 				goto unlock;
 			}
 		}
+#endif
 	}
 
 	/* Re-check policy now with rq lock held: */
@@ -668,35 +702,45 @@ change:
 		 * itself.
 		 */
 		newprio = rt_effective_prio(p, newprio);
-		if (newprio == oldprio && !dl_prio(newprio))
+		if (newprio == oldprio)
 			queue_flags &= ~DEQUEUE_MOVE;
 	}
 
 	prev_class = p->sched_class;
 	next_class = __setscheduler_class(policy, newprio);
 
-	if (prev_class != next_class)
-		queue_flags |= DEQUEUE_CLASS;
+	if (prev_class != next_class && p->se.sched_delayed)
+		dequeue_task(rq, p, DEQUEUE_SLEEP | DEQUEUE_DELAYED | DEQUEUE_NOCLOCK);
 
-	scoped_guard (sched_change, p, queue_flags) {
+	queued = task_on_rq_queued(p);
+	running = task_current(rq, p);
+	if (queued)
+		dequeue_task(rq, p, queue_flags);
+	if (running)
+		put_prev_task(rq, p);
 
-		if (!(attr->sched_flags & SCHED_FLAG_KEEP_PARAMS)) {
-			__setscheduler_params(p, attr);
-			p->sched_class = next_class;
-			p->prio = newprio;
-			__setscheduler_dl_pi(newprio, policy, p, scope);
-		}
-		__setscheduler_uclamp(p, attr);
-
-		if (scope->queued) {
-			/*
-			 * We enqueue to tail when the priority of a task is
-			 * increased (user space view).
-			 */
-			if (oldprio < p->prio)
-				scope->flags |= ENQUEUE_HEAD;
-		}
+	if (!(attr->sched_flags & SCHED_FLAG_KEEP_PARAMS)) {
+		__setscheduler_params(p, attr);
+		p->sched_class = next_class;
+		p->prio = newprio;
 	}
+	__setscheduler_uclamp(p, attr);
+	check_class_changing(rq, p, prev_class);
+
+	if (queued) {
+		/*
+		 * We enqueue to tail when the priority of a task is
+		 * increased (user space view).
+		 */
+		if (oldprio < p->prio)
+			queue_flags |= ENQUEUE_HEAD;
+
+		enqueue_task(rq, p, queue_flags);
+	}
+	if (running)
+		set_next_task(rq, p);
+
+	check_class_changed(rq, p, prev_class, oldprio);
 
 	/* Avoid rq from going away on us: */
 	preempt_disable();
@@ -826,19 +870,6 @@ void sched_set_fifo_low(struct task_struct *p)
 }
 EXPORT_SYMBOL_GPL(sched_set_fifo_low);
 
-/*
- * Used when the primary interrupt handler is forced into a thread, in addition
- * to the (always threaded) secondary handler.  The secondary handler gets a
- * slightly lower priority so that the primary handler can preempt it, thereby
- * emulating the behavior of a non-PREEMPT_RT system where the primary handler
- * runs in hard interrupt context.
- */
-void sched_set_fifo_secondary(struct task_struct *p)
-{
-	struct sched_param sp = { .sched_priority = MAX_RT_PRIO / 2 - 1 };
-	WARN_ON_ONCE(sched_setscheduler_nocheck(p, SCHED_FIFO, &sp) != 0);
-}
-
 void sched_set_normal(struct task_struct *p, int nice)
 {
 	struct sched_attr attr = {
@@ -854,7 +885,7 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 {
 	struct sched_param lparam;
 
-	if (unlikely(!param || pid < 0))
+	if (!param || pid < 0)
 		return -EINVAL;
 	if (copy_from_user(&lparam, param, sizeof(struct sched_param)))
 		return -EFAULT;
@@ -911,10 +942,10 @@ err_size:
 	return -E2BIG;
 }
 
-static void get_params(struct task_struct *p, struct sched_attr *attr, unsigned int flags)
+static void get_params(struct task_struct *p, struct sched_attr *attr)
 {
 	if (task_has_dl_policy(p)) {
-		__getparam_dl(p, attr, flags);
+		__getparam_dl(p, attr);
 	} else if (task_has_rt_policy(p)) {
 		attr->sched_priority = p->rt_priority;
 	} else {
@@ -963,7 +994,7 @@ SYSCALL_DEFINE3(sched_setattr, pid_t, pid, struct sched_attr __user *, uattr,
 	struct sched_attr attr;
 	int retval;
 
-	if (unlikely(!uattr || pid < 0 || flags))
+	if (!uattr || pid < 0 || flags)
 		return -EINVAL;
 
 	retval = sched_copy_attr(uattr, &attr);
@@ -980,7 +1011,7 @@ SYSCALL_DEFINE3(sched_setattr, pid_t, pid, struct sched_attr __user *, uattr,
 		return -ESRCH;
 
 	if (attr.sched_flags & SCHED_FLAG_KEEP_PARAMS)
-		get_params(p, &attr, 0);
+		get_params(p, &attr);
 
 	return sched_setattr(p, &attr);
 }
@@ -1028,7 +1059,7 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	struct task_struct *p;
 	int retval;
 
-	if (unlikely(!param || pid < 0))
+	if (!param || pid < 0)
 		return -EINVAL;
 
 	scoped_guard (rcu) {
@@ -1050,6 +1081,45 @@ SYSCALL_DEFINE2(sched_getparam, pid_t, pid, struct sched_param __user *, param)
 	return copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
 }
 
+/*
+ * Copy the kernel size attribute structure (which might be larger
+ * than what user-space knows about) to user-space.
+ *
+ * Note that all cases are valid: user-space buffer can be larger or
+ * smaller than the kernel-space buffer. The usual case is that both
+ * have the same size.
+ */
+static int
+sched_attr_copy_to_user(struct sched_attr __user *uattr,
+			struct sched_attr *kattr,
+			unsigned int usize)
+{
+	unsigned int ksize = sizeof(*kattr);
+
+	if (!access_ok(uattr, usize))
+		return -EFAULT;
+
+	/*
+	 * sched_getattr() ABI forwards and backwards compatibility:
+	 *
+	 * If usize == ksize then we just copy everything to user-space and all is good.
+	 *
+	 * If usize < ksize then we only copy as much as user-space has space for,
+	 * this keeps ABI compatibility as well. We skip the rest.
+	 *
+	 * If usize > ksize then user-space is using a newer version of the ABI,
+	 * which part the kernel doesn't know about. Just ignore it - tooling can
+	 * detect the kernel's knowledge of attributes from the attr->size value
+	 * which is set to ksize in this case.
+	 */
+	kattr->size = min(usize, ksize);
+
+	if (copy_to_user(uattr, kattr, kattr->size))
+		return -EFAULT;
+
+	return 0;
+}
+
 /**
  * sys_sched_getattr - similar to sched_getparam, but with sched_attr
  * @pid: the pid in question.
@@ -1064,20 +1134,14 @@ SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
 	struct task_struct *p;
 	int retval;
 
-	if (unlikely(!uattr || pid < 0 || usize > PAGE_SIZE ||
-		     usize < SCHED_ATTR_SIZE_VER0))
+	if (!uattr || pid < 0 || usize > PAGE_SIZE ||
+	    usize < SCHED_ATTR_SIZE_VER0 || flags)
 		return -EINVAL;
 
 	scoped_guard (rcu) {
 		p = find_process_by_pid(pid);
 		if (!p)
 			return -ESRCH;
-
-		if (flags) {
-			if (!task_has_dl_policy(p) ||
-			    flags != SCHED_GETATTR_FLAG_DL_DYNAMIC)
-				return -EINVAL;
-		}
 
 		retval = security_task_getscheduler(p);
 		if (retval)
@@ -1086,7 +1150,7 @@ SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
 		kattr.sched_policy = p->policy;
 		if (p->sched_reset_on_fork)
 			kattr.sched_flags |= SCHED_FLAG_RESET_ON_FORK;
-		get_params(p, &kattr, flags);
+		get_params(p, &kattr);
 		kattr.sched_flags &= SCHED_FLAG_ALL;
 
 #ifdef CONFIG_UCLAMP_TASK
@@ -1100,10 +1164,10 @@ SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
 #endif
 	}
 
-	kattr.size = min(usize, sizeof(kattr));
-	return copy_struct_to_user(uattr, usize, &kattr, sizeof(kattr), NULL);
+	return sched_attr_copy_to_user(uattr, &kattr, usize);
 }
 
+#ifdef CONFIG_SMP
 int dl_task_check_affinity(struct task_struct *p, const struct cpumask *mask)
 {
 	/*
@@ -1111,13 +1175,6 @@ int dl_task_check_affinity(struct task_struct *p, const struct cpumask *mask)
 	 * disabled then we don't care about affinity changes.
 	 */
 	if (!task_has_dl_policy(p) || !dl_bandwidth_enabled())
-		return 0;
-
-	/*
-	 * The special/sugov task isn't part of regular bandwidth/admission
-	 * control so let userspace change affinities.
-	 */
-	if (dl_entity_is_special(&p->dl))
 		return 0;
 
 	/*
@@ -1132,6 +1189,7 @@ int dl_task_check_affinity(struct task_struct *p, const struct cpumask *mask)
 
 	return 0;
 }
+#endif /* CONFIG_SMP */
 
 int __sched_setaffinity(struct task_struct *p, struct affinity_context *ctx)
 {
@@ -1224,7 +1282,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	user_mask = alloc_user_cpus_ptr(NUMA_NO_NODE);
 	if (user_mask) {
 		cpumask_copy(user_mask, in_mask);
-	} else {
+	} else if (IS_ENABLED(CONFIG_SMP)) {
 		return -ENOMEM;
 	}
 
@@ -1340,7 +1398,7 @@ static void do_sched_yield(void)
 	rq = this_rq_lock_irq(&rf);
 
 	schedstat_inc(rq->yld_count);
-	rq->donor->sched_class->yield_task(rq);
+	current->sched_class->yield_task(rq);
 
 	preempt_disable();
 	rq_unlock_irq(rq, &rf);
@@ -1409,13 +1467,12 @@ EXPORT_SYMBOL(yield);
  */
 int __sched yield_to(struct task_struct *p, bool preempt)
 {
-	struct task_struct *curr;
+	struct task_struct *curr = current;
 	struct rq *rq, *p_rq;
 	int yielded = 0;
 
 	scoped_guard (raw_spinlock_irqsave, &p->pi_lock) {
 		rq = this_rq();
-		curr = rq->donor;
 
 again:
 		p_rq = task_rq(p);

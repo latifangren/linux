@@ -180,7 +180,6 @@ static void dpcd_reduce_address_range(
 		uint8_t * const reduced_data,
 		const uint32_t reduced_size)
 {
-	(void)extended_size;
 	const uint32_t offset = reduced_address - extended_address;
 
 	/*

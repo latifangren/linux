@@ -79,57 +79,70 @@ static inline struct nt36672a_panel *to_nt36672a_panel(struct drm_panel *panel)
 	return container_of(panel, struct nt36672a_panel, base);
 }
 
-static void nt36672a_send_cmds(struct mipi_dsi_multi_context *dsi_ctx,
-			       const struct nt36672a_panel_cmd *cmds, int num)
+static int nt36672a_send_cmds(struct drm_panel *panel, const struct nt36672a_panel_cmd *cmds,
+			      int num)
 {
+	struct nt36672a_panel *pinfo = to_nt36672a_panel(panel);
 	unsigned int i;
+	int err;
 
 	for (i = 0; i < num; i++) {
 		const struct nt36672a_panel_cmd *cmd = &cmds[i];
 
-		/* cmd->data[0] is the DCS command, cmd->data[1] is the parameter */
-		mipi_dsi_dcs_write_buffer_multi(dsi_ctx, cmd->data, sizeof(cmd->data));
+		err = mipi_dsi_dcs_write(pinfo->link, cmd->data[0], cmd->data + 1, 1);
+
+		if (err < 0)
+			return err;
 	}
+
+	return 0;
 }
 
-static void nt36672a_panel_power_off(struct drm_panel *panel)
+static int nt36672a_panel_power_off(struct drm_panel *panel)
 {
 	struct nt36672a_panel *pinfo = to_nt36672a_panel(panel);
-	int ret;
+	int ret = 0;
 
 	gpiod_set_value(pinfo->reset_gpio, 1);
 
 	ret = regulator_bulk_disable(ARRAY_SIZE(pinfo->supplies), pinfo->supplies);
 	if (ret)
 		dev_err(panel->dev, "regulator_bulk_disable failed %d\n", ret);
+
+	return ret;
 }
 
 static int nt36672a_panel_unprepare(struct drm_panel *panel)
 {
 	struct nt36672a_panel *pinfo = to_nt36672a_panel(panel);
-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->link };
+	int ret;
 
 	/* send off cmds */
-	nt36672a_send_cmds(&dsi_ctx, pinfo->desc->off_cmds,
-			   pinfo->desc->num_off_cmds);
+	ret = nt36672a_send_cmds(panel, pinfo->desc->off_cmds,
+				 pinfo->desc->num_off_cmds);
 
-	/* Reset error to continue with display off even if send_cmds failed */
-	dsi_ctx.accum_err = 0;
-	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
-	/* Reset error to continue power-down even if display off failed */
-	dsi_ctx.accum_err = 0;
+	if (ret < 0)
+		dev_err(panel->dev, "failed to send DCS off cmds: %d\n", ret);
+
+	ret = mipi_dsi_dcs_set_display_off(pinfo->link);
+	if (ret < 0)
+		dev_err(panel->dev, "set_display_off cmd failed ret = %d\n", ret);
 
 	/* 120ms delay required here as per DCS spec */
 	msleep(120);
 
-	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
+	ret = mipi_dsi_dcs_enter_sleep_mode(pinfo->link);
+	if (ret < 0)
+		dev_err(panel->dev, "enter_sleep cmd failed ret = %d\n", ret);
 
 	/* 0x3C = 60ms delay */
 	msleep(60);
 
-	nt36672a_panel_power_off(panel);
+	ret = nt36672a_panel_power_off(panel);
+	if (ret < 0)
+		dev_err(panel->dev, "power_off failed ret = %d\n", ret);
 
-	return 0;
+	return ret;
 }
 
 static int nt36672a_panel_power_on(struct nt36672a_panel *pinfo)
@@ -157,31 +170,52 @@ static int nt36672a_panel_power_on(struct nt36672a_panel *pinfo)
 static int nt36672a_panel_prepare(struct drm_panel *panel)
 {
 	struct nt36672a_panel *pinfo = to_nt36672a_panel(panel);
-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->link };
+	int err;
 
-	dsi_ctx.accum_err = nt36672a_panel_power_on(pinfo);
+	err = nt36672a_panel_power_on(pinfo);
+	if (err < 0)
+		goto poweroff;
 
 	/* send first part of init cmds */
-	nt36672a_send_cmds(&dsi_ctx, pinfo->desc->on_cmds_1,
-			   pinfo->desc->num_on_cmds_1);
+	err = nt36672a_send_cmds(panel, pinfo->desc->on_cmds_1,
+				 pinfo->desc->num_on_cmds_1);
 
-	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+	if (err < 0) {
+		dev_err(panel->dev, "failed to send DCS Init 1st Code: %d\n", err);
+		goto poweroff;
+	}
+
+	err = mipi_dsi_dcs_exit_sleep_mode(pinfo->link);
+	if (err < 0) {
+		dev_err(panel->dev, "failed to exit sleep mode: %d\n", err);
+		goto poweroff;
+	}
 
 	/* 0x46 = 70 ms delay */
-	mipi_dsi_msleep(&dsi_ctx, 70);
+	msleep(70);
 
-	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+	err = mipi_dsi_dcs_set_display_on(pinfo->link);
+	if (err < 0) {
+		dev_err(panel->dev, "failed to Set Display ON: %d\n", err);
+		goto poweroff;
+	}
 
 	/* Send rest of the init cmds */
-	nt36672a_send_cmds(&dsi_ctx, pinfo->desc->on_cmds_2,
-			   pinfo->desc->num_on_cmds_2);
+	err = nt36672a_send_cmds(panel, pinfo->desc->on_cmds_2,
+				 pinfo->desc->num_on_cmds_2);
 
-	mipi_dsi_msleep(&dsi_ctx, 120);
+	if (err < 0) {
+		dev_err(panel->dev, "failed to send DCS Init 2nd Code: %d\n", err);
+		goto poweroff;
+	}
 
-	if (dsi_ctx.accum_err < 0)
-		gpiod_set_value(pinfo->reset_gpio, 0);
+	msleep(120);
 
-	return dsi_ctx.accum_err;
+	return 0;
+
+poweroff:
+	gpiod_set_value(pinfo->reset_gpio, 0);
+	return err;
 }
 
 static int nt36672a_panel_get_modes(struct drm_panel *panel,
@@ -574,6 +608,8 @@ static int nt36672a_panel_add(struct nt36672a_panel *pinfo)
 		return dev_err_probe(dev, PTR_ERR(pinfo->reset_gpio),
 				     "failed to get reset gpio from DT\n");
 
+	drm_panel_init(&pinfo->base, dev, &panel_funcs, DRM_MODE_CONNECTOR_DSI);
+
 	ret = drm_panel_of_backlight(&pinfo->base);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to get backlight\n");
@@ -589,11 +625,9 @@ static int nt36672a_panel_probe(struct mipi_dsi_device *dsi)
 	const struct nt36672a_panel_desc *desc;
 	int err;
 
-	pinfo = devm_drm_panel_alloc(&dsi->dev, __typeof(*pinfo), base,
-				     &panel_funcs, DRM_MODE_CONNECTOR_DSI);
-
-	if (IS_ERR(pinfo))
-		return PTR_ERR(pinfo);
+	pinfo = devm_kzalloc(&dsi->dev, sizeof(*pinfo), GFP_KERNEL);
+	if (!pinfo)
+		return -ENOMEM;
 
 	desc = of_device_get_match_data(&dsi->dev);
 	dsi->mode_flags = desc->mode_flags;

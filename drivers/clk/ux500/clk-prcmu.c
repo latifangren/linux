@@ -53,13 +53,11 @@ static unsigned long clk_prcmu_recalc_rate(struct clk_hw *hw,
 	return prcmu_clock_rate(clk->cg_sel);
 }
 
-static int clk_prcmu_determine_rate(struct clk_hw *hw,
-				    struct clk_rate_request *req)
+static long clk_prcmu_round_rate(struct clk_hw *hw, unsigned long rate,
+				 unsigned long *parent_rate)
 {
 	struct clk_prcmu *clk = to_clk_prcmu(hw);
-	req->rate = prcmu_round_clock_rate(clk->cg_sel, req->rate);
-
-	return 0;
+	return prcmu_round_clock_rate(clk->cg_sel, rate);
 }
 
 static int clk_prcmu_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -159,7 +157,7 @@ static const struct clk_ops clk_prcmu_scalable_ops = {
 	.prepare = clk_prcmu_prepare,
 	.unprepare = clk_prcmu_unprepare,
 	.recalc_rate = clk_prcmu_recalc_rate,
-	.determine_rate = clk_prcmu_determine_rate,
+	.round_rate = clk_prcmu_round_rate,
 	.set_rate = clk_prcmu_set_rate,
 };
 
@@ -171,7 +169,7 @@ static const struct clk_ops clk_prcmu_gate_ops = {
 
 static const struct clk_ops clk_prcmu_scalable_rate_ops = {
 	.recalc_rate = clk_prcmu_recalc_rate,
-	.determine_rate = clk_prcmu_determine_rate,
+	.round_rate = clk_prcmu_round_rate,
 	.set_rate = clk_prcmu_set_rate,
 };
 
@@ -189,7 +187,7 @@ static const struct clk_ops clk_prcmu_opp_volt_scalable_ops = {
 	.prepare = clk_prcmu_opp_volt_prepare,
 	.unprepare = clk_prcmu_opp_volt_unprepare,
 	.recalc_rate = clk_prcmu_recalc_rate,
-	.determine_rate = clk_prcmu_determine_rate,
+	.round_rate = clk_prcmu_round_rate,
 	.set_rate = clk_prcmu_set_rate,
 };
 
@@ -209,7 +207,7 @@ static struct clk_hw *clk_reg_prcmu(const char *name,
 		return ERR_PTR(-EINVAL);
 	}
 
-	clk = kzalloc_obj(*clk);
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk)
 		return ERR_PTR(-ENOMEM);
 
@@ -376,7 +374,7 @@ struct clk_hw *clk_reg_prcmu_clkout(const char *name,
 		return ERR_PTR(-EINVAL);
 	}
 
-	clk = kzalloc_obj(*clk);
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk)
 		return ERR_PTR(-ENOMEM);
 

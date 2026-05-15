@@ -348,7 +348,7 @@ static int xenfb_probe(struct xenbus_device *dev,
 	int val;
 	int ret = 0;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (info == NULL) {
 		xenbus_dev_fatal(dev, -ENOMEM, "allocating info structure");
 		return -ENOMEM;
@@ -390,7 +390,7 @@ static int xenfb_probe(struct xenbus_device *dev,
 
 	info->nr_pages = (fb_size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	info->gfns = vmalloc_array(info->nr_pages, sizeof(unsigned long));
+	info->gfns = vmalloc(array_size(sizeof(unsigned long), info->nr_pages));
 	if (!info->gfns)
 		goto error_nomem;
 

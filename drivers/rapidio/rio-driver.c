@@ -227,7 +227,7 @@ struct class rio_mport_class = {
 };
 EXPORT_SYMBOL_GPL(rio_mport_class);
 
-const struct bus_type rio_bus_type = {
+struct bus_type rio_bus_type = {
 	.name = "rapidio",
 	.match = rio_match_bus,
 	.dev_groups = rio_dev_groups,

@@ -7,7 +7,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/moduleparam.h>
-#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <crypto/aes.h>
@@ -441,14 +440,15 @@ static int qce_skcipher_register_one(const struct qce_skcipher_def *def,
 	struct skcipher_alg *alg;
 	int ret;
 
-	tmpl = kzalloc_obj(*tmpl);
+	tmpl = kzalloc(sizeof(*tmpl), GFP_KERNEL);
 	if (!tmpl)
 		return -ENOMEM;
 
 	alg = &tmpl->alg.skcipher;
 
-	strscpy(alg->base.cra_name, def->name);
-	strscpy(alg->base.cra_driver_name, def->drv_name);
+	snprintf(alg->base.cra_name, CRYPTO_MAX_ALG_NAME, "%s", def->name);
+	snprintf(alg->base.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
+		 def->drv_name);
 
 	alg->base.cra_blocksize		= def->blocksize;
 	alg->chunksize			= def->chunksize;

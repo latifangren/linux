@@ -228,7 +228,7 @@ static int tonga_smu_init(struct pp_hwmgr *hwmgr)
 {
 	struct tonga_smumgr *tonga_priv;
 
-	tonga_priv = kzalloc_obj(struct tonga_smumgr);
+	tonga_priv = kzalloc(sizeof(struct tonga_smumgr), GFP_KERNEL);
 	if (tonga_priv == NULL)
 		return -ENOMEM;
 
@@ -3072,7 +3072,7 @@ static int tonga_initialize_mc_reg_table(struct pp_hwmgr *hwmgr)
 	struct tonga_mc_reg_table *ni_table = &smu_data->mc_reg_table;
 	uint8_t module_index = tonga_get_memory_modile_index(hwmgr);
 
-	table = kzalloc_obj(pp_atomctrl_mc_reg_table);
+	table = kzalloc(sizeof(pp_atomctrl_mc_reg_table), GFP_KERNEL);
 
 	if (table == NULL)
 		return -ENOMEM;
@@ -3139,8 +3139,9 @@ static int tonga_initialize_mc_reg_table(struct pp_hwmgr *hwmgr)
 
 static bool tonga_is_dpm_running(struct pp_hwmgr *hwmgr)
 {
-	return PHM_READ_INDIRECT_FIELD(hwmgr->device,
-			CGS_IND_REG__SMC, FEATURE_STATUS, VOLTAGE_CONTROLLER_ON) == 1;
+	return (1 == PHM_READ_INDIRECT_FIELD(hwmgr->device,
+			CGS_IND_REG__SMC, FEATURE_STATUS, VOLTAGE_CONTROLLER_ON))
+			? true : false;
 }
 
 static int tonga_update_dpm_settings(struct pp_hwmgr *hwmgr,

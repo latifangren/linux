@@ -28,15 +28,14 @@ static const char *data_usage[] = {
 	NULL
 };
 
-static const char *to_json;
-static const char *to_ctf;
-static struct perf_data_convert_opts opts = {
+const char *to_json;
+const char *to_ctf;
+struct perf_data_convert_opts opts = {
 	.force = false,
 	.all = false,
-	.time_str = NULL,
 };
 
-static const struct option data_options[] = {
+const struct option data_options[] = {
 		OPT_INCR('v', "verbose", &verbose, "be more verbose"),
 		OPT_STRING('i', "input", &input_name, "file", "input file name"),
 		OPT_STRING(0, "to-json", &to_json, NULL, "Convert to JSON format"),
@@ -46,8 +45,6 @@ static const struct option data_options[] = {
 #endif
 		OPT_BOOLEAN('f', "force", &opts.force, "don't complain, do it"),
 		OPT_BOOLEAN(0, "all", &opts.all, "Convert all events"),
-		OPT_STRING(0, "time", &opts.time_str, "str",
-			   "Time span of interest (start,stop)"),
 		OPT_END()
 	};
 

@@ -41,11 +41,8 @@ properties:
 
   areg-supply:
     description: |
-      External supply of 1.8V. If not defined then the internal regulator is
-      enabled instead.
-
-  avdd-supply: true
-  iovdd-supply: true
+      Regulator with AVDD at 3.3V.  If not defined then the internal regulator
+      is enabled.
 
   ti,mic-bias-source:
     description: |

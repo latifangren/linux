@@ -141,6 +141,7 @@ bool can_boost(struct insn *insn, void *addr)
 {
 	kprobe_opcode_t opcode;
 	insn_byte_t prefix;
+	int i;
 
 	if (search_exception_tables((unsigned long)addr))
 		return false;	/* Page fault may occur on this address. */
@@ -153,7 +154,7 @@ bool can_boost(struct insn *insn, void *addr)
 	if (insn->opcode.nbytes != 1)
 		return false;
 
-	for_each_insn_prefix(insn, prefix) {
+	for_each_insn_prefix(insn, i, prefix) {
 		insn_attr_t attr;
 
 		attr = inat_get_opcode_attribute(prefix);
@@ -338,7 +339,7 @@ static bool can_probe(unsigned long paddr)
 	if (is_exception_insn(&insn))
 		return false;
 
-	if (IS_ENABLED(CONFIG_CFI)) {
+	if (IS_ENABLED(CONFIG_CFI_CLANG)) {
 		/*
 		 * The compiler generates the following instruction sequence
 		 * for indirect call checks and cfi.c decodes this;
@@ -372,7 +373,16 @@ out:
 kprobe_opcode_t *arch_adjust_kprobe_addr(unsigned long addr, unsigned long offset,
 					 bool *on_func_entry)
 {
-	if (is_endbr((u32 *)addr)) {
+	u32 insn;
+
+	/*
+	 * Since 'addr' is not guaranteed to be safe to access, use
+	 * copy_from_kernel_nofault() to read the instruction:
+	 */
+	if (copy_from_kernel_nofault(&insn, (void *)addr, sizeof(u32)))
+		return NULL;
+
+	if (is_endbr(insn)) {
 		*on_func_entry = !offset || offset == 4;
 		if (*on_func_entry)
 			offset = 4;
@@ -478,6 +488,24 @@ static int prepare_singlestep(kprobe_opcode_t *buf, struct kprobe *p,
 	}
 
 	return len;
+}
+
+/* Make page to RO mode when allocate it */
+void *alloc_insn_page(void)
+{
+	void *page;
+
+	page = execmem_alloc(EXECMEM_KPROBES, PAGE_SIZE);
+	if (!page)
+		return NULL;
+
+	/*
+	 * TODO: Once additional kernel code protection mechanisms are set, ensure
+	 * that the page was not maliciously altered and it is still zeroed.
+	 */
+	set_memory_rox((unsigned long)page, 1);
+
+	return page;
 }
 
 /* Kprobe x86 instruction emulation - only regs->ip or IF flag modifiers */
@@ -789,7 +817,7 @@ void arch_arm_kprobe(struct kprobe *p)
 	u8 int3 = INT3_INSN_OPCODE;
 
 	text_poke(p->addr, &int3, 1);
-	smp_text_poke_sync_each_cpu();
+	text_poke_sync();
 	perf_event_text_poke(p->addr, &p->opcode, 1, &int3, 1);
 }
 
@@ -799,7 +827,7 @@ void arch_disarm_kprobe(struct kprobe *p)
 
 	perf_event_text_poke(p->addr, &int3, 1, &p->opcode, 1);
 	text_poke(p->addr, &p->opcode, 1);
-	smp_text_poke_sync_each_cpu();
+	text_poke_sync();
 }
 
 void arch_remove_kprobe(struct kprobe *p)

@@ -2,15 +2,13 @@
 // Copyright (C) 2021 Intel Corporation
 
 #include <linux/acpi.h>
-#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <linux/unaligned.h>
-
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
+#include <linux/unaligned.h>
 
 #define IMX208_REG_MODE_SELECT		0x0100
 #define IMX208_MODE_STANDBY		0x00
@@ -270,9 +268,6 @@ static const struct imx208_mode supported_modes[] = {
 };
 
 struct imx208 {
-	struct device *dev;
-	struct clk *clk;
-
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 
@@ -377,6 +372,7 @@ static int imx208_write_reg(struct imx208 *imx208, u16 reg, u32 len, u32 val)
 static int imx208_write_regs(struct imx208 *imx208,
 			     const struct imx208_reg *regs, u32 len)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	unsigned int i;
 	int ret;
 
@@ -384,7 +380,7 @@ static int imx208_write_regs(struct imx208 *imx208,
 		ret = imx208_write_reg(imx208, regs[i].address, 1,
 				       regs[i].val);
 		if (ret) {
-			dev_err_ratelimited(imx208->dev,
+			dev_err_ratelimited(&client->dev,
 					    "Failed to write reg 0x%4.4x. error = %d\n",
 					    regs[i].address, ret);
 
@@ -435,13 +431,14 @@ static int imx208_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct imx208 *imx208 =
 		container_of(ctrl->handler, struct imx208, ctrl_handler);
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	int ret;
 
 	/*
 	 * Applying V4L2 control value only happens
 	 * when power is up for streaming
 	 */
-	if (!pm_runtime_get_if_in_use(imx208->dev))
+	if (!pm_runtime_get_if_in_use(&client->dev))
 		return 0;
 
 	switch (ctrl->id) {
@@ -474,13 +471,13 @@ static int imx208_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	default:
 		ret = -EINVAL;
-		dev_err(imx208->dev,
+		dev_err(&client->dev,
 			"ctrl(id:0x%x,val:0x%x) is not handled\n",
 			ctrl->id, ctrl->val);
 		break;
 	}
 
-	pm_runtime_put(imx208->dev);
+	pm_runtime_put(&client->dev);
 
 	return ret;
 }
@@ -623,6 +620,7 @@ static int imx208_set_pad_format(struct v4l2_subdev *sd,
 
 static int imx208_identify_module(struct imx208 *imx208)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	int ret;
 	u32 val;
 
@@ -632,13 +630,13 @@ static int imx208_identify_module(struct imx208 *imx208)
 	ret = imx208_read_reg(imx208, IMX208_REG_CHIP_ID,
 			      2, &val);
 	if (ret) {
-		dev_err(imx208->dev, "failed to read chip id %x\n",
+		dev_err(&client->dev, "failed to read chip id %x\n",
 			IMX208_CHIP_ID);
 		return ret;
 	}
 
 	if (val != IMX208_CHIP_ID) {
-		dev_err(imx208->dev, "chip id mismatch: %x!=%x\n",
+		dev_err(&client->dev, "chip id mismatch: %x!=%x\n",
 			IMX208_CHIP_ID, val);
 		return -EIO;
 	}
@@ -651,6 +649,7 @@ static int imx208_identify_module(struct imx208 *imx208)
 /* Start streaming */
 static int imx208_start_streaming(struct imx208 *imx208)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	const struct imx208_reg_list *reg_list;
 	int ret, link_freq_index;
 
@@ -663,7 +662,7 @@ static int imx208_start_streaming(struct imx208 *imx208)
 	reg_list = &link_freq_configs[link_freq_index].reg_list;
 	ret = imx208_write_regs(imx208, reg_list->regs, reg_list->num_of_regs);
 	if (ret) {
-		dev_err(imx208->dev, "%s failed to set plls\n", __func__);
+		dev_err(&client->dev, "%s failed to set plls\n", __func__);
 		return ret;
 	}
 
@@ -671,7 +670,7 @@ static int imx208_start_streaming(struct imx208 *imx208)
 	reg_list = &imx208->cur_mode->reg_list;
 	ret = imx208_write_regs(imx208, reg_list->regs, reg_list->num_of_regs);
 	if (ret) {
-		dev_err(imx208->dev, "%s failed to set mode\n", __func__);
+		dev_err(&client->dev, "%s failed to set mode\n", __func__);
 		return ret;
 	}
 
@@ -688,13 +687,14 @@ static int imx208_start_streaming(struct imx208 *imx208)
 /* Stop streaming */
 static int imx208_stop_streaming(struct imx208 *imx208)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	int ret;
 
 	/* set stream off register */
 	ret = imx208_write_reg(imx208, IMX208_REG_MODE_SELECT,
 			       1, IMX208_MODE_STANDBY);
 	if (ret)
-		dev_err(imx208->dev, "%s failed to set stream\n", __func__);
+		dev_err(&client->dev, "%s failed to set stream\n", __func__);
 
 	/*
 	 * Return success even if it was an error, as there is nothing the
@@ -706,12 +706,13 @@ static int imx208_stop_streaming(struct imx208 *imx208)
 static int imx208_set_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct imx208 *imx208 = to_imx208(sd);
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	int ret = 0;
 
 	mutex_lock(&imx208->imx208_mx);
 
 	if (enable) {
-		ret = pm_runtime_resume_and_get(imx208->dev);
+		ret = pm_runtime_resume_and_get(&client->dev);
 		if (ret) {
 			mutex_unlock(&imx208->imx208_mx);
 			return ret;
@@ -726,7 +727,7 @@ static int imx208_set_stream(struct v4l2_subdev *sd, int enable)
 			goto err_rpm_put;
 	} else {
 		imx208_stop_streaming(imx208);
-		pm_runtime_put(imx208->dev);
+		pm_runtime_put(&client->dev);
 	}
 
 	mutex_unlock(&imx208->imx208_mx);
@@ -738,7 +739,7 @@ static int imx208_set_stream(struct v4l2_subdev *sd, int enable)
 	return ret;
 
 err_rpm_put:
-	pm_runtime_put(imx208->dev);
+	pm_runtime_put(&client->dev);
 	mutex_unlock(&imx208->imx208_mx);
 
 	return ret;
@@ -777,7 +778,7 @@ static int imx208_read_otp(struct imx208 *imx208)
 	if (imx208->otp_read)
 		goto out_unlock;
 
-	ret = pm_runtime_resume_and_get(imx208->dev);
+	ret = pm_runtime_resume_and_get(&client->dev);
 	if (ret)
 		goto out_unlock;
 
@@ -804,7 +805,7 @@ static int imx208_read_otp(struct imx208 *imx208)
 	}
 
 out_pm_put:
-	pm_runtime_put(imx208->dev);
+	pm_runtime_put(&client->dev);
 
 out_unlock:
 	mutex_unlock(&imx208->imx208_mx);
@@ -813,7 +814,7 @@ out_unlock:
 }
 
 static ssize_t otp_read(struct file *filp, struct kobject *kobj,
-			const struct bin_attribute *bin_attr,
+			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
 	struct i2c_client *client = to_i2c_client(kobj_to_dev(kobj));
@@ -834,6 +835,7 @@ static const BIN_ATTR_RO(otp, IMX208_OTP_SIZE);
 /* Initialize control handlers */
 static int imx208_init_controls(struct imx208 *imx208)
 {
+	struct i2c_client *client = v4l2_get_subdevdata(&imx208->sd);
 	struct v4l2_ctrl_handler *ctrl_hdlr = &imx208->ctrl_handler;
 	s64 exposure_max;
 	s64 vblank_def;
@@ -912,7 +914,7 @@ static int imx208_init_controls(struct imx208 *imx208)
 
 	if (ctrl_hdlr->error) {
 		ret = ctrl_hdlr->error;
-		dev_err(imx208->dev, "%s control init failed (%d)\n",
+		dev_err(&client->dev, "%s control init failed (%d)\n",
 			__func__, ret);
 		goto error;
 	}
@@ -936,36 +938,31 @@ static void imx208_free_controls(struct imx208 *imx208)
 static int imx208_probe(struct i2c_client *client)
 {
 	struct imx208 *imx208;
-	unsigned long freq;
 	int ret;
 	bool full_power;
+	u32 val = 0;
+
+	device_property_read_u32(&client->dev, "clock-frequency", &val);
+	if (val != 19200000) {
+		dev_err(&client->dev,
+			"Unsupported clock-frequency %u. Expected 19200000.\n",
+			val);
+		return -EINVAL;
+	}
 
 	imx208 = devm_kzalloc(&client->dev, sizeof(*imx208), GFP_KERNEL);
 	if (!imx208)
 		return -ENOMEM;
 
-	imx208->dev = &client->dev;
-
-	imx208->clk = devm_v4l2_sensor_clk_get(imx208->dev, NULL);
-	if (IS_ERR(imx208->clk))
-		return dev_err_probe(imx208->dev, PTR_ERR(imx208->clk),
-				     "failed to get clock\n");
-
-	freq = clk_get_rate(imx208->clk);
-	if (freq != 19200000)
-		return dev_err_probe(imx208->dev, -EINVAL,
-				     "external clock %lu is not supported\n",
-				     freq);
-
 	/* Initialize subdev */
 	v4l2_i2c_subdev_init(&imx208->sd, client, &imx208_subdev_ops);
 
-	full_power = acpi_dev_state_d0(imx208->dev);
+	full_power = acpi_dev_state_d0(&client->dev);
 	if (full_power) {
 		/* Check module identity */
 		ret = imx208_identify_module(imx208);
 		if (ret) {
-			dev_err(imx208->dev, "failed to find sensor: %d", ret);
+			dev_err(&client->dev, "failed to find sensor: %d", ret);
 			goto error_probe;
 		}
 	}
@@ -975,7 +972,7 @@ static int imx208_probe(struct i2c_client *client)
 
 	ret = imx208_init_controls(imx208);
 	if (ret) {
-		dev_err(imx208->dev, "failed to init controls: %d", ret);
+		dev_err(&client->dev, "failed to init controls: %d", ret);
 		goto error_probe;
 	}
 
@@ -988,7 +985,7 @@ static int imx208_probe(struct i2c_client *client)
 	imx208->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ret = media_entity_pads_init(&imx208->sd.entity, 1, &imx208->pad);
 	if (ret) {
-		dev_err(imx208->dev, "%s failed:%d\n", __func__, ret);
+		dev_err(&client->dev, "%s failed:%d\n", __func__, ret);
 		goto error_handler_free;
 	}
 
@@ -996,17 +993,17 @@ static int imx208_probe(struct i2c_client *client)
 	if (ret < 0)
 		goto error_media_entity;
 
-	ret = device_create_bin_file(imx208->dev, &bin_attr_otp);
+	ret = device_create_bin_file(&client->dev, &bin_attr_otp);
 	if (ret) {
-		dev_err(imx208->dev, "sysfs otp creation failed\n");
+		dev_err(&client->dev, "sysfs otp creation failed\n");
 		goto error_async_subdev;
 	}
 
 	/* Set the device's state to active if it's in D0 state. */
 	if (full_power)
-		pm_runtime_set_active(imx208->dev);
-	pm_runtime_enable(imx208->dev);
-	pm_runtime_idle(imx208->dev);
+		pm_runtime_set_active(&client->dev);
+	pm_runtime_enable(&client->dev);
+	pm_runtime_idle(&client->dev);
 
 	return 0;
 
@@ -1030,13 +1027,13 @@ static void imx208_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx208 *imx208 = to_imx208(sd);
 
-	device_remove_bin_file(imx208->dev, &bin_attr_otp);
+	device_remove_bin_file(&client->dev, &bin_attr_otp);
 	v4l2_async_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
 	imx208_free_controls(imx208);
 
-	pm_runtime_disable(imx208->dev);
-	pm_runtime_set_suspended(imx208->dev);
+	pm_runtime_disable(&client->dev);
+	pm_runtime_set_suspended(&client->dev);
 
 	mutex_destroy(&imx208->imx208_mx);
 }

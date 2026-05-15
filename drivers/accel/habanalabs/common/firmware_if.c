@@ -2681,7 +2681,7 @@ static int hl_fw_dynamic_send_msg(struct hl_device *hdev,
 	struct lkd_msg_comms *msg;
 	int rc;
 
-	msg = kzalloc_obj(*msg);
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 

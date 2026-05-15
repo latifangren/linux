@@ -9,7 +9,8 @@
 #undef DEBUGDATA
 #undef DEBUGCCW
 
-#define pr_fmt(fmt) "ctcm: " fmt
+#define KMSG_COMPONENT "ctcm"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/device.h>
 #include <linux/sysfs.h>

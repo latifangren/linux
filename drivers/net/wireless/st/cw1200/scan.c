@@ -225,7 +225,9 @@ void cw1200_scan_work(struct work_struct *work)
 			scan.type = WSM_SCAN_TYPE_BACKGROUND;
 			scan.flags = WSM_SCAN_FLAG_FORCE_BACKGROUND;
 		}
-		scan.ch = kzalloc_objs(struct wsm_scan_ch, it - priv->scan.curr);
+		scan.ch = kcalloc(it - priv->scan.curr,
+				  sizeof(struct wsm_scan_ch),
+				  GFP_KERNEL);
 		if (!scan.ch) {
 			priv->scan.status = -ENOMEM;
 			goto fail;

@@ -131,8 +131,7 @@ static size_t shr_data_offset(struct vtpm_shared_page *shr)
 	return struct_size(shr, extra_pages, shr->nr_extra_pages);
 }
 
-static int vtpm_send(struct tpm_chip *chip, u8 *buf, size_t bufsiz,
-		     size_t count)
+static int vtpm_send(struct tpm_chip *chip, u8 *buf, size_t count)
 {
 	struct tpm_private *priv = dev_get_drvdata(&chip->dev);
 	struct vtpm_shared_page *shr = priv->shr;
@@ -338,7 +337,7 @@ static int tpmfront_probe(struct xenbus_device *dev,
 	struct tpm_private *priv;
 	int rv;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		xenbus_dev_fatal(dev, -ENOMEM, "allocating priv structure");
 		return -ENOMEM;

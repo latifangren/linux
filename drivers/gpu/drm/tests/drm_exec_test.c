@@ -16,6 +16,8 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_kunit_helpers.h>
 
+#include "../lib/drm_random.h"
+
 struct drm_exec_priv {
 	struct device *dev;
 	struct drm_device *drm;
@@ -148,22 +150,14 @@ static void test_prepare(struct kunit *test)
 static void test_prepare_array(struct kunit *test)
 {
 	struct drm_exec_priv *priv = test->priv;
-	struct drm_gem_object *gobj1;
-	struct drm_gem_object *gobj2;
-	struct drm_gem_object *array[] = {
-		(gobj1 = kunit_kzalloc(test, sizeof(*gobj1), GFP_KERNEL)),
-		(gobj2 = kunit_kzalloc(test, sizeof(*gobj2), GFP_KERNEL)),
-	};
+	struct drm_gem_object gobj1 = { };
+	struct drm_gem_object gobj2 = { };
+	struct drm_gem_object *array[] = { &gobj1, &gobj2 };
 	struct drm_exec exec;
 	int ret;
 
-	if (!gobj1 || !gobj2) {
-		KUNIT_FAIL(test, "Failed to allocate GEM objects.\n");
-		return;
-	}
-
-	drm_gem_private_object_init(priv->drm, gobj1, PAGE_SIZE);
-	drm_gem_private_object_init(priv->drm, gobj2, PAGE_SIZE);
+	drm_gem_private_object_init(priv->drm, &gobj1, PAGE_SIZE);
+	drm_gem_private_object_init(priv->drm, &gobj2, PAGE_SIZE);
 
 	drm_exec_init(&exec, DRM_EXEC_INTERRUPTIBLE_WAIT, 0);
 	drm_exec_until_all_locked(&exec)
@@ -172,8 +166,8 @@ static void test_prepare_array(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, ret, 0);
 	drm_exec_fini(&exec);
 
-	drm_gem_private_object_fini(gobj1);
-	drm_gem_private_object_fini(gobj2);
+	drm_gem_private_object_fini(&gobj1);
+	drm_gem_private_object_fini(&gobj2);
 }
 
 static void test_multiple_loops(struct kunit *test)

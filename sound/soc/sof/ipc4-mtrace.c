@@ -118,19 +118,22 @@ static int sof_ipc4_mtrace_dfs_open(struct inode *inode, struct file *file)
 	struct sof_mtrace_core_data *core_data = inode->i_private;
 	int ret;
 
-	guard(mutex)(&core_data->buffer_lock);
+	mutex_lock(&core_data->buffer_lock);
 
-	if (core_data->log_buffer)
-		return -EBUSY;
+	if (core_data->log_buffer) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	ret = debugfs_file_get(file->f_path.dentry);
 	if (unlikely(ret))
-		return ret;
+		goto out;
 
 	core_data->log_buffer = kmalloc(SOF_IPC4_DEBUG_SLOT_SIZE, GFP_KERNEL);
 	if (!core_data->log_buffer) {
 		debugfs_file_put(file->f_path.dentry);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out;
 	}
 
 	ret = simple_open(inode, file);
@@ -138,6 +141,9 @@ static int sof_ipc4_mtrace_dfs_open(struct inode *inode, struct file *file)
 		kfree(core_data->log_buffer);
 		debugfs_file_put(file->f_path.dentry);
 	}
+
+out:
+	mutex_unlock(&core_data->buffer_lock);
 
 	return ret;
 }
@@ -275,10 +281,10 @@ static int sof_ipc4_mtrace_dfs_release(struct inode *inode, struct file *file)
 
 	debugfs_file_put(file->f_path.dentry);
 
-	scoped_guard(mutex, &core_data->buffer_lock) {
-		kfree(core_data->log_buffer);
-		core_data->log_buffer = NULL;
-	}
+	mutex_lock(&core_data->buffer_lock);
+	kfree(core_data->log_buffer);
+	core_data->log_buffer = NULL;
+	mutex_unlock(&core_data->buffer_lock);
 
 	return 0;
 }

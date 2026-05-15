@@ -38,6 +38,7 @@
 struct meson_encoder_hdmi {
 	struct drm_encoder encoder;
 	struct drm_bridge bridge;
+	struct drm_bridge *next_bridge;
 	struct drm_connector *connector;
 	struct meson_drm *priv;
 	unsigned long output_bus_fmt;
@@ -48,12 +49,11 @@ struct meson_encoder_hdmi {
 	container_of(x, struct meson_encoder_hdmi, bridge)
 
 static int meson_encoder_hdmi_attach(struct drm_bridge *bridge,
-				     struct drm_encoder *encoder,
 				     enum drm_bridge_attach_flags flags)
 {
 	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
 
-	return drm_bridge_attach(encoder, encoder_hdmi->bridge.next_bridge,
+	return drm_bridge_attach(bridge->encoder, encoder_hdmi->next_bridge,
 				 &encoder_hdmi->bridge, flags);
 }
 
@@ -189,9 +189,10 @@ static enum drm_mode_status meson_encoder_hdmi_mode_valid(struct drm_bridge *bri
 }
 
 static void meson_encoder_hdmi_atomic_enable(struct drm_bridge *bridge,
-					     struct drm_atomic_state *state)
+					     struct drm_bridge_state *bridge_state)
 {
 	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
+	struct drm_atomic_state *state = bridge_state->base.state;
 	unsigned int ycrcb_map = VPU_HDMI_OUTPUT_CBYCR;
 	struct meson_drm *priv = encoder_hdmi->priv;
 	struct drm_connector_state *conn_state;
@@ -252,7 +253,7 @@ static void meson_encoder_hdmi_atomic_enable(struct drm_bridge *bridge,
 }
 
 static void meson_encoder_hdmi_atomic_disable(struct drm_bridge *bridge,
-					      struct drm_atomic_state *state)
+					     struct drm_bridge_state *bridge_state)
 {
 	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
 	struct meson_drm *priv = encoder_hdmi->priv;
@@ -322,7 +323,6 @@ static int meson_encoder_hdmi_atomic_check(struct drm_bridge *bridge,
 }
 
 static void meson_encoder_hdmi_hpd_notify(struct drm_bridge *bridge,
-					  struct drm_connector *connector,
 					  enum drm_connector_status status)
 {
 	struct meson_encoder_hdmi *encoder_hdmi = bridge_to_meson_encoder_hdmi(bridge);
@@ -334,7 +334,7 @@ static void meson_encoder_hdmi_hpd_notify(struct drm_bridge *bridge,
 		const struct drm_edid *drm_edid;
 		const struct edid *edid;
 
-		drm_edid = drm_bridge_edid_read(encoder_hdmi->bridge.next_bridge,
+		drm_edid = drm_bridge_edid_read(encoder_hdmi->next_bridge,
 						encoder_hdmi->connector);
 		if (!drm_edid)
 			return;
@@ -376,12 +376,9 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
 	struct device_node *remote;
 	int ret;
 
-	meson_encoder_hdmi = devm_drm_bridge_alloc(priv->dev,
-						   struct meson_encoder_hdmi,
-						   bridge,
-						   &meson_encoder_hdmi_bridge_funcs);
-	if (IS_ERR(meson_encoder_hdmi))
-		return PTR_ERR(meson_encoder_hdmi);
+	meson_encoder_hdmi = devm_kzalloc(priv->dev, sizeof(*meson_encoder_hdmi), GFP_KERNEL);
+	if (!meson_encoder_hdmi)
+		return -ENOMEM;
 
 	/* HDMI Transceiver Bridge */
 	remote = of_graph_get_remote_node(priv->dev->of_node, 1, 0);
@@ -390,14 +387,15 @@ int meson_encoder_hdmi_probe(struct meson_drm *priv)
 		return 0;
 	}
 
-	meson_encoder_hdmi->bridge.next_bridge = of_drm_find_and_get_bridge(remote);
-	if (!meson_encoder_hdmi->bridge.next_bridge) {
+	meson_encoder_hdmi->next_bridge = of_drm_find_bridge(remote);
+	if (!meson_encoder_hdmi->next_bridge) {
 		ret = dev_err_probe(priv->dev, -EPROBE_DEFER,
 				    "Failed to find HDMI transceiver bridge\n");
 		goto err_put_node;
 	}
 
 	/* HDMI Encoder Bridge */
+	meson_encoder_hdmi->bridge.funcs = &meson_encoder_hdmi_bridge_funcs;
 	meson_encoder_hdmi->bridge.of_node = priv->dev->of_node;
 	meson_encoder_hdmi->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
 	meson_encoder_hdmi->bridge.interlace_allowed = true;

@@ -321,18 +321,6 @@ enum npc_kpu_lb_lflag {
 	NPC_F_LB_L_FDSA,
 };
 
-enum npc_cn20k_kpu_lc_uflag {
-	NPC_CN20K_F_LC_U_MPLS_IN_IP = 0x20,
-	NPC_CN20K_F_LC_U_IP6_TUN_IP6 = 0x40,
-	NPC_CN20K_F_LC_U_IP6_MPLS_IN_IP = 0x80,
-};
-
-enum npc_cn20k_kpu_lc_lflag {
-	NPC_CN20K_F_LC_L_IP_FRAG = 2,
-	NPC_CN20K_F_LC_L_IP6_FRAG,
-	NPC_CN20K_F_LC_L_6TO4,
-};
-
 enum npc_kpu_lc_uflag {
 	NPC_F_LC_U_UNK_PROTO = 0x10,
 	NPC_F_LC_U_IP_FRAG = 0x20,
@@ -501,7 +489,7 @@ enum NPC_ERRLEV_E {
 		0, 0, 0, 0,			\
 	}
 
-static struct npc_kpu_profile_action ikpu_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action ikpu_action_entries[] = {
 	{
 		NPC_ERRLEV_RE, NPC_EC_NOERR,
 		12, 16, 20, 0, 0,
@@ -1080,7 +1068,7 @@ static struct npc_kpu_profile_action ikpu_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu1_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu1_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -1890,7 +1878,7 @@ static struct npc_kpu_profile_cam kpu1_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu2_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu2_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -2835,7 +2823,7 @@ static struct npc_kpu_profile_cam kpu2_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu3_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu3_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -3816,7 +3804,7 @@ static struct npc_kpu_profile_cam kpu3_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu4_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu4_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -4131,7 +4119,7 @@ static struct npc_kpu_profile_cam kpu4_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu5_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu5_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -5184,7 +5172,7 @@ static struct npc_kpu_profile_cam kpu5_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu6_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu6_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -5913,7 +5901,7 @@ static struct npc_kpu_profile_cam kpu6_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu7_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu7_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -6264,7 +6252,7 @@ static struct npc_kpu_profile_cam kpu7_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu8_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu8_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -7101,7 +7089,7 @@ static struct npc_kpu_profile_cam kpu8_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu9_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu9_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -7587,7 +7575,7 @@ static struct npc_kpu_profile_cam kpu9_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu10_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu10_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -7758,7 +7746,7 @@ static struct npc_kpu_profile_cam kpu10_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu11_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu11_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8073,7 +8061,7 @@ static struct npc_kpu_profile_cam kpu11_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu12_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu12_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8334,7 +8322,7 @@ static struct npc_kpu_profile_cam kpu12_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu13_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu13_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8352,7 +8340,7 @@ static struct npc_kpu_profile_cam kpu13_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu14_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu14_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8370,7 +8358,7 @@ static struct npc_kpu_profile_cam kpu14_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu15_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu15_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8577,7 +8565,7 @@ static struct npc_kpu_profile_cam kpu15_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_cam kpu16_cam_entries[] __maybe_unused = {
+static struct npc_kpu_profile_cam kpu16_cam_entries[] = {
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
 	NPC_KPU_NOP_CAM,
@@ -8640,7 +8628,7 @@ static struct npc_kpu_profile_cam kpu16_cam_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu1_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu1_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -9380,7 +9368,7 @@ static struct npc_kpu_profile_action kpu1_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu2_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu2_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -10221,7 +10209,7 @@ static struct npc_kpu_profile_action kpu2_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu3_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu3_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -11094,7 +11082,7 @@ static struct npc_kpu_profile_action kpu3_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu4_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu4_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -11375,7 +11363,7 @@ static struct npc_kpu_profile_action kpu4_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu5_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu5_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -12312,7 +12300,7 @@ static struct npc_kpu_profile_action kpu5_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu6_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu6_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -12961,7 +12949,7 @@ static struct npc_kpu_profile_action kpu6_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu7_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu7_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -13274,7 +13262,7 @@ static struct npc_kpu_profile_action kpu7_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu8_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu8_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -14019,7 +14007,7 @@ static struct npc_kpu_profile_action kpu8_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu9_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu9_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -14452,7 +14440,7 @@ static struct npc_kpu_profile_action kpu9_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu10_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu10_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -14605,7 +14593,7 @@ static struct npc_kpu_profile_action kpu10_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu11_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu11_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -14886,7 +14874,7 @@ static struct npc_kpu_profile_action kpu11_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu12_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu12_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -15119,7 +15107,7 @@ static struct npc_kpu_profile_action kpu12_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu13_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu13_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -15136,7 +15124,7 @@ static struct npc_kpu_profile_action kpu13_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu14_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu14_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -15153,7 +15141,7 @@ static struct npc_kpu_profile_action kpu14_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu15_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu15_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -15338,7 +15326,7 @@ static struct npc_kpu_profile_action kpu15_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile_action kpu16_action_entries[] __maybe_unused = {
+static struct npc_kpu_profile_action kpu16_action_entries[] = {
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
 	NPC_KPU_NOP_ACTION,
@@ -15395,7 +15383,7 @@ static struct npc_kpu_profile_action kpu16_action_entries[] __maybe_unused = {
 	},
 };
 
-static struct npc_kpu_profile npc_kpu_profiles[] __maybe_unused = {
+static struct npc_kpu_profile npc_kpu_profiles[] = {
 	{
 		ARRAY_SIZE(kpu1_cam_entries),
 		ARRAY_SIZE(kpu1_action_entries),
@@ -15494,7 +15482,7 @@ static struct npc_kpu_profile npc_kpu_profiles[] __maybe_unused = {
 	},
 };
 
-static struct npc_lt_def_cfg npc_lt_defaults __maybe_unused = {
+static struct npc_lt_def_cfg npc_lt_defaults = {
 	.rx_ol2 = {
 		.lid = NPC_LID_LA,
 		.ltype_match = NPC_LT_LA_ETHER,
@@ -15616,7 +15604,7 @@ static struct npc_lt_def_cfg npc_lt_defaults __maybe_unused = {
 	},
 };
 
-static struct npc_mcam_kex npc_mkex_default __maybe_unused = {
+static struct npc_mcam_kex npc_mkex_default = {
 	.mkex_sign = MKEX_SIGN,
 	.name = "default",
 	.kpu_version = NPC_KPU_PROFILE_VER,

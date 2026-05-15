@@ -5,7 +5,6 @@
 #include <perf/evsel.h>
 #include <perf/cpumap.h>
 #include <perf/threadmap.h>
-#include <linux/hash.h>
 #include <linux/list.h>
 #include <internal/evsel.h>
 #include <linux/zalloc.h>
@@ -24,7 +23,6 @@ void perf_evsel__init(struct perf_evsel *evsel, struct perf_event_attr *attr,
 		      int idx)
 {
 	INIT_LIST_HEAD(&evsel->node);
-	INIT_LIST_HEAD(&evsel->per_stream_periods);
 	evsel->attr = *attr;
 	evsel->idx  = idx;
 	evsel->leader = evsel;
@@ -40,19 +38,8 @@ struct perf_evsel *perf_evsel__new(struct perf_event_attr *attr)
 	return evsel;
 }
 
-void perf_evsel__exit(struct perf_evsel *evsel)
-{
-	assert(evsel->fd == NULL);  /* If not fds were not closed. */
-	assert(evsel->mmap == NULL); /* If not munmap wasn't called. */
-	assert(evsel->sample_id == NULL); /* If not free_id wasn't called. */
-	perf_cpu_map__put(evsel->cpus);
-	perf_cpu_map__put(evsel->pmu_cpus);
-	perf_thread_map__put(evsel->threads);
-}
-
 void perf_evsel__delete(struct perf_evsel *evsel)
 {
-	perf_evsel__exit(evsel);
 	free(evsel);
 }
 
@@ -127,8 +114,7 @@ int perf_evsel__open(struct perf_evsel *evsel, struct perf_cpu_map *cpus,
 		     struct perf_thread_map *threads)
 {
 	struct perf_cpu cpu;
-	unsigned int idx;
-	int thread, err = 0;
+	int idx, thread, err = 0;
 
 	if (cpus == NULL) {
 		static struct perf_cpu_map *empty_cpu_map;
@@ -461,7 +447,7 @@ int perf_evsel__enable_cpu(struct perf_evsel *evsel, int cpu_map_idx)
 int perf_evsel__enable_thread(struct perf_evsel *evsel, int thread)
 {
 	struct perf_cpu cpu __maybe_unused;
-	unsigned int idx;
+	int idx;
 	int err;
 
 	perf_cpu_map__for_each_cpu(cpu, idx, evsel->cpus) {
@@ -500,13 +486,12 @@ int perf_evsel__disable(struct perf_evsel *evsel)
 
 int perf_evsel__apply_filter(struct perf_evsel *evsel, const char *filter)
 {
-	int err = 0;
+	int err = 0, i;
 
-	for (unsigned int i = 0; i < perf_cpu_map__nr(evsel->cpus) && !err; i++) {
+	for (i = 0; i < perf_cpu_map__nr(evsel->cpus) && !err; i++)
 		err = perf_evsel__run_ioctl(evsel,
 				     PERF_EVENT_IOC_SET_FILTER,
 				     (void *)filter, i);
-	}
 	return err;
 }
 
@@ -546,56 +531,10 @@ int perf_evsel__alloc_id(struct perf_evsel *evsel, int ncpus, int nthreads)
 
 void perf_evsel__free_id(struct perf_evsel *evsel)
 {
-	struct perf_sample_id_period *pos, *n;
-
 	xyarray__delete(evsel->sample_id);
 	evsel->sample_id = NULL;
 	zfree(&evsel->id);
 	evsel->ids = 0;
-
-	perf_evsel_for_each_per_thread_period_safe(evsel, n, pos) {
-		list_del_init(&pos->node);
-		free(pos);
-	}
-}
-
-bool perf_evsel__attr_has_per_thread_sample_period(struct perf_evsel *evsel)
-{
-	return (evsel->attr.sample_type & PERF_SAMPLE_READ) &&
-		(evsel->attr.sample_type & PERF_SAMPLE_TID) &&
-		evsel->attr.inherit;
-}
-
-u64 *perf_sample_id__get_period_storage(struct perf_sample_id *sid, u32 tid, bool per_thread)
-{
-	struct hlist_head *head;
-	struct perf_sample_id_period *res;
-	int hash;
-
-	if (!per_thread)
-		return &sid->period;
-
-	hash = hash_32(tid, PERF_SAMPLE_ID__HLIST_BITS);
-	head = &sid->periods[hash];
-
-	hlist_for_each_entry(res, head, hnode)
-		if (res->tid == tid)
-			return &res->period;
-
-	if (sid->evsel == NULL)
-		return NULL;
-
-	res = zalloc(sizeof(struct perf_sample_id_period));
-	if (res == NULL)
-		return NULL;
-
-	INIT_LIST_HEAD(&res->node);
-	res->tid = tid;
-
-	list_add_tail(&res->node, &sid->evsel->per_stream_periods);
-	hlist_add_head(&res->hnode, &sid->periods[hash]);
-
-	return &res->period;
 }
 
 void perf_counts_values__scale(struct perf_counts_values *count,

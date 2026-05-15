@@ -160,7 +160,7 @@ static int __wait_for_resp(struct bnxt_qplib_rcfw *rcfw, u16 cookie)
 		wait_event_timeout(cmdq->waitq,
 				   !crsqe->is_in_used ||
 				   test_bit(ERR_DEVICE_DETACHED, &cmdq->flags),
-				   secs_to_jiffies(rcfw->max_timeout));
+				   msecs_to_jiffies(rcfw->max_timeout * 1000));
 
 		if (!crsqe->is_in_used)
 			return 0;
@@ -186,7 +186,7 @@ static int __wait_for_resp(struct bnxt_qplib_rcfw *rcfw, u16 cookie)
  * wait for command completion. Maximum holding interval is 8 second.
  *
  * Returns:
- * -ETIMEDOUT if command is not completed in specific time interval.
+ * -ETIMEOUT if command is not completed in specific time interval.
  * 0 if command is completed by firmware.
  */
 static int __block_for_resp(struct bnxt_qplib_rcfw *rcfw, u16 cookie)
@@ -366,7 +366,6 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw,
 	wmb();
 	writel(cmdq_prod, cmdq->cmdq_mbox.prod);
 	writel(RCFW_CMDQ_TRIG_VAL, cmdq->cmdq_mbox.db);
-	print_hex_dump_bytes("req: ", DUMP_PREFIX_OFFSET, msg->req, msg->req_sz);
 	spin_unlock_bh(&hwq->lock);
 	/* Return the CREQ response pointer */
 	return 0;
@@ -382,7 +381,7 @@ static int __send_message(struct bnxt_qplib_rcfw *rcfw,
  * This function can not be called from non-sleepable context.
  *
  * Returns:
- * -ETIMEDOUT if command is not completed in specific time interval.
+ * -ETIMEOUT if command is not completed in specific time interval.
  * 0 if command is completed by firmware.
  */
 static int __poll_for_resp(struct bnxt_qplib_rcfw *rcfw, u16 cookie)
@@ -632,7 +631,6 @@ static int bnxt_qplib_process_qp_event(struct bnxt_qplib_rcfw *rcfw,
 	int rc = 0;
 
 	pdev = rcfw->pdev;
-	print_hex_dump_bytes("event: ", DUMP_PREFIX_OFFSET, qp_event, sizeof(*qp_event));
 	switch (qp_event->event) {
 	case CREQ_QP_EVENT_EVENT_QP_ERROR_NOTIFICATION:
 		err_event = (struct creq_qp_error_notification *)qp_event;
@@ -834,7 +832,6 @@ int bnxt_qplib_init_rcfw(struct bnxt_qplib_rcfw *rcfw,
 	struct creq_initialize_fw_resp resp = {};
 	struct cmdq_initialize_fw req = {};
 	struct bnxt_qplib_cmdqmsg msg = {};
-	u16 flags = 0;
 	u8 pgsz, lvl;
 	int rc;
 
@@ -853,8 +850,10 @@ int bnxt_qplib_init_rcfw(struct bnxt_qplib_rcfw *rcfw,
 	 * shall setup this area for VF. Skipping the
 	 * HW programming
 	 */
-	if (is_virtfn || bnxt_qplib_is_chip_gen_p5_p7(rcfw->res->cctx))
+	if (is_virtfn)
 		goto skip_ctx_setup;
+	if (bnxt_qplib_is_chip_gen_p5_p7(rcfw->res->cctx))
+		goto config_vf_res;
 
 	lvl = ctx->qpc_tbl.level;
 	pgsz = bnxt_qplib_base_pg_size(&ctx->qpc_tbl);
@@ -898,18 +897,16 @@ int bnxt_qplib_init_rcfw(struct bnxt_qplib_rcfw *rcfw,
 	req.number_of_srq = cpu_to_le32(ctx->srqc_tbl.max_elements);
 	req.number_of_cq = cpu_to_le32(ctx->cq_tbl.max_elements);
 
+config_vf_res:
+	req.max_qp_per_vf = cpu_to_le32(ctx->vf_res.max_qp_per_vf);
+	req.max_mrw_per_vf = cpu_to_le32(ctx->vf_res.max_mrw_per_vf);
+	req.max_srq_per_vf = cpu_to_le32(ctx->vf_res.max_srq_per_vf);
+	req.max_cq_per_vf = cpu_to_le32(ctx->vf_res.max_cq_per_vf);
+	req.max_gid_per_vf = cpu_to_le32(ctx->vf_res.max_gid_per_vf);
+
 skip_ctx_setup:
 	if (BNXT_RE_HW_RETX(rcfw->res->dattr->dev_cap_flags))
-		flags |= CMDQ_INITIALIZE_FW_FLAGS_HW_REQUESTER_RETX_SUPPORTED;
-	if (_is_optimize_modify_qp_supported(rcfw->res->dattr->dev_cap_flags2))
-		flags |= CMDQ_INITIALIZE_FW_FLAGS_OPTIMIZE_MODIFY_QP_SUPPORTED;
-	if (rcfw->res->en_dev->flags & BNXT_EN_FLAG_ROCE_VF_RES_MGMT)
-		flags |= CMDQ_INITIALIZE_FW_FLAGS_L2_VF_RESOURCE_MGMT;
-	if (bnxt_qplib_roce_mirror_supported(rcfw->res->cctx)) {
-		flags |= CMDQ_INITIALIZE_FW_FLAGS_MIRROR_ON_ROCE_SUPPORTED;
-		rcfw->roce_mirror = true;
-	}
-	req.flags |= cpu_to_le16(flags);
+		req.flags |= cpu_to_le16(CMDQ_INITIALIZE_FW_FLAGS_HW_REQUESTER_RETX_SUPPORTED);
 	req.stat_ctx_id = cpu_to_le32(ctx->stats.fw_id);
 	bnxt_qplib_fill_cmdqmsg(&msg, &req, &resp, NULL, sizeof(req), sizeof(resp), 0);
 	rc = bnxt_qplib_rcfw_send_message(rcfw, &msg);
@@ -921,6 +918,7 @@ skip_ctx_setup:
 
 void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 {
+	kfree(rcfw->qp_tbl);
 	kfree(rcfw->crsqe_tbl);
 	bnxt_qplib_free_hwq(rcfw->res, &rcfw->cmdq.hwq);
 	bnxt_qplib_free_hwq(rcfw->res, &rcfw->creq.hwq);
@@ -929,7 +927,8 @@ void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 
 int bnxt_qplib_alloc_rcfw_channel(struct bnxt_qplib_res *res,
 				  struct bnxt_qplib_rcfw *rcfw,
-				  struct bnxt_qplib_ctx *ctx)
+				  struct bnxt_qplib_ctx *ctx,
+				  int qp_tbl_sz)
 {
 	struct bnxt_qplib_hwq_attr hwq_attr = {};
 	struct bnxt_qplib_sg_info sginfo = {};
@@ -968,10 +967,17 @@ int bnxt_qplib_alloc_rcfw_channel(struct bnxt_qplib_res *res,
 		goto fail;
 	}
 
-	rcfw->crsqe_tbl = kzalloc_objs(*rcfw->crsqe_tbl, cmdq->hwq.max_elements);
+	rcfw->crsqe_tbl = kcalloc(cmdq->hwq.max_elements,
+				  sizeof(*rcfw->crsqe_tbl), GFP_KERNEL);
 	if (!rcfw->crsqe_tbl)
 		goto fail;
 
+	/* Allocate one extra to hold the QP1 entries */
+	rcfw->qp_tbl_size = qp_tbl_sz + 1;
+	rcfw->qp_tbl = kcalloc(rcfw->qp_tbl_size, sizeof(struct bnxt_qplib_qp_node),
+			       GFP_KERNEL);
+	if (!rcfw->qp_tbl)
+		goto fail;
 	spin_lock_init(&rcfw->tbl_lock);
 
 	rcfw->max_timeout = res->cctx->hwrm_cmd_max_timeout;

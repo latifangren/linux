@@ -99,7 +99,7 @@ void *dmar_alloc_dev_scope(void *start, void *end, int *cnt)
 	if (*cnt == 0)
 		return NULL;
 
-	return kzalloc_objs(struct dmar_dev_scope, *cnt);
+	return kcalloc(*cnt, sizeof(struct dmar_dev_scope), GFP_KERNEL);
 }
 
 void dmar_free_dev_scope(struct dmar_dev_scope **devices, int *cnt)
@@ -899,8 +899,8 @@ dmar_validate_one_drhd(struct acpi_dmar_header *entry, void *arg)
 		return -EINVAL;
 	}
 
-	cap = readq(addr + DMAR_CAP_REG);
-	ecap = readq(addr + DMAR_ECAP_REG);
+	cap = dmar_readq(addr + DMAR_CAP_REG);
+	ecap = dmar_readq(addr + DMAR_ECAP_REG);
 
 	if (arg)
 		iounmap(addr);
@@ -935,10 +935,13 @@ void __init detect_intel_iommu(void)
 		pci_request_acs();
 	}
 
+#ifdef CONFIG_X86
 	if (!ret) {
 		x86_init.iommu.iommu_init = intel_iommu_init;
 		x86_platform.iommu_shutdown = intel_iommu_shutdown;
 	}
+
+#endif
 
 	if (dmar_tbl) {
 		acpi_put_table(dmar_tbl);
@@ -982,8 +985,8 @@ static int map_iommu(struct intel_iommu *iommu, struct dmar_drhd_unit *drhd)
 		goto release;
 	}
 
-	iommu->cap = readq(iommu->reg + DMAR_CAP_REG);
-	iommu->ecap = readq(iommu->reg + DMAR_ECAP_REG);
+	iommu->cap = dmar_readq(iommu->reg + DMAR_CAP_REG);
+	iommu->ecap = dmar_readq(iommu->reg + DMAR_ECAP_REG);
 
 	if (iommu->cap == (uint64_t)-1 && iommu->ecap == (uint64_t)-1) {
 		err = -EINVAL;
@@ -1017,8 +1020,8 @@ static int map_iommu(struct intel_iommu *iommu, struct dmar_drhd_unit *drhd)
 		int i;
 
 		for (i = 0; i < DMA_MAX_NUM_ECMDCAP; i++) {
-			iommu->ecmdcap[i] = readq(iommu->reg + DMAR_ECCAP_REG +
-						  i * DMA_ECMD_REG_STEP);
+			iommu->ecmdcap[i] = dmar_readq(iommu->reg + DMAR_ECCAP_REG +
+						       i * DMA_ECMD_REG_STEP);
 		}
 	}
 
@@ -1046,7 +1049,7 @@ static int alloc_iommu(struct dmar_drhd_unit *drhd)
 		return -EINVAL;
 	}
 
-	iommu = kzalloc_obj(*iommu);
+	iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
 	if (!iommu)
 		return -ENOMEM;
 
@@ -1057,7 +1060,7 @@ static int alloc_iommu(struct dmar_drhd_unit *drhd)
 		err = iommu->seq_id;
 		goto error;
 	}
-	snprintf(iommu->name, sizeof(iommu->name), "dmar%d", iommu->seq_id);
+	sprintf(iommu->name, "dmar%d", iommu->seq_id);
 
 	err = map_iommu(iommu, drhd);
 	if (err) {
@@ -1096,9 +1099,6 @@ static int alloc_iommu(struct dmar_drhd_unit *drhd)
 	spin_lock_init(&iommu->device_rbtree_lock);
 	mutex_init(&iommu->iopf_lock);
 	iommu->node = NUMA_NO_NODE;
-	spin_lock_init(&iommu->lock);
-	ida_init(&iommu->domain_ida);
-	mutex_init(&iommu->did_lock);
 
 	ver = readl(iommu->reg + DMAR_VER_REG);
 	pr_info("%s: reg_base_addr %llx ver %d:%d cap %llx ecap %llx\n",
@@ -1187,7 +1187,7 @@ static void free_iommu(struct intel_iommu *iommu)
 	}
 
 	if (iommu->qi) {
-		iommu_free_pages(iommu->qi->desc);
+		iommu_free_page(iommu->qi->desc);
 		kfree(iommu->qi->desc_status);
 		kfree(iommu->qi);
 	}
@@ -1195,7 +1195,6 @@ static void free_iommu(struct intel_iommu *iommu)
 	if (iommu->reg)
 		unmap_iommu(iommu);
 
-	ida_destroy(&iommu->domain_ida);
 	ida_free(&dmar_seq_ids, iommu->seq_id);
 	kfree(iommu);
 }
@@ -1239,8 +1238,8 @@ static const char *qi_type_string(u8 type)
 
 static void qi_dump_fault(struct intel_iommu *iommu, u32 fault)
 {
-	unsigned int head = readl(iommu->reg + DMAR_IQH_REG);
-	u64 iqe_err = readq(iommu->reg + DMAR_IQER_REG);
+	unsigned int head = dmar_readl(iommu->reg + DMAR_IQH_REG);
+	u64 iqe_err = dmar_readq(iommu->reg + DMAR_IQER_REG);
 	struct qi_desc *desc = iommu->qi->desc + head;
 
 	if (fault & DMA_FSTS_IQE)
@@ -1321,7 +1320,7 @@ static int qi_check_fault(struct intel_iommu *iommu, int index, int wait_index)
 		 * SID field is valid only when the ITE field is Set in FSTS_REG
 		 * see Intel VT-d spec r4.1, section 11.4.9.9
 		 */
-		iqe_err = readq(iommu->reg + DMAR_IQER_REG);
+		iqe_err = dmar_readq(iommu->reg + DMAR_IQER_REG);
 		ite_sid = DMAR_IQER_REG_ITESID(iqe_err);
 
 		writel(DMA_FSTS_ITE, iommu->reg + DMAR_FSTS_REG);
@@ -1550,12 +1549,23 @@ void qi_flush_dev_iotlb(struct intel_iommu *iommu, u16 sid, u16 pfsid,
 	qi_submit_sync(iommu, &desc, 1, 0);
 }
 
-/* PASID-selective IOTLB invalidation */
-void qi_flush_piotlb_all(struct intel_iommu *iommu, u16 did, u32 pasid)
+/* PASID-based IOTLB invalidation */
+void qi_flush_piotlb(struct intel_iommu *iommu, u16 did, u32 pasid, u64 addr,
+		     unsigned long npages, bool ih)
 {
-	struct qi_desc desc = {};
+	struct qi_desc desc = {.qw2 = 0, .qw3 = 0};
 
-	qi_desc_piotlb_all(did, pasid, &desc);
+	/*
+	 * npages == -1 means a PASID-selective invalidation, otherwise,
+	 * a positive value for Page-selective-within-PASID invalidation.
+	 * 0 is not a valid input.
+	 */
+	if (WARN_ON(!npages)) {
+		pr_err("Invalid input npages = %ld\n", npages);
+		return;
+	}
+
+	qi_desc_piotlb(did, pasid, addr, npages, ih, &desc);
 	qi_submit_sync(iommu, &desc, 1, 0);
 }
 
@@ -1650,7 +1660,7 @@ static void __dmar_enable_qi(struct intel_iommu *iommu)
 	/* write zero to the tail reg */
 	writel(0, iommu->reg + DMAR_IQT_REG);
 
-	writeq(val, iommu->reg + DMAR_IQA_REG);
+	dmar_writeq(iommu->reg + DMAR_IQA_REG, val);
 
 	iommu->gcmd |= DMA_GCMD_QIE;
 	writel(iommu->gcmd, iommu->reg + DMAR_GCMD_REG);
@@ -1670,6 +1680,7 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 {
 	struct q_inval *qi;
 	void *desc;
+	int order;
 
 	if (!ecap_qis(iommu->ecap))
 		return -ENOENT;
@@ -1680,7 +1691,7 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 	if (iommu->qi)
 		return 0;
 
-	iommu->qi = kmalloc_obj(*qi, GFP_ATOMIC);
+	iommu->qi = kmalloc(sizeof(*qi), GFP_ATOMIC);
 	if (!iommu->qi)
 		return -ENOMEM;
 
@@ -1690,9 +1701,8 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 	 * Need two pages to accommodate 256 descriptors of 256 bits each
 	 * if the remapping hardware supports scalable mode translation.
 	 */
-	desc = iommu_alloc_pages_node_sz(iommu->node, GFP_ATOMIC,
-					 ecap_smts(iommu->ecap) ? SZ_8K :
-								  SZ_4K);
+	order = ecap_smts(iommu->ecap) ? 1 : 0;
+	desc = iommu_alloc_pages_node(iommu->node, GFP_ATOMIC, order);
 	if (!desc) {
 		kfree(qi);
 		iommu->qi = NULL;
@@ -1701,9 +1711,9 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 
 	qi->desc = desc;
 
-	qi->desc_status = kzalloc_objs(int, QI_LENGTH, GFP_ATOMIC);
+	qi->desc_status = kcalloc(QI_LENGTH, sizeof(int), GFP_ATOMIC);
 	if (!qi->desc_status) {
-		iommu_free_pages(qi->desc);
+		iommu_free_page(qi->desc);
 		kfree(qi);
 		iommu->qi = NULL;
 		return -ENOMEM;
@@ -1884,6 +1894,19 @@ void dmar_msi_write(int irq, struct msi_msg *msg)
 	raw_spin_unlock_irqrestore(&iommu->register_lock, flag);
 }
 
+void dmar_msi_read(int irq, struct msi_msg *msg)
+{
+	struct intel_iommu *iommu = irq_get_handler_data(irq);
+	int reg = dmar_msi_reg(iommu, irq);
+	unsigned long flag;
+
+	raw_spin_lock_irqsave(&iommu->register_lock, flag);
+	msg->data = readl(iommu->reg + reg + 4);
+	msg->address_lo = readl(iommu->reg + reg + 8);
+	msg->address_hi = readl(iommu->reg + reg + 12);
+	raw_spin_unlock_irqrestore(&iommu->register_lock, flag);
+}
+
 static int dmar_fault_do_one(struct intel_iommu *iommu, int type,
 		u8 fault_reason, u32 pasid, u16 source_id,
 		unsigned long long addr)
@@ -1969,8 +1992,8 @@ irqreturn_t dmar_fault(int irq, void *dev_id)
 			source_id = dma_frcd_source_id(data);
 
 			pasid_present = dma_frcd_pasid_present(data);
-			guest_addr = readq(iommu->reg + reg +
-					   fault_index * PRIMARY_FAULT_REG_LEN);
+			guest_addr = dmar_readq(iommu->reg + reg +
+					fault_index * PRIMARY_FAULT_REG_LEN);
 			guest_addr = dma_frcd_page_addr(guest_addr);
 		}
 

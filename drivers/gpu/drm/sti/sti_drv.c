@@ -13,7 +13,6 @@
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 
-#include <drm/clients/drm_client_setup.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_debugfs.h>
@@ -22,7 +21,6 @@
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_of.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 
 #include "sti_drv.h"
@@ -30,6 +28,7 @@
 
 #define DRIVER_NAME	"sti"
 #define DRIVER_DESC	"STMicroelectronics SoC DRM"
+#define DRIVER_DATE	"20140601"
 #define DRIVER_MAJOR	1
 #define DRIVER_MINOR	0
 
@@ -137,12 +136,12 @@ static const struct drm_driver sti_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
 	.fops = &sti_driver_fops,
 	DRM_GEM_DMA_DRIVER_OPS,
-	DRM_FBDEV_DMA_DRIVER_OPS,
 
 	.debugfs_init = sti_drm_dbg_init,
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
+	.date = DRIVER_DATE,
 	.major = DRIVER_MAJOR,
 	.minor = DRIVER_MINOR,
 };
@@ -151,7 +150,7 @@ static int sti_init(struct drm_device *ddev)
 {
 	struct sti_private *private;
 
-	private = kzalloc_obj(*private);
+	private = kzalloc(sizeof(*private), GFP_KERNEL);
 	if (!private)
 		return -ENOMEM;
 
@@ -204,7 +203,7 @@ static int sti_bind(struct device *dev)
 
 	drm_mode_config_reset(ddev);
 
-	drm_client_setup(ddev, NULL);
+	drm_fbdev_dma_setup(ddev, 32);
 
 	return 0;
 
@@ -232,15 +231,23 @@ static const struct component_master_ops sti_ops = {
 static int sti_platform_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	int ret;
+	struct device_node *node = dev->of_node;
+	struct device_node *child_np;
+	struct component_match *match = NULL;
 
-	ret = dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
+	dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
 
 	devm_of_platform_populate(dev);
 
-	return drm_of_component_probe(dev, component_compare_of, &sti_ops);
+	child_np = of_get_next_available_child(node, NULL);
+
+	while (child_np) {
+		drm_of_component_match_add(dev, &match, component_compare_of,
+					   child_np);
+		child_np = of_get_next_available_child(node, child_np);
+	}
+
+	return component_master_add_with_match(dev, &sti_ops, match);
 }
 
 static void sti_platform_remove(struct platform_device *pdev)
@@ -261,7 +268,7 @@ MODULE_DEVICE_TABLE(of, sti_dt_ids);
 
 static struct platform_driver sti_platform_driver = {
 	.probe = sti_platform_probe,
-	.remove = sti_platform_remove,
+	.remove_new = sti_platform_remove,
 	.shutdown = sti_platform_shutdown,
 	.driver = {
 		.name = DRIVER_NAME,

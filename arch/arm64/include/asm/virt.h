@@ -40,13 +40,8 @@
  */
 #define HVC_FINALISE_EL2	3
 
-/*
- * HVC_GET_ICH_VTR_EL2 - Retrieve the ICH_VTR_EL2 value
- */
-#define HVC_GET_ICH_VTR_EL2	4
-
 /* Max number of HYP stub hypercalls */
-#define HVC_STUB_HCALL_NR 5
+#define HVC_STUB_HCALL_NR 4
 
 /* Error returned when an invalid stub number is passed into x0 */
 #define HVC_STUB_ERR	0xbadca11
@@ -61,7 +56,7 @@
  */
 #define BOOT_CPU_FLAG_E2H	BIT_ULL(32)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #include <asm/ptrace.h>
 #include <asm/sections.h>
@@ -72,8 +67,7 @@
  * __boot_cpu_mode records what mode CPUs were booted in.
  * A correctly-implemented bootloader must start all CPUs in the same mode:
  * In this case, both 32bit halves of __boot_cpu_mode will contain the
- * same value (either BOOT_CPU_MODE_EL1 if booted in EL1, BOOT_CPU_MODE_EL2 if
- * booted in EL2).
+ * same value (either 0 if booted in EL1, BOOT_CPU_MODE_EL2 if booted in EL2).
  *
  * Should the bootloader fail to do this, the two values will be different.
  * This allows the kernel to flag an error when the secondaries have come up.
@@ -93,15 +87,6 @@ static inline bool is_pkvm_initialized(void)
 	return IS_ENABLED(CONFIG_KVM) &&
 	       static_branch_likely(&kvm_protected_mode_initialized);
 }
-
-#ifdef CONFIG_KVM
-bool pkvm_force_reclaim_guest_page(phys_addr_t phys);
-#else
-static inline bool pkvm_force_reclaim_guest_page(phys_addr_t phys)
-{
-	return false;
-}
-#endif
 
 /* Reports the availability of HYP mode */
 static inline bool is_hyp_mode_available(void)
@@ -175,6 +160,6 @@ static inline bool is_hyp_nvhe(void)
 	return is_hyp_mode_available() && !is_kernel_in_hyp_mode();
 }
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* ! __ASM__VIRT_H */

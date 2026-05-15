@@ -16,7 +16,6 @@
  * on the formats implemented in this file.
  */
 
-#include <linux/hex.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ctype.h>

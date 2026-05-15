@@ -2,11 +2,10 @@
 x86 IOMMU Support
 =================
 
-The architecture specs can be obtained from the vendor websites.
-Search for the following documents to obtain the latest versions:
+The architecture specs can be obtained from the below locations.
 
-- Intel: Intel Virtualization Technology for Directed I/O Architecture Specification (ID: D51397)
-- AMD: AMD I/O Virtualization Technology (IOMMU) Specification (ID: 48882)
+- Intel: http://www.intel.com/content/dam/www/public/us/en/documents/product-specifications/vt-directed-io-spec.pdf
+- AMD: https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/specifications/48882_3_07_PUB.pdf
 
 This guide gives a quick cheat sheet for some basic understanding.
 

@@ -10,7 +10,6 @@
 #include <linux/irqchip/riscv-aplic.h>
 #include <linux/kvm_host.h>
 #include <linux/math.h>
-#include <linux/nospec.h>
 #include <linux/spinlock.h>
 #include <linux/swab.h>
 #include <kvm/iodev.h>
@@ -46,7 +45,7 @@ static u32 aplic_read_sourcecfg(struct aplic *aplic, u32 irq)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return 0;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 	ret = irqd->sourcecfg;
@@ -62,7 +61,7 @@ static void aplic_write_sourcecfg(struct aplic *aplic, u32 irq, u32 val)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	if (val & APLIC_SOURCECFG_D)
 		val = 0;
@@ -82,7 +81,7 @@ static u32 aplic_read_target(struct aplic *aplic, u32 irq)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return 0;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 	ret = irqd->target;
@@ -98,7 +97,7 @@ static void aplic_write_target(struct aplic *aplic, u32 irq, u32 val)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	val &= APLIC_TARGET_EIID_MASK |
 	       (APLIC_TARGET_HART_IDX_MASK << APLIC_TARGET_HART_IDX_SHIFT) |
@@ -117,7 +116,7 @@ static bool aplic_read_pending(struct aplic *aplic, u32 irq)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return false;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 	ret = (irqd->state & APLIC_IRQ_STATE_PENDING) ? true : false;
@@ -133,7 +132,7 @@ static void aplic_write_pending(struct aplic *aplic, u32 irq, bool pending)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 
@@ -171,7 +170,7 @@ static bool aplic_read_enabled(struct aplic *aplic, u32 irq)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return false;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 	ret = (irqd->state & APLIC_IRQ_STATE_ENABLED) ? true : false;
@@ -187,7 +186,7 @@ static void aplic_write_enabled(struct aplic *aplic, u32 irq, bool enabled)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 	if (enabled)
@@ -206,7 +205,7 @@ static bool aplic_read_input(struct aplic *aplic, u32 irq)
 
 	if (!irq || aplic->nr_irqs <= irq)
 		return false;
-	irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+	irqd = &aplic->irqs[irq];
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
 
@@ -255,7 +254,7 @@ static void aplic_update_irq_range(struct kvm *kvm, u32 first, u32 last)
 	for (irq = first; irq <= last; irq++) {
 		if (!irq || aplic->nr_irqs <= irq)
 			continue;
-		irqd = &aplic->irqs[array_index_nospec(irq, aplic->nr_irqs)];
+		irqd = &aplic->irqs[irq];
 
 		raw_spin_lock_irqsave(&irqd->lock, flags);
 
@@ -284,7 +283,7 @@ int kvm_riscv_aia_aplic_inject(struct kvm *kvm, u32 source, bool level)
 
 	if (!aplic || !source || (aplic->nr_irqs <= source))
 		return -ENODEV;
-	irqd = &aplic->irqs[array_index_nospec(source, aplic->nr_irqs)];
+	irqd = &aplic->irqs[source];
 	ie = (aplic->domaincfg & APLIC_DOMAINCFG_IE) ? true : false;
 
 	raw_spin_lock_irqsave(&irqd->lock, flags);
@@ -581,7 +580,7 @@ int kvm_riscv_aia_aplic_init(struct kvm *kvm)
 		return 0;
 
 	/* Allocate APLIC global state */
-	aplic = kzalloc_obj(*aplic);
+	aplic = kzalloc(sizeof(*aplic), GFP_KERNEL);
 	if (!aplic)
 		return -ENOMEM;
 	kvm->arch.aia.aplic_state = aplic;
@@ -589,7 +588,8 @@ int kvm_riscv_aia_aplic_init(struct kvm *kvm)
 	/* Setup APLIC IRQs */
 	aplic->nr_irqs = kvm->arch.aia.nr_sources + 1;
 	aplic->nr_words = DIV_ROUND_UP(aplic->nr_irqs, 32);
-	aplic->irqs = kzalloc_objs(*aplic->irqs, aplic->nr_irqs);
+	aplic->irqs = kcalloc(aplic->nr_irqs,
+			      sizeof(*aplic->irqs), GFP_KERNEL);
 	if (!aplic->irqs) {
 		ret = -ENOMEM;
 		goto fail_free_aplic;

@@ -616,6 +616,9 @@ static int exfat_nls_to_ucs2(struct super_block *sb,
 		unilen++;
 	}
 
+	if (p_cstring[i] != '\0')
+		lossy |= NLS_NAME_OVERLEN;
+
 	*uniname = '\0';
 	p_uniname->name_len = unilen;
 	p_uniname->name_hash = exfat_calc_chksum16(upname, unilen << 1, 0,
@@ -786,7 +789,7 @@ int exfat_create_upcase_table(struct super_block *sb)
 			return ret;
 		}
 
-		if (exfat_get_next_cluster(sb, &clu.dir))
+		if (exfat_get_next_cluster(sb, &(clu.dir)))
 			return -EIO;
 	}
 
@@ -798,5 +801,4 @@ load_default:
 void exfat_free_upcase_table(struct exfat_sb_info *sbi)
 {
 	kvfree(sbi->vol_utbl);
-	sbi->vol_utbl = NULL;
 }

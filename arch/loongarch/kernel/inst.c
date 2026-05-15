@@ -4,8 +4,6 @@
  */
 #include <linux/sizes.h>
 #include <linux/uaccess.h>
-#include <linux/set_memory.h>
-#include <linux/stop_machine.h>
 
 #include <asm/cacheflush.h>
 #include <asm/inst.h>
@@ -209,9 +207,6 @@ int larch_insn_write(void *addr, u32 insn)
 	int ret;
 	unsigned long flags = 0;
 
-	if ((unsigned long)addr & 3)
-		return -EINVAL;
-
 	raw_spin_lock_irqsave(&patch_lock, flags);
 	ret = copy_to_kernel_nofault(addr, &insn, LOONGARCH_INSN_SIZE);
 	raw_spin_unlock_irqrestore(&patch_lock, flags);
@@ -224,73 +219,13 @@ int larch_insn_patch_text(void *addr, u32 insn)
 	int ret;
 	u32 *tp = addr;
 
+	if ((unsigned long)tp & 3)
+		return -EINVAL;
+
 	ret = larch_insn_write(tp, insn);
 	if (!ret)
 		flush_icache_range((unsigned long)tp,
 				   (unsigned long)tp + LOONGARCH_INSN_SIZE);
-
-	return ret;
-}
-
-struct insn_copy {
-	void *dst;
-	void *src;
-	size_t len;
-	unsigned int cpu;
-};
-
-static int text_copy_cb(void *data)
-{
-	int ret = 0;
-	struct insn_copy *copy = data;
-
-	if (smp_processor_id() == copy->cpu) {
-		ret = copy_to_kernel_nofault(copy->dst, copy->src, copy->len);
-		if (ret) {
-			pr_err("%s: operation failed\n", __func__);
-			return ret;
-		}
-	}
-
-	flush_icache_range((unsigned long)copy->dst, (unsigned long)copy->dst + copy->len);
-
-	return 0;
-}
-
-int larch_insn_text_copy(void *dst, void *src, size_t len)
-{
-	int ret = 0;
-	int err = 0;
-	size_t start, end;
-	struct insn_copy copy = {
-		.dst = dst,
-		.src = src,
-		.len = len,
-		.cpu = raw_smp_processor_id(),
-	};
-
-	/*
-	 * Ensure copy.cpu won't be hot removed before stop_machine.
-	 * If it is removed nobody will really update the text.
-	 */
-	lockdep_assert_cpus_held();
-
-	start = round_down((size_t)dst, PAGE_SIZE);
-	end   = round_up((size_t)dst + len, PAGE_SIZE);
-
-	err = set_memory_rw(start, (end - start) / PAGE_SIZE);
-	if (err) {
-		pr_info("%s: set_memory_rw() failed\n", __func__);
-		return err;
-	}
-
-	ret = stop_machine_cpuslocked(text_copy_cb, &copy, cpu_online_mask);
-
-	err = set_memory_rox(start, (end - start) / PAGE_SIZE);
-	if (err) {
-		pr_info("%s: set_memory_rox() failed\n", __func__);
-		return err;
-	}
 
 	return ret;
 }
@@ -396,34 +331,6 @@ u32 larch_insn_gen_lu52id(enum loongarch_gpr rd, enum loongarch_gpr rj, int imm)
 	}
 
 	emit_lu52id(&insn, rd, rj, imm);
-
-	return insn.word;
-}
-
-u32 larch_insn_gen_beq(enum loongarch_gpr rd, enum loongarch_gpr rj, int imm)
-{
-	union loongarch_instruction insn;
-
-	if ((imm & 3) || imm < -SZ_128K || imm >= SZ_128K) {
-		pr_warn("The generated beq instruction is out of range.\n");
-		return INSN_BREAK;
-	}
-
-	emit_beq(&insn, rj, rd, imm >> 2);
-
-	return insn.word;
-}
-
-u32 larch_insn_gen_bne(enum loongarch_gpr rd, enum loongarch_gpr rj, int imm)
-{
-	union loongarch_instruction insn;
-
-	if ((imm & 3) || imm < -SZ_128K || imm >= SZ_128K) {
-		pr_warn("The generated bne instruction is out of range.\n");
-		return INSN_BREAK;
-	}
-
-	emit_bne(&insn, rj, rd, imm >> 2);
 
 	return insn.word;
 }

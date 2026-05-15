@@ -94,18 +94,23 @@ static int snd_sbdsp_probe(struct snd_sb * chip)
 	int version;
 	int major, minor;
 	char *str;
+	unsigned long flags;
 
 	/*
 	 *  initialization sequence
 	 */
 
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		if (snd_sbdsp_reset(chip) < 0)
-			return -ENODEV;
-		version = snd_sbdsp_version(chip);
-		if (version < 0)
-			return -ENODEV;
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	if (snd_sbdsp_reset(chip) < 0) {
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
+		return -ENODEV;
 	}
+	version = snd_sbdsp_version(chip);
+	if (version < 0) {
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
+		return -ENODEV;
+	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	major = version >> 8;
 	minor = version & 0xff;
 	dev_dbg(chip->card->dev, "SB [0x%lx]: DSP chip found, version = %i.%i\n",

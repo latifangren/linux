@@ -12,10 +12,8 @@ Contents:
    driver
    consumer
    board
-   legacy-boards
    drivers-on-gpio
    bt8xxgpio
-   pca953x
 
 Core
 ====

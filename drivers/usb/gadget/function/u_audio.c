@@ -1191,7 +1191,7 @@ int g_audio_setup(struct g_audio *g_audio, const char *pcm_name,
 	if (!g_audio)
 		return -EINVAL;
 
-	uac = kzalloc_obj(*uac);
+	uac = kzalloc(sizeof(*uac), GFP_KERNEL);
 	if (!uac)
 		return -ENOMEM;
 	g_audio->uac = uac;
@@ -1209,8 +1209,9 @@ int g_audio_setup(struct g_audio *g_audio, const char *pcm_name,
 		prm->max_psize = g_audio->out_ep_maxpsize;
 		prm->srate = params->c_srates[0];
 
-		prm->reqs = kzalloc_objs(struct usb_request *,
-					 params->req_number);
+		prm->reqs = kcalloc(params->req_number,
+				    sizeof(struct usb_request *),
+				    GFP_KERNEL);
 		if (!prm->reqs) {
 			err = -ENOMEM;
 			goto fail;
@@ -1233,8 +1234,9 @@ int g_audio_setup(struct g_audio *g_audio, const char *pcm_name,
 		prm->max_psize = g_audio->in_ep_maxpsize;
 		prm->srate = params->p_srates[0];
 
-		prm->reqs = kzalloc_objs(struct usb_request *,
-					 params->req_number);
+		prm->reqs = kcalloc(params->req_number,
+				    sizeof(struct usb_request *),
+				    GFP_KERNEL);
 		if (!prm->reqs) {
 			err = -ENOMEM;
 			goto fail;

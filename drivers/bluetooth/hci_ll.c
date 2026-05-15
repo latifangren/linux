@@ -68,7 +68,6 @@ struct ll_device {
 	struct gpio_desc *enable_gpio;
 	struct clk *ext_clk;
 	bdaddr_t bdaddr;
-	bool broken_enhanced_setup;
 };
 
 struct ll_struct {
@@ -115,7 +114,7 @@ static int ll_open(struct hci_uart *hu)
 
 	BT_DBG("hu %p", hu);
 
-	ll = kzalloc_obj(*ll);
+	ll = kzalloc(sizeof(*ll), GFP_KERNEL);
 	if (!ll)
 		return -ENOMEM;
 
@@ -430,7 +429,7 @@ static int ll_recv(struct hci_uart *hu, const void *data, int count)
 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
 		return -EUNATCH;
 
-	ll->rx_skb = h4_recv_buf(hu, ll->rx_skb, data, count,
+	ll->rx_skb = h4_recv_buf(hu->hdev, ll->rx_skb, data, count,
 				 ll_recv_pkts, ARRAY_SIZE(ll_recv_pkts));
 	if (IS_ERR(ll->rx_skb)) {
 		int err = PTR_ERR(ll->rx_skb);
@@ -652,16 +651,12 @@ static int ll_setup(struct hci_uart *hu)
 		/* This means that there was an error getting the BD address
 		 * during probe, so mark the device as having a bad address.
 		 */
-		hci_set_quirk(hu->hdev, HCI_QUIRK_INVALID_BDADDR);
+		set_bit(HCI_QUIRK_INVALID_BDADDR, &hu->hdev->quirks);
 	} else if (bacmp(&lldev->bdaddr, BDADDR_ANY)) {
 		err = ll_set_bdaddr(hu->hdev, &lldev->bdaddr);
 		if (err)
-			hci_set_quirk(hu->hdev, HCI_QUIRK_INVALID_BDADDR);
+			set_bit(HCI_QUIRK_INVALID_BDADDR, &hu->hdev->quirks);
 	}
-
-	if (lldev->broken_enhanced_setup)
-		hci_set_quirk(hu->hdev,
-			      HCI_QUIRK_BROKEN_ENHANCED_SETUP_SYNC_CONN);
 
 	/* Operational speed if any */
 	if (hu->oper_speed)
@@ -716,11 +711,6 @@ static int hci_ti_probe(struct serdev_device *serdev)
 
 	of_property_read_u32(serdev->dev.of_node, "max-speed", &max_speed);
 	hci_uart_set_speeds(hu, 115200, max_speed);
-
-	if (of_device_is_compatible(serdev->dev.of_node, "ti,wl1831-st") ||
-	    of_device_is_compatible(serdev->dev.of_node, "ti,wl1835-st") ||
-	    of_device_is_compatible(serdev->dev.of_node, "ti,wl1837-st"))
-		lldev->broken_enhanced_setup = true;
 
 	/* optional BD address from nvram */
 	bdaddr_cell = nvmem_cell_get(&serdev->dev, "bd-address");

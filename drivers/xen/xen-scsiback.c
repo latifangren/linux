@@ -543,7 +543,8 @@ static int scsiback_gnttab_data_map(struct vscsiif_request *ring_req,
 	}
 
 	/* free of (sgl) in fast_flush_area() */
-	pending_req->sgl = kmalloc_objs(struct scatterlist, nr_segments);
+	pending_req->sgl = kmalloc_array(nr_segments,
+					sizeof(struct scatterlist), GFP_KERNEL);
 	if (!pending_req->sgl)
 		return -ENOMEM;
 
@@ -973,7 +974,7 @@ static int scsiback_add_translation_entry(struct vscsibk_info *info,
 		return -ENODEV;
 	}
 
-	new = kmalloc_obj(struct v2p_entry);
+	new = kmalloc(sizeof(struct v2p_entry), GFP_KERNEL);
 	if (new == NULL) {
 		err = -ENOMEM;
 		goto out_free;
@@ -1269,7 +1270,8 @@ static int scsiback_probe(struct xenbus_device *dev,
 {
 	int err;
 
-	struct vscsibk_info *info = kzalloc_obj(struct vscsibk_info);
+	struct vscsibk_info *info = kzalloc(sizeof(struct vscsibk_info),
+					    GFP_KERNEL);
 
 	pr_debug("%s %p %d\n", __func__, dev, dev->otherend_id);
 
@@ -1350,7 +1352,7 @@ scsiback_make_tport(struct target_fabric_configfs *tf,
 	u64 wwpn = 0;
 	int off = 0;
 
-	tport = kzalloc_obj(struct scsiback_tport);
+	tport = kzalloc(sizeof(struct scsiback_tport), GFP_KERNEL);
 	if (!tport)
 		return ERR_PTR(-ENOMEM);
 
@@ -1530,7 +1532,7 @@ static int scsiback_make_nexus(struct scsiback_tpg *tpg,
 		goto out_unlock;
 	}
 
-	tv_nexus = kzalloc_obj(struct scsiback_nexus);
+	tv_nexus = kzalloc(sizeof(struct scsiback_nexus), GFP_KERNEL);
 	if (!tv_nexus) {
 		ret = -ENOMEM;
 		goto out_unlock;
@@ -1757,7 +1759,7 @@ scsiback_make_tpg(struct se_wwn *wwn, const char *name)
 	if (ret)
 		return ERR_PTR(ret);
 
-	tpg = kzalloc_obj(struct scsiback_tpg);
+	tpg = kzalloc(sizeof(struct scsiback_tpg), GFP_KERNEL);
 	if (!tpg)
 		return ERR_PTR(-ENOMEM);
 
@@ -1832,7 +1834,6 @@ static const struct target_core_fabric_ops scsiback_ops = {
 	.tfc_tpg_base_attrs		= scsiback_tpg_attrs,
 	.tfc_tpg_param_attrs		= scsiback_param_attrs,
 
-	.default_compl_type		= TARGET_QUEUE_COMPL,
 	.default_submit_type		= TARGET_DIRECT_SUBMIT,
 	.direct_submit_supp		= 1,
 };

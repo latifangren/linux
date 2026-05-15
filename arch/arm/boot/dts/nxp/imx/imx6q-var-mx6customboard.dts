@@ -8,7 +8,6 @@
 
 /dts-v1/;
 
-#include "imx6q.dtsi"
 #include "imx6qdl-var-som.dtsi"
 #include <dt-bindings/pwm/pwm.h>
 

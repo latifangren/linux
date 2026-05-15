@@ -37,7 +37,7 @@ nvkm_sec2_finimsg(void *priv, struct nvfw_falcon_msg *hdr)
 }
 
 static int
-nvkm_sec2_fini(struct nvkm_engine *engine, enum nvkm_suspend_state suspend)
+nvkm_sec2_fini(struct nvkm_engine *engine, bool suspend)
 {
 	struct nvkm_sec2 *sec2 = nvkm_sec2(engine);
 	struct nvkm_subdev *subdev = &sec2->engine.subdev;
@@ -137,7 +137,7 @@ nvkm_sec2_new_(const struct nvkm_sec2_fwif *fwif, struct nvkm_device *device,
 	struct nvkm_sec2 *sec2;
 	int ret;
 
-	if (!(sec2 = *psec2 = kzalloc_obj(*sec2)))
+	if (!(sec2 = *psec2 = kzalloc(sizeof(*sec2), GFP_KERNEL)))
 		return -ENOMEM;
 
 	ret = nvkm_engine_ctor(&nvkm_sec2, device, type, inst, true, &sec2->engine);

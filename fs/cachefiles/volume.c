@@ -7,7 +7,6 @@
 
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <linux/namei.h>
 #include "internal.h"
 #include <trace/events/fscache.h>
 
@@ -28,7 +27,7 @@ void cachefiles_acquire_volume(struct fscache_volume *vcookie)
 
 	_enter("");
 
-	volume = kzalloc_obj(struct cachefiles_volume);
+	volume = kzalloc(sizeof(struct cachefiles_volume), GFP_KERNEL);
 	if (!volume)
 		return;
 	volume->vcookie = vcookie;
@@ -59,11 +58,9 @@ retry:
 		if (ret < 0) {
 			if (ret != -ESTALE)
 				goto error_dir;
-			vdentry = start_removing_dentry(cache->store, vdentry);
-			if (!IS_ERR(vdentry))
-				cachefiles_bury_object(cache, NULL, cache->store,
-						       vdentry,
-						       FSCACHE_VOLUME_IS_WEIRD);
+			inode_lock_nested(d_inode(cache->store), I_MUTEX_PARENT);
+			cachefiles_bury_object(cache, NULL, cache->store, vdentry,
+					       FSCACHE_VOLUME_IS_WEIRD);
 			cachefiles_put_directory(volume->dentry);
 			cond_resched();
 			goto retry;

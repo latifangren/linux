@@ -5,7 +5,6 @@
 
 #include "ivpu_drv.h"
 #include "ivpu_fw.h"
-#include "ivpu_gem.h"
 #include "ivpu_hw.h"
 #include "ivpu_hw_37xx_reg.h"
 #include "ivpu_hw_40xx_reg.h"
@@ -304,6 +303,9 @@ static void pwr_island_trickle_drive_40xx(struct ivpu_device *vdev, bool enable)
 		val = REG_CLR_FLD(VPU_40XX_HOST_SS_AON_PWR_ISLAND_TRICKLE_EN0, CSS_CPU, val);
 
 	REGV_WR32(VPU_40XX_HOST_SS_AON_PWR_ISLAND_TRICKLE_EN0, val);
+
+	if (enable)
+		ndelay(500);
 }
 
 static void pwr_island_drive_37xx(struct ivpu_device *vdev, bool enable)
@@ -316,6 +318,9 @@ static void pwr_island_drive_37xx(struct ivpu_device *vdev, bool enable)
 		val = REG_CLR_FLD(VPU_40XX_HOST_SS_AON_PWR_ISLAND_EN0, CSS_CPU, val);
 
 	REGV_WR32(VPU_40XX_HOST_SS_AON_PWR_ISLAND_EN0, val);
+
+	if (!enable)
+		ndelay(500);
 }
 
 static void pwr_island_drive_40xx(struct ivpu_device *vdev, bool enable)
@@ -334,11 +339,9 @@ static void pwr_island_enable(struct ivpu_device *vdev)
 {
 	if (ivpu_hw_ip_gen(vdev) == IVPU_HW_IP_37XX) {
 		pwr_island_trickle_drive_37xx(vdev, true);
-		ndelay(500);
 		pwr_island_drive_37xx(vdev, true);
 	} else {
 		pwr_island_trickle_drive_40xx(vdev, true);
-		ndelay(500);
 		pwr_island_drive_40xx(vdev, true);
 	}
 }
@@ -684,19 +687,11 @@ static void pwr_island_delay_set(struct ivpu_device *vdev)
 		return;
 
 	switch (ivpu_device_id(vdev)) {
-	case PCI_DEVICE_ID_WCL:
 	case PCI_DEVICE_ID_PTL_P:
 		post = high ? 18 : 0;
 		post1 = 0;
 		post2 = 0;
 		status = high ? 46 : 3;
-		break;
-
-	case PCI_DEVICE_ID_NVL:
-		post = high ? 198 : 17;
-		post1 = 0;
-		post2 = high ? 198 : 17;
-		status = 0;
 		break;
 
 	default:
@@ -817,14 +812,6 @@ void ivpu_hw_ip_tbu_mmu_enable(struct ivpu_device *vdev)
 		return ivpu_hw_ip_tbu_mmu_enable_40xx(vdev);
 }
 
-static inline u64 get_entry_point_addr(struct ivpu_device *vdev)
-{
-	if (ivpu_fw_is_warm_boot(vdev))
-		return vdev->fw->warm_boot_entry_point;
-	else
-		return vdev->fw->cold_boot_entry_point;
-}
-
 static int soc_cpu_boot_37xx(struct ivpu_device *vdev)
 {
 	u32 val;
@@ -841,11 +828,14 @@ static int soc_cpu_boot_37xx(struct ivpu_device *vdev)
 	val = REG_CLR_FLD(VPU_37XX_CPU_SS_MSSCPU_CPR_LEON_RT_VEC, IRQI_RESUME0, val);
 	REGV_WR32(VPU_37XX_CPU_SS_MSSCPU_CPR_LEON_RT_VEC, val);
 
-	val = get_entry_point_addr(vdev) >> 9;
+	val = vdev->fw->entry_point >> 9;
 	REGV_WR32(VPU_37XX_HOST_SS_LOADING_ADDRESS_LO, val);
 
 	val = REG_SET_FLD(VPU_37XX_HOST_SS_LOADING_ADDRESS_LO, DONE, val);
 	REGV_WR32(VPU_37XX_HOST_SS_LOADING_ADDRESS_LO, val);
+
+	ivpu_dbg(vdev, PM, "Booting firmware, mode: %s\n",
+		 vdev->fw->entry_point == vdev->fw->cold_boot_entry_point ? "cold boot" : "resume");
 
 	return 0;
 }
@@ -900,67 +890,43 @@ static int soc_cpu_drive_40xx(struct ivpu_device *vdev, bool enable)
 	return ret;
 }
 
-static void soc_cpu_set_entry_point_40xx(struct ivpu_device *vdev, u64 entry_point)
+static int soc_cpu_enable(struct ivpu_device *vdev)
 {
-	u64 val64;
-	u32 val;
+	return soc_cpu_drive_40xx(vdev, true);
+}
 
-	val64 = entry_point;
+static int soc_cpu_boot_40xx(struct ivpu_device *vdev)
+{
+	int ret;
+	u32 val;
+	u64 val64;
+
+	ret = soc_cpu_enable(vdev);
+	if (ret) {
+		ivpu_err(vdev, "Failed to enable SOC CPU: %d\n", ret);
+		return ret;
+	}
+
+	val64 = vdev->fw->entry_point;
 	val64 <<= ffs(VPU_40XX_HOST_SS_VERIFICATION_ADDRESS_LO_IMAGE_LOCATION_MASK) - 1;
 	REGV_WR64(VPU_40XX_HOST_SS_VERIFICATION_ADDRESS_LO, val64);
 
 	val = REGV_RD32(VPU_40XX_HOST_SS_VERIFICATION_ADDRESS_LO);
 	val = REG_SET_FLD(VPU_40XX_HOST_SS_VERIFICATION_ADDRESS_LO, DONE, val);
 	REGV_WR32(VPU_40XX_HOST_SS_VERIFICATION_ADDRESS_LO, val);
-}
 
-static int soc_cpu_boot_40xx(struct ivpu_device *vdev)
-{
-	int ret;
-
-	ret = soc_cpu_drive_40xx(vdev, true);
-	if (ret) {
-		ivpu_err(vdev, "Failed to enable SOC CPU: %d\n", ret);
-		return ret;
-	}
-
-	soc_cpu_set_entry_point_40xx(vdev, get_entry_point_addr(vdev));
-
-	return 0;
-}
-
-static int soc_cpu_boot_60xx(struct ivpu_device *vdev)
-{
-	soc_cpu_set_entry_point_40xx(vdev, vdev->fw->cold_boot_entry_point);
+	ivpu_dbg(vdev, PM, "Booting firmware, mode: %s\n",
+		 ivpu_fw_is_cold_boot(vdev) ? "cold boot" : "resume");
 
 	return 0;
 }
 
 int ivpu_hw_ip_soc_cpu_boot(struct ivpu_device *vdev)
 {
-	int ret;
-
-	switch (ivpu_hw_ip_gen(vdev)) {
-	case IVPU_HW_IP_37XX:
-		ret = soc_cpu_boot_37xx(vdev);
-		break;
-
-	case IVPU_HW_IP_40XX:
-	case IVPU_HW_IP_50XX:
-		ret = soc_cpu_boot_40xx(vdev);
-		break;
-
-	default:
-		ret = soc_cpu_boot_60xx(vdev);
-	}
-
-	if (ret)
-		return ret;
-
-	ivpu_dbg(vdev, PM, "Booting firmware, mode: %s\n",
-		 ivpu_fw_is_warm_boot(vdev) ? "warm boot" : "cold boot");
-
-	return 0;
+	if (ivpu_hw_ip_gen(vdev) == IVPU_HW_IP_37XX)
+		return soc_cpu_boot_37xx(vdev);
+	else
+		return soc_cpu_boot_40xx(vdev);
 }
 
 static void wdt_disable_37xx(struct ivpu_device *vdev)
@@ -1006,14 +972,14 @@ void ivpu_hw_ip_wdt_disable(struct ivpu_device *vdev)
 
 static u32 ipc_rx_count_get_37xx(struct ivpu_device *vdev)
 {
-	u32 count = readl(vdev->regv + VPU_37XX_HOST_SS_TIM_IPC_FIFO_STAT);
+	u32 count = REGV_RD32_SILENT(VPU_37XX_HOST_SS_TIM_IPC_FIFO_STAT);
 
 	return REG_GET_FLD(VPU_37XX_HOST_SS_TIM_IPC_FIFO_STAT, FILL_LEVEL, count);
 }
 
 static u32 ipc_rx_count_get_40xx(struct ivpu_device *vdev)
 {
-	u32 count = readl(vdev->regv + VPU_40XX_HOST_SS_TIM_IPC_FIFO_STAT);
+	u32 count = REGV_RD32_SILENT(VPU_40XX_HOST_SS_TIM_IPC_FIFO_STAT);
 
 	return REG_GET_FLD(VPU_40XX_HOST_SS_TIM_IPC_FIFO_STAT, FILL_LEVEL, count);
 }

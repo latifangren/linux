@@ -10,7 +10,6 @@
  */
 
 #include <kunit/test.h>
-#include <kunit/visibility.h>
 #include <linux/bitops.h>
 #include <linux/ftrace.h>
 #include <linux/init.h>
@@ -133,20 +132,20 @@ static bool report_enabled(void)
 	return !test_and_set_bit(KASAN_BIT_REPORTED, &kasan_flags);
 }
 
-#if IS_ENABLED(CONFIG_KASAN_KUNIT_TEST)
+#if IS_ENABLED(CONFIG_KASAN_KUNIT_TEST) || IS_ENABLED(CONFIG_KASAN_MODULE_TEST)
 
-VISIBLE_IF_KUNIT bool kasan_save_enable_multi_shot(void)
+bool kasan_save_enable_multi_shot(void)
 {
 	return test_and_set_bit(KASAN_BIT_MULTI_SHOT, &kasan_flags);
 }
-EXPORT_SYMBOL_IF_KUNIT(kasan_save_enable_multi_shot);
+EXPORT_SYMBOL_GPL(kasan_save_enable_multi_shot);
 
-VISIBLE_IF_KUNIT void kasan_restore_multi_shot(bool enabled)
+void kasan_restore_multi_shot(bool enabled)
 {
 	if (!enabled)
 		clear_bit(KASAN_BIT_MULTI_SHOT, &kasan_flags);
 }
-EXPORT_SYMBOL_IF_KUNIT(kasan_restore_multi_shot);
+EXPORT_SYMBOL_GPL(kasan_restore_multi_shot);
 
 #endif
 
@@ -158,17 +157,17 @@ EXPORT_SYMBOL_IF_KUNIT(kasan_restore_multi_shot);
  */
 static bool kasan_kunit_executing;
 
-VISIBLE_IF_KUNIT void kasan_kunit_test_suite_start(void)
+void kasan_kunit_test_suite_start(void)
 {
 	WRITE_ONCE(kasan_kunit_executing, true);
 }
-EXPORT_SYMBOL_IF_KUNIT(kasan_kunit_test_suite_start);
+EXPORT_SYMBOL_GPL(kasan_kunit_test_suite_start);
 
-VISIBLE_IF_KUNIT void kasan_kunit_test_suite_end(void)
+void kasan_kunit_test_suite_end(void)
 {
 	WRITE_ONCE(kasan_kunit_executing, false);
 }
-EXPORT_SYMBOL_IF_KUNIT(kasan_kunit_test_suite_end);
+EXPORT_SYMBOL_GPL(kasan_kunit_test_suite_end);
 
 static bool kasan_kunit_test_suite_executing(void)
 {
@@ -203,7 +202,7 @@ static inline void fail_non_kasan_kunit_test(void) { }
 
 static DEFINE_RAW_SPINLOCK(report_lock);
 
-static void start_report(unsigned long *flags)
+static void start_report(unsigned long *flags, bool sync)
 {
 	fail_non_kasan_kunit_test();
 	/* Respect the /proc/sys/kernel/traceoff_on_warning interface. */
@@ -543,7 +542,7 @@ void kasan_report_invalid_free(void *ptr, unsigned long ip, enum kasan_report_ty
 	if (unlikely(!report_enabled()))
 		return;
 
-	start_report(&flags);
+	start_report(&flags, true);
 
 	__memset(&info, 0, sizeof(info));
 	info.type = type;
@@ -581,7 +580,7 @@ bool kasan_report(const void *addr, size_t size, bool is_write,
 		goto out;
 	}
 
-	start_report(&irq_flags);
+	start_report(&irq_flags, true);
 
 	__memset(&info, 0, sizeof(info));
 	info.type = KASAN_REPORT_ACCESS;
@@ -615,7 +614,7 @@ void kasan_report_async(void)
 	if (unlikely(!report_enabled()))
 		return;
 
-	start_report(&flags);
+	start_report(&flags, false);
 	pr_err("BUG: KASAN: invalid-access\n");
 	pr_err("Asynchronous fault: no details available\n");
 	pr_err("\n");
@@ -638,7 +637,7 @@ void kasan_report_async(void)
  */
 void kasan_non_canonical_hook(unsigned long addr)
 {
-	unsigned long orig_addr, user_orig_addr;
+	unsigned long orig_addr;
 	const char *bug_type;
 
 	/*
@@ -649,9 +648,6 @@ void kasan_non_canonical_hook(unsigned long addr)
 		return;
 
 	orig_addr = (unsigned long)kasan_shadow_to_mem((void *)addr);
-
-	/* Strip pointer tag before comparing against userspace ranges */
-	user_orig_addr = (unsigned long)set_tag((void *)orig_addr, 0);
 
 	/*
 	 * For faults near the shadow address for NULL, we can be fairly certain
@@ -664,13 +660,11 @@ void kasan_non_canonical_hook(unsigned long addr)
 	 * address, but make it clear that this is not necessarily what's
 	 * actually going on.
 	 */
-	if (user_orig_addr < PAGE_SIZE) {
+	if (orig_addr < PAGE_SIZE)
 		bug_type = "null-ptr-deref";
-		orig_addr = user_orig_addr;
-	} else if (user_orig_addr < TASK_SIZE) {
+	else if (orig_addr < TASK_SIZE)
 		bug_type = "probably user-memory-access";
-		orig_addr = user_orig_addr;
-	} else if (addr_in_shadow((void *)addr))
+	else if (addr_in_shadow((void *)addr))
 		bug_type = "probably wild-memory-access";
 	else
 		bug_type = "maybe wild-memory-access";

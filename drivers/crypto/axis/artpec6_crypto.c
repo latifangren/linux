@@ -252,7 +252,7 @@ struct artpec6_crypto_dma_descriptors {
 };
 
 enum artpec6_crypto_variant {
-	ARTPEC6_CRYPTO = 1,
+	ARTPEC6_CRYPTO,
 	ARTPEC7_CRYPTO,
 };
 
@@ -1323,7 +1323,7 @@ static int artpec6_crypto_prepare_hash(struct ahash_request *areq)
 
 	artpec6_crypto_init_dma_operation(common);
 
-	/* Upload HMAC key, it must be the first packet */
+	/* Upload HMAC key, must be first the first packet */
 	if (req_ctx->hash_flags & HASH_FLAG_HMAC) {
 		if (variant == ARTPEC6_CRYPTO) {
 			req_ctx->key_md = FIELD_PREP(A6_CRY_MD_OPER,
@@ -1333,8 +1333,11 @@ static int artpec6_crypto_prepare_hash(struct ahash_request *areq)
 						     a7_regk_crypto_dlkey);
 		}
 
-		memcpy_and_pad(req_ctx->key_buffer, blocksize, ctx->hmac_key,
-			       ctx->hmac_key_length, 0);
+		/* Copy and pad up the key */
+		memcpy(req_ctx->key_buffer, ctx->hmac_key,
+		       ctx->hmac_key_length);
+		memset(req_ctx->key_buffer + ctx->hmac_key_length, 0,
+		       blocksize - ctx->hmac_key_length);
 
 		error = artpec6_crypto_setup_out_descr(common,
 					(void *)&req_ctx->key_md,
@@ -2064,12 +2067,12 @@ static void artpec6_crypto_process_queue(struct artpec6_crypto *ac,
 	if (ac->pending_count)
 		mod_timer(&ac->timer, jiffies + msecs_to_jiffies(100));
 	else
-		timer_delete(&ac->timer);
+		del_timer(&ac->timer);
 }
 
 static void artpec6_crypto_timeout(struct timer_list *t)
 {
-	struct artpec6_crypto *ac = timer_container_of(ac, t, timer);
+	struct artpec6_crypto *ac = from_timer(ac, t, timer);
 
 	dev_info_ratelimited(artpec6_crypto_dev, "timeout\n");
 
@@ -2839,6 +2842,7 @@ MODULE_DEVICE_TABLE(of, artpec6_crypto_of_match);
 
 static int artpec6_crypto_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *match;
 	enum artpec6_crypto_variant variant;
 	struct artpec6_crypto *ac;
 	struct device *dev = &pdev->dev;
@@ -2849,9 +2853,11 @@ static int artpec6_crypto_probe(struct platform_device *pdev)
 	if (artpec6_crypto_dev)
 		return -ENODEV;
 
-	variant = (enum artpec6_crypto_variant)of_device_get_match_data(dev);
-	if (!variant)
+	match = of_match_node(artpec6_crypto_of_match, dev->of_node);
+	if (!match)
 		return -EINVAL;
+
+	variant = (enum artpec6_crypto_variant)match->data;
 
 	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
@@ -2891,13 +2897,13 @@ static int artpec6_crypto_probe(struct platform_device *pdev)
 	tasklet_init(&ac->task, artpec6_crypto_task,
 		     (unsigned long)ac);
 
-	ac->pad_buffer = devm_kcalloc(&pdev->dev, 2, ARTPEC_CACHE_LINE_MAX,
+	ac->pad_buffer = devm_kzalloc(&pdev->dev, 2 * ARTPEC_CACHE_LINE_MAX,
 				      GFP_KERNEL);
 	if (!ac->pad_buffer)
 		return -ENOMEM;
 	ac->pad_buffer = PTR_ALIGN(ac->pad_buffer, ARTPEC_CACHE_LINE_MAX);
 
-	ac->zero_buffer = devm_kcalloc(&pdev->dev, 2, ARTPEC_CACHE_LINE_MAX,
+	ac->zero_buffer = devm_kzalloc(&pdev->dev, 2 * ARTPEC_CACHE_LINE_MAX,
 				      GFP_KERNEL);
 	if (!ac->zero_buffer)
 		return -ENOMEM;
@@ -2957,7 +2963,7 @@ static void artpec6_crypto_remove(struct platform_device *pdev)
 	tasklet_disable(&ac->task);
 	devm_free_irq(&pdev->dev, irq, ac);
 	tasklet_kill(&ac->task);
-	timer_delete_sync(&ac->timer);
+	del_timer_sync(&ac->timer);
 
 	artpec6_crypto_disable_hw(ac);
 

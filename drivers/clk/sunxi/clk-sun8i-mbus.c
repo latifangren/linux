@@ -44,15 +44,15 @@ static void __init sun8i_a23_mbus_setup(struct device_node *node)
 		goto err_free_parents;
 	}
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div)
 		goto err_unmap;
 
-	mux = kzalloc_obj(*mux);
+	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 	if (!mux)
 		goto err_free_div;
 
-	gate = kzalloc_obj(*gate);
+	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
 	if (!gate)
 		goto err_free_mux;
 

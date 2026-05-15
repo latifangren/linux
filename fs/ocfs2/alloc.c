@@ -10,7 +10,6 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/highmem.h>
 #include <linux/swap.h>
 #include <linux/quotaops.h>
@@ -567,7 +566,7 @@ static void ocfs2_adjust_rightmost_records(handle_t *handle,
 					   struct ocfs2_path *path,
 					   struct ocfs2_extent_rec *insert_rec);
 /*
- * Reset the actual path elements so that we can reuse the structure
+ * Reset the actual path elements so that we can re-use the structure
  * to build another path. Generally, this involves freeing the buffer
  * heads.
  */
@@ -686,7 +685,7 @@ static struct ocfs2_path *ocfs2_new_path(struct buffer_head *root_bh,
 
 	BUG_ON(le16_to_cpu(root_el->l_tree_depth) >= OCFS2_MAX_PATH_DEPTH);
 
-	path = kzalloc_obj(*path, GFP_NOFS);
+	path = kzalloc(sizeof(*path), GFP_NOFS);
 	if (path) {
 		path->p_tree_depth = le16_to_cpu(root_el->l_tree_depth);
 		get_bh(root_bh);
@@ -917,32 +916,11 @@ static int ocfs2_validate_extent_block(struct super_block *sb,
 		goto bail;
 	}
 
-	if (le32_to_cpu(eb->h_fs_generation) != OCFS2_SB(sb)->fs_generation) {
+	if (le32_to_cpu(eb->h_fs_generation) != OCFS2_SB(sb)->fs_generation)
 		rc = ocfs2_error(sb,
 				 "Extent block #%llu has an invalid h_fs_generation of #%u\n",
 				 (unsigned long long)bh->b_blocknr,
 				 le32_to_cpu(eb->h_fs_generation));
-		goto bail;
-	}
-
-	if (le16_to_cpu(eb->h_list.l_count) != ocfs2_extent_recs_per_eb(sb)) {
-		rc = ocfs2_error(sb,
-				 "Extent block #%llu has invalid l_count %u (expected %u)\n",
-				 (unsigned long long)bh->b_blocknr,
-				 le16_to_cpu(eb->h_list.l_count),
-				 ocfs2_extent_recs_per_eb(sb));
-		goto bail;
-	}
-
-	if (le16_to_cpu(eb->h_list.l_next_free_rec) > le16_to_cpu(eb->h_list.l_count)) {
-		rc = ocfs2_error(sb,
-				 "Extent block #%llu has invalid l_next_free_rec %u (l_count %u)\n",
-				 (unsigned long long)bh->b_blocknr,
-				 le16_to_cpu(eb->h_list.l_next_free_rec),
-				 le16_to_cpu(eb->h_list.l_count));
-		goto bail;
-	}
-
 bail:
 	return rc;
 }
@@ -1059,7 +1037,7 @@ static int ocfs2_create_new_meta_bhs(handle_t *handle,
 			memset(bhs[i]->b_data, 0, osb->sb->s_blocksize);
 			eb = (struct ocfs2_extent_block *) bhs[i]->b_data;
 			/* Ok, setup the minimal stuff here. */
-			strscpy(eb->h_signature, OCFS2_EXTENT_BLOCK_SIGNATURE);
+			strcpy(eb->h_signature, OCFS2_EXTENT_BLOCK_SIGNATURE);
 			eb->h_blkno = cpu_to_le64(first_blkno);
 			eb->h_fs_generation = cpu_to_le32(osb->fs_generation);
 			eb->h_suballoc_slot =
@@ -1204,7 +1182,7 @@ static int ocfs2_add_branch(handle_t *handle,
 
 	/*
 	 * If there is a gap before the root end and the real end
-	 * of the rightmost leaf block, we need to remove the gap
+	 * of the righmost leaf block, we need to remove the gap
 	 * between new_cpos and root_end first so that the tree
 	 * is consistent after we add a new branch(it will start
 	 * from new_cpos).
@@ -1223,7 +1201,8 @@ static int ocfs2_add_branch(handle_t *handle,
 	}
 
 	/* allocate the number of new eb blocks we need */
-	new_eb_bhs = kzalloc_objs(struct buffer_head *, new_blocks);
+	new_eb_bhs = kcalloc(new_blocks, sizeof(struct buffer_head *),
+			     GFP_KERNEL);
 	if (!new_eb_bhs) {
 		status = -ENOMEM;
 		mlog_errno(status);
@@ -1259,7 +1238,7 @@ static int ocfs2_add_branch(handle_t *handle,
 
 	/* Note: new_eb_bhs[new_blocks - 1] is the guy which will be
 	 * linked with the rest of the tree.
-	 * conversely, new_eb_bhs[0] is the new bottommost leaf.
+	 * conversly, new_eb_bhs[0] is the new bottommost leaf.
 	 *
 	 * when we leave the loop, new_last_eb_blk will point to the
 	 * newest leaf, and next_blkno will point to the topmost extent
@@ -1832,15 +1811,14 @@ static int __ocfs2_find_path(struct ocfs2_caching_info *ci,
 			ret = -EROFS;
 			goto out;
 		}
-		if (!el->l_next_free_rec || !el->l_count) {
+		if (le16_to_cpu(el->l_next_free_rec) == 0) {
 			ocfs2_error(ocfs2_metadata_cache_get_super(ci),
-				    "Owner %llu has empty extent list at depth %u\n"
-				    "(next free=%u count=%u)\n",
+				    "Owner %llu has empty extent list at depth %u\n",
 				    (unsigned long long)ocfs2_metadata_cache_owner(ci),
-				    le16_to_cpu(el->l_tree_depth),
-				    le16_to_cpu(el->l_next_free_rec), le16_to_cpu(el->l_count));
+				    le16_to_cpu(el->l_tree_depth));
 			ret = -EROFS;
 			goto out;
+
 		}
 
 		for(i = 0; i < le16_to_cpu(el->l_next_free_rec) - 1; i++) {
@@ -1877,6 +1855,18 @@ static int __ocfs2_find_path(struct ocfs2_caching_info *ci,
 
 		eb = (struct ocfs2_extent_block *) bh->b_data;
 		el = &eb->h_list;
+
+		if (le16_to_cpu(el->l_next_free_rec) >
+		    le16_to_cpu(el->l_count)) {
+			ocfs2_error(ocfs2_metadata_cache_get_super(ci),
+				    "Owner %llu has bad count in extent list at block %llu (next free=%u, count=%u)\n",
+				    (unsigned long long)ocfs2_metadata_cache_owner(ci),
+				    (unsigned long long)bh->b_blocknr,
+				    le16_to_cpu(el->l_next_free_rec),
+				    le16_to_cpu(el->l_count));
+			ret = -EROFS;
+			goto out;
+		}
 
 		if (func)
 			func(data, bh);
@@ -3729,7 +3719,7 @@ static int ocfs2_try_to_merge_extent(handle_t *handle,
 		 * update split_index here.
 		 *
 		 * When the split_index is zero, we need to merge it to the
-		 * previous extent block. It is more efficient and easier
+		 * prevoius extent block. It is more efficient and easier
 		 * if we do merge_right first and merge_left later.
 		 */
 		ret = ocfs2_merge_rec_right(path, handle, et, split_rec,
@@ -4534,7 +4524,7 @@ static void ocfs2_figure_contig_type(struct ocfs2_extent_tree *et,
 }
 
 /*
- * This should only be called against the rightmost leaf extent list.
+ * This should only be called against the righmost leaf extent list.
  *
  * ocfs2_figure_appending_type() will figure out whether we'll have to
  * insert at the tail of the rightmost leaf.
@@ -4784,7 +4774,7 @@ bail:
 }
 
 /*
- * Allocate and add clusters into the extent b-tree.
+ * Allcate and add clusters into the extent b-tree.
  * The new clusters(clusters_to_add) will be inserted at logical_offset.
  * The extent b-tree's root is specified by et, and
  * it is not limited to the file storage. Any extent tree can use this
@@ -6171,9 +6161,6 @@ static int ocfs2_get_truncate_log_info(struct ocfs2_super *osb,
 	int status;
 	struct inode *inode = NULL;
 	struct buffer_head *bh = NULL;
-	struct ocfs2_dinode *di;
-	struct ocfs2_truncate_log *tl;
-	unsigned int tl_count, tl_used;
 
 	inode = ocfs2_get_system_file_inode(osb,
 					   TRUNCATE_LOG_SYSTEM_INODE,
@@ -6187,20 +6174,6 @@ static int ocfs2_get_truncate_log_info(struct ocfs2_super *osb,
 	status = ocfs2_read_inode_block(inode, &bh);
 	if (status < 0) {
 		iput(inode);
-		mlog_errno(status);
-		goto bail;
-	}
-
-	di = (struct ocfs2_dinode *)bh->b_data;
-	tl = &di->id2.i_dealloc;
-	tl_count = le16_to_cpu(tl->tl_count);
-	tl_used = le16_to_cpu(tl->tl_used);
-	if (unlikely(tl_count > ocfs2_truncate_recs_per_inode(osb->sb) ||
-		     tl_count == 0 ||
-		     tl_used > tl_count)) {
-		status = -EFSCORRUPTED;
-		iput(inode);
-		brelse(bh);
 		mlog_errno(status);
 		goto bail;
 	}
@@ -6501,7 +6474,7 @@ int ocfs2_cache_cluster_dealloc(struct ocfs2_cached_dealloc_ctxt *ctxt,
 	int ret = 0;
 	struct ocfs2_cached_block_free *item;
 
-	item = kzalloc_obj(*item, GFP_NOFS);
+	item = kzalloc(sizeof(*item), GFP_NOFS);
 	if (item == NULL) {
 		ret = -ENOMEM;
 		mlog_errno(ret);
@@ -6627,7 +6600,7 @@ ocfs2_find_per_slot_free_list(int type,
 		fl = fl->f_next_suballocator;
 	}
 
-	fl = kmalloc_obj(*fl, GFP_NOFS);
+	fl = kmalloc(sizeof(*fl), GFP_NOFS);
 	if (fl) {
 		fl->f_inode_type = type;
 		fl->f_slot = slot;
@@ -6755,7 +6728,7 @@ static int ocfs2_reuse_blk_from_dealloc(handle_t *handle,
 		/* We can't guarantee that buffer head is still cached, so
 		 * polutlate the extent block again.
 		 */
-		strscpy(eb->h_signature, OCFS2_EXTENT_BLOCK_SIGNATURE);
+		strcpy(eb->h_signature, OCFS2_EXTENT_BLOCK_SIGNATURE);
 		eb->h_blkno = cpu_to_le64(bf->free_blk);
 		eb->h_fs_generation = cpu_to_le32(osb->fs_generation);
 		eb->h_suballoc_slot = cpu_to_le16(real_slot);
@@ -6802,7 +6775,7 @@ int ocfs2_cache_block_dealloc(struct ocfs2_cached_dealloc_ctxt *ctxt,
 		goto out;
 	}
 
-	item = kzalloc_obj(*item, GFP_NOFS);
+	item = kzalloc(sizeof(*item), GFP_NOFS);
 	if (item == NULL) {
 		ret = -ENOMEM;
 		mlog_errno(ret);
@@ -6842,27 +6815,27 @@ static int ocfs2_zero_func(handle_t *handle, struct buffer_head *bh)
 	return 0;
 }
 
-void ocfs2_map_and_dirty_folio(struct inode *inode, handle_t *handle,
-		size_t from, size_t to, struct folio *folio, int zero,
-		u64 *phys)
+void ocfs2_map_and_dirty_page(struct inode *inode, handle_t *handle,
+			      unsigned int from, unsigned int to,
+			      struct page *page, int zero, u64 *phys)
 {
 	int ret, partial = 0;
-	loff_t start_byte = folio_pos(folio) + from;
+	loff_t start_byte = ((loff_t)page->index << PAGE_SHIFT) + from;
 	loff_t length = to - from;
 
-	ret = ocfs2_map_folio_blocks(folio, phys, inode, from, to, 0);
+	ret = ocfs2_map_page_blocks(page, phys, inode, from, to, 0);
 	if (ret)
 		mlog_errno(ret);
 
 	if (zero)
-		folio_zero_segment(folio, from, to);
+		zero_user_segment(page, from, to);
 
 	/*
 	 * Need to set the buffers we zero'd into uptodate
 	 * here if they aren't - ocfs2_map_page_blocks()
 	 * might've skipped some
 	 */
-	ret = walk_page_buffers(handle, folio_buffers(folio),
+	ret = walk_page_buffers(handle, page_buffers(page),
 				from, to, &partial,
 				ocfs2_zero_func);
 	if (ret < 0)
@@ -6875,88 +6848,92 @@ void ocfs2_map_and_dirty_folio(struct inode *inode, handle_t *handle,
 	}
 
 	if (!partial)
-		folio_mark_uptodate(folio);
+		SetPageUptodate(page);
 
-	flush_dcache_folio(folio);
+	flush_dcache_page(page);
 }
 
-static void ocfs2_zero_cluster_folios(struct inode *inode, loff_t start,
-		loff_t end, struct folio **folios, int numfolios,
-		u64 phys, handle_t *handle)
+static void ocfs2_zero_cluster_pages(struct inode *inode, loff_t start,
+				     loff_t end, struct page **pages,
+				     int numpages, u64 phys, handle_t *handle)
 {
 	int i;
+	struct page *page;
+	unsigned int from, to = PAGE_SIZE;
 	struct super_block *sb = inode->i_sb;
 
 	BUG_ON(!ocfs2_sparse_alloc(OCFS2_SB(sb)));
 
-	if (numfolios == 0)
+	if (numpages == 0)
 		goto out;
 
-	for (i = 0; i < numfolios; i++) {
-		struct folio *folio = folios[i];
-		size_t to = folio_size(folio);
-		size_t from = offset_in_folio(folio, start);
+	to = PAGE_SIZE;
+	for(i = 0; i < numpages; i++) {
+		page = pages[i];
 
-		if (to > end - folio_pos(folio))
-			to = end - folio_pos(folio);
+		from = start & (PAGE_SIZE - 1);
+		if ((end >> PAGE_SHIFT) == page->index)
+			to = end & (PAGE_SIZE - 1);
 
-		ocfs2_map_and_dirty_folio(inode, handle, from, to, folio, 1,
-				&phys);
+		BUG_ON(from > PAGE_SIZE);
+		BUG_ON(to > PAGE_SIZE);
 
-		start = folio_next_pos(folio);
+		ocfs2_map_and_dirty_page(inode, handle, from, to, page, 1,
+					 &phys);
+
+		start = (page->index + 1) << PAGE_SHIFT;
 	}
 out:
-	if (folios)
-		ocfs2_unlock_and_free_folios(folios, numfolios);
+	if (pages)
+		ocfs2_unlock_and_free_pages(pages, numpages);
 }
 
-static int ocfs2_grab_folios(struct inode *inode, loff_t start, loff_t end,
-		struct folio **folios, int *num)
+int ocfs2_grab_pages(struct inode *inode, loff_t start, loff_t end,
+		     struct page **pages, int *num)
 {
-	int numfolios, ret = 0;
+	int numpages, ret = 0;
 	struct address_space *mapping = inode->i_mapping;
 	unsigned long index;
 	loff_t last_page_bytes;
 
 	BUG_ON(start > end);
 
-	numfolios = 0;
+	numpages = 0;
 	last_page_bytes = PAGE_ALIGN(end);
 	index = start >> PAGE_SHIFT;
 	do {
-		folios[numfolios] = __filemap_get_folio(mapping, index,
-				FGP_LOCK | FGP_ACCESSED | FGP_CREAT, GFP_NOFS);
-		if (IS_ERR(folios[numfolios])) {
-			ret = PTR_ERR(folios[numfolios]);
+		pages[numpages] = find_or_create_page(mapping, index, GFP_NOFS);
+		if (!pages[numpages]) {
+			ret = -ENOMEM;
 			mlog_errno(ret);
-			folios[numfolios] = NULL;
 			goto out;
 		}
 
-		index = folio_next_index(folios[numfolios]);
-		numfolios++;
+		numpages++;
+		index++;
 	} while (index < (last_page_bytes >> PAGE_SHIFT));
 
 out:
 	if (ret != 0) {
-		ocfs2_unlock_and_free_folios(folios, numfolios);
-		numfolios = 0;
+		if (pages)
+			ocfs2_unlock_and_free_pages(pages, numpages);
+		numpages = 0;
 	}
 
-	*num = numfolios;
+	*num = numpages;
 
 	return ret;
 }
 
-static int ocfs2_grab_eof_folios(struct inode *inode, loff_t start, loff_t end,
-				struct folio **folios, int *num)
+static int ocfs2_grab_eof_pages(struct inode *inode, loff_t start, loff_t end,
+				struct page **pages, int *num)
 {
 	struct super_block *sb = inode->i_sb;
 
 	BUG_ON(start >> OCFS2_SB(sb)->s_clustersize_bits !=
 	       (end - 1) >> OCFS2_SB(sb)->s_clustersize_bits);
 
-	return ocfs2_grab_folios(inode, start, end, folios, num);
+	return ocfs2_grab_pages(inode, start, end, pages, num);
 }
 
 /*
@@ -6970,8 +6947,8 @@ static int ocfs2_grab_eof_folios(struct inode *inode, loff_t start, loff_t end,
 int ocfs2_zero_range_for_truncate(struct inode *inode, handle_t *handle,
 				  u64 range_start, u64 range_end)
 {
-	int ret = 0, numfolios;
-	struct folio **folios = NULL;
+	int ret = 0, numpages;
+	struct page **pages = NULL;
 	u64 phys;
 	unsigned int ext_flags;
 	struct super_block *sb = inode->i_sb;
@@ -6984,17 +6961,17 @@ int ocfs2_zero_range_for_truncate(struct inode *inode, handle_t *handle,
 		return 0;
 
 	/*
-	 * Avoid zeroing folios fully beyond current i_size. It is pointless as
-	 * underlying blocks of those folios should be already zeroed out and
+	 * Avoid zeroing pages fully beyond current i_size. It is pointless as
+	 * underlying blocks of those pages should be already zeroed out and
 	 * page writeback will skip them anyway.
 	 */
 	range_end = min_t(u64, range_end, i_size_read(inode));
 	if (range_start >= range_end)
 		return 0;
 
-	folios = kzalloc_objs(struct folio *, ocfs2_pages_per_cluster(sb),
-			      GFP_NOFS);
-	if (folios == NULL) {
+	pages = kcalloc(ocfs2_pages_per_cluster(sb),
+			sizeof(struct page *), GFP_NOFS);
+	if (pages == NULL) {
 		ret = -ENOMEM;
 		mlog_errno(ret);
 		goto out;
@@ -7015,18 +6992,18 @@ int ocfs2_zero_range_for_truncate(struct inode *inode, handle_t *handle,
 	if (phys == 0 || ext_flags & OCFS2_EXT_UNWRITTEN)
 		goto out;
 
-	ret = ocfs2_grab_eof_folios(inode, range_start, range_end, folios,
-				   &numfolios);
+	ret = ocfs2_grab_eof_pages(inode, range_start, range_end, pages,
+				   &numpages);
 	if (ret) {
 		mlog_errno(ret);
 		goto out;
 	}
 
-	ocfs2_zero_cluster_folios(inode, range_start, range_end, folios,
-				 numfolios, phys, handle);
+	ocfs2_zero_cluster_pages(inode, range_start, range_end, pages,
+				 numpages, phys, handle);
 
 	/*
-	 * Initiate writeout of the folios we zero'd here. We don't
+	 * Initiate writeout of the pages we zero'd here. We don't
 	 * wait on them - the truncate_inode_pages() call later will
 	 * do that for us.
 	 */
@@ -7036,7 +7013,7 @@ int ocfs2_zero_range_for_truncate(struct inode *inode, handle_t *handle,
 		mlog_errno(ret);
 
 out:
-	kfree(folios);
+	kfree(pages);
 
 	return ret;
 }
@@ -7089,7 +7066,7 @@ void ocfs2_set_inode_data_inline(struct inode *inode, struct ocfs2_dinode *di)
 int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 					 struct buffer_head *di_bh)
 {
-	int ret, has_data, num_folios = 0;
+	int ret, has_data, num_pages = 0;
 	int need_free = 0;
 	u32 bit_off, num;
 	handle_t *handle;
@@ -7098,7 +7075,7 @@ int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 	struct ocfs2_dinode *di = (struct ocfs2_dinode *)di_bh->b_data;
 	struct ocfs2_alloc_context *data_ac = NULL;
-	struct folio *folio = NULL;
+	struct page *page = NULL;
 	struct ocfs2_extent_tree et;
 	int did_quota = 0;
 
@@ -7149,12 +7126,12 @@ int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 
 		/*
 		 * Save two copies, one for insert, and one that can
-		 * be changed by ocfs2_map_and_dirty_folio() below.
+		 * be changed by ocfs2_map_and_dirty_page() below.
 		 */
 		block = phys = ocfs2_clusters_to_blocks(inode->i_sb, bit_off);
 
-		ret = ocfs2_grab_eof_folios(inode, 0, page_end, &folio,
-					   &num_folios);
+		ret = ocfs2_grab_eof_pages(inode, 0, page_end, &page,
+					   &num_pages);
 		if (ret) {
 			mlog_errno(ret);
 			need_free = 1;
@@ -7165,15 +7142,15 @@ int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 		 * This should populate the 1st page for us and mark
 		 * it up to date.
 		 */
-		ret = ocfs2_read_inline_data(inode, folio, di_bh);
+		ret = ocfs2_read_inline_data(inode, page, di_bh);
 		if (ret) {
 			mlog_errno(ret);
 			need_free = 1;
 			goto out_unlock;
 		}
 
-		ocfs2_map_and_dirty_folio(inode, handle, 0, page_end, folio, 0,
-				&phys);
+		ocfs2_map_and_dirty_page(inode, handle, 0, page_end, page, 0,
+					 &phys);
 	}
 
 	spin_lock(&oi->ip_lock);
@@ -7204,8 +7181,8 @@ int ocfs2_convert_inline_data_to_extents(struct inode *inode,
 	}
 
 out_unlock:
-	if (folio)
-		ocfs2_unlock_and_free_folios(&folio, num_folios);
+	if (page)
+		ocfs2_unlock_and_free_pages(&page, num_pages);
 
 out_commit:
 	if (ret < 0 && did_quota)
@@ -7327,7 +7304,7 @@ start:
 		 * to check it up here before changing the tree.
 		*/
 		if (root_el->l_tree_depth && rec->e_int_clusters == 0) {
-			mlog(ML_ERROR, "Inode %llu has an empty "
+			mlog(ML_ERROR, "Inode %lu has an empty "
 				    "extent record, depth %u\n", inode->i_ino,
 				    le16_to_cpu(root_el->l_tree_depth));
 			status = ocfs2_remove_rightmost_empty_extent(osb,

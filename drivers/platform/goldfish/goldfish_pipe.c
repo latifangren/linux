@@ -61,6 +61,7 @@
 #include <linux/io.h>
 #include <linux/dma-mapping.h>
 #include <linux/mm.h>
+#include <linux/acpi.h>
 #include <linux/bug.h>
 #include "goldfish_pipe_qemu.h"
 
@@ -660,7 +661,7 @@ static int get_free_pipe_id_locked(struct goldfish_pipe_dev *dev)
 		 */
 		u32 new_capacity = 2 * dev->pipes_capacity;
 		struct goldfish_pipe **pipes =
-			kzalloc_objs(*pipes, new_capacity, GFP_ATOMIC);
+			kcalloc(new_capacity, sizeof(*pipes), GFP_ATOMIC);
 		if (!pipes)
 			return -ENOMEM;
 		memcpy(pipes, dev->pipes, sizeof(*pipes) * dev->pipes_capacity);
@@ -699,7 +700,7 @@ static int goldfish_pipe_open(struct inode *inode, struct file *file)
 	int status;
 
 	/* Allocate new pipe kernel object */
-	struct goldfish_pipe *pipe = kzalloc_obj(*pipe);
+	struct goldfish_pipe *pipe = kzalloc(sizeof(*pipe), GFP_KERNEL);
 
 	if (!pipe)
 		return -ENOMEM;
@@ -826,7 +827,8 @@ static int goldfish_pipe_device_init(struct platform_device *pdev,
 	dev->pdev_dev = &pdev->dev;
 	dev->first_signalled_pipe = NULL;
 	dev->pipes_capacity = INITIAL_PIPES_CAPACITY;
-	dev->pipes = kzalloc_objs(*dev->pipes, dev->pipes_capacity);
+	dev->pipes = kcalloc(dev->pipes_capacity, sizeof(*dev->pipes),
+			     GFP_KERNEL);
 	if (!dev->pipes) {
 		misc_deregister(&dev->miscdev);
 		return -ENOMEM;
@@ -934,11 +936,11 @@ MODULE_DEVICE_TABLE(of, goldfish_pipe_of_match);
 
 static struct platform_driver goldfish_pipe_driver = {
 	.probe = goldfish_pipe_probe,
-	.remove = goldfish_pipe_remove,
+	.remove_new = goldfish_pipe_remove,
 	.driver = {
 		.name = "goldfish_pipe",
 		.of_match_table = goldfish_pipe_of_match,
-		.acpi_match_table = goldfish_pipe_acpi_match,
+		.acpi_match_table = ACPI_PTR(goldfish_pipe_acpi_match),
 	}
 };
 

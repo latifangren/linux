@@ -283,7 +283,7 @@ static int fsl_lbc_ctrl_probe(struct platform_device *dev)
 		return -EFAULT;
 	}
 
-	fsl_lbc_ctrl_dev = kzalloc_obj(*fsl_lbc_ctrl_dev);
+	fsl_lbc_ctrl_dev = kzalloc(sizeof(*fsl_lbc_ctrl_dev), GFP_KERNEL);
 	if (!fsl_lbc_ctrl_dev)
 		return -ENOMEM;
 
@@ -350,7 +350,7 @@ err:
 #ifdef CONFIG_SUSPEND
 
 /* save lbc registers */
-static int fsl_lbc_syscore_suspend(void *data)
+static int fsl_lbc_syscore_suspend(void)
 {
 	struct fsl_lbc_ctrl *ctrl;
 	struct fsl_lbc_regs __iomem *lbc;
@@ -363,7 +363,7 @@ static int fsl_lbc_syscore_suspend(void *data)
 	if (!lbc)
 		goto out;
 
-	ctrl->saved_regs = kmalloc_obj(struct fsl_lbc_regs);
+	ctrl->saved_regs = kmalloc(sizeof(struct fsl_lbc_regs), GFP_KERNEL);
 	if (!ctrl->saved_regs)
 		return -ENOMEM;
 
@@ -374,7 +374,7 @@ out:
 }
 
 /* restore lbc registers */
-static void fsl_lbc_syscore_resume(void *data)
+static void fsl_lbc_syscore_resume(void)
 {
 	struct fsl_lbc_ctrl *ctrl;
 	struct fsl_lbc_regs __iomem *lbc;
@@ -408,13 +408,9 @@ static const struct of_device_id fsl_lbc_match[] = {
 };
 
 #ifdef CONFIG_SUSPEND
-static const struct syscore_ops lbc_syscore_pm_ops = {
+static struct syscore_ops lbc_syscore_pm_ops = {
 	.suspend = fsl_lbc_syscore_suspend,
 	.resume = fsl_lbc_syscore_resume,
-};
-
-static struct syscore lbc_syscore_pm = {
-	.ops = &lbc_syscore_pm_ops,
 };
 #endif
 
@@ -429,7 +425,7 @@ static struct platform_driver fsl_lbc_ctrl_driver = {
 static int __init fsl_lbc_init(void)
 {
 #ifdef CONFIG_SUSPEND
-	register_syscore(&lbc_syscore_pm);
+	register_syscore_ops(&lbc_syscore_pm_ops);
 #endif
 	return platform_driver_register(&fsl_lbc_ctrl_driver);
 }

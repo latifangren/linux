@@ -42,7 +42,8 @@ static int xtfpga_power_off(struct sys_off_data *unused)
 	return NOTIFY_DONE;
 }
 
-static int xtfpga_restart(struct sys_off_data *unused)
+static int xtfpga_restart(struct notifier_block *this,
+			  unsigned long event, void *ptr)
 {
 	/* Try software reset first. */
 	WRITE_ONCE(*(u32 *)XTFPGA_SWRST_VADDR, 0xdead);
@@ -55,6 +56,10 @@ static int xtfpga_restart(struct sys_off_data *unused)
 	return NOTIFY_DONE;
 }
 
+static struct notifier_block xtfpga_restart_block = {
+	.notifier_call = xtfpga_restart,
+};
+
 #ifdef CONFIG_XTENSA_CALIBRATE_CCOUNT
 
 void __init platform_calibrate_ccount(void)
@@ -66,9 +71,7 @@ void __init platform_calibrate_ccount(void)
 
 static void __init xtfpga_register_handlers(void)
 {
-	register_sys_off_handler(SYS_OFF_MODE_RESTART,
-				 SYS_OFF_PRIO_PLATFORM,
-				 xtfpga_restart, NULL);
+	register_restart_handler(&xtfpga_restart_block);
 	register_sys_off_handler(SYS_OFF_MODE_POWER_OFF,
 				 SYS_OFF_PRIO_DEFAULT,
 				 xtfpga_power_off, NULL);

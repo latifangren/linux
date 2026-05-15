@@ -38,7 +38,7 @@ static int opt_modulo, verbose;
 static int opt_yield, opt_signal, opt_sleep,
 		opt_disable_rseq, opt_threads = 200,
 		opt_disable_mod = 0, opt_test = 's';
-static bool opt_rseq_legacy;
+
 static long long opt_reps = 5000;
 
 static __thread __attribute__((tls_model("initial-exec")))
@@ -226,32 +226,8 @@ unsigned int yield_mod_cnt, nr_abort;
 	"addi  " INJECT_ASM_REG "," INJECT_ASM_REG ", -1\n\t"	\
 	"bnez " INJECT_ASM_REG ", 222b\n\t"			\
 	"333:\n\t"
-#elif defined(__or1k__)
 
-#define RSEQ_INJECT_INPUT \
-	, [loop_cnt_1]"m"(loop_cnt[1]) \
-	, [loop_cnt_2]"m"(loop_cnt[2]) \
-	, [loop_cnt_3]"m"(loop_cnt[3]) \
-	, [loop_cnt_4]"m"(loop_cnt[4]) \
-	, [loop_cnt_5]"m"(loop_cnt[5]) \
-	, [loop_cnt_6]"m"(loop_cnt[6])
 
-#define INJECT_ASM_REG	"r31"
-
-#define RSEQ_INJECT_CLOBBER \
-	, INJECT_ASM_REG
-
-#define RSEQ_INJECT_ASM(n)					\
-	"l.lwz   " INJECT_ASM_REG ", %[loop_cnt_" #n "]\n\t"	\
-	"l.sfeqi " INJECT_ASM_REG ", 0\n\t"			\
-	"l.bf 333f\n\t"						\
-	" l.nop\n\t"						\
-	"222:\n\t"						\
-	"l.addi  " INJECT_ASM_REG "," INJECT_ASM_REG ", -1\n\t"	\
-	"l.sfeqi " INJECT_ASM_REG ", 0\n\t"			\
-	"l.bf 222f\n\t"						\
-	" l.nop\n\t"						\
-	"333:\n\t"
 #else
 #error unsupported target
 #endif
@@ -281,12 +257,9 @@ unsigned int yield_mod_cnt, nr_abort;
 	} \
 }
 
-#define rseq_no_glibc			true
-
 #else
 
 #define printf_verbose(fmt, ...)
-#define rseq_no_glibc			false
 
 #endif /* BENCHMARK */
 
@@ -484,7 +457,7 @@ void *test_percpu_spinlock_thread(void *arg)
 	long long i, reps;
 
 	if (!opt_disable_rseq && thread_data->reg &&
-	    __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	    rseq_register_current_thread())
 		abort();
 	reps = thread_data->reps;
 	for (i = 0; i < reps; i++) {
@@ -561,7 +534,7 @@ void *test_percpu_inc_thread(void *arg)
 	long long i, reps;
 
 	if (!opt_disable_rseq && thread_data->reg &&
-	    __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	    rseq_register_current_thread())
 		abort();
 	reps = thread_data->reps;
 	for (i = 0; i < reps; i++) {
@@ -715,7 +688,7 @@ void *test_percpu_list_thread(void *arg)
 	long long i, reps;
 	struct percpu_list *list = (struct percpu_list *)arg;
 
-	if (!opt_disable_rseq && __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	if (!opt_disable_rseq && rseq_register_current_thread())
 		abort();
 
 	reps = opt_reps;
@@ -898,7 +871,7 @@ void *test_percpu_buffer_thread(void *arg)
 	long long i, reps;
 	struct percpu_buffer *buffer = (struct percpu_buffer *)arg;
 
-	if (!opt_disable_rseq && __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	if (!opt_disable_rseq && rseq_register_current_thread())
 		abort();
 
 	reps = opt_reps;
@@ -1108,7 +1081,7 @@ void *test_percpu_memcpy_buffer_thread(void *arg)
 	long long i, reps;
 	struct percpu_memcpy_buffer *buffer = (struct percpu_memcpy_buffer *)arg;
 
-	if (!opt_disable_rseq && __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	if (!opt_disable_rseq && rseq_register_current_thread())
 		abort();
 
 	reps = opt_reps;
@@ -1261,7 +1234,7 @@ void *test_membarrier_worker_thread(void *arg)
 	const int iters = opt_reps;
 	int i;
 
-	if (__rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy)) {
+	if (rseq_register_current_thread()) {
 		fprintf(stderr, "Error: rseq_register_current_thread(...) failed(%d): %s\n",
 			errno, strerror(errno));
 		abort();
@@ -1326,7 +1299,7 @@ void *test_membarrier_manager_thread(void *arg)
 	intptr_t expect_a = 0, expect_b = 0;
 	int cpu_a = 0, cpu_b = 0;
 
-	if (__rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy)) {
+	if (rseq_register_current_thread()) {
 		fprintf(stderr, "Error: rseq_register_current_thread(...) failed(%d): %s\n",
 			errno, strerror(errno));
 		abort();
@@ -1478,7 +1451,6 @@ static void show_usage(int argc, char **argv)
 	printf("	[-D M] Disable rseq for each M threads\n");
 	printf("	[-T test] Choose test: (s)pinlock, (l)ist, (b)uffer, (m)emcpy, (i)ncrement, membarrie(r)\n");
 	printf("	[-M] Push into buffer and memcpy buffer with memory barriers.\n");
-	printf("	[-O] Test with optimized RSEQ\n");
 	printf("	[-v] Verbose output.\n");
 	printf("	[-h] Show this help.\n");
 	printf("\n");
@@ -1606,9 +1578,6 @@ int main(int argc, char **argv)
 		case 'M':
 			opt_mo = RSEQ_MO_RELEASE;
 			break;
-		case 'L':
-			opt_rseq_legacy = true;
-			break;
 		default:
 			show_usage(argc, argv);
 			goto error;
@@ -1625,7 +1594,7 @@ int main(int argc, char **argv)
 	if (set_signal_handler())
 		goto error;
 
-	if (!opt_disable_rseq && __rseq_register_current_thread(rseq_no_glibc, opt_rseq_legacy))
+	if (!opt_disable_rseq && rseq_register_current_thread())
 		goto error;
 	if (!opt_disable_rseq && !rseq_validate_cpu_id()) {
 		fprintf(stderr, "Error: cpu id getter unavailable\n");

@@ -100,7 +100,7 @@ static int tegra210_peq_get(struct snd_kcontrol *kcontrol,
 {
 	struct soc_mixer_control *mc =
 		(struct soc_mixer_control *)kcontrol->private_value;
-	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *cmpnt = snd_soc_kcontrol_component(kcontrol);
 	struct tegra210_ope *ope = snd_soc_component_get_drvdata(cmpnt);
 	unsigned int mask = (1 << fls(mc->max)) - 1;
 	unsigned int val;
@@ -123,7 +123,7 @@ static int tegra210_peq_put(struct snd_kcontrol *kcontrol,
 {
 	struct soc_mixer_control *mc =
 		(struct soc_mixer_control *)kcontrol->private_value;
-	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *cmpnt = snd_soc_kcontrol_component(kcontrol);
 	struct tegra210_ope *ope = snd_soc_component_get_drvdata(cmpnt);
 	unsigned int mask = (1 << fls(mc->max)) - 1;
 	bool change = false;
@@ -146,11 +146,10 @@ static int tegra210_peq_ram_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
 	struct tegra_soc_bytes *params = (void *)kcontrol->private_value;
-	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *cmpnt = snd_soc_kcontrol_component(kcontrol);
 	struct tegra210_ope *ope = snd_soc_component_get_drvdata(cmpnt);
-	int val_bytes = snd_soc_component_regmap_val_bytes(cmpnt);
 	u32 i, reg_ctrl = params->soc.base;
-	u32 reg_data = reg_ctrl + val_bytes;
+	u32 reg_data = reg_ctrl + cmpnt->val_bytes;
 	s32 *data = (s32 *)biquad_coeff_buffer;
 
 	pm_runtime_get_sync(cmpnt->dev);
@@ -170,11 +169,10 @@ static int tegra210_peq_ram_put(struct snd_kcontrol *kcontrol,
 				     struct snd_ctl_elem_value *ucontrol)
 {
 	struct tegra_soc_bytes *params = (void *)kcontrol->private_value;
-	struct snd_soc_component *cmpnt = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *cmpnt = snd_soc_kcontrol_component(kcontrol);
 	struct tegra210_ope *ope = snd_soc_component_get_drvdata(cmpnt);
-	int val_bytes = snd_soc_component_regmap_val_bytes(cmpnt);
 	u32 i, reg_ctrl = params->soc.base;
-	u32 reg_data = reg_ctrl + val_bytes;
+	u32 reg_data = reg_ctrl + cmpnt->val_bytes;
 	s32 *data = (s32 *)biquad_coeff_buffer;
 
 	for (i = 0; i < params->soc.num_regs; i++)
@@ -308,7 +306,6 @@ static const struct regmap_config tegra210_peq_regmap_config = {
 	.precious_reg		= tegra210_peq_precious_reg,
 	.reg_defaults		= tegra210_peq_reg_defaults,
 	.num_reg_defaults	= ARRAY_SIZE(tegra210_peq_reg_defaults),
-	.reg_default_cb		= regmap_default_zero_cb,
 	.cache_type		= REGCACHE_FLAT,
 };
 
@@ -410,14 +407,14 @@ int tegra210_peq_regmap_init(struct platform_device *pdev)
 
 	child = of_get_child_by_name(dev->of_node, "equalizer");
 	if (!child)
-		return dev_err_probe(dev, -ENODEV,
-				     "missing 'equalizer' DT child node\n");
+		return -ENODEV;
 
 	err = of_address_to_resource(child, 0, &mem);
 	of_node_put(child);
-	if (err < 0)
-		return dev_err_probe(dev, err,
-				     "failed to get PEQ resource\n");
+	if (err < 0) {
+		dev_err(dev, "fail to get PEQ resource\n");
+		return err;
+	}
 
 	mem.flags = IORESOURCE_MEM;
 	regs = devm_ioremap_resource(dev, &mem);
@@ -425,9 +422,10 @@ int tegra210_peq_regmap_init(struct platform_device *pdev)
 		return PTR_ERR(regs);
 	ope->peq_regmap = devm_regmap_init_mmio(dev, regs,
 						&tegra210_peq_regmap_config);
-	if (IS_ERR(ope->peq_regmap))
-		return dev_err_probe(dev, PTR_ERR(ope->peq_regmap),
-				     "PEQ regmap init failed\n");
+	if (IS_ERR(ope->peq_regmap)) {
+		dev_err(dev, "regmap init failed\n");
+		return PTR_ERR(ope->peq_regmap);
+	}
 
 	regcache_cache_only(ope->peq_regmap, true);
 

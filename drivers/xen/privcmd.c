@@ -286,7 +286,7 @@ static long privcmd_ioctl_mmap(struct file *file, void __user *udata)
 	struct mmap_gfn_state state;
 
 	/* We only support privcmd_ioctl_mmap_batch for non-auto-translated. */
-	if (!xen_pv_domain())
+	if (xen_feature(XENFEAT_auto_translated_physmap))
 		return -ENOSYS;
 
 	if (copy_from_user(&mmapcmd, udata, sizeof(mmapcmd)))
@@ -368,7 +368,7 @@ static int mmap_batch_fn(void *data, int nr, void *state)
 	struct page **cur_pages = NULL;
 	int ret;
 
-	if (!xen_pv_domain())
+	if (xen_feature(XENFEAT_auto_translated_physmap))
 		cur_pages = &pages[st->index];
 
 	BUG_ON(nr < 0);
@@ -448,7 +448,7 @@ static int alloc_empty_pages(struct vm_area_struct *vma, int numpgs)
 	int rc;
 	struct page **pages;
 
-	pages = kvzalloc_objs(pages[0], numpgs);
+	pages = kvcalloc(numpgs, sizeof(pages[0]), GFP_KERNEL);
 	if (pages == NULL)
 		return -ENOMEM;
 
@@ -550,7 +550,7 @@ static long privcmd_ioctl_mmap_batch(
 			ret = -EINVAL;
 			goto out_unlock;
 		}
-		if (!xen_pv_domain()) {
+		if (xen_feature(XENFEAT_auto_translated_physmap)) {
 			ret = alloc_empty_pages(vma, nr_pages);
 			if (ret < 0)
 				goto out_unlock;
@@ -668,7 +668,7 @@ static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
 	if (kdata.num > privcmd_dm_op_max_num)
 		return -E2BIG;
 
-	kbufs = kzalloc_objs(*kbufs, kdata.num);
+	kbufs = kcalloc(kdata.num, sizeof(*kbufs), GFP_KERNEL);
 	if (!kbufs)
 		return -ENOMEM;
 
@@ -695,13 +695,13 @@ static long privcmd_ioctl_dm_op(struct file *file, void __user *udata)
 			PAGE_SIZE);
 	}
 
-	pages = kzalloc_objs(*pages, nr_pages);
+	pages = kcalloc(nr_pages, sizeof(*pages), GFP_KERNEL);
 	if (!pages) {
 		rc = -ENOMEM;
 		goto out;
 	}
 
-	xbufs = kzalloc_objs(*xbufs, kdata.num);
+	xbufs = kcalloc(kdata.num, sizeof(*xbufs), GFP_KERNEL);
 	if (!xbufs) {
 		rc = -ENOMEM;
 		goto out;
@@ -788,13 +788,14 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 		goto out;
 	}
 
-	pfns = kzalloc_objs(*pfns, kdata.num, GFP_KERNEL | __GFP_NOWARN);
+	pfns = kcalloc(kdata.num, sizeof(*pfns), GFP_KERNEL | __GFP_NOWARN);
 	if (!pfns) {
 		rc = -ENOMEM;
 		goto out;
 	}
 
-	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) && !xen_pv_domain()) {
+	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) &&
+	    xen_feature(XENFEAT_auto_translated_physmap)) {
 		unsigned int nr = DIV_ROUND_UP(kdata.num, XEN_PFN_PER_PAGE);
 		struct page **pages;
 		unsigned int i;
@@ -825,7 +826,8 @@ static long privcmd_ioctl_mmap_resource(struct file *file,
 	if (rc)
 		goto out;
 
-	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) && !xen_pv_domain()) {
+	if (IS_ENABLED(CONFIG_XEN_AUTO_XLATE) &&
+	    xen_feature(XENFEAT_auto_translated_physmap)) {
 		rc = xen_remap_vma_range(vma, kdata.addr, kdata.num << PAGE_SHIFT);
 	} else {
 		unsigned int domid =
@@ -978,10 +980,9 @@ static int privcmd_irqfd_assign(struct privcmd_irqfd *irqfd)
 	struct privcmd_kernel_irqfd *kirqfd, *tmp;
 	unsigned long flags;
 	__poll_t events;
+	struct fd f;
 	void *dm_op;
 	int ret, idx;
-
-	CLASS(fd, f)(irqfd->fd);
 
 	kirqfd = kzalloc(sizeof(*kirqfd) + irqfd->size, GFP_KERNEL);
 	if (!kirqfd)
@@ -998,7 +999,8 @@ static int privcmd_irqfd_assign(struct privcmd_irqfd *irqfd)
 	kirqfd->dom = irqfd->dom;
 	INIT_WORK(&kirqfd->shutdown, irqfd_shutdown);
 
-	if (fd_empty(f)) {
+	f = fdget(irqfd->fd);
+	if (!fd_file(f)) {
 		ret = -EBADF;
 		goto error_kfree;
 	}
@@ -1006,7 +1008,7 @@ static int privcmd_irqfd_assign(struct privcmd_irqfd *irqfd)
 	kirqfd->eventfd = eventfd_ctx_fileget(fd_file(f));
 	if (IS_ERR(kirqfd->eventfd)) {
 		ret = PTR_ERR(kirqfd->eventfd);
-		goto error_kfree;
+		goto error_fd_put;
 	}
 
 	/*
@@ -1039,10 +1041,19 @@ static int privcmd_irqfd_assign(struct privcmd_irqfd *irqfd)
 		irqfd_inject(kirqfd);
 
 	srcu_read_unlock(&irqfds_srcu, idx);
+
+	/*
+	 * Do not drop the file until the kirqfd is fully initialized, otherwise
+	 * we might race against the EPOLLHUP.
+	 */
+	fdput(f);
 	return 0;
 
 error_eventfd:
 	eventfd_ctx_put(kirqfd->eventfd);
+
+error_fd_put:
+	fdput(f);
 
 error_kfree:
 	kfree(kirqfd);
@@ -1106,8 +1117,7 @@ static long privcmd_ioctl_irqfd(struct file *file, void __user *udata)
 
 static int privcmd_irqfd_init(void)
 {
-	irqfd_cleanup_wq = alloc_workqueue("privcmd-irqfd-cleanup", WQ_PERCPU,
-					   0);
+	irqfd_cleanup_wq = alloc_workqueue("privcmd-irqfd-cleanup", 0, 0);
 	if (!irqfd_cleanup_wq)
 		return -ENOMEM;
 
@@ -1355,6 +1365,7 @@ static int privcmd_ioeventfd_assign(struct privcmd_ioeventfd *ioeventfd)
 	struct privcmd_kernel_ioeventfd *kioeventfd;
 	struct privcmd_kernel_ioreq *kioreq;
 	unsigned long flags;
+	struct fd f;
 	int ret;
 
 	/* Check for range overflow */
@@ -1370,11 +1381,19 @@ static int privcmd_ioeventfd_assign(struct privcmd_ioeventfd *ioeventfd)
 	if (!ioeventfd->vcpus || ioeventfd->vcpus > 4096)
 		return -EINVAL;
 
-	kioeventfd = kzalloc_obj(*kioeventfd);
+	kioeventfd = kzalloc(sizeof(*kioeventfd), GFP_KERNEL);
 	if (!kioeventfd)
 		return -ENOMEM;
 
-	kioeventfd->eventfd = eventfd_ctx_fdget(ioeventfd->event_fd);
+	f = fdget(ioeventfd->event_fd);
+	if (!fd_file(f)) {
+		ret = -EBADF;
+		goto error_kfree;
+	}
+
+	kioeventfd->eventfd = eventfd_ctx_fileget(fd_file(f));
+	fdput(f);
+
 	if (IS_ERR(kioeventfd->eventfd)) {
 		ret = PTR_ERR(kioeventfd->eventfd);
 		goto error_kfree;
@@ -1583,7 +1602,7 @@ static int privcmd_open(struct inode *ino, struct file *file)
 	if (wait_event_interruptible(restrict_wait_wq, !restrict_wait) < 0)
 		return -EINTR;
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -1608,7 +1627,7 @@ static void privcmd_close(struct vm_area_struct *vma)
 	int numgfns = (vma->vm_end - vma->vm_start) >> XEN_PAGE_SHIFT;
 	int rc;
 
-	if (xen_pv_domain() || !numpgs || !pages)
+	if (!xen_feature(XENFEAT_auto_translated_physmap) || !numpgs || !pages)
 		return;
 
 	rc = xen_unmap_domain_gfn_range(vma, numgfns, pages);
@@ -1618,12 +1637,6 @@ static void privcmd_close(struct vm_area_struct *vma)
 		pr_crit("unable to unmap MFN range: leaking %d pages. rc=%d\n",
 			numpgs, rc);
 	kvfree(pages);
-}
-
-static int privcmd_may_split(struct vm_area_struct *area, unsigned long addr)
-{
-	/* Forbid splitting, avoids double free via privcmd_close(). */
-	return -EINVAL;
 }
 
 static vm_fault_t privcmd_fault(struct vm_fault *vmf)
@@ -1637,7 +1650,6 @@ static vm_fault_t privcmd_fault(struct vm_fault *vmf)
 
 static const struct vm_operations_struct privcmd_vm_ops = {
 	.close = privcmd_close,
-	.may_split = privcmd_may_split,
 	.fault = privcmd_fault
 };
 

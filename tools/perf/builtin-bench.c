@@ -37,14 +37,14 @@ struct bench {
 };
 
 #ifdef HAVE_LIBNUMA_SUPPORT
-static const struct bench numa_benchmarks[] = {
+static struct bench numa_benchmarks[] = {
 	{ "mem",	"Benchmark for NUMA workloads",			bench_numa		},
 	{ "all",	"Run all NUMA benchmarks",			NULL			},
 	{ NULL,		NULL,						NULL			}
 };
 #endif
 
-static const struct bench sched_benchmarks[] = {
+static struct bench sched_benchmarks[] = {
 	{ "messaging",	"Benchmark for scheduling and IPC",		bench_sched_messaging	},
 	{ "pipe",	"Benchmark for pipe() between two processes",	bench_sched_pipe	},
 	{ "seccomp-notify",	"Benchmark for seccomp user notify",	bench_sched_seccomp_notify},
@@ -52,7 +52,7 @@ static const struct bench sched_benchmarks[] = {
 	{ NULL,		NULL,						NULL			}
 };
 
-static const struct bench syscall_benchmarks[] = {
+static struct bench syscall_benchmarks[] = {
 	{ "basic",	"Benchmark for basic getppid(2) calls",		bench_syscall_basic	},
 	{ "getpgid",	"Benchmark for getpgid(2) calls",		bench_syscall_getpgid	},
 	{ "fork",	"Benchmark for fork(2) calls",			bench_syscall_fork	},
@@ -61,16 +61,15 @@ static const struct bench syscall_benchmarks[] = {
 	{ NULL,		NULL,						NULL			},
 };
 
-static const struct bench mem_benchmarks[] = {
+static struct bench mem_benchmarks[] = {
 	{ "memcpy",	"Benchmark for memcpy() functions",		bench_mem_memcpy	},
 	{ "memset",	"Benchmark for memset() functions",		bench_mem_memset	},
 	{ "find_bit",	"Benchmark for find_bit() functions",		bench_mem_find_bit	},
-	{ "mmap",	"Benchmark for mmap() mappings",		bench_mem_mmap		},
 	{ "all",	"Run all memory access benchmarks",		NULL			},
 	{ NULL,		NULL,						NULL			}
 };
 
-static const struct bench futex_benchmarks[] = {
+static struct bench futex_benchmarks[] = {
 	{ "hash",	"Benchmark for futex hash table",               bench_futex_hash	},
 	{ "wake",	"Benchmark for futex wake calls",               bench_futex_wake	},
 	{ "wake-parallel", "Benchmark for parallel futex wake calls",   bench_futex_wake_parallel },
@@ -82,7 +81,7 @@ static const struct bench futex_benchmarks[] = {
 };
 
 #ifdef HAVE_EVENTFD_SUPPORT
-static const struct bench epoll_benchmarks[] = {
+static struct bench epoll_benchmarks[] = {
 	{ "wait",	"Benchmark epoll concurrent epoll_waits",       bench_epoll_wait	},
 	{ "ctl",	"Benchmark epoll concurrent epoll_ctls",        bench_epoll_ctl		},
 	{ "all",	"Run all futex benchmarks",			NULL			},
@@ -90,7 +89,7 @@ static const struct bench epoll_benchmarks[] = {
 };
 #endif // HAVE_EVENTFD_SUPPORT
 
-static const struct bench internals_benchmarks[] = {
+static struct bench internals_benchmarks[] = {
 	{ "synthesize", "Benchmark perf event synthesis",	bench_synthesize	},
 	{ "kallsyms-parse", "Benchmark kallsyms parsing",	bench_kallsyms_parse	},
 	{ "inject-build-id", "Benchmark build-id injection",	bench_inject_build_id	},
@@ -99,14 +98,14 @@ static const struct bench internals_benchmarks[] = {
 	{ NULL,		NULL,					NULL			}
 };
 
-static const struct bench breakpoint_benchmarks[] = {
+static struct bench breakpoint_benchmarks[] = {
 	{ "thread", "Benchmark thread start/finish with breakpoints", bench_breakpoint_thread},
 	{ "enable", "Benchmark breakpoint enable/disable", bench_breakpoint_enable},
 	{ "all", "Run all breakpoint benchmarks", NULL},
 	{ NULL,	NULL, NULL },
 };
 
-static const struct bench uprobe_benchmarks[] = {
+static struct bench uprobe_benchmarks[] = {
 	{ "baseline",	"Baseline libc usleep(1000) call",				bench_uprobe_baseline,	},
 	{ "empty",	"Attach empty BPF prog to uprobe on usleep, system wide",	bench_uprobe_empty,	},
 	{ "trace_printk", "Attach trace_printk BPF prog to uprobe on usleep syswide",	bench_uprobe_trace_printk,	},
@@ -116,12 +115,12 @@ static const struct bench uprobe_benchmarks[] = {
 };
 
 struct collection {
-	const char		*name;
-	const char		*summary;
-	const struct bench	*benchmarks;
+	const char	*name;
+	const char	*summary;
+	struct bench	*benchmarks;
 };
 
-static const struct collection collections[] = {
+static struct collection collections[] = {
 	{ "sched",	"Scheduler and IPC benchmarks",			sched_benchmarks	},
 	{ "syscall",	"System call benchmarks",			syscall_benchmarks	},
 	{ "mem",	"Memory access benchmarks",			mem_benchmarks		},
@@ -147,9 +146,9 @@ static const struct collection collections[] = {
 #define for_each_bench(coll, bench) \
 	for (bench = coll->benchmarks; bench && bench->name; bench++)
 
-static void dump_benchmarks(const struct collection *coll)
+static void dump_benchmarks(struct collection *coll)
 {
-	const struct bench *bench;
+	struct bench *bench;
 
 	printf("\n        # List of available benchmarks for collection '%s':\n\n", coll->name);
 
@@ -178,7 +177,7 @@ static const char * const bench_usage[] = {
 
 static void print_usage(void)
 {
-	const struct collection *coll;
+	struct collection *coll;
 	int i;
 
 	printf("Usage: \n");
@@ -234,9 +233,9 @@ static int run_bench(const char *coll_name, const char *bench_name, bench_fn_t f
 	return ret;
 }
 
-static void run_collection(const struct collection *coll)
+static void run_collection(struct collection *coll)
 {
-	const struct bench *bench;
+	struct bench *bench;
 	const char *argv[2];
 
 	argv[1] = NULL;
@@ -260,7 +259,7 @@ static void run_collection(const struct collection *coll)
 
 static void run_all_collections(void)
 {
-	const struct collection *coll;
+	struct collection *coll;
 
 	for_each_collection(coll)
 		run_collection(coll);
@@ -268,7 +267,7 @@ static void run_all_collections(void)
 
 int cmd_bench(int argc, const char **argv)
 {
-	const struct collection *coll;
+	struct collection *coll;
 	int ret = 0;
 
 	/* Unbuffered output */
@@ -306,7 +305,7 @@ int cmd_bench(int argc, const char **argv)
 	}
 
 	for_each_collection(coll) {
-		const struct bench *bench;
+		struct bench *bench;
 
 		if (strcmp(coll->name, argv[0]))
 			continue;

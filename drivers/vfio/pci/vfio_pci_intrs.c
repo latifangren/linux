@@ -69,7 +69,7 @@ vfio_irq_ctx_alloc(struct vfio_pci_core_device *vdev, unsigned long index)
 	struct vfio_pci_irq_ctx *ctx;
 	int ret;
 
-	ctx = kzalloc_obj(*ctx, GFP_KERNEL_ACCOUNT);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL_ACCOUNT);
 	if (!ctx)
 		return NULL;
 
@@ -512,11 +512,15 @@ static int vfio_msi_set_vector_signal(struct vfio_pci_core_device *vdev,
 	if (ret)
 		goto out_put_eventfd_ctx;
 
-	ret = irq_bypass_register_producer(&ctx->producer, trigger, irq);
+	ctx->producer.token = trigger;
+	ctx->producer.irq = irq;
+	ret = irq_bypass_register_producer(&ctx->producer);
 	if (unlikely(ret)) {
 		dev_info(&pdev->dev,
-		"irq bypass producer (eventfd %p) registration fails: %d\n",
-		trigger, ret);
+		"irq bypass producer (token %p) registration fails: %d\n",
+		ctx->producer.token, ret);
+
+		ctx->producer.token = NULL;
 	}
 	ctx->trigger = trigger;
 
@@ -684,7 +688,7 @@ static int vfio_pci_set_msi_trigger(struct vfio_pci_core_device *vdev,
 {
 	struct vfio_pci_irq_ctx *ctx;
 	unsigned int i;
-	bool msix = (index == VFIO_PCI_MSIX_IRQ_INDEX);
+	bool msix = (index == VFIO_PCI_MSIX_IRQ_INDEX) ? true : false;
 
 	if (irq_is(vdev, index) && !count && (flags & VFIO_IRQ_SET_DATA_NONE)) {
 		vfio_msi_disable(vdev, msix);

@@ -93,6 +93,7 @@ allOf:
         adi,fault-q:
           default: 4
 
+
 required:
   - compatible
   - reg

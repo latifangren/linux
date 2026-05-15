@@ -9,3 +9,12 @@ Contents:
    :maxdepth: 2
 
    cxacru
+   fore200e
+   iphase
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

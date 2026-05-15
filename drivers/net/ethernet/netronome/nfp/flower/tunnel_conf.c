@@ -650,7 +650,7 @@ static void nfp_tun_neigh_update(struct work_struct *work)
 		flow6.daddr = *(struct in6_addr *)n->primary_key;
 		if (!neigh_invalid) {
 			struct dst_entry *dst;
-			/* Use ip6_dst_lookup_flow to populate flow6->saddr
+			/* Use ipv6_dst_lookup_flow to populate flow6->saddr
 			 * and other fields. This information is only needed
 			 * for new entries, lookup can be skipped when an entry
 			 * gets invalidated - as only the daddr is needed for
@@ -696,7 +696,7 @@ nfp_tun_alloc_neigh_update_work(struct nfp_app *app, struct neighbour *n)
 {
 	struct nfp_neigh_update_work *update_work;
 
-	update_work = kzalloc_obj(*update_work, GFP_ATOMIC);
+	update_work = kzalloc(sizeof(*update_work), GFP_ATOMIC);
 	if (!update_work)
 		return NULL;
 
@@ -730,7 +730,7 @@ nfp_tun_neigh_event_handler(struct notifier_block *nb, unsigned long event,
 		return NOTIFY_DONE;
 	}
 #if IS_ENABLED(CONFIG_IPV6)
-	if (n->tbl != &nd_tbl && n->tbl != &arp_tbl)
+	if (n->tbl != ipv6_stub->nd_tbl && n->tbl != &arp_tbl)
 #else
 	if (n->tbl != &arp_tbl)
 #endif
@@ -815,7 +815,8 @@ void nfp_tunnel_request_route_v6(struct nfp_app *app, struct sk_buff *skb)
 	flow.flowi6_proto = IPPROTO_UDP;
 
 #if IS_ENABLED(CONFIG_INET) && IS_ENABLED(CONFIG_IPV6)
-	dst = ip6_dst_lookup_flow(dev_net(netdev), NULL, &flow, NULL);
+	dst = ipv6_stub->ipv6_dst_lookup_flow(dev_net(netdev), NULL, &flow,
+					      NULL);
 	if (IS_ERR(dst))
 		goto fail_rcu_unlock;
 #else
@@ -883,7 +884,7 @@ void nfp_tunnel_add_ipv4_off(struct nfp_app *app, __be32 ipv4)
 		}
 	}
 
-	entry = kmalloc_obj(*entry);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry) {
 		mutex_unlock(&priv->tun.ipv4_off_lock);
 		nfp_flower_cmsg_warn(app, "Mem error when offloading IP address.\n");
@@ -958,7 +959,7 @@ nfp_tunnel_add_ipv6_off(struct nfp_app *app, struct in6_addr *ipv6)
 			return entry;
 		}
 
-	entry = kmalloc_obj(*entry);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry) {
 		mutex_unlock(&priv->tun.ipv6_off_lock);
 		nfp_flower_cmsg_warn(app, "Mem error when offloading IP address.\n");
@@ -1116,7 +1117,7 @@ nfp_tunnel_add_shared_mac(struct nfp_app *app, struct net_device *netdev,
 	}
 
 	if (!entry) {
-		entry = kzalloc_obj(*entry);
+		entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 		if (!entry) {
 			err = -ENOMEM;
 			goto err_free_ida;

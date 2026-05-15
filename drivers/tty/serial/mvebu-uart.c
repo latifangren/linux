@@ -1264,16 +1264,14 @@ static unsigned long mvebu_uart_clock_recalc_rate(struct clk_hw *hw,
 	return parent_rate / uart_clock_base->div;
 }
 
-static int mvebu_uart_clock_determine_rate(struct clk_hw *hw,
-					   struct clk_rate_request *req)
+static long mvebu_uart_clock_round_rate(struct clk_hw *hw, unsigned long rate,
+					unsigned long *parent_rate)
 {
 	struct mvebu_uart_clock *uart_clock = to_uart_clock(hw);
 	struct mvebu_uart_clock_base *uart_clock_base =
 						to_uart_clock_base(uart_clock);
 
-	req->rate = req->best_parent_rate / uart_clock_base->div;
-
-	return 0;
+	return *parent_rate / uart_clock_base->div;
 }
 
 static int mvebu_uart_clock_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -1295,7 +1293,7 @@ static const struct clk_ops mvebu_uart_clock_ops = {
 	.is_enabled = mvebu_uart_clock_is_enabled,
 	.save_context = mvebu_uart_clock_save_context,
 	.restore_context = mvebu_uart_clock_restore_context,
-	.determine_rate = mvebu_uart_clock_determine_rate,
+	.round_rate = mvebu_uart_clock_round_rate,
 	.set_rate = mvebu_uart_clock_set_rate,
 	.recalc_rate = mvebu_uart_clock_recalc_rate,
 };

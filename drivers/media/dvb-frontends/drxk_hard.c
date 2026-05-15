@@ -6324,7 +6324,8 @@ static int drxk_set_parameters(struct dvb_frontend *fe)
 		case SYS_DVBC_ANNEX_C:
 			if (!state->m_has_dvbc)
 				return -EINVAL;
-			state->m_itut_annex_c = delsys == SYS_DVBC_ANNEX_C;
+			state->m_itut_annex_c = (delsys == SYS_DVBC_ANNEX_C) ?
+						true : false;
 			if (state->m_itut_annex_c)
 				setoperation_mode(state, OM_QAM_ITU_C);
 			else
@@ -6722,7 +6723,7 @@ struct dvb_frontend *drxk_attach(const struct drxk_config *config,
 	int status;
 
 	dprintk(1, "\n");
-	state = kzalloc_obj(struct drxk_state);
+	state = kzalloc(sizeof(struct drxk_state), GFP_KERNEL);
 	if (!state)
 		return NULL;
 

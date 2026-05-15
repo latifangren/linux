@@ -31,7 +31,7 @@
 	};
 
 	reserved-memory {
-		gpu_mem: zap-shader@80840000 {
+		zap_mem: zap-shader@80840000 {
 			reg = <0x0 0x80840000 0 0x2000>;
 			no-map;
 		};
@@ -426,10 +426,11 @@
 
 &gpu {
 	status = "okay";
-};
 
-&gpu_zap_shader {
-	firmware-name = "qcom/sc7180/acer/aspire1/qcdxkmsuc7180.mbn";
+	zap-shader {
+		memory-region = <&zap_mem>;
+		firmware-name = "qcom/sc7180/acer/aspire1/qcdxkmsuc7180.mbn";
+	};
 };
 
 &mdss {
@@ -437,11 +438,15 @@
 };
 
 &mdss_dp {
+	data-lanes = <0 1>;
+
+	vdda-1p2-supply = <&vreg_l3c_1p2>;
+	vdda-0p9-supply = <&vreg_l4a_0p8>;
+
 	status = "okay";
 };
 
 &mdss_dp_out {
-	data-lanes = <0 1>;
 	remote-endpoint = <&ec_dp_in>;
 };
 
@@ -525,19 +530,19 @@
 
 &q6asmdai {
 	dai@0 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		reg = <0>;
 	};
 
 	dai@1 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		reg = <1>;
 	};
 
 	dai@2 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
+		reg = <2>;
 	};
 
 	dai@3 {
-		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
+		reg = <3>;
 	};
 };
 

@@ -1584,7 +1584,7 @@ static int dib8096p_set_output_mode(struct dvb_frontend *fe, int mode)
 				dib8096p_configMpegMux(state, 3, 1, 1);
 				dib8096p_setHostBusMux(state, MPEG_ON_HOSTBUS);
 			} else {/* Use Smooth block */
-				dprintk("dib8096P setting output mode TS_SERIAL using Smooth block\n");
+				dprintk("dib8096P setting output mode TS_SERIAL using Smooth bloc\n");
 				dib8096p_setHostBusMux(state,
 						DEMOUT_ON_HOSTBUS);
 				outreg |= (2 << 6) | (0 << 1);
@@ -1612,8 +1612,7 @@ static int dib8096p_set_output_mode(struct dvb_frontend *fe, int mode)
 
 	case OUTMODE_MPEG2_FIFO:
 			/* Using Smooth block because not supported
-			 * by new Mpeg Mux block
-			 */
+			   by new Mpeg Mux bloc */
 			dprintk("dib8096P setting output mode TS_FIFO using Smooth block\n");
 			dib8096p_setHostBusMux(state, DEMOUT_ON_HOSTBUS);
 			outreg |= (5 << 6);
@@ -2695,7 +2694,7 @@ static void dib8000_viterbi_state(struct dib8000_state *state, u8 onoff)
 
 static void dib8000_set_dds(struct dib8000_state *state, s32 offset_khz)
 {
-	s32 unit_khz_dds_val;
+	s16 unit_khz_dds_val;
 	u32 abs_offset_khz = abs(offset_khz);
 	u32 dds = state->cfg.pll->ifreq & 0x1ffffff;
 	u8 invert = !!(state->cfg.pll->ifreq & (1 << 25));
@@ -2716,7 +2715,7 @@ static void dib8000_set_dds(struct dib8000_state *state, s32 offset_khz)
 			dds = (1<<26) - dds;
 	} else {
 		ratio = 2;
-		unit_khz_dds_val = 67108864 / state->cfg.pll->internal;
+		unit_khz_dds_val = (u16) (67108864 / state->cfg.pll->internal);
 
 		if (offset_khz < 0)
 			unit_khz_dds_val *= -1;
@@ -4307,7 +4306,7 @@ static int dib8000_i2c_enumeration(struct i2c_adapter *host, int no_of_demods,
 		ret = -ENOMEM;
 		goto error_memory_read;
 	}
-	client.i2c_buffer_lock = kzalloc_obj(struct mutex);
+	client.i2c_buffer_lock = kzalloc(sizeof(struct mutex), GFP_KERNEL);
 	if (!client.i2c_buffer_lock) {
 		dprintk("%s: not enough memory\n", __func__);
 		ret = -ENOMEM;
@@ -4448,10 +4447,10 @@ static struct dvb_frontend *dib8000_init(struct i2c_adapter *i2c_adap, u8 i2c_ad
 
 	dprintk("dib8000_init\n");
 
-	state = kzalloc_obj(struct dib8000_state);
+	state = kzalloc(sizeof(struct dib8000_state), GFP_KERNEL);
 	if (state == NULL)
 		return NULL;
-	fe = kzalloc_obj(struct dvb_frontend);
+	fe = kzalloc(sizeof(struct dvb_frontend), GFP_KERNEL);
 	if (fe == NULL)
 		goto error;
 

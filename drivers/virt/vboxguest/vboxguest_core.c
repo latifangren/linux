@@ -74,7 +74,7 @@ static void vbg_guest_mappings_init(struct vbg_dev *gdev)
 	/* Add 4M so that we can align the vmap to 4MiB as the host requires. */
 	size = PAGE_ALIGN(req->hypervisor_size) + SZ_4M;
 
-	pages = kmalloc_objs(*pages, size >> PAGE_SHIFT);
+	pages = kmalloc_array(size >> PAGE_SHIFT, sizeof(*pages), GFP_KERNEL);
 	if (!pages)
 		goto out;
 
@@ -275,8 +275,9 @@ static int vbg_balloon_inflate(struct vbg_dev *gdev, u32 chunk_idx)
 	struct page **pages;
 	int i, rc, ret;
 
-	pages = kmalloc_objs(*pages, VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
-			     GFP_KERNEL | __GFP_NOWARN);
+	pages = kmalloc_array(VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
+			      sizeof(*pages),
+			      GFP_KERNEL | __GFP_NOWARN);
 	if (!pages)
 		return -ENOMEM;
 
@@ -418,7 +419,7 @@ static void vbg_balloon_work(struct work_struct *work)
  */
 static void vbg_heartbeat_timer(struct timer_list *t)
 {
-	struct vbg_dev *gdev = timer_container_of(gdev, t, heartbeat_timer);
+	struct vbg_dev *gdev = from_timer(gdev, t, heartbeat_timer);
 
 	vbg_req_perform(gdev, gdev->guest_heartbeat_req);
 	mod_timer(&gdev->heartbeat_timer,
@@ -494,7 +495,7 @@ static int vbg_heartbeat_init(struct vbg_dev *gdev)
  */
 static void vbg_heartbeat_exit(struct vbg_dev *gdev)
 {
-	timer_delete_sync(&gdev->heartbeat_timer);
+	del_timer_sync(&gdev->heartbeat_timer);
 	vbg_heartbeat_host_config(gdev, false);
 	vbg_req_free(gdev->guest_heartbeat_req,
 		     sizeof(*gdev->guest_heartbeat_req));
@@ -1080,7 +1081,7 @@ struct vbg_session *vbg_core_open_session(struct vbg_dev *gdev, u32 requestor)
 {
 	struct vbg_session *session;
 
-	session = kzalloc_obj(*session);
+	session = kzalloc(sizeof(*session), GFP_KERNEL);
 	if (!session)
 		return ERR_PTR(-ENOMEM);
 

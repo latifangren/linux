@@ -151,9 +151,8 @@ int scsi_complete_async_scans(void)
 	struct async_scan_data *data;
 
 	do {
-		scoped_guard(spinlock, &async_scan_lock)
-			if (list_empty(&scanning_hosts))
-				return 0;
+		if (list_empty(&scanning_hosts))
+			return 0;
 		/* If we can't get memory immediately, that's OK.  Just
 		 * sleep a little.  Even if we never get memory, the async
 		 * scans will finish eventually.
@@ -221,7 +220,6 @@ static int scsi_realloc_sdev_budget_map(struct scsi_device *sdev,
 	int new_shift = sbitmap_calculate_shift(depth);
 	bool need_alloc = !sdev->budget_map.map;
 	bool need_free = false;
-	unsigned int memflags;
 	int ret;
 	struct sbitmap sb_backup;
 
@@ -229,7 +227,7 @@ static int scsi_realloc_sdev_budget_map(struct scsi_device *sdev,
 
 	/*
 	 * realloc if new shift is calculated, which is caused by setting
-	 * up one new default queue depth after calling ->sdev_configure
+	 * up one new default queue depth after calling ->device_configure
 	 */
 	if (!need_alloc && new_shift != sdev->budget_map.shift)
 		need_alloc = need_free = true;
@@ -242,7 +240,7 @@ static int scsi_realloc_sdev_budget_map(struct scsi_device *sdev,
 	 * and here disk isn't added yet, so freezing is pretty fast
 	 */
 	if (need_free) {
-		memflags = blk_mq_freeze_queue(sdev->request_queue);
+		blk_mq_freeze_queue(sdev->request_queue);
 		sb_backup = sdev->budget_map;
 	}
 	ret = sbitmap_init_node(&sdev->budget_map,
@@ -258,7 +256,7 @@ static int scsi_realloc_sdev_budget_map(struct scsi_device *sdev,
 		else
 			sbitmap_free(&sb_backup);
 		ret = 0;
-		blk_mq_unfreeze_queue(sdev->request_queue, memflags);
+		blk_mq_unfreeze_queue(sdev->request_queue);
 	}
 	return ret;
 }
@@ -267,7 +265,7 @@ static int scsi_realloc_sdev_budget_map(struct scsi_device *sdev,
  * scsi_alloc_sdev - allocate and setup a scsi_Device
  * @starget: which target to allocate a &scsi_device for
  * @lun: which lun
- * @hostdata: usually NULL and set by ->sdev_init instead
+ * @hostdata: usually NULL and set by ->slave_alloc instead
  *
  * Description:
  *     Allocate, initialize for io, and return a pointer to a scsi_Device.
@@ -314,11 +312,11 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	sdev->sdev_gendev.parent = get_device(&starget->dev);
 	sdev->sdev_target = starget;
 
-	/* usually NULL and set by ->sdev_init instead */
+	/* usually NULL and set by ->slave_alloc instead */
 	sdev->hostdata = hostdata;
 
 	/* if the device needs this changing, it may do so in the
-	 * sdev_configure function */
+	 * slave_configure function */
 	sdev->max_device_blocked = SCSI_DEFAULT_DEVICE_BLOCKED;
 
 	/*
@@ -347,11 +345,6 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	kref_get(&sdev->host->tagset_refcnt);
 	sdev->request_queue = q;
 
-	scsi_sysfs_device_initialize(sdev);
-
-	if (scsi_device_is_pseudo_dev(sdev))
-		return sdev;
-
 	depth = sdev->host->cmd_per_lun ?: 1;
 
 	/*
@@ -365,8 +358,10 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 
 	scsi_change_queue_depth(sdev, depth);
 
-	if (shost->hostt->sdev_init) {
-		ret = shost->hostt->sdev_init(sdev);
+	scsi_sysfs_device_initialize(sdev);
+
+	if (shost->hostt->slave_alloc) {
+		ret = shost->hostt->slave_alloc(sdev);
 		if (ret) {
 			/*
 			 * if LLDD reports slave not present, don't clutter
@@ -909,8 +904,7 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	sdev->model = (char *) (sdev->inquiry + 16);
 	sdev->rev = (char *) (sdev->inquiry + 32);
 
-	sdev->is_ata = strncmp(sdev->vendor, "ATA     ", 8) == 0;
-	if (sdev->is_ata) {
+	if (strncmp(sdev->vendor, "ATA     ", 8) == 0) {
 		/*
 		 * sata emulation layer device.  This is a hack to work around
 		 * the SATL power management specifications which state that
@@ -1068,11 +1062,6 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 
 	transport_configure_device(&sdev->sdev_gendev);
 
-	sdev->sdev_bflags = *bflags;
-
-	if (scsi_device_is_pseudo_dev(sdev))
-		return SCSI_SCAN_LUN_PRESENT;
-
 	/*
 	 * No need to freeze the queue as it isn't reachable to anyone else yet.
 	 */
@@ -1082,8 +1071,10 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	else if (*bflags & BLIST_MAX_1024)
 		lim.max_hw_sectors = 1024;
 
-	if (hostt->sdev_configure)
-		ret = hostt->sdev_configure(sdev, &lim);
+	if (hostt->device_configure)
+		ret = hostt->device_configure(sdev, &lim);
+	else if (hostt->slave_configure)
+		ret = hostt->slave_configure(sdev);
 	if (ret) {
 		queue_limits_cancel_update(sdev->request_queue);
 		/*
@@ -1103,12 +1094,12 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	}
 
 	/*
-	 * The queue_depth is often changed in ->sdev_configure.
+	 * The queue_depth is often changed in ->device_configure.
 	 *
 	 * Set up budget map again since memory consumption of the map depends
 	 * on actual queue depth.
 	 */
-	if (hostt->sdev_configure)
+	if (hostt->device_configure || hostt->slave_configure)
 		scsi_realloc_sdev_budget_map(sdev, sdev->queue_depth);
 
 	if (sdev->scsi_level >= SCSI_3)
@@ -1118,6 +1109,7 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 
 	sdev->max_queue_depth = sdev->queue_depth;
 	WARN_ON_ONCE(sdev->max_queue_depth > sdev->budget_map.depth);
+	sdev->sdev_bflags = *bflags;
 
 	/*
 	 * Ok, the device is now all set up, we can
@@ -1215,12 +1207,6 @@ static int scsi_probe_and_add_lun(struct scsi_target *starget,
 		sdev = scsi_alloc_sdev(starget, lun, hostdata);
 	if (!sdev)
 		goto out;
-
-	if (scsi_device_is_pseudo_dev(sdev)) {
-		if (bflagsp)
-			*bflagsp = BLIST_NOLUN;
-		return SCSI_SCAN_LUN_PRESENT;
-	}
 
 	result = kmalloc(result_len, GFP_KERNEL);
 	if (!result)
@@ -1647,24 +1633,6 @@ struct scsi_device *__scsi_add_device(struct Scsi_Host *shost, uint channel,
 }
 EXPORT_SYMBOL(__scsi_add_device);
 
-/**
- * scsi_add_device - creates a new SCSI (LU) instance
- * @host: the &Scsi_Host instance where the device is located
- * @channel: target channel number (rarely other than %0)
- * @target: target id number
- * @lun: LUN of target device
- *
- * Probe for a specific LUN and add it if found.
- *
- * Notes: This call is usually performed internally during a SCSI
- * bus scan when an HBA is added (i.e. scsi_scan_host()). So it
- * should only be called if the HBA becomes aware of a new SCSI
- * device (LU) after scsi_scan_host() has completed. If successful
- * this call can lead to sdev_init() and sdev_configure() callbacks
- * into the LLD.
- *
- * Return: %0 on success or negative error code on failure
- */
 int scsi_add_device(struct Scsi_Host *host, uint channel,
 		    uint target, u64 lun)
 {
@@ -1940,6 +1908,7 @@ static void scsi_sysfs_add_devices(struct Scsi_Host *shost)
 static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 {
 	struct async_scan_data *data = NULL;
+	unsigned long flags;
 
 	if (strncmp(scsi_scan_type, "sync", 4) == 0)
 		return NULL;
@@ -1950,7 +1919,7 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 		goto err;
 	}
 
-	data = kmalloc_obj(*data);
+	data = kmalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		goto err;
 	data->shost = scsi_host_get(shost);
@@ -1958,7 +1927,9 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 		goto err;
 	init_completion(&data->prev_finished);
 
-	shost->async_scan = true;
+	spin_lock_irqsave(shost->host_lock, flags);
+	shost->async_scan = 1;
+	spin_unlock_irqrestore(shost->host_lock, flags);
 	mutex_unlock(&shost->scan_mutex);
 
 	spin_lock(&async_scan_lock);
@@ -1986,6 +1957,7 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 static void scsi_finish_async_scan(struct async_scan_data *data)
 {
 	struct Scsi_Host *shost;
+	unsigned long flags;
 
 	if (!data)
 		return;
@@ -2005,7 +1977,9 @@ static void scsi_finish_async_scan(struct async_scan_data *data)
 
 	scsi_sysfs_add_devices(shost);
 
-	shost->async_scan = false;
+	spin_lock_irqsave(shost->host_lock, flags);
+	shost->async_scan = 0;
+	spin_unlock_irqrestore(shost->host_lock, flags);
 
 	mutex_unlock(&shost->scan_mutex);
 
@@ -2050,8 +2024,6 @@ static void do_scan_async(void *_data, async_cookie_t c)
 /**
  * scsi_scan_host - scan the given adapter
  * @shost:	adapter to scan
- *
- * Notes: Should be called after scsi_add_host()
  **/
 void scsi_scan_host(struct Scsi_Host *shost)
 {
@@ -2087,65 +2059,12 @@ void scsi_forget_host(struct Scsi_Host *shost)
  restart:
 	spin_lock_irqsave(shost->host_lock, flags);
 	list_for_each_entry(sdev, &shost->__devices, siblings) {
-		if (scsi_device_is_pseudo_dev(sdev) ||
-		    sdev->sdev_state == SDEV_DEL)
+		if (sdev->sdev_state == SDEV_DEL)
 			continue;
 		spin_unlock_irqrestore(shost->host_lock, flags);
 		__scsi_remove_device(sdev);
 		goto restart;
 	}
 	spin_unlock_irqrestore(shost->host_lock, flags);
-
-	/*
-	 * Remove the pseudo device last since it may be needed during removal
-	 * of other SCSI devices.
-	 */
-	if (shost->pseudo_sdev)
-		__scsi_remove_device(shost->pseudo_sdev);
 }
 
-/**
- * scsi_get_pseudo_sdev() - Attach a pseudo SCSI device to a SCSI host
- * @shost: Host that needs a pseudo SCSI device
- *
- * Lock status: None assumed.
- *
- * Returns:     The scsi_device or NULL
- *
- * Notes:
- *	Attach a single scsi_device to the Scsi_Host. The primary aim for this
- *	device is to serve as a container from which SCSI commands can be
- *	allocated. Each SCSI command will carry a command tag allocated by the
- *	block layer. These SCSI commands can be used by the LLDD to send
- *	internal or passthrough commands without having to manage tag allocation
- *	inside the LLDD.
- */
-struct scsi_device *scsi_get_pseudo_sdev(struct Scsi_Host *shost)
-{
-	struct scsi_device *sdev = NULL;
-	struct scsi_target *starget;
-
-	guard(mutex)(&shost->scan_mutex);
-
-	if (!scsi_host_scan_allowed(shost))
-		goto out;
-
-	starget = scsi_alloc_target(&shost->shost_gendev, 0, shost->max_id);
-	if (!starget)
-		goto out;
-
-	sdev = scsi_alloc_sdev(starget, U64_MAX, NULL);
-	if (!sdev) {
-		scsi_target_reap(starget);
-		goto put_target;
-	}
-
-	sdev->borken = 0;
-
-put_target:
-	/* See also the get_device(dev) call in scsi_alloc_target(). */
-	put_device(&starget->dev);
-
-out:
-	return sdev;
-}

@@ -16,7 +16,6 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <linux/string_choices.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
 #include <linux/of_irq.h>
@@ -1041,7 +1040,7 @@ static struct dma_async_tx_descriptor *edma_prep_slave_sg(
 		return NULL;
 	}
 
-	edesc = kzalloc_flex(*edesc, pset, sg_len, GFP_ATOMIC);
+	edesc = kzalloc(struct_size(edesc, pset, sg_len), GFP_ATOMIC);
 	if (!edesc)
 		return NULL;
 
@@ -1158,7 +1157,7 @@ static struct dma_async_tx_descriptor *edma_prep_dma_memcpy(
 			nslots = 2;
 	}
 
-	edesc = kzalloc_flex(*edesc, pset, nslots, GFP_ATOMIC);
+	edesc = kzalloc(struct_size(edesc, pset, nslots), GFP_ATOMIC);
 	if (!edesc)
 		return NULL;
 
@@ -1265,7 +1264,7 @@ edma_prep_dma_interleaved(struct dma_chan *chan,
 	if (src_bidx > SZ_64K || dst_bidx > SZ_64K)
 		return NULL;
 
-	edesc = kzalloc_flex(*edesc, pset, 1, GFP_ATOMIC);
+	edesc = kzalloc(struct_size(edesc, pset, 1), GFP_ATOMIC);
 	if (!edesc)
 		return NULL;
 
@@ -1361,7 +1360,7 @@ static struct dma_async_tx_descriptor *edma_prep_dma_cyclic(
 		}
 	}
 
-	edesc = kzalloc_flex(*edesc, pset, nslots, GFP_ATOMIC);
+	edesc = kzalloc(struct_size(edesc, pset, nslots), GFP_ATOMIC);
 	if (!edesc)
 		return NULL;
 
@@ -2048,7 +2047,7 @@ static int edma_setup_from_hw(struct device *dev, struct edma_soc_info *pdata,
 	dev_dbg(dev, "num_qchannels: %u\n", ecc->num_qchannels);
 	dev_dbg(dev, "num_slots: %u\n", ecc->num_slots);
 	dev_dbg(dev, "num_tc: %u\n", ecc->num_tc);
-	dev_dbg(dev, "chmap_exist: %s\n", str_yes_no(ecc->chmap_exist));
+	dev_dbg(dev, "chmap_exist: %s\n", ecc->chmap_exist ? "yes" : "no");
 
 	/* Nothing need to be done if queue priority is provided */
 	if (pdata->queue_priority_mapping)
@@ -2259,12 +2258,8 @@ static struct dma_chan *of_edma_xlate(struct of_phandle_args *dma_spec,
 
 	return NULL;
 out:
-	/*
-	 * The channel is going to be HW synchronized, unless it was
-	 * reserved as a memcpy channel
-	 */
-	echan->hw_triggered =
-		!edma_is_memcpy_channel(i, ecc->info->memcpy_channels);
+	/* The channel is going to be used as HW synchronized */
+	echan->hw_triggered = true;
 	return dma_get_slave_channel(chan);
 }
 #else
@@ -2464,10 +2459,10 @@ static int edma_probe(struct platform_device *pdev)
 			goto err_reg1;
 		}
 
-		for (i = 0; i < ecc->num_tc; i++) {
+		for (i = 0;; i++) {
 			ret = of_parse_phandle_with_fixed_args(node, "ti,tptcs",
 							       1, i, &tc_args);
-			if (ret)
+			if (ret || i == ecc->num_tc)
 				break;
 
 			ecc->tc_list[i].id = i;
@@ -2640,7 +2635,7 @@ static const struct dev_pm_ops edma_pm_ops = {
 
 static struct platform_driver edma_driver = {
 	.probe		= edma_probe,
-	.remove		= edma_remove,
+	.remove_new	= edma_remove,
 	.driver = {
 		.name	= "edma",
 		.pm	= &edma_pm_ops,

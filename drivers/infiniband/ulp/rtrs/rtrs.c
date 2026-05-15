@@ -26,7 +26,7 @@ struct rtrs_iu *rtrs_iu_alloc(u32 iu_num, size_t size, gfp_t gfp_mask,
 	struct rtrs_iu *ius, *iu;
 	int i;
 
-	ius = kzalloc_objs(*ius, iu_num, gfp_mask);
+	ius = kcalloc(iu_num, sizeof(*ius), gfp_mask);
 	if (!ius)
 		return NULL;
 	for (i = 0; i < iu_num; i++) {
@@ -273,8 +273,7 @@ static int create_qp(struct rtrs_con *con, struct ib_pd *pd,
 
 	ret = rdma_create_qp(cm_id, pd, &init_attr);
 	if (ret) {
-		rtrs_err(con->path, "Creating QP failed, err: %pe\n",
-			 ERR_PTR(ret));
+		rtrs_err(con->path, "Creating QP failed, err: %d\n", ret);
 		return ret;
 	}
 	con->qp = cm_id->qp;
@@ -342,8 +341,7 @@ void rtrs_send_hb_ack(struct rtrs_path *path)
 	err = rtrs_post_rdma_write_imm_empty(usr_con, path->hb_cqe, imm,
 					     NULL);
 	if (err) {
-		rtrs_err(path, "send HB ACK failed, errno: %pe\n",
-			 ERR_PTR(err));
+		rtrs_err(path, "send HB ACK failed, errno: %d\n", err);
 		path->hb_err_handler(usr_con);
 		return;
 	}
@@ -377,8 +375,7 @@ static void hb_work(struct work_struct *work)
 	err = rtrs_post_rdma_write_imm_empty(usr_con, path->hb_cqe, imm,
 					     NULL);
 	if (err) {
-		rtrs_err(path, "HB send failed, errno: %pe\n",
-			 ERR_PTR(err));
+		rtrs_err(path, "HB send failed, errno: %d\n", err);
 		path->hb_err_handler(usr_con);
 		return;
 	}
@@ -618,7 +615,7 @@ rtrs_ib_dev_find_or_add(struct ib_device *ib_dev,
 			goto out_unlock;
 	}
 	mutex_unlock(&pool->mutex);
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		goto out_err;
 

@@ -49,7 +49,6 @@
 #include <xen/hvc-console.h>
 #include <xen/acpi.h>
 
-#include <asm/cpuid/api.h>
 #include <asm/paravirt.h>
 #include <asm/apic.h>
 #include <asm/page.h>
@@ -61,7 +60,6 @@
 #include <asm/processor.h>
 #include <asm/proto.h>
 #include <asm/msr-index.h>
-#include <asm/msr.h>
 #include <asm/traps.h>
 #include <asm/setup.h>
 #include <asm/desc.h>
@@ -139,6 +137,7 @@ struct tls_descs {
 };
 
 DEFINE_PER_CPU(enum xen_lazy_mode, xen_lazy_mode) = XEN_LAZY_NONE;
+DEFINE_PER_CPU(unsigned int, xen_lazy_nesting);
 
 enum xen_lazy_mode xen_get_lazy_mode(void)
 {
@@ -270,7 +269,7 @@ static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 		or_ebx = smp_processor_id() << 24;
 		break;
 
-	case CPUID_LEAF_MWAIT:
+	case CPUID_MWAIT_LEAF:
 		/* Synthesize the values.. */
 		*ax = 0;
 		*bx = 0;
@@ -340,7 +339,7 @@ static bool __init xen_check_mwait(void)
 	 * ecx and edx. The hypercall provides only partial information.
 	 */
 
-	ax = CPUID_LEAF_MWAIT;
+	ax = CPUID_MWAIT_LEAF;
 	bx = 0;
 	cx = 0;
 	dx = 0;
@@ -382,6 +381,7 @@ static bool __init xen_check_xsave(void)
 
 static void __init xen_init_capabilities(void)
 {
+	setup_force_cpu_cap(X86_FEATURE_XENPV);
 	setup_clear_cpu_cap(X86_FEATURE_DCA);
 	setup_clear_cpu_cap(X86_FEATURE_APERFMPERF);
 	setup_clear_cpu_cap(X86_FEATURE_MTRR);
@@ -392,7 +392,7 @@ static void __init xen_init_capabilities(void)
 
 	/*
 	 * Xen PV would need some work to support PCID: CR3 handling as well
-	 * as xen_flush_tlb_multi() would need updating.
+	 * as xen_flush_tlb_others() would need updating.
 	 */
 	setup_clear_cpu_cap(X86_FEATURE_PCID);
 
@@ -426,6 +426,7 @@ static void xen_start_context_switch(struct task_struct *prev)
 
 	if (this_cpu_read(xen_lazy_mode) == XEN_LAZY_MMU) {
 		arch_leave_lazy_mmu_mode();
+		set_ti_thread_flag(task_thread_info(prev), TIF_LAZY_MMU_UPDATES);
 	}
 	enter_lazy(XEN_LAZY_CPU);
 }
@@ -436,7 +437,7 @@ static void xen_end_context_switch(struct task_struct *next)
 
 	xen_mc_flush();
 	leave_lazy(XEN_LAZY_CPU);
-	if (__task_lazy_mmu_mode_active(next))
+	if (test_and_clear_ti_thread_flag(task_thread_info(next), TIF_LAZY_MMU_UPDATES))
 		arch_enter_lazy_mmu_mode();
 }
 
@@ -1045,6 +1046,10 @@ static void xen_update_io_bitmap(void)
 }
 #endif
 
+static void xen_io_delay(void)
+{
+}
+
 static DEFINE_PER_CPU(unsigned long, xen_cr0_value);
 
 static unsigned long xen_read_cr0(void)
@@ -1081,15 +1086,15 @@ static void xen_write_cr4(unsigned long cr4)
 	native_write_cr4(cr4);
 }
 
-static u64 xen_do_read_msr(u32 msr, int *err)
+static u64 xen_do_read_msr(unsigned int msr, int *err)
 {
 	u64 val = 0;	/* Avoid uninitialized value for safe variant. */
 
-	if (pmu_msr_chk_emulated(msr, &val, true))
+	if (pmu_msr_read(msr, &val, err))
 		return val;
 
 	if (err)
-		*err = native_read_msr_safe(msr, &val);
+		val = native_read_msr_safe(msr, err);
 	else
 		val = native_read_msr(msr);
 
@@ -1105,9 +1110,17 @@ static u64 xen_do_read_msr(u32 msr, int *err)
 	return val;
 }
 
-static void set_seg(u32 which, u64 base)
+static void set_seg(unsigned int which, unsigned int low, unsigned int high,
+		    int *err)
 {
-	if (HYPERVISOR_set_segment_base(which, base))
+	u64 base = ((u64)high << 32) | low;
+
+	if (HYPERVISOR_set_segment_base(which, base) == 0)
+		return;
+
+	if (err)
+		*err = -EIO;
+	else
 		WARN(1, "Xen set_segment_base(%u, %llx) failed\n", which, base);
 }
 
@@ -1116,19 +1129,20 @@ static void set_seg(u32 which, u64 base)
  * With err == NULL write_msr() semantics are selected.
  * Supplying an err pointer requires err to be pre-initialized with 0.
  */
-static void xen_do_write_msr(u32 msr, u64 val, int *err)
+static void xen_do_write_msr(unsigned int msr, unsigned int low,
+			     unsigned int high, int *err)
 {
 	switch (msr) {
 	case MSR_FS_BASE:
-		set_seg(SEGBASE_FS, val);
+		set_seg(SEGBASE_FS, low, high, err);
 		break;
 
 	case MSR_KERNEL_GS_BASE:
-		set_seg(SEGBASE_GS_USER, val);
+		set_seg(SEGBASE_GS_USER, low, high, err);
 		break;
 
 	case MSR_GS_BASE:
-		set_seg(SEGBASE_GS_KERNEL, val);
+		set_seg(SEGBASE_GS_KERNEL, low, high, err);
 		break;
 
 	case MSR_STAR:
@@ -1144,45 +1158,42 @@ static void xen_do_write_msr(u32 msr, u64 val, int *err)
 		break;
 
 	default:
-		if (pmu_msr_chk_emulated(msr, &val, false))
-			return;
-
-		if (err)
-			*err = native_write_msr_safe(msr, val);
-		else
-			native_write_msr(msr, val);
+		if (!pmu_msr_write(msr, low, high, err)) {
+			if (err)
+				*err = native_write_msr_safe(msr, low, high);
+			else
+				native_write_msr(msr, low, high);
+		}
 	}
 }
 
-static int xen_read_msr_safe(u32 msr, u64 *val)
+static u64 xen_read_msr_safe(unsigned int msr, int *err)
+{
+	return xen_do_read_msr(msr, err);
+}
+
+static int xen_write_msr_safe(unsigned int msr, unsigned int low,
+			      unsigned int high)
 {
 	int err = 0;
 
-	*val = xen_do_read_msr(msr, &err);
+	xen_do_write_msr(msr, low, high, &err);
+
 	return err;
 }
 
-static int xen_write_msr_safe(u32 msr, u64 val)
+static u64 xen_read_msr(unsigned int msr)
 {
-	int err = 0;
-
-	xen_do_write_msr(msr, val, &err);
-
-	return err;
-}
-
-static u64 xen_read_msr(u32 msr)
-{
-	int err = 0;
+	int err;
 
 	return xen_do_read_msr(msr, xen_msr_safe ? &err : NULL);
 }
 
-static void xen_write_msr(u32 msr, u64 val)
+static void xen_write_msr(unsigned int msr, unsigned low, unsigned high)
 {
 	int err;
 
-	xen_do_write_msr(msr, val, xen_msr_safe ? &err : NULL);
+	xen_do_write_msr(msr, low, high, xen_msr_safe ? &err : NULL);
 }
 
 /* This is called once we have the cpu_possible_mask */
@@ -1204,8 +1215,57 @@ void __init xen_setup_vcpu_info_placement(void)
 
 static const struct pv_info xen_info __initconst = {
 	.extra_user_64bit_cs = FLAT_USER_CS64,
-	.io_delay = false,
 	.name = "Xen",
+};
+
+static const typeof(pv_ops) xen_cpu_ops __initconst = {
+	.cpu = {
+		.cpuid = xen_cpuid,
+
+		.set_debugreg = xen_set_debugreg,
+		.get_debugreg = xen_get_debugreg,
+
+		.read_cr0 = xen_read_cr0,
+		.write_cr0 = xen_write_cr0,
+
+		.write_cr4 = xen_write_cr4,
+
+		.wbinvd = pv_native_wbinvd,
+
+		.read_msr = xen_read_msr,
+		.write_msr = xen_write_msr,
+
+		.read_msr_safe = xen_read_msr_safe,
+		.write_msr_safe = xen_write_msr_safe,
+
+		.read_pmc = xen_read_pmc,
+
+		.load_tr_desc = paravirt_nop,
+		.set_ldt = xen_set_ldt,
+		.load_gdt = xen_load_gdt,
+		.load_idt = xen_load_idt,
+		.load_tls = xen_load_tls,
+		.load_gs_index = xen_load_gs_index,
+
+		.alloc_ldt = xen_alloc_ldt,
+		.free_ldt = xen_free_ldt,
+
+		.store_tr = xen_store_tr,
+
+		.write_ldt_entry = xen_write_ldt_entry,
+		.write_gdt_entry = xen_write_gdt_entry,
+		.write_idt_entry = xen_write_idt_entry,
+		.load_sp0 = xen_load_sp0,
+
+#ifdef CONFIG_X86_IOPL_IOPERM
+		.invalidate_io_bitmap = xen_invalidate_io_bitmap,
+		.update_io_bitmap = xen_update_io_bitmap,
+#endif
+		.io_delay = xen_io_delay,
+
+		.start_context_switch = xen_start_context_switch,
+		.end_context_switch = xen_end_context_switch,
+	},
 };
 
 static void xen_restart(char *msg)
@@ -1349,7 +1409,6 @@ asmlinkage __visible void __init xen_start_kernel(struct start_info *si)
 			JMP32_INSN_SIZE);
 
 	xen_domain_type = XEN_PV_DOMAIN;
-	setup_force_cpu_cap(X86_FEATURE_XENPV);
 	xen_start_flags = xen_start_info->flags;
 	/* Interrupts are guaranteed to be off initially. */
 	early_boot_irqs_disabled = true;
@@ -1359,38 +1418,7 @@ asmlinkage __visible void __init xen_start_kernel(struct start_info *si)
 
 	/* Install Xen paravirt ops */
 	pv_info = xen_info;
-
-	pv_ops.cpu.cpuid = xen_cpuid;
-	pv_ops.cpu.set_debugreg = xen_set_debugreg;
-	pv_ops.cpu.get_debugreg = xen_get_debugreg;
-	pv_ops.cpu.read_cr0 = xen_read_cr0;
-	pv_ops.cpu.write_cr0 = xen_write_cr0;
-	pv_ops.cpu.write_cr4 = xen_write_cr4;
-	pv_ops.cpu.read_msr = xen_read_msr;
-	pv_ops.cpu.write_msr = xen_write_msr;
-	pv_ops.cpu.read_msr_safe = xen_read_msr_safe;
-	pv_ops.cpu.write_msr_safe = xen_write_msr_safe;
-	pv_ops.cpu.read_pmc = xen_read_pmc;
-	pv_ops.cpu.load_tr_desc = paravirt_nop;
-	pv_ops.cpu.set_ldt = xen_set_ldt;
-	pv_ops.cpu.load_gdt = xen_load_gdt;
-	pv_ops.cpu.load_idt = xen_load_idt;
-	pv_ops.cpu.load_tls = xen_load_tls;
-	pv_ops.cpu.load_gs_index = xen_load_gs_index;
-	pv_ops.cpu.alloc_ldt = xen_alloc_ldt;
-	pv_ops.cpu.free_ldt = xen_free_ldt;
-	pv_ops.cpu.store_tr = xen_store_tr;
-	pv_ops.cpu.write_ldt_entry = xen_write_ldt_entry;
-	pv_ops.cpu.write_gdt_entry = xen_write_gdt_entry;
-	pv_ops.cpu.write_idt_entry = xen_write_idt_entry;
-	pv_ops.cpu.load_sp0 = xen_load_sp0;
-#ifdef CONFIG_X86_IOPL_IOPERM
-	pv_ops.cpu.invalidate_io_bitmap = xen_invalidate_io_bitmap;
-	pv_ops.cpu.update_io_bitmap = xen_update_io_bitmap;
-#endif
-	pv_ops.cpu.start_context_switch = xen_start_context_switch;
-	pv_ops.cpu.end_context_switch = xen_end_context_switch;
-
+	pv_ops.cpu = xen_cpu_ops.cpu;
 	xen_init_irq_ops();
 
 	/*

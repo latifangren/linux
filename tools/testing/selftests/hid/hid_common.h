@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright (c) 2022-2024 Red Hat */
 
-#include "kselftest_harness.h"
+#include "../kselftest_harness.h"
 
 #include <fcntl.h>
 #include <fnmatch.h>
@@ -18,16 +18,6 @@
 	({ __typeof__(a) _a = (a); \
 	__typeof__(b) _b = (b); \
 	_a < _b ? _a : _b; })
-
-struct uhid_device {
-	int dev_id;		/* uniq (random) number to identify the device */
-	int uhid_fd;
-	int hid_id;		/* HID device id in the system */
-	__u16 bus;
-	__u32 vid;
-	__u32 pid;
-	pthread_t tid;		/* thread for reading uhid events */
-};
 
 static unsigned char rdesc[] = {
 	0x06, 0x00, 0xff,	/* Usage Page (Vendor Defined Page 1) */
@@ -132,9 +122,7 @@ static int uhid_write(struct __test_metadata *_metadata, int fd, const struct uh
 	}
 }
 
-static int uhid_create(struct __test_metadata *_metadata, int fd, int rand_nb,
-		       __u16 bus, __u32 vid, __u32 pid, __u8 *rdesc,
-		       size_t rdesc_size)
+static int uhid_create(struct __test_metadata *_metadata, int fd, int rand_nb)
 {
 	struct uhid_event ev;
 	char buf[25];
@@ -145,10 +133,10 @@ static int uhid_create(struct __test_metadata *_metadata, int fd, int rand_nb,
 	ev.type = UHID_CREATE;
 	strcpy((char *)ev.u.create.name, buf);
 	ev.u.create.rd_data = rdesc;
-	ev.u.create.rd_size = rdesc_size;
-	ev.u.create.bus = bus;
-	ev.u.create.vendor = vid;
-	ev.u.create.product = pid;
+	ev.u.create.rd_size = sizeof(rdesc);
+	ev.u.create.bus = BUS_USB;
+	ev.u.create.vendor = 0x0001;
+	ev.u.create.product = 0x0a37;
 	ev.u.create.version = 0;
 	ev.u.create.country = 0;
 
@@ -158,14 +146,14 @@ static int uhid_create(struct __test_metadata *_metadata, int fd, int rand_nb,
 	return uhid_write(_metadata, fd, &ev);
 }
 
-static void uhid_destroy(struct __test_metadata *_metadata, struct uhid_device *hid)
+static void uhid_destroy(struct __test_metadata *_metadata, int fd)
 {
 	struct uhid_event ev;
 
 	memset(&ev, 0, sizeof(ev));
 	ev.type = UHID_DESTROY;
 
-	uhid_write(_metadata, hid->uhid_fd, &ev);
+	uhid_write(_metadata, fd, &ev);
 }
 
 static int uhid_event(struct __test_metadata *_metadata, int fd)
@@ -230,12 +218,6 @@ static int uhid_event(struct __test_metadata *_metadata, int fd)
 		break;
 	case UHID_SET_REPORT:
 		UHID_LOG("UHID_SET_REPORT from uhid-dev");
-
-		answer.type = UHID_SET_REPORT_REPLY;
-		answer.u.set_report_reply.id = ev.u.set_report.id;
-		answer.u.set_report_reply.err = 0; /* success */
-
-		uhid_write(_metadata, fd, &answer);
 		break;
 	default:
 		TH_LOG("Invalid event from uhid-dev: %u", ev.type);
@@ -299,8 +281,7 @@ static int uhid_start_listener(struct __test_metadata *_metadata, pthread_t *tid
 	return 0;
 }
 
-static int uhid_send_event(struct __test_metadata *_metadata, struct uhid_device *hid,
-			   __u8 *buf, size_t size)
+static int uhid_send_event(struct __test_metadata *_metadata, int fd, __u8 *buf, size_t size)
 {
 	struct uhid_event ev;
 
@@ -313,19 +294,35 @@ static int uhid_send_event(struct __test_metadata *_metadata, struct uhid_device
 
 	memcpy(ev.u.input2.data, buf, size);
 
-	return uhid_write(_metadata, hid->uhid_fd, &ev);
+	return uhid_write(_metadata, fd, &ev);
 }
 
-static bool match_sysfs_device(struct uhid_device *hid, const char *workdir, struct dirent *dir)
+static int setup_uhid(struct __test_metadata *_metadata, int rand_nb)
 {
-	char target[20] = "";
+	int fd;
+	const char *path = "/dev/uhid";
+	int ret;
+
+	fd = open(path, O_RDWR | O_CLOEXEC);
+	ASSERT_GE(fd, 0) TH_LOG("open uhid-cdev failed; %d", fd);
+
+	ret = uhid_create(_metadata, fd, rand_nb);
+	ASSERT_EQ(0, ret) {
+		TH_LOG("create uhid device failed: %d", ret);
+		close(fd);
+	}
+
+	return fd;
+}
+
+static bool match_sysfs_device(int dev_id, const char *workdir, struct dirent *dir)
+{
+	const char *target = "0003:0001:0A37.*";
 	char phys[512];
 	char uevent[1024];
 	char temp[512];
 	int fd, nread;
 	bool found = false;
-
-	snprintf(target, sizeof(target), "%04X:%04X:%04X.*", hid->bus, hid->vid, hid->pid);
 
 	if (fnmatch(target, dir->d_name, 0))
 		return false;
@@ -337,7 +334,7 @@ static bool match_sysfs_device(struct uhid_device *hid, const char *workdir, str
 	if (fd < 0)
 		return false;
 
-	sprintf(phys, "PHYS=%d", hid->dev_id);
+	sprintf(phys, "PHYS=%d", dev_id);
 
 	nread = read(fd, temp, ARRAY_SIZE(temp));
 	if (nread > 0 && (strstr(temp, phys)) != NULL)
@@ -348,7 +345,7 @@ static bool match_sysfs_device(struct uhid_device *hid, const char *workdir, str
 	return found;
 }
 
-static int get_hid_id(struct uhid_device *hid)
+static int get_hid_id(int dev_id)
 {
 	const char *workdir = "/sys/devices/virtual/misc/uhid";
 	const char *str_id;
@@ -363,10 +360,10 @@ static int get_hid_id(struct uhid_device *hid)
 		d = opendir(workdir);
 		if (d) {
 			while ((dir = readdir(d)) != NULL) {
-				if (!match_sysfs_device(hid, workdir, dir))
+				if (!match_sysfs_device(dev_id, workdir, dir))
 					continue;
 
-				str_id = dir->d_name + sizeof("0000:0000:0000.");
+				str_id = dir->d_name + sizeof("0003:0001:0A37.");
 				found = (int)strtol(str_id, NULL, 16);
 
 				break;
@@ -380,7 +377,7 @@ static int get_hid_id(struct uhid_device *hid)
 	return found;
 }
 
-static int get_hidraw(struct uhid_device *hid)
+static int get_hidraw(int dev_id)
 {
 	const char *workdir = "/sys/devices/virtual/misc/uhid";
 	char sysfs[1024];
@@ -397,7 +394,7 @@ static int get_hidraw(struct uhid_device *hid)
 			continue;
 
 		while ((dir = readdir(d)) != NULL) {
-			if (!match_sysfs_device(hid, workdir, dir))
+			if (!match_sysfs_device(dev_id, workdir, dir))
 				continue;
 
 			sprintf(sysfs, "%s/%s/hidraw", workdir, dir->d_name);
@@ -424,57 +421,16 @@ static int get_hidraw(struct uhid_device *hid)
 	return found;
 }
 
-static int open_hidraw(struct uhid_device *hid)
+static int open_hidraw(int dev_id)
 {
 	int hidraw_number;
 	char hidraw_path[64] = { 0 };
 
-	hidraw_number = get_hidraw(hid);
+	hidraw_number = get_hidraw(dev_id);
 	if (hidraw_number < 0)
 		return hidraw_number;
 
 	/* open hidraw node to check the other side of the pipe */
 	sprintf(hidraw_path, "/dev/hidraw%d", hidraw_number);
 	return open(hidraw_path, O_RDWR | O_NONBLOCK);
-}
-
-static int setup_uhid(struct __test_metadata *_metadata, struct uhid_device *hid,
-		      __u16 bus, __u32 vid, __u32 pid, const __u8 *rdesc, size_t rdesc_size)
-{
-	const char *path = "/dev/uhid";
-	time_t t;
-	int ret;
-
-	/* initialize random number generator */
-	srand((unsigned int)time(&t));
-
-	hid->dev_id = rand() % 1024;
-	hid->bus = bus;
-	hid->vid = vid;
-	hid->pid = pid;
-
-	hid->uhid_fd = open(path, O_RDWR | O_CLOEXEC);
-	ASSERT_GE(hid->uhid_fd, 0) TH_LOG("open uhid-cdev failed; %d", hid->uhid_fd);
-
-	ret = uhid_create(_metadata, hid->uhid_fd, hid->dev_id, bus, vid, pid,
-			  (__u8 *)rdesc, rdesc_size);
-	ASSERT_EQ(0, ret) {
-		TH_LOG("create uhid device failed: %d", ret);
-		close(hid->uhid_fd);
-		return ret;
-	}
-
-	/* locate the uevent file of the created device */
-	hid->hid_id = get_hid_id(hid);
-	ASSERT_GT(hid->hid_id, 0)
-		TH_LOG("Could not locate uhid device id: %d", hid->hid_id);
-
-	ret = uhid_start_listener(_metadata, &hid->tid, hid->uhid_fd);
-	ASSERT_EQ(0, ret) {
-		TH_LOG("could not start udev listener: %d", ret);
-		close(hid->uhid_fd);
-		return ret;
-	}
-
-	return 0;
 }

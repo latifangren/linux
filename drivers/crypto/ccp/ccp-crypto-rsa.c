@@ -10,7 +10,6 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/scatterlist.h>
-#include <linux/string.h>
 #include <linux/crypto.h>
 #include <crypto/algapi.h>
 #include <crypto/internal/rsa.h>
@@ -250,7 +249,7 @@ static int ccp_register_rsa_alg(struct list_head *head,
 	struct akcipher_alg *alg;
 	int ret;
 
-	ccp_alg = kzalloc_obj(*ccp_alg);
+	ccp_alg = kzalloc(sizeof(*ccp_alg), GFP_KERNEL);
 	if (!ccp_alg)
 		return -ENOMEM;
 
@@ -258,8 +257,9 @@ static int ccp_register_rsa_alg(struct list_head *head,
 
 	alg = &ccp_alg->alg;
 	*alg = *def->alg_defaults;
-	strscpy(alg->base.cra_name, def->name);
-	strscpy(alg->base.cra_driver_name, def->driver_name);
+	snprintf(alg->base.cra_name, CRYPTO_MAX_ALG_NAME, "%s", def->name);
+	snprintf(alg->base.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
+		 def->driver_name);
 	ret = crypto_register_akcipher(alg);
 	if (ret) {
 		pr_err("%s akcipher algorithm registration error (%d)\n",

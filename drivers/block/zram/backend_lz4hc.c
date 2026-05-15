@@ -18,7 +18,7 @@ static void lz4hc_release_params(struct zcomp_params *params)
 
 static int lz4hc_setup_params(struct zcomp_params *params)
 {
-	if (params->level == ZCOMP_PARAM_NOT_SET)
+	if (params->level == ZCOMP_PARAM_NO_LEVEL)
 		params->level = LZ4HC_DEFAULT_CLEVEL;
 
 	return 0;
@@ -41,7 +41,7 @@ static int lz4hc_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 {
 	struct lz4hc_ctx *zctx;
 
-	zctx = kzalloc_obj(*zctx);
+	zctx = kzalloc(sizeof(*zctx), GFP_KERNEL);
 	if (!zctx)
 		return -ENOMEM;
 
@@ -51,11 +51,11 @@ static int lz4hc_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 		if (!zctx->mem)
 			goto error;
 	} else {
-		zctx->dstrm = kzalloc_obj(*zctx->dstrm);
+		zctx->dstrm = kzalloc(sizeof(*zctx->dstrm), GFP_KERNEL);
 		if (!zctx->dstrm)
 			goto error;
 
-		zctx->cstrm = kzalloc_obj(*zctx->cstrm);
+		zctx->cstrm = kzalloc(sizeof(*zctx->cstrm), GFP_KERNEL);
 		if (!zctx->cstrm)
 			goto error;
 	}

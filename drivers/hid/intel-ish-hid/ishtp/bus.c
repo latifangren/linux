@@ -435,7 +435,7 @@ static struct ishtp_cl_device *ishtp_bus_add_device(struct ishtp_device *dev,
 	}
 	spin_unlock_irqrestore(&dev->device_list_lock, flags);
 
-	device = kzalloc_obj(struct ishtp_cl_device);
+	device = kzalloc(sizeof(struct ishtp_cl_device), GFP_KERNEL);
 	if (!device)
 		return NULL;
 
@@ -860,6 +860,9 @@ EXPORT_SYMBOL(ishtp_device);
  */
 bool ishtp_wait_resume(struct ishtp_device *dev)
 {
+	/* 50ms to get resume response */
+	#define WAIT_FOR_RESUME_ACK_MS		50
+
 	/* Waiting to get resume response */
 	if (dev->resume_flag)
 		wait_event_interruptible_timeout(dev->resume_wait,

@@ -8,11 +8,10 @@
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/net/ti-dp83867.h>
+#include "k3-am625.dtsi"
 
 / {
 	aliases {
-		serial0 = &wkup_uart0;
-		serial1 = &mcu_uart0;
 		serial2 = &main_uart0;
 		mmc0 = &sdhci0;
 		mmc1 = &sdhci1;
@@ -28,7 +27,14 @@
 		stdout-path = "serial2:115200n8";
 	};
 
-	reserved_memory: reserved-memory {
+	memory@80000000 {
+		bootph-pre-ram;
+		device_type = "memory";
+		/* 2G RAM */
+		reg = <0x00000000 0x80000000 0x00000000 0x80000000>;
+	};
+
+	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
@@ -50,18 +56,6 @@
 			linux,cma-default;
 		};
 
-		wkup_r5fss0_core0_dma_memory_region: memory@9da00000 {
-			compatible = "shared-dma-pool";
-			reg = <0x00 0x9da00000 0x00 0x100000>;
-			no-map;
-		};
-
-		wkup_r5fss0_core0_memory_region: memory@9db00000 {
-			compatible = "shared-dma-pool";
-			reg = <0x00 0x9db00000 0x00 0xc00000>;
-			no-map;
-		};
-
 		secure_tfa_ddr: tfa@9e780000 {
 			reg = <0x00 0x9e780000 0x00 0x80000>;
 			alignment = <0x1000>;
@@ -74,6 +68,11 @@
 			no-map;
 		};
 
+		wkup_r5fss0_core0_dma_memory_region: r5f-dma-memory@9db00000 {
+			compatible = "shared-dma-pool";
+			reg = <0x00 0x9db00000 0x00 0xc00000>;
+			no-map;
+		};
 	};
 
 	leds {
@@ -147,13 +146,6 @@
 		bootph-all;
 		pinctrl-single,pins = <
 			AM62X_IOPAD(0x1c8, PIN_INPUT, 0) /* (D14/A13) UART0_RXD */
-			AM62X_IOPAD(0x1cc, PIN_OUTPUT, 0) /* (E14/E11) UART0_TXD */
-		>;
-	};
-
-	main_uart0_pins_wakeup: main-uart0-wakeup-pins {
-		pinctrl-single,pins = <
-			AM62X_IOPAD(0x1c8, PIN_INPUT | PIN_WKUP_EN, 0) /* (D14/A13) UART0_RXD */
 			AM62X_IOPAD(0x1cc, PIN_OUTPUT, 0) /* (E14/E11) UART0_TXD */
 		>;
 	};
@@ -281,25 +273,6 @@
 			AM62X_IOPAD(0x078, PIN_OUTPUT, 1) /* (U24) GPMC0_AD15.VOUT0_DATA23 */
 		>;
 	};
-
-	main_ecap0_pins_default: main-ecap0-default-pins {
-		pinctrl-single,pins = <
-			AM62X_IOPAD(0x01b8, PIN_OUTPUT, 3) /* (C13) SPI0_CS1.ECAP0_IN_APWM_OUT */
-		>;
-	};
-
-	main_ecap2_pins_default: main-ecap2-default-pins {
-		pinctrl-single,pins = <
-			AM62X_IOPAD(0x01a4, PIN_OUTPUT, 2) /* (B20) MCASP0_ACLKX.ECAP2_IN_APWM_OUT */
-		>;
-	};
-
-	main_epwm1_pins_default: main-epwm1-default-pins {
-		pinctrl-single,pins = <
-			AM62X_IOPAD(0x019c, PIN_OUTPUT, 6) /* (B18) MCASP0_AXR1.EHRPWM1_A */
-			AM62X_IOPAD(0x01a0, PIN_OUTPUT, 6) /* (E18) MCASP0_AXR0.EHRPWM1_B */
-		>;
-	};
 };
 
 &mcu_pmx0 {
@@ -314,10 +287,6 @@
 	};
 };
 
-&cpsw_mac_syscon {
-	bootph-all;
-};
-
 &wkup_uart0 {
 	/* WKUP UART0 is used by DM firmware */
 	bootph-pre-ram;
@@ -329,12 +298,8 @@
 &main_uart0 {
 	bootph-all;
 	status = "okay";
-	pinctrl-names = "default", "wakeup";
+	pinctrl-names = "default";
 	pinctrl-0 = <&main_uart0_pins_default>;
-	pinctrl-1 = <&main_uart0_pins_wakeup>;
-	wakeup-source = <&system_deep_sleep>,
-			<&system_mcu_only>,
-			<&system_standby>;
 };
 
 &main_uart1 {
@@ -449,7 +414,7 @@
 
 &cpsw_port1 {
 	bootph-all;
-	phy-mode = "rgmii-id";
+	phy-mode = "rgmii-rxid";
 	phy-handle = <&cpsw3g_phy0>;
 };
 
@@ -465,6 +430,13 @@
 		ti,rx-internal-delay = <DP83867_RGMIIDCTL_2_00_NS>;
 		ti,fifo-depth = <DP83867_PHYCR_FIFO_DEPTH_4_B_NIB>;
 		ti,min-output-impedance;
+	};
+};
+
+&mailbox0_cluster0 {
+	mbox_m4_0: mbox-m4-0 {
+		ti,mbox-rx = <0 0 0>;
+		ti,mbox-tx = <1 0 0>;
 	};
 };
 
@@ -488,10 +460,6 @@
 		    remote-endpoint = <&usb_con_hs>;
 	       };
 	};
-};
-
-&usb0_phy_ctrl {
-	bootph-all;
 };
 
 &usb1 {
@@ -543,26 +511,3 @@
 &mcu_gpio_intr {
 	status = "reserved";
 };
-
-&ecap0 {
-	/* P26 of J3 */
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_ecap0_pins_default>;
-	status = "okay";
-};
-
-&ecap2 {
-	/* P11 of J3 */
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_ecap2_pins_default>;
-	status = "okay";
-};
-
-&epwm1 {
-	/* P36/P33 of J3 */
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_epwm1_pins_default>;
-	status = "okay";
-};
-
-#include "k3-am62-ti-ipc-firmware.dtsi"

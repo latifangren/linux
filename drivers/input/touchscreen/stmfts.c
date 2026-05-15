@@ -120,7 +120,7 @@ static int stmfts_brightness_set(struct led_classdev *led_cdev,
 			err = regulator_enable(sdata->ledvdd);
 			if (err) {
 				dev_warn(&sdata->client->dev,
-					 "failed to enable ledvdd regulator: %d\n",
+					 "failed to disable ledvdd regulator: %d\n",
 					 err);
 				return err;
 			}
@@ -141,7 +141,7 @@ static enum led_brightness stmfts_brightness_get(struct led_classdev *led_cdev)
 
 /*
  * We can't simply use i2c_smbus_read_i2c_block_data because we
- * need to read 256 bytes, which exceeds the 255-byte SMBus block limit.
+ * need to read more than 255 bytes (
  */
 static int stmfts_read_events(struct stmfts_data *sdata)
 {
@@ -302,7 +302,7 @@ static irqreturn_t stmfts_irq_handler(int irq, void *dev)
 	struct stmfts_data *sdata = dev;
 	int err;
 
-	guard(mutex)(&sdata->mutex);
+	mutex_lock(&sdata->mutex);
 
 	err = stmfts_read_events(sdata);
 	if (unlikely(err))
@@ -311,6 +311,7 @@ static irqreturn_t stmfts_irq_handler(int irq, void *dev)
 	else
 		stmfts_parse_events(sdata);
 
+	mutex_unlock(&sdata->mutex);
 	return IRQ_HANDLED;
 }
 
@@ -346,17 +347,17 @@ static int stmfts_input_open(struct input_dev *dev)
 		return err;
 	}
 
-	scoped_guard(mutex, &sdata->mutex) {
-		sdata->running = true;
+	mutex_lock(&sdata->mutex);
+	sdata->running = true;
 
-		if (sdata->hover_enabled) {
-			err = i2c_smbus_write_byte(sdata->client,
-						   STMFTS_SS_HOVER_SENSE_ON);
-			if (err)
-				dev_warn(&sdata->client->dev,
-					 "failed to enable hover\n");
-		}
+	if (sdata->hover_enabled) {
+		err = i2c_smbus_write_byte(sdata->client,
+					   STMFTS_SS_HOVER_SENSE_ON);
+		if (err)
+			dev_warn(&sdata->client->dev,
+				 "failed to enable hover\n");
 	}
+	mutex_unlock(&sdata->mutex);
 
 	if (sdata->use_key) {
 		err = i2c_smbus_write_byte(sdata->client,
@@ -380,17 +381,18 @@ static void stmfts_input_close(struct input_dev *dev)
 		dev_warn(&sdata->client->dev,
 			 "failed to disable touchscreen: %d\n", err);
 
-	scoped_guard(mutex, &sdata->mutex) {
-		sdata->running = false;
+	mutex_lock(&sdata->mutex);
 
-		if (sdata->hover_enabled) {
-			err = i2c_smbus_write_byte(sdata->client,
-						   STMFTS_SS_HOVER_SENSE_OFF);
-			if (err)
-				dev_warn(&sdata->client->dev,
-					 "failed to disable hover: %d\n", err);
-		}
+	sdata->running = false;
+
+	if (sdata->hover_enabled) {
+		err = i2c_smbus_write_byte(sdata->client,
+					   STMFTS_SS_HOVER_SENSE_OFF);
+		if (err)
+			dev_warn(&sdata->client->dev,
+				 "failed to disable hover: %d\n", err);
 	}
+	mutex_unlock(&sdata->mutex);
 
 	if (sdata->use_key) {
 		err = i2c_smbus_write_byte(sdata->client,
@@ -408,7 +410,7 @@ static ssize_t stmfts_sysfs_chip_id(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%#x\n", sdata->chip_id);
+	return sprintf(buf, "%#x\n", sdata->chip_id);
 }
 
 static ssize_t stmfts_sysfs_chip_version(struct device *dev,
@@ -416,7 +418,7 @@ static ssize_t stmfts_sysfs_chip_version(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%u\n", sdata->chip_ver);
+	return sprintf(buf, "%u\n", sdata->chip_ver);
 }
 
 static ssize_t stmfts_sysfs_fw_ver(struct device *dev,
@@ -424,7 +426,7 @@ static ssize_t stmfts_sysfs_fw_ver(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%u\n", sdata->fw_ver);
+	return sprintf(buf, "%u\n", sdata->fw_ver);
 }
 
 static ssize_t stmfts_sysfs_config_id(struct device *dev,
@@ -432,7 +434,7 @@ static ssize_t stmfts_sysfs_config_id(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%#x\n", sdata->config_id);
+	return sprintf(buf, "%#x\n", sdata->config_id);
 }
 
 static ssize_t stmfts_sysfs_config_version(struct device *dev,
@@ -440,7 +442,7 @@ static ssize_t stmfts_sysfs_config_version(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%u\n", sdata->config_ver);
+	return sprintf(buf, "%u\n", sdata->config_ver);
 }
 
 static ssize_t stmfts_sysfs_read_status(struct device *dev,
@@ -455,7 +457,7 @@ static ssize_t stmfts_sysfs_read_status(struct device *dev,
 	if (err)
 		return err;
 
-	return sysfs_emit(buf, "%#02x\n", status[0]);
+	return sprintf(buf, "%#02x\n", status[0]);
 }
 
 static ssize_t stmfts_sysfs_hover_enable_read(struct device *dev,
@@ -463,7 +465,7 @@ static ssize_t stmfts_sysfs_hover_enable_read(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%u\n", sdata->hover_enabled);
+	return sprintf(buf, "%u\n", sdata->hover_enabled);
 }
 
 static ssize_t stmfts_sysfs_hover_enable_write(struct device *dev,
@@ -472,27 +474,26 @@ static ssize_t stmfts_sysfs_hover_enable_write(struct device *dev,
 {
 	struct stmfts_data *sdata = dev_get_drvdata(dev);
 	unsigned long value;
-	bool hover;
-	int err;
+	int err = 0;
 
 	if (kstrtoul(buf, 0, &value))
 		return -EINVAL;
 
-	hover = !!value;
+	mutex_lock(&sdata->mutex);
 
-	guard(mutex)(&sdata->mutex);
+	if (value && sdata->hover_enabled)
+		goto out;
 
-	if (hover != sdata->hover_enabled) {
-		if (sdata->running) {
-			err = i2c_smbus_write_byte(sdata->client,
+	if (sdata->running)
+		err = i2c_smbus_write_byte(sdata->client,
 					   value ? STMFTS_SS_HOVER_SENSE_ON :
 						   STMFTS_SS_HOVER_SENSE_OFF);
-			if (err)
-				return err;
-		}
 
-		sdata->hover_enabled = hover;
-	}
+	if (!err)
+		sdata->hover_enabled = !!value;
+
+out:
+	mutex_unlock(&sdata->mutex);
 
 	return len;
 }
@@ -593,6 +594,9 @@ static void stmfts_power_off(void *data)
 						sdata->regulators);
 }
 
+/* This function is void because I don't want to prevent using the touch key
+ * only because the LEDs don't get registered
+ */
 static int stmfts_enable_led(struct stmfts_data *sdata)
 {
 	int err;

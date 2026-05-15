@@ -33,6 +33,8 @@ properties:
   vsp-supply:
     description: Negative source voltage rail
 
+  port: true
+
 required:
   - compatible
   - reg

@@ -23,7 +23,6 @@
  *
  */
 #include "priv.h"
-#include "gk20a_devfreq.h"
 #include "gk20a.h"
 
 #include <core/tegra.h>
@@ -590,10 +589,6 @@ gk20a_clk_init(struct nvkm_clk *base)
 		return ret;
 	}
 
-	ret = gk20a_devfreq_init(base, &clk->devfreq);
-	if (ret)
-		return ret;
-
 	return 0;
 }
 
@@ -649,7 +644,7 @@ gk20a_clk_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	struct gk20a_clk *clk;
 	int ret;
 
-	clk = kzalloc_obj(*clk);
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk)
 		return -ENOMEM;
 	*pclk = &clk->base;

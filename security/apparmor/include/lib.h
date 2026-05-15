@@ -19,38 +19,22 @@
 extern struct aa_dfa *stacksplitdfa;
 
 /*
+ * DEBUG remains global (no per profile flag) since it is mostly used in sysctl
+ * which is not related to profile accesses.
+ */
+
+#define DEBUG_ON (aa_g_debug)
+/*
  * split individual debug cases out in preparation for finer grained
  * debug controls in the future.
  */
+#define AA_DEBUG_LABEL DEBUG_ON
 #define dbg_printk(__fmt, __args...) pr_debug(__fmt, ##__args)
-
-#define DEBUG_NONE 0
-#define DEBUG_LABEL_ABS_ROOT 1
-#define DEBUG_LABEL 2
-#define DEBUG_DOMAIN 4
-#define DEBUG_POLICY 8
-#define DEBUG_INTERFACE 0x10
-#define DEBUG_UNPACK 0x20
-#define DEBUG_TAGS 0x40
-
-#define DEBUG_ALL 0x7f		/* update if new DEBUG_X added */
-#define DEBUG_PARSE_ERROR (-1)
-
-#define DEBUG_ON (aa_g_debug != DEBUG_NONE)
-#define DEBUG_ABS_ROOT (aa_g_debug & DEBUG_LABEL_ABS_ROOT)
-
-#define AA_DEBUG(opt, fmt, args...)					\
+#define AA_DEBUG(fmt, args...)						\
 	do {								\
-		if (aa_g_debug & opt)					\
-			pr_warn_ratelimited("%s: " fmt, __func__, ##args); \
+		if (DEBUG_ON)						\
+			pr_debug_ratelimited("AppArmor: " fmt, ##args);	\
 	} while (0)
-#define AA_DEBUG_LABEL(LAB, X, fmt, args...)				\
-do {									\
-	if ((LAB)->flags & FLAG_DEBUG1)					\
-		AA_DEBUG(X, fmt, ##args);				\
-} while (0)
-
-#define AA_DEBUG_PROFILE(PROF, X, fmt...) AA_DEBUG_LABEL(&(PROF)->label, X, ##fmt)
 
 #define AA_WARN(X) WARN((X), "APPARMOR WARN %s: %s\n", __func__, #X)
 
@@ -71,30 +55,15 @@ do {									\
 	} while (0)
 #endif
 
-int aa_parse_debug_params(const char *str);
-int aa_print_debug_params(char *buffer);
-
 #define AA_ERROR(fmt, args...)						\
 	pr_err_ratelimited("AppArmor: " fmt, ##args)
 
 /* Flag indicating whether initialization completed */
 extern int apparmor_initialized;
 
-/* semantic split of scope and view */
-#define aa_in_scope(SUBJ, OBJ)						\
-	aa_ns_visible(SUBJ, OBJ, false)
-
-#define aa_in_view(SUBJ, OBJ)						\
-	aa_ns_visible(SUBJ, OBJ, true)
-
-#define label_for_each_in_scope(I, NS, L, P)				\
-	label_for_each_in_ns(I, NS, L, P)
-
-#define fn_for_each_in_scope(L, P, FN)					\
-	fn_for_each_in_ns(L, P, FN)
-
 /* fn's in lib */
 const char *skipn_spaces(const char *str, size_t n);
+char *aa_split_fqname(char *args, char **ns_name);
 const char *aa_splitn_fqname(const char *fqname, size_t n, const char **ns_name,
 			     size_t *ns_len);
 void aa_info_message(const char *str);
@@ -148,19 +117,12 @@ static inline bool path_mediated_fs(struct dentry *dentry)
 	return !(dentry->d_sb->s_flags & SB_NOUSER);
 }
 
-struct aa_str_table_ent {
-	int count;
-	int size;
-	char *strs;
-};
-
 struct aa_str_table {
 	int size;
-	struct aa_str_table_ent *table;
+	char **table;
 };
 
-bool aa_resize_str_table(struct aa_str_table *t, int newsize, gfp_t gfp);
-void aa_destroy_str_table(struct aa_str_table *table);
+void aa_free_str_table(struct aa_str_table *table);
 
 struct counted_str {
 	struct kref count;
@@ -206,7 +168,7 @@ struct aa_policy {
 
 /**
  * basename - find the last component of an hname
- * @hname: hname to find the base profile name component of  (NOT NULL)
+ * @name: hname to find the base profile name component of  (NOT NULL)
  *
  * Returns: the tail (base profile name) name component of an hname
  */
@@ -336,12 +298,12 @@ __do_cleanup:								\
 	}								\
 __done:									\
 	if (!__new_)							\
-		AA_DEBUG(DEBUG_LABEL, "label build failed\n");		\
+		AA_DEBUG("label build failed\n");			\
 	(__new_);							\
 })
 
 
-#define __fn_build_in_scope(NS, P, NS_FN, OTHER_FN)			\
+#define __fn_build_in_ns(NS, P, NS_FN, OTHER_FN)			\
 ({									\
 	struct aa_label *__new;						\
 	if ((P)->ns != (NS))						\
@@ -351,10 +313,10 @@ __done:									\
 	(__new);							\
 })
 
-#define fn_label_build_in_scope(L, P, GFP, NS_FN, OTHER_FN)		\
+#define fn_label_build_in_ns(L, P, GFP, NS_FN, OTHER_FN)		\
 ({									\
 	fn_label_build((L), (P), (GFP),					\
-		__fn_build_in_scope(labels_ns(L), (P), (NS_FN), (OTHER_FN))); \
+		__fn_build_in_ns(labels_ns(L), (P), (NS_FN), (OTHER_FN))); \
 })
 
 #endif /* __AA_LIB_H */

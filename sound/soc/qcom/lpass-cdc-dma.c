@@ -217,9 +217,8 @@ static int lpass_cdc_dma_daiops_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *soc_runtime = snd_soc_substream_to_rtd(substream);
 	struct lpaif_dmactl *dmactl = NULL;
-	unsigned int regval;
+	unsigned int ret, regval;
 	unsigned int channels = params_channels(params);
-	int ret;
 	int id;
 
 	switch (channels) {

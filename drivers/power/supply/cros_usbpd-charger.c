@@ -94,7 +94,7 @@ static int cros_usbpd_charger_ec_command(struct charger_data *charger,
 	struct cros_ec_command *msg;
 	int ret;
 
-	msg = kzalloc_flex(*msg, data, max(outsize, insize));
+	msg = kzalloc(struct_size(msg, data, max(outsize, insize)), GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
@@ -618,7 +618,6 @@ static int cros_usbpd_charger_probe(struct platform_device *pd)
 		psy_desc->external_power_changed =
 					cros_usbpd_charger_power_changed;
 		psy_cfg.drv_data = port;
-		psy_cfg.no_wakeup_source = true;
 
 		if (cros_usbpd_charger_port_is_dedicated(port)) {
 			sprintf(port->name, CHARGER_DEDICATED_DIR_NAME);
@@ -645,7 +644,8 @@ static int cros_usbpd_charger_probe(struct platform_device *pd)
 
 		psy_desc->name = port->name;
 
-		psy = devm_power_supply_register(dev, psy_desc, &psy_cfg);
+		psy = devm_power_supply_register_no_ws(dev, psy_desc,
+						       &psy_cfg);
 		if (IS_ERR(psy)) {
 			dev_err(dev, "Failed to register power supply\n");
 			continue;

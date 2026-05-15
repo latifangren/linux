@@ -20,10 +20,10 @@
  *    CP Programming Service, IBM document # SC24-5760
  */
 
-#define pr_fmt(fmt) "iucv: " fmt
+#define KMSG_COMPONENT "iucv"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel_stat.h>
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/spinlock.h>
@@ -39,7 +39,6 @@
 #include <linux/reboot.h>
 #include <net/iucv/iucv.h>
 #include <linux/atomic.h>
-#include <asm/machine.h>
 #include <asm/ebcdic.h>
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -90,11 +89,11 @@ struct device *iucv_alloc_device(const struct attribute_group **attrs,
 	char buf[20];
 	int rc;
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		goto out_error;
 	va_start(vargs, fmt);
-	vscnprintf(buf, sizeof(buf), fmt, vargs);
+	vsnprintf(buf, sizeof(buf), fmt, vargs);
 	rc = dev_set_name(dev, "%s", buf);
 	va_end(vargs);
 	if (rc)
@@ -313,12 +312,13 @@ static union iucv_param *iucv_param[NR_CPUS];
 static union iucv_param *iucv_param_irq[NR_CPUS];
 
 /**
- * __iucv_call_b2f0 - Calls CP to execute IUCV commands.
- *
+ * __iucv_call_b2f0
  * @command: identifier of IUCV call to CP.
  * @parm: pointer to a struct iucv_parm block
  *
- * Returns: the result of the CP IUCV call.
+ * Calls CP to execute IUCV commands.
+ *
+ * Returns the result of the CP IUCV call.
  */
 static inline int __iucv_call_b2f0(int command, union iucv_param *parm)
 {
@@ -347,10 +347,11 @@ static inline int iucv_call_b2f0(int command, union iucv_param *parm)
 }
 
 /*
- * iucv_query_maxconn - Determine the maximum number of connections that
- * may be established.
+ * iucv_query_maxconn
  *
- * Returns: the maximum number of connections or -EPERM is IUCV is not
+ * Determines the maximum number of connections that may be established.
+ *
+ * Returns the maximum number of connections or -EPERM is IUCV is not
  * available.
  */
 static int __iucv_query_maxconn(void *param, unsigned long *max_pathid)
@@ -378,7 +379,7 @@ static int iucv_query_maxconn(void)
 	void *param;
 	int ccode;
 
-	param = kzalloc_obj(union iucv_param, GFP_KERNEL | GFP_DMA);
+	param = kzalloc(sizeof(union iucv_param), GFP_KERNEL | GFP_DMA);
 	if (!param)
 		return -ENOMEM;
 	ccode = __iucv_query_maxconn(param, &max_pathid);
@@ -389,9 +390,10 @@ static int iucv_query_maxconn(void)
 }
 
 /**
- * iucv_allow_cpu - Allow iucv interrupts on this cpu.
- *
+ * iucv_allow_cpu
  * @data: unused
+ *
+ * Allow iucv interrupts on this cpu.
  */
 static void iucv_allow_cpu(void *data)
 {
@@ -429,9 +431,10 @@ static void iucv_allow_cpu(void *data)
 }
 
 /**
- * iucv_block_cpu - Block iucv interrupts on this cpu.
- *
+ * iucv_block_cpu
  * @data: unused
+ *
+ * Block iucv interrupts on this cpu.
  */
 static void iucv_block_cpu(void *data)
 {
@@ -448,9 +451,10 @@ static void iucv_block_cpu(void *data)
 }
 
 /**
- * iucv_declare_cpu - Declare a interrupt buffer on this cpu.
- *
+ * iucv_declare_cpu
  * @data: unused
+ *
+ * Declare a interrupt buffer on this cpu.
  */
 static void iucv_declare_cpu(void *data)
 {
@@ -502,9 +506,10 @@ static void iucv_declare_cpu(void *data)
 }
 
 /**
- * iucv_retrieve_cpu - Retrieve interrupt buffer on this cpu.
- *
+ * iucv_retrieve_cpu
  * @data: unused
+ *
+ * Retrieve interrupt buffer on this cpu.
  */
 static void iucv_retrieve_cpu(void *data)
 {
@@ -526,7 +531,9 @@ static void iucv_retrieve_cpu(void *data)
 }
 
 /*
- * iucv_setmask_mp - Allow iucv interrupts on all cpus.
+ * iucv_setmask_mp
+ *
+ * Allow iucv interrupts on all cpus.
  */
 static void iucv_setmask_mp(void)
 {
@@ -543,7 +550,9 @@ static void iucv_setmask_mp(void)
 }
 
 /*
- * iucv_setmask_up - Allow iucv interrupts on a single cpu.
+ * iucv_setmask_up
+ *
+ * Allow iucv interrupts on a single cpu.
  */
 static void iucv_setmask_up(void)
 {
@@ -558,11 +567,12 @@ static void iucv_setmask_up(void)
 }
 
 /*
- * iucv_enable - Make the iucv ready for use
+ * iucv_enable
  *
- * It allocates the pathid table, declares an iucv interrupt buffer and
- * enables the iucv interrupts. Called when the first user has registered
- * an iucv handler.
+ * This function makes iucv ready for use. It allocates the pathid
+ * table, declares an iucv interrupt buffer and enables the iucv
+ * interrupts. Called when the first user has registered an iucv
+ * handler.
  */
 static int iucv_enable(void)
 {
@@ -592,10 +602,11 @@ out:
 }
 
 /*
- * iucv_disable - Shuts down iucv.
+ * iucv_disable
  *
- * It disables iucv interrupts, retrieves the iucv interrupt buffer and frees
- * the pathid table. Called after the last user unregister its iucv handler.
+ * This function shuts down iucv. It disables iucv interrupts, retrieves
+ * the iucv interrupt buffer and frees the pathid table. Called after the
+ * last user unregister its iucv handler.
  */
 static void iucv_disable(void)
 {
@@ -683,12 +694,11 @@ __free_cpumask:
 }
 
 /**
- * iucv_sever_pathid - Sever an iucv path to free up the pathid. Used internally.
- *
+ * iucv_sever_pathid
  * @pathid: path identification number.
  * @userdata: 16-bytes of user data.
  *
- * Returns: 0 on success, the result of the CP b2f0 IUCV call.
+ * Sever an iucv path to free up the pathid. Used internally.
  */
 static int iucv_sever_pathid(u16 pathid, u8 *userdata)
 {
@@ -703,20 +713,22 @@ static int iucv_sever_pathid(u16 pathid, u8 *userdata)
 }
 
 /**
- * __iucv_cleanup_queue - Nop function called via smp_call_function to force
- * work items from pending external iucv interrupts to the work queue.
- *
+ * __iucv_cleanup_queue
  * @dummy: unused dummy argument
+ *
+ * Nop function called via smp_call_function to force work items from
+ * pending external iucv interrupts to the work queue.
  */
 static void __iucv_cleanup_queue(void *dummy)
 {
 }
 
 /**
- * iucv_cleanup_queue - Called after a path has been severed to find all
- * remaining work items for the now stale pathid.
+ * iucv_cleanup_queue
  *
- * The caller needs to hold the iucv_table_lock.
+ * Function called after a path has been severed to find all remaining
+ * work items for the now stale pathid. The caller needs to hold the
+ * iucv_table_lock.
  */
 static void iucv_cleanup_queue(void)
 {
@@ -744,12 +756,13 @@ static void iucv_cleanup_queue(void)
 }
 
 /**
- * iucv_register - Registers a driver with IUCV.
- *
+ * iucv_register:
  * @handler: address of iucv handler structure
  * @smp: != 0 indicates that the handler can deal with out of order messages
  *
- * Returns: 0 on success, -ENOMEM if the memory allocation for the pathid
+ * Registers a driver with IUCV.
+ *
+ * Returns 0 on success, -ENOMEM if the memory allocation for the pathid
  * table failed, or -EIO if IUCV_DECLARE_BUFFER failed on all cpus.
  */
 int iucv_register(struct iucv_handler *handler, int smp)
@@ -780,10 +793,11 @@ out_mutex:
 EXPORT_SYMBOL(iucv_register);
 
 /**
- * iucv_unregister - Unregister driver from IUCV.
- *
+ * iucv_unregister
  * @handler:  address of iucv handler structure
  * @smp: != 0 indicates that the handler can deal with out of order messages
+ *
+ * Unregister driver from IUCV.
  */
 void iucv_unregister(struct iucv_handler *handler, int smp)
 {
@@ -837,8 +851,7 @@ static struct notifier_block iucv_reboot_notifier = {
 };
 
 /**
- * iucv_path_accept - Complete the IUCV communication path
- *
+ * iucv_path_accept
  * @path: address of iucv path structure
  * @handler: address of iucv handler structure
  * @userdata: 16 bytes of data reflected to the communication partner
@@ -847,7 +860,7 @@ static struct notifier_block iucv_reboot_notifier = {
  * This function is issued after the user received a connection pending
  * external interrupt and now wishes to complete the IUCV communication path.
  *
- * Returns: the result of the CP IUCV call.
+ * Returns the result of the CP IUCV call.
  */
 int iucv_path_accept(struct iucv_path *path, struct iucv_handler *handler,
 		     u8 *userdata, void *private)
@@ -882,8 +895,7 @@ out:
 EXPORT_SYMBOL(iucv_path_accept);
 
 /**
- * iucv_path_connect - Establish an IUCV path
- *
+ * iucv_path_connect
  * @path: address of iucv path structure
  * @handler: address of iucv handler structure
  * @userid: 8-byte user identification
@@ -895,7 +907,7 @@ EXPORT_SYMBOL(iucv_path_accept);
  * successfully, you are not able to use the path until you receive an IUCV
  * Connection Complete external interrupt.
  *
- * Returns: the result of the CP IUCV call.
+ * Returns the result of the CP IUCV call.
  */
 int iucv_path_connect(struct iucv_path *path, struct iucv_handler *handler,
 		      u8 *userid, u8 *system, u8 *userdata,
@@ -951,14 +963,14 @@ out:
 EXPORT_SYMBOL(iucv_path_connect);
 
 /**
- * iucv_path_quiesce - Temporarily suspend incoming messages
+ * iucv_path_quiesce:
  * @path: address of iucv path structure
  * @userdata: 16 bytes of data reflected to the communication partner
  *
  * This function temporarily suspends incoming messages on an IUCV path.
  * You can later reactivate the path by invoking the iucv_resume function.
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_path_quiesce(struct iucv_path *path, u8 *userdata)
 {
@@ -983,15 +995,14 @@ out:
 EXPORT_SYMBOL(iucv_path_quiesce);
 
 /**
- * iucv_path_resume - Resume incoming messages on a suspended IUCV path
- *
+ * iucv_path_resume:
  * @path: address of iucv path structure
  * @userdata: 16 bytes of data reflected to the communication partner
  *
  * This function resumes incoming messages on an IUCV path that has
  * been stopped with iucv_path_quiesce.
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_path_resume(struct iucv_path *path, u8 *userdata)
 {
@@ -1015,12 +1026,13 @@ out:
 }
 
 /**
- * iucv_path_sever - Terminates an IUCV path.
- *
+ * iucv_path_sever
  * @path: address of iucv path structure
  * @userdata: 16 bytes of data reflected to the communication partner
  *
- * Returns: the result from the CP IUCV call.
+ * This function terminates an IUCV path.
+ *
+ * Returns the result from the CP IUCV call.
  */
 int iucv_path_sever(struct iucv_path *path, u8 *userdata)
 {
@@ -1045,13 +1057,14 @@ out:
 EXPORT_SYMBOL(iucv_path_sever);
 
 /**
- * iucv_message_purge - Cancels a message you have sent.
- *
+ * iucv_message_purge
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @srccls: source class of message
  *
- * Returns: the result from the CP IUCV call.
+ * Cancels a message you have sent.
+ *
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_purge(struct iucv_path *path, struct iucv_message *msg,
 		       u32 srccls)
@@ -1082,20 +1095,16 @@ out:
 EXPORT_SYMBOL(iucv_message_purge);
 
 /**
- * iucv_message_receive_iprmdata - Internal function to receive RMDATA
- * stored in &struct iucv_message
- *
+ * iucv_message_receive_iprmdata
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @flags: how the message is received (IUCV_IPBUFLST)
  * @buffer: address of data buffer or address of struct iucv_array
  * @size: length of data buffer
- * @residual: number of bytes remaining in the data buffer
+ * @residual:
  *
  * Internal function used by iucv_message_receive and __iucv_message_receive
  * to receive RMDATA data stored in struct iucv_message.
- *
- * Returns: 0
  */
 static int iucv_message_receive_iprmdata(struct iucv_path *path,
 					 struct iucv_message *msg,
@@ -1130,11 +1139,10 @@ static int iucv_message_receive_iprmdata(struct iucv_path *path,
 }
 
 /**
- * __iucv_message_receive - Receives messages on an established path (no locking)
- *
+ * __iucv_message_receive
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
- * @flags: flags that affect how the message is received (IUCV_IPBUFLST)
+ * @flags: how the message is received (IUCV_IPBUFLST)
  * @buffer: address of data buffer or address of struct iucv_array
  * @size: length of data buffer
  * @residual:
@@ -1145,7 +1153,7 @@ static int iucv_message_receive_iprmdata(struct iucv_path *path,
  *
  * Locking:	no locking
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int __iucv_message_receive(struct iucv_path *path, struct iucv_message *msg,
 			   u8 flags, void *buffer, size_t size, size_t *residual)
@@ -1179,11 +1187,10 @@ int __iucv_message_receive(struct iucv_path *path, struct iucv_message *msg,
 EXPORT_SYMBOL(__iucv_message_receive);
 
 /**
- * iucv_message_receive - Receives messages on an established path, with locking
- *
+ * iucv_message_receive
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
- * @flags: flags that affect how the message is received (IUCV_IPBUFLST)
+ * @flags: how the message is received (IUCV_IPBUFLST)
  * @buffer: address of data buffer or address of struct iucv_array
  * @size: length of data buffer
  * @residual:
@@ -1194,7 +1201,7 @@ EXPORT_SYMBOL(__iucv_message_receive);
  *
  * Locking:	local_bh_enable/local_bh_disable
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_receive(struct iucv_path *path, struct iucv_message *msg,
 			 u8 flags, void *buffer, size_t size, size_t *residual)
@@ -1212,8 +1219,7 @@ int iucv_message_receive(struct iucv_path *path, struct iucv_message *msg,
 EXPORT_SYMBOL(iucv_message_receive);
 
 /**
- * iucv_message_reject - Refuses a specified message
- *
+ * iucv_message_reject
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  *
@@ -1221,7 +1227,7 @@ EXPORT_SYMBOL(iucv_message_receive);
  * are notified of a message and the time that you complete the message,
  * the message may be rejected.
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_reject(struct iucv_path *path, struct iucv_message *msg)
 {
@@ -1247,8 +1253,7 @@ out:
 EXPORT_SYMBOL(iucv_message_reject);
 
 /**
- * iucv_message_reply - Replies to a specified message
- *
+ * iucv_message_reply
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @flags: how the reply is sent (IUCV_IPRMDATA, IUCV_IPPRTY, IUCV_IPBUFLST)
@@ -1256,11 +1261,11 @@ EXPORT_SYMBOL(iucv_message_reject);
  * @size: length of reply data buffer
  *
  * This function responds to the two-way messages that you receive. You
- * must identify completely the message to which you wish to reply. I.e.,
+ * must identify completely the message to which you wish to reply. ie,
  * pathid, msgid, and trgcls. Prmmsg signifies the data is moved into
  * the parameter list.
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_reply(struct iucv_path *path, struct iucv_message *msg,
 		       u8 flags, void *reply, size_t size)
@@ -1297,8 +1302,7 @@ out:
 EXPORT_SYMBOL(iucv_message_reply);
 
 /**
- * __iucv_message_send - Transmits a one-way message, no locking
- *
+ * __iucv_message_send
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @flags: how the message is sent (IUCV_IPRMDATA, IUCV_IPPRTY, IUCV_IPBUFLST)
@@ -1312,7 +1316,7 @@ EXPORT_SYMBOL(iucv_message_reply);
  *
  * Locking:	no locking
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int __iucv_message_send(struct iucv_path *path, struct iucv_message *msg,
 		      u8 flags, u32 srccls, void *buffer, size_t size)
@@ -1352,8 +1356,7 @@ out:
 EXPORT_SYMBOL(__iucv_message_send);
 
 /**
- * iucv_message_send - Transmits a one-way message, with locking
- *
+ * iucv_message_send
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @flags: how the message is sent (IUCV_IPRMDATA, IUCV_IPPRTY, IUCV_IPBUFLST)
@@ -1367,7 +1370,7 @@ EXPORT_SYMBOL(__iucv_message_send);
  *
  * Locking:	local_bh_enable/local_bh_disable
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_send(struct iucv_path *path, struct iucv_message *msg,
 		      u8 flags, u32 srccls, void *buffer, size_t size)
@@ -1382,8 +1385,7 @@ int iucv_message_send(struct iucv_path *path, struct iucv_message *msg,
 EXPORT_SYMBOL(iucv_message_send);
 
 /**
- * iucv_message_send2way - Transmits a two-way message
- *
+ * iucv_message_send2way
  * @path: address of iucv path structure
  * @msg: address of iucv msg structure
  * @flags: how the message is sent and the reply is received
@@ -1400,7 +1402,7 @@ EXPORT_SYMBOL(iucv_message_send);
  * reply to the message and a buffer is provided into which IUCV moves
  * the reply to this message.
  *
- * Returns: the result from the CP IUCV call.
+ * Returns the result from the CP IUCV call.
  */
 int iucv_message_send2way(struct iucv_path *path, struct iucv_message *msg,
 			  u8 flags, u32 srccls, void *buffer, size_t size,
@@ -1459,11 +1461,11 @@ struct iucv_path_pending {
 } __packed;
 
 /**
- * iucv_path_pending - Process connection pending work item
- *
+ * iucv_path_pending
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process connection pending work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_path_pending(struct iucv_irq_data *data)
 {
@@ -1520,11 +1522,11 @@ struct iucv_path_complete {
 } __packed;
 
 /**
- * iucv_path_complete - Process connection complete work item
- *
+ * iucv_path_complete
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process connection complete work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_path_complete(struct iucv_irq_data *data)
 {
@@ -1550,11 +1552,11 @@ struct iucv_path_severed {
 } __packed;
 
 /**
- * iucv_path_severed - Process connection severed work item.
- *
+ * iucv_path_severed
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process connection severed work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_path_severed(struct iucv_irq_data *data)
 {
@@ -1586,11 +1588,11 @@ struct iucv_path_quiesced {
 } __packed;
 
 /**
- * iucv_path_quiesced - Process connection quiesced work item.
- *
+ * iucv_path_quiesced
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process connection quiesced work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_path_quiesced(struct iucv_irq_data *data)
 {
@@ -1614,11 +1616,11 @@ struct iucv_path_resumed {
 } __packed;
 
 /**
- * iucv_path_resumed - Process connection resumed work item.
- *
+ * iucv_path_resumed
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process connection resumed work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_path_resumed(struct iucv_irq_data *data)
 {
@@ -1645,11 +1647,11 @@ struct iucv_message_complete {
 } __packed;
 
 /**
- * iucv_message_complete - Process message complete work item.
- *
+ * iucv_message_complete
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process message complete work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_message_complete(struct iucv_irq_data *data)
 {
@@ -1692,11 +1694,11 @@ struct iucv_message_pending {
 } __packed;
 
 /**
- * iucv_message_pending - Process message pending work item.
- *
+ * iucv_message_pending
  * @data: Pointer to external interrupt buffer
  *
- * Context: Called from tasklet while holding iucv_table_lock.
+ * Process message pending work item. Called from tasklet while holding
+ * iucv_table_lock.
  */
 static void iucv_message_pending(struct iucv_irq_data *data)
 {
@@ -1719,7 +1721,7 @@ static void iucv_message_pending(struct iucv_irq_data *data)
 }
 
 /*
- * iucv_tasklet_fn - Process the queue of IRQ buffers
+ * iucv_tasklet_fn:
  *
  * This tasklet loops over the queue of irq buffers created by
  * iucv_external_interrupt, calls the appropriate action handler
@@ -1763,7 +1765,7 @@ static void iucv_tasklet_fn(unsigned long ignored)
 }
 
 /*
- * iucv_work_fn - Process the queue of path pending IRQ blocks
+ * iucv_work_fn:
  *
  * This work function loops over the queue of path pending irq blocks
  * created by iucv_external_interrupt, calls the appropriate action
@@ -1794,8 +1796,9 @@ static void iucv_work_fn(struct work_struct *work)
 }
 
 /*
- * iucv_external_interrupt - Handles external interrupts coming in from CP.
+ * iucv_external_interrupt
  *
+ * Handles external interrupts coming in from CP.
  * Places the interrupt buffer on a queue and schedules iucv_tasklet_fn().
  */
 static void iucv_external_interrupt(struct ext_code ext_code,
@@ -1812,7 +1815,7 @@ static void iucv_external_interrupt(struct ext_code ext_code,
 		return;
 	}
 	BUG_ON(p->iptype  < 0x01 || p->iptype > 0x09);
-	work = kmalloc_obj(struct iucv_irq_list, GFP_ATOMIC);
+	work = kmalloc(sizeof(struct iucv_irq_list), GFP_ATOMIC);
 	if (!work) {
 		pr_warn("iucv_external_interrupt: out of memory\n");
 		return;
@@ -1853,17 +1856,16 @@ struct iucv_interface iucv_if = {
 EXPORT_SYMBOL(iucv_if);
 
 static enum cpuhp_state iucv_online;
-
 /**
- * iucv_init - Allocates and initializes various data structures.
+ * iucv_init
  *
- * Returns: 0 on success, return code on failure.
+ * Allocates and initializes various data structures.
  */
 static int __init iucv_init(void)
 {
 	int rc;
 
-	if (!machine_is_vm()) {
+	if (!MACHINE_IS_VM) {
 		rc = -EPROTONOSUPPORT;
 		goto out;
 	}
@@ -1921,7 +1923,9 @@ out:
 }
 
 /**
- * iucv_exit - Frees everything allocated from iucv_init.
+ * iucv_exit
+ *
+ * Frees everything allocated from iucv_init.
  */
 static void __exit iucv_exit(void)
 {

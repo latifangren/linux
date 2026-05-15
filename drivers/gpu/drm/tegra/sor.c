@@ -24,7 +24,6 @@
 #include <drm/drm_eld.h>
 #include <drm/drm_file.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_print.h>
 #include <drm/drm_simple_kms_helper.h>
 
 #include "dc.h"
@@ -1721,7 +1720,7 @@ static void tegra_sor_connector_reset(struct drm_connector *connector)
 {
 	struct tegra_sor_state *state;
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (!state)
 		return;
 
@@ -1790,7 +1789,7 @@ static int tegra_sor_connector_get_modes(struct drm_connector *connector)
 
 static enum drm_mode_status
 tegra_sor_connector_mode_valid(struct drm_connector *connector,
-			       const struct drm_display_mode *mode)
+			       struct drm_display_mode *mode)
 {
 	return MODE_OK;
 }
@@ -2667,7 +2666,7 @@ static void tegra_sor_dp_disable(struct drm_encoder *encoder)
 	 * the AUX transactions would just be timing out.
 	 */
 	if (output->connector.status != connector_status_disconnected) {
-		err = drm_dp_link_power_down(sor->aux, sor->link.revision);
+		err = drm_dp_link_power_down(sor->aux, &sor->link);
 		if (err < 0)
 			dev_err(sor->dev, "failed to power down link: %d\n",
 				err);
@@ -2883,7 +2882,7 @@ static void tegra_sor_dp_enable(struct drm_encoder *encoder)
 	else
 		dev_dbg(sor->dev, "link training succeeded\n");
 
-	err = drm_dp_link_power_up(sor->aux, sor->link.revision);
+	err = drm_dp_link_power_up(sor->aux, &sor->link);
 	if (err < 0)
 		dev_err(sor->dev, "failed to power up DP link: %d\n", err);
 
@@ -4041,5 +4040,5 @@ struct platform_driver tegra_sor_driver = {
 		.pm = &tegra_sor_pm_ops,
 	},
 	.probe = tegra_sor_probe,
-	.remove = tegra_sor_remove,
+	.remove_new = tegra_sor_remove,
 };

@@ -16,19 +16,12 @@ description:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - qcom,glymur-dp-phy
-          - qcom,sa8775p-edp-phy
-          - qcom,sc7280-edp-phy
-          - qcom,sc8180x-edp-phy
-          - qcom,sc8280xp-dp-phy
-          - qcom,sc8280xp-edp-phy
-          - qcom,x1e80100-dp-phy
-      - items:
-          - enum:
-              - qcom,qcs8300-edp-phy
-          - const: qcom,sa8775p-edp-phy
+    enum:
+      - qcom,sc7280-edp-phy
+      - qcom,sc8180x-edp-phy
+      - qcom,sc8280xp-dp-phy
+      - qcom,sc8280xp-edp-phy
+      - qcom,x1e80100-dp-phy
 
   reg:
     items:
@@ -73,7 +66,6 @@ allOf:
       properties:
         compatible:
           enum:
-            - qcom,glymur-dp-phy
             - qcom,x1e80100-dp-phy
     then:
       properties:

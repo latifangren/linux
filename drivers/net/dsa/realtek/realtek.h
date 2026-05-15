@@ -19,6 +19,9 @@
 
 struct phylink_mac_ops;
 struct realtek_ops;
+struct dentry;
+struct inode;
+struct file;
 
 struct rtl8366_mib_counter {
 	unsigned int	base;
@@ -54,7 +57,6 @@ struct realtek_priv {
 	struct regmap		*map;
 	struct regmap		*map_nolock;
 	struct mutex		map_lock;
-	struct mii_bus		*user_mii_bus;
 	struct mii_bus		*bus;
 	int			mdio_addr;
 

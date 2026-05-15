@@ -44,10 +44,7 @@ struct x86_instruction_info {
 	u64 dst_val;            /* value of destination operand         */
 	u8  src_bytes;          /* size of source operand               */
 	u8  dst_bytes;          /* size of destination operand          */
-	u8  src_type;		/* type of source operand		*/
-	u8  dst_type;		/* type of destination operand		*/
 	u8  ad_bytes;           /* size of src/dst address              */
-	u64 rip;		/* rip of the instruction		*/
 	u64 next_rip;           /* rip following the instruction        */
 };
 
@@ -91,8 +88,6 @@ struct x86_instruction_info {
 #define X86EMUL_CMPXCHG_FAILED  4 /* cmpxchg did not see expected value */
 #define X86EMUL_IO_NEEDED       5 /* IO is needed to complete emulation */
 #define X86EMUL_INTERCEPTED     6 /* Intercepted by nested VMCB/VMCS */
-/* Emulation during event vectoring is unhandleable. */
-#define X86EMUL_UNHANDLEABLE_VECTORING	7
 
 /* x86-specific emulation flags */
 #define X86EMUL_F_WRITE			BIT(0)
@@ -237,7 +232,6 @@ struct x86_emulate_ops {
 	bool (*is_smm)(struct x86_emulate_ctxt *ctxt);
 	int (*leave_smm)(struct x86_emulate_ctxt *ctxt);
 	void (*triple_fault)(struct x86_emulate_ctxt *ctxt);
-	int (*get_xcr)(struct x86_emulate_ctxt *ctxt, u32 index, u64 *xcr);
 	int (*set_xcr)(struct x86_emulate_ctxt *ctxt, u32 index, u64 xcr);
 
 	gva_t (*get_untagged_addr)(struct x86_emulate_ctxt *ctxt, gva_t addr,
@@ -245,13 +239,11 @@ struct x86_emulate_ops {
 
 	bool (*is_canonical_addr)(struct x86_emulate_ctxt *ctxt, gva_t addr,
 				  unsigned int flags);
-
-	bool (*page_address_valid)(struct x86_emulate_ctxt *ctxt, gpa_t gpa);
 };
 
 /* Type, address-of, and value of an instruction's operand. */
 struct operand {
-	enum { OP_REG, OP_MEM, OP_MEM_STR, OP_IMM, OP_XMM, OP_YMM, OP_MM, OP_NONE } type;
+	enum { OP_REG, OP_MEM, OP_MEM_STR, OP_IMM, OP_XMM, OP_MM, OP_NONE } type;
 	unsigned int bytes;
 	unsigned int count;
 	union {
@@ -270,18 +262,15 @@ struct operand {
 	union {
 		unsigned long val;
 		u64 val64;
-		char valptr[sizeof(avx256_t)];
+		char valptr[sizeof(sse128_t)];
 		sse128_t vec_val;
-		avx256_t vec_val2;
 		u64 mm_val;
 		void *data;
-	} __aligned(32);
+	};
 };
 
-#define X86_MAX_INSTRUCTION_LENGTH	15
-
 struct fetch_cache {
-	u8 data[X86_MAX_INSTRUCTION_LENGTH];
+	u8 data[15];
 	u8 *ptr;
 	u8 *end;
 };
@@ -321,14 +310,6 @@ typedef void (*fastop_t)(struct fastop *);
 #define NR_EMULATOR_GPRS	8
 #endif
 
-/*
- * Distinguish between no prefix, REX, or in the future REX2.
- */
-enum rex_type {
-	REX_NONE,
-	REX_PREFIX,
-};
-
 struct x86_emulate_ctxt {
 	void *vcpu;
 	const struct x86_emulate_ops *ops;
@@ -360,7 +341,6 @@ struct x86_emulate_ctxt {
 	u8 opcode_len;
 	u8 b;
 	u8 intercept;
-	bool op_prefix;
 	u8 op_bytes;
 	u8 ad_bytes;
 	union {
@@ -370,8 +350,7 @@ struct x86_emulate_ctxt {
 	int (*check_perm)(struct x86_emulate_ctxt *ctxt);
 
 	bool rip_relative;
-	enum rex_type rex_prefix;
-	u8 rex_bits;
+	u8 rex_prefix;
 	u8 lock_prefix;
 	u8 rep_prefix;
 	/* bitmaps of registers in _regs[] that can be read */

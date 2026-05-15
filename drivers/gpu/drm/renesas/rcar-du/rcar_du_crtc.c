@@ -17,7 +17,6 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_gem_dma_helper.h>
-#include <drm/drm_print.h>
 #include <drm/drm_vblank.h>
 
 #include "rcar_cmm.h"
@@ -519,7 +518,7 @@ static void rcar_du_cmm_setup(struct drm_crtc *crtc)
 	if (drm_lut)
 		cmm_config.lut.table = (struct drm_color_lut *)drm_lut->data;
 
-	rcar_cmm_setup(rcrtc->cmm->dev, &cmm_config);
+	rcar_cmm_setup(rcrtc->cmm, &cmm_config);
 }
 
 /* -----------------------------------------------------------------------------
@@ -668,7 +667,7 @@ static void rcar_du_crtc_stop(struct rcar_du_crtc *rcrtc)
 		rcar_du_vsp_disable(rcrtc);
 
 	if (rcrtc->cmm)
-		rcar_cmm_disable(rcrtc->cmm->dev);
+		rcar_cmm_disable(rcrtc->cmm);
 
 	/*
 	 * Select switch sync mode. This stops display operation and configures
@@ -727,7 +726,7 @@ static void rcar_du_crtc_atomic_enable(struct drm_crtc *crtc,
 	struct rcar_du_device *rcdu = rcrtc->dev;
 
 	if (rcrtc->cmm)
-		rcar_cmm_enable(rcrtc->cmm->dev);
+		rcar_cmm_enable(rcrtc->cmm);
 	rcar_du_crtc_get(rcrtc);
 
 	/*
@@ -994,7 +993,7 @@ static void rcar_du_crtc_cleanup(struct drm_crtc *crtc)
 
 	rcar_du_crtc_crc_cleanup(rcrtc);
 
-	drm_crtc_cleanup(crtc);
+	return drm_crtc_cleanup(crtc);
 }
 
 static void rcar_du_crtc_reset(struct drm_crtc *crtc)
@@ -1006,7 +1005,7 @@ static void rcar_du_crtc_reset(struct drm_crtc *crtc)
 		crtc->state = NULL;
 	}
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (state == NULL)
 		return;
 
@@ -1300,8 +1299,8 @@ int rcar_du_crtc_create(struct rcar_du_group *rgrp, unsigned int swindex,
 		return ret;
 
 	/* CMM might be disabled for this CRTC. */
-	if (rcdu->cmms[swindex].dev) {
-		rcrtc->cmm = &rcdu->cmms[swindex];
+	if (rcdu->cmms[swindex]) {
+		rcrtc->cmm = rcdu->cmms[swindex];
 		rgrp->cmms_mask |= BIT(hwindex % 2);
 
 		drm_mode_crtc_set_gamma_size(crtc, CM2_LUT_SIZE);

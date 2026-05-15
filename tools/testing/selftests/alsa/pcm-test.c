@@ -17,7 +17,7 @@
 #include <assert.h>
 #include <pthread.h>
 
-#include "kselftest.h"
+#include "../kselftest.h"
 #include "alsa-local.h"
 
 typedef struct timespec timestamp_t;
@@ -30,7 +30,7 @@ struct card_data {
 	struct card_data *next;
 };
 
-struct card_data *card_list;
+struct card_data *card_list = NULL;
 
 struct pcm_data {
 	snd_pcm_t *handle;
@@ -43,10 +43,10 @@ struct pcm_data {
 	struct pcm_data *next;
 };
 
-struct pcm_data *pcm_list;
+struct pcm_data *pcm_list = NULL;
 
-int num_missing;
-struct pcm_data *pcm_missing;
+int num_missing = 0;
+struct pcm_data *pcm_missing = NULL;
 
 snd_config_t *default_pcm_config;
 

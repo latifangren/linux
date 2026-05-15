@@ -22,6 +22,10 @@ struct cdns_plat_pcie {
 	struct cdns_pcie        *pcie;
 };
 
+struct cdns_plat_pcie_of_data {
+	bool is_rc;
+};
+
 static const struct of_device_id cdns_plat_pcie_of_match[];
 
 static u64 cdns_plat_cpu_addr_fixup(struct cdns_pcie *pcie, u64 cpu_addr)
@@ -173,7 +177,4 @@ static struct platform_driver cdns_plat_pcie_driver = {
 	.probe = cdns_plat_pcie_probe,
 	.shutdown = cdns_plat_pcie_shutdown,
 };
-module_platform_driver(cdns_plat_pcie_driver);
-
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Cadence PCIe controller platform driver");
+builtin_platform_driver(cdns_plat_pcie_driver);

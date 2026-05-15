@@ -3,7 +3,8 @@
  * Copyright IBM Corp. 2018
  */
 
-#define pr_fmt(fmt) "qeth: " fmt
+#define KMSG_COMPONENT "qeth"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/ethtool.h>
 #include "qeth_core.h"

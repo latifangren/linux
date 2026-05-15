@@ -2,7 +2,6 @@
 #include <linux/objtool.h>
 #include <linux/module.h>
 #include <linux/sort.h>
-#include <linux/bpf.h>
 #include <asm/ptrace.h>
 #include <asm/stacktrace.h>
 #include <asm/unwind.h>
@@ -173,25 +172,6 @@ static struct orc_entry *orc_ftrace_find(unsigned long ip)
 }
 #endif
 
-/* Fake frame pointer entry -- used as a fallback for generated code */
-static struct orc_entry orc_fp_entry = {
-	.type		= ORC_TYPE_CALL,
-	.sp_reg		= ORC_REG_BP,
-	.sp_offset	= 16,
-	.bp_reg		= ORC_REG_PREV_SP,
-	.bp_offset	= -16,
-};
-
-static struct orc_entry *orc_bpf_find(unsigned long ip)
-{
-#ifdef CONFIG_BPF_JIT
-	if (bpf_has_frame_pointer(ip))
-		return &orc_fp_entry;
-#endif
-
-	return NULL;
-}
-
 /*
  * If we crash with IP==0, the last successfully executed instruction
  * was probably an indirect function call with a NULL function pointer,
@@ -204,6 +184,15 @@ static struct orc_entry null_orc_entry = {
 	.sp_reg = ORC_REG_SP,
 	.bp_reg = ORC_REG_UNDEFINED,
 	.type = ORC_TYPE_CALL
+};
+
+/* Fake frame pointer entry -- used as a fallback for generated code */
+static struct orc_entry orc_fp_entry = {
+	.type		= ORC_TYPE_CALL,
+	.sp_reg		= ORC_REG_BP,
+	.sp_offset	= 16,
+	.bp_reg		= ORC_REG_PREV_SP,
+	.bp_offset	= -16,
 };
 
 static struct orc_entry *orc_find(unsigned long ip)
@@ -246,11 +235,6 @@ static struct orc_entry *orc_find(unsigned long ip)
 
 	/* Module lookup: */
 	orc = orc_module_find(ip);
-	if (orc)
-		return orc;
-
-	/* BPF lookup: */
-	orc = orc_bpf_find(ip);
 	if (orc)
 		return orc;
 
@@ -492,7 +476,7 @@ bool unwind_next_frame(struct unwind_state *state)
 		return false;
 
 	/* Don't let modules unload while we're reading their ORC data. */
-	guard(rcu)();
+	preempt_disable();
 
 	/* End-of-stack check for user tasks: */
 	if (state->regs && user_mode(state->regs))
@@ -511,8 +495,9 @@ bool unwind_next_frame(struct unwind_state *state)
 	if (!orc) {
 		/*
 		 * As a fallback, try to assume this code uses a frame pointer.
-		 * This is just a guess, so the rest of the unwind is no longer
-		 * considered reliable.
+		 * This is useful for generated code, like BPF, which ORC
+		 * doesn't know about.  This is just a guess, so the rest of
+		 * the unwind is no longer considered reliable.
 		 */
 		orc = &orc_fp_entry;
 		state->error = true;
@@ -546,23 +531,17 @@ bool unwind_next_frame(struct unwind_state *state)
 		indirect = true;
 		break;
 
-	/*
-	 * Any of the below registers may temporarily hold the stack pointer,
-	 * typically during a DRAP stack realignment sequence or some other
-	 * stack swizzle.
-	 */
-
-	case ORC_REG_AX:
-		if (!get_reg(state, offsetof(struct pt_regs, ax), &sp)) {
-			orc_warn_current("missing AX value at %pB\n",
+	case ORC_REG_R10:
+		if (!get_reg(state, offsetof(struct pt_regs, r10), &sp)) {
+			orc_warn_current("missing R10 value at %pB\n",
 					 (void *)state->ip);
 			goto err;
 		}
 		break;
 
-	case ORC_REG_DX:
-		if (!get_reg(state, offsetof(struct pt_regs, dx), &sp)) {
-			orc_warn_current("missing DX value at %pB\n",
+	case ORC_REG_R13:
+		if (!get_reg(state, offsetof(struct pt_regs, r13), &sp)) {
+			orc_warn_current("missing R13 value at %pB\n",
 					 (void *)state->ip);
 			goto err;
 		}
@@ -576,17 +555,9 @@ bool unwind_next_frame(struct unwind_state *state)
 		}
 		break;
 
-	case ORC_REG_R10:
-		if (!get_reg(state, offsetof(struct pt_regs, r10), &sp)) {
-			orc_warn_current("missing R10 value at %pB\n",
-					 (void *)state->ip);
-			goto err;
-		}
-		break;
-
-	case ORC_REG_R13:
-		if (!get_reg(state, offsetof(struct pt_regs, r13), &sp)) {
-			orc_warn_current("missing R13 value at %pB\n",
+	case ORC_REG_DX:
+		if (!get_reg(state, offsetof(struct pt_regs, dx), &sp)) {
+			orc_warn_current("missing DX value at %pB\n",
 					 (void *)state->ip);
 			goto err;
 		}
@@ -698,12 +669,14 @@ bool unwind_next_frame(struct unwind_state *state)
 		goto err;
 	}
 
+	preempt_enable();
 	return true;
 
 err:
 	state->error = true;
 
 the_end:
+	preempt_enable();
 	state->stack_info.type = STACK_TYPE_UNKNOWN;
 	return false;
 }

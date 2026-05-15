@@ -17,7 +17,6 @@
 #include <asm/early_ioremap.h>
 #include <asm/alternative.h>
 #include <asm/cpufeature.h>
-#include <asm/rsi.h>
 
 /*
  * Generic IO read/write.  These perform native-endian accesses.
@@ -128,6 +127,17 @@ static __always_inline u64 __raw_readq(const volatile void __iomem *addr)
 #define arch_has_dev_port()	(1)
 #define IO_SPACE_LIMIT		(PCI_IO_SIZE - 1)
 #define PCI_IOBASE		((void __iomem *)PCI_IO_START)
+
+/*
+ * String version of I/O memory access operations.
+ */
+extern void __memcpy_fromio(void *, const volatile void __iomem *, size_t);
+extern void __memcpy_toio(volatile void __iomem *, const void *, size_t);
+extern void __memset_io(volatile void __iomem *, int, size_t);
+
+#define memset_io(c,v,l)	__memset_io((c),(v),(l))
+#define memcpy_fromio(a,c,l)	__memcpy_fromio((a),(c),(l))
+#define memcpy_toio(c,a,l)	__memcpy_toio((c),(a),(l))
 
 /*
  * The ARM64 iowrite implementation is intended to support drivers that want to
@@ -264,33 +274,15 @@ __iowrite64_copy(void __iomem *to, const void *from, size_t count)
 typedef int (*ioremap_prot_hook_t)(phys_addr_t phys_addr, size_t size,
 				   pgprot_t *prot);
 int arm64_ioremap_prot_hook_register(const ioremap_prot_hook_t hook);
-void __iomem *__ioremap_prot(phys_addr_t phys, size_t size, pgprot_t prot);
 
-static inline void __iomem *ioremap_prot(phys_addr_t phys, size_t size,
-					 pgprot_t user_prot)
-{
-	pgprot_t prot;
-	ptdesc_t user_prot_val = pgprot_val(user_prot);
-
-	if (WARN_ON_ONCE(!(user_prot_val & PTE_USER)))
-		return NULL;
-
-	prot = __pgprot_modify(PAGE_KERNEL, PTE_ATTRINDX_MASK,
-			       user_prot_val & PTE_ATTRINDX_MASK);
-	return __ioremap_prot(phys, size, prot);
-}
 #define ioremap_prot ioremap_prot
 
-#define ioremap(addr, size)	\
-	__ioremap_prot((addr), (size), __pgprot(PROT_DEVICE_nGnRE))
+#define _PAGE_IOREMAP PROT_DEVICE_nGnRE
+
 #define ioremap_wc(addr, size)	\
-	__ioremap_prot((addr), (size), __pgprot(PROT_NORMAL_NC))
+	ioremap_prot((addr), (size), PROT_NORMAL_NC)
 #define ioremap_np(addr, size)	\
-	__ioremap_prot((addr), (size), __pgprot(PROT_DEVICE_nGnRnE))
-
-
-#define ioremap_encrypted(addr, size)	\
-	__ioremap_prot((addr), (size), PAGE_KERNEL)
+	ioremap_prot((addr), (size), PROT_DEVICE_nGnRnE)
 
 /*
  * io{read,write}{16,32,64}be() macros
@@ -311,7 +303,7 @@ static inline void __iomem *ioremap_cache(phys_addr_t addr, size_t size)
 	if (pfn_is_map_memory(__phys_to_pfn(addr)))
 		return (void __iomem *)__phys_to_virt(addr);
 
-	return __ioremap_prot(addr, size, __pgprot(PROT_NORMAL));
+	return ioremap_prot(addr, size, PROT_NORMAL);
 }
 
 /*
@@ -325,12 +317,5 @@ extern int valid_mmap_phys_addr_range(unsigned long pfn, size_t size);
 extern bool arch_memremap_can_ram_remap(resource_size_t offset, size_t size,
 					unsigned long flags);
 #define arch_memremap_can_ram_remap arch_memremap_can_ram_remap
-
-static inline bool arm64_is_protected_mmio(phys_addr_t phys_addr, size_t size)
-{
-	if (unlikely(is_realm_world()))
-		return arm64_rsi_is_protected(phys_addr, size);
-	return false;
-}
 
 #endif	/* __ASM_IO_H */

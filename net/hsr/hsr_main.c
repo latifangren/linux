@@ -78,18 +78,9 @@ static int hsr_netdev_notify(struct notifier_block *nb, unsigned long event,
 			eth_hw_addr_set(master->dev, dev->dev_addr);
 			call_netdevice_notifiers(NETDEV_CHANGEADDR,
 						 master->dev);
-
-			if (hsr->prot_version == PRP_V1) {
-				port = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_B);
-				if (port) {
-					eth_hw_addr_set(port->dev, dev->dev_addr);
-					call_netdevice_notifiers(NETDEV_CHANGEADDR,
-								 port->dev);
-				}
-			}
 		}
 
-		/* Make sure we recognize frames from ourselves in hsr_handle_frame() */
+		/* Make sure we recognize frames from ourselves in hsr_rcv() */
 		port = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_B);
 		res = hsr_create_self_node(hsr,
 					   master->dev->dev_addr,

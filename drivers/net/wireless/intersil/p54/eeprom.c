@@ -154,12 +154,13 @@ static int p54_generate_band(struct ieee80211_hw *dev,
 	if ((!list->entries) || (!list->band_channel_num[band]))
 		return -EINVAL;
 
-	tmp = kzalloc_obj(*tmp);
+	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		goto err_out;
 
-	tmp->channels = kzalloc_objs(struct ieee80211_channel,
-				     list->band_channel_num[band]);
+	tmp->channels = kcalloc(list->band_channel_num[band],
+				sizeof(struct ieee80211_channel),
+				GFP_KERNEL);
 	if (!tmp->channels)
 		goto err_out;
 
@@ -335,20 +336,23 @@ static int p54_generate_channel_lists(struct ieee80211_hw *dev)
 	max_channel_num = max_t(unsigned int, max_channel_num,
 				priv->curve_data->entries);
 
-	list = kzalloc_obj(*list);
+	list = kzalloc(sizeof(*list), GFP_KERNEL);
 	if (!list) {
 		ret = -ENOMEM;
 		goto free;
 	}
 	priv->chan_num = max_channel_num;
-	priv->survey = kzalloc_objs(struct survey_info, max_channel_num);
+	priv->survey = kcalloc(max_channel_num, sizeof(struct survey_info),
+			       GFP_KERNEL);
 	if (!priv->survey) {
 		ret = -ENOMEM;
 		goto free;
 	}
 
 	list->max_entries = max_channel_num;
-	list->channels = kzalloc_objs(struct p54_channel_entry, max_channel_num);
+	list->channels = kcalloc(max_channel_num,
+				 sizeof(struct p54_channel_entry),
+				 GFP_KERNEL);
 	if (!list->channels) {
 		ret = -ENOMEM;
 		goto free;

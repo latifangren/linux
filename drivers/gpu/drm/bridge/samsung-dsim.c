@@ -14,13 +14,11 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
-#include <linux/export.h>
 #include <linux/irq.h>
 #include <linux/media-bus-format.h>
 #include <linux/of.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
-#include <linux/units.h>
 
 #include <video/mipi_display.h>
 
@@ -31,10 +29,11 @@
 /* returns true iff both arguments logically differs */
 #define NEQV(a, b) (!(a) ^ !(b))
 
-/* DSIM_STATUS or DSIM_DPHY_STATUS */
+/* DSIM_STATUS */
 #define DSIM_STOP_STATE_DAT(x)		(((x) & 0xf) << 0)
 #define DSIM_STOP_STATE_CLK		BIT(8)
 #define DSIM_TX_READY_HS_CLK		BIT(10)
+#define DSIM_PLL_STABLE			BIT(31)
 
 /* DSIM_SWRST */
 #define DSIM_FUNCRST			BIT(16)
@@ -45,13 +44,17 @@
 #define DSIM_BTA_TIMEOUT(x)		((x) << 16)
 
 /* DSIM_CLKCTRL */
-#define DSIM_ESC_PRESCALER(x)			(((x) & 0xffff) << 0)
-#define DSIM_ESC_PRESCALER_MASK			(0xffff << 0)
-#define DSIM_LANE_ESC_CLK_EN_DATA(x, offset)	(((x) & 0xf) << offset)
-#define DSIM_LANE_ESC_CLK_EN_DATA_MASK(offset)	(0xf << offset)
-#define DSIM_BYTE_CLK_SRC(x)			(((x) & 0x3) << 25)
-#define DSIM_BYTE_CLK_SRC_MASK			(0x3 << 25)
-#define DSIM_PLL_BYPASS				BIT(27)
+#define DSIM_ESC_PRESCALER(x)		(((x) & 0xffff) << 0)
+#define DSIM_ESC_PRESCALER_MASK		(0xffff << 0)
+#define DSIM_LANE_ESC_CLK_EN_CLK	BIT(19)
+#define DSIM_LANE_ESC_CLK_EN_DATA(x)	(((x) & 0xf) << 20)
+#define DSIM_LANE_ESC_CLK_EN_DATA_MASK	(0xf << 20)
+#define DSIM_BYTE_CLKEN			BIT(24)
+#define DSIM_BYTE_CLK_SRC(x)		(((x) & 0x3) << 25)
+#define DSIM_BYTE_CLK_SRC_MASK		(0x3 << 25)
+#define DSIM_PLL_BYPASS			BIT(27)
+#define DSIM_ESC_CLKEN			BIT(28)
+#define DSIM_TX_REQUEST_HSCLK		BIT(31)
 
 /* DSIM_CONFIG */
 #define DSIM_LANE_EN_CLK		BIT(0)
@@ -86,6 +89,7 @@
  */
 #define DSIM_HSE_DISABLE_MODE		BIT(23)
 #define DSIM_AUTO_MODE			BIT(24)
+#define DSIM_VIDEO_MODE			BIT(25)
 #define DSIM_BURST_MODE			BIT(26)
 #define DSIM_SYNC_INFORM		BIT(27)
 #define DSIM_EOT_DISABLE		BIT(28)
@@ -123,9 +127,9 @@
 #define DSIM_MAIN_HBP_MASK		((0xffff) << 0)
 
 /* DSIM_MSYNC */
-#define DSIM_MAIN_VSA(x, offset)	((x) << offset)
+#define DSIM_MAIN_VSA(x)		((x) << 22)
 #define DSIM_MAIN_HSA(x)		((x) << 0)
-#define DSIM_MAIN_VSA_MASK(offset)	((0x3ff) << offset)
+#define DSIM_MAIN_VSA_MASK		((0x3ff) << 22)
 #define DSIM_MAIN_HSA_MASK		((0xffff) << 0)
 
 /* DSIM_SDRESOL */
@@ -150,11 +154,6 @@
 #define DSIM_INT_RX_ACK			BIT(16)
 #define DSIM_INT_RX_ECC_ERR		BIT(15)
 #define DSIM_INT_RX_CRC_ERR		BIT(14)
-
-/* DSIM_SFRCTRL */
-#define DSIM_SFR_CTRL_STAND_BY		BIT(4)
-#define DSIM_SFR_CTRL_SHADOW_UPDATE	BIT(1)
-#define DSIM_SFR_CTRL_SHADOW_EN		BIT(0)
 
 /* DSIM_FIFOCTRL */
 #define DSIM_RX_DATA_FULL		BIT(25)
@@ -190,7 +189,9 @@
 #define DSIM_PLL_DPDNSWAP_DAT		(1 << 24)
 #define DSIM_FREQ_BAND(x)		((x) << 24)
 #define DSIM_PLL_EN			BIT(23)
-#define DSIM_PLL(x, offset)		((x) << (offset))
+#define DSIM_PLL_P(x, offset)		((x) << (offset))
+#define DSIM_PLL_M(x)			((x) << 4)
+#define DSIM_PLL_S(x)			((x) << 1)
 
 /* DSIM_PHYCTRL */
 #define DSIM_PHYCTRL_ULPS_EXIT(x)	(((x) & 0x1ff) << 0)
@@ -219,42 +220,25 @@
 #define DSI_XFER_TIMEOUT_MS		100
 #define DSI_RX_FIFO_EMPTY		0x30800002
 
+#define OLD_SCLK_MIPI_CLK_NAME		"pll_clk"
+
 #define PS_TO_CYCLE(ps, hz) DIV64_U64_ROUND_CLOSEST(((ps) * (hz)), 1000000000000ULL)
+
+static const char *const clk_names[5] = {
+	"bus_clk",
+	"sclk_mipi",
+	"phyclk_mipidphy0_bitclkdiv8",
+	"phyclk_mipidphy0_rxclkesc0",
+	"sclk_rgb_vclk_to_dsim0"
+};
 
 enum samsung_dsim_transfer_type {
 	EXYNOS_DSI_TX,
 	EXYNOS_DSI_RX,
 };
 
-static struct clk_bulk_data exynos3_clk_bulk_data[] = {
-	{ .id = "bus_clk" },
-	{ .id = "pll_clk" },
-};
-
-static struct clk_bulk_data exynos4_clk_bulk_data[] = {
-	{ .id = "bus_clk" },
-	{ .id = "sclk_mipi" },
-};
-
-static struct clk_bulk_data exynos5433_clk_bulk_data[] = {
-	{ .id = "bus_clk" },
-	{ .id = "sclk_mipi" },
-	{ .id = "phyclk_mipidphy0_bitclkdiv8" },
-	{ .id = "phyclk_mipidphy0_rxclkesc0" },
-	{ .id = "sclk_rgb_vclk_to_dsim0" },
-};
-
-static struct clk_bulk_data exynos7870_clk_bulk_data[] = {
-	{ .id = "bus" },
-	{ .id = "pll" },
-	{ .id = "byte" },
-	{ .id = "esc" },
-};
-
 enum reg_idx {
-	DSIM_STATUS_REG,	/* Status register (legacy) */
-	DSIM_LINK_STATUS_REG,	/* Link status register */
-	DSIM_DPHY_STATUS_REG,	/* D-PHY status register */
+	DSIM_STATUS_REG,	/* Status register */
 	DSIM_SWRST_REG,		/* Software reset register */
 	DSIM_CLKCTRL_REG,	/* Clock control register */
 	DSIM_TIMEOUT_REG,	/* Time out register */
@@ -269,7 +253,6 @@ enum reg_idx {
 	DSIM_PKTHDR_REG,	/* Packet Header FIFO register */
 	DSIM_PAYLOAD_REG,	/* Payload FIFO register */
 	DSIM_RXFIFO_REG,	/* Read FIFO register */
-	DSIM_SFRCTRL_REG,	/* SFR standby and shadow control register */
 	DSIM_FIFOCTRL_REG,	/* FIFO status and control register */
 	DSIM_PLLCTRL_REG,	/* PLL control register */
 	DSIM_PHYCTRL_REG,
@@ -319,32 +302,6 @@ static const unsigned int exynos5433_reg_ofs[] = {
 	[DSIM_PKTHDR_REG] = 0x3C,
 	[DSIM_PAYLOAD_REG] = 0x40,
 	[DSIM_RXFIFO_REG] = 0x44,
-	[DSIM_FIFOCTRL_REG] = 0x4C,
-	[DSIM_PLLCTRL_REG] = 0x94,
-	[DSIM_PHYCTRL_REG] = 0xA4,
-	[DSIM_PHYTIMING_REG] = 0xB4,
-	[DSIM_PHYTIMING1_REG] = 0xB8,
-	[DSIM_PHYTIMING2_REG] = 0xBC,
-};
-
-static const unsigned int exynos7870_reg_ofs[] = {
-	[DSIM_LINK_STATUS_REG] = 0x04,
-	[DSIM_DPHY_STATUS_REG] = 0x08,
-	[DSIM_SWRST_REG] = 0x0C,
-	[DSIM_CLKCTRL_REG] = 0x10,
-	[DSIM_TIMEOUT_REG] = 0x14,
-	[DSIM_ESCMODE_REG] = 0x1C,
-	[DSIM_MDRESOL_REG] = 0x20,
-	[DSIM_MVPORCH_REG] = 0x24,
-	[DSIM_MHPORCH_REG] = 0x28,
-	[DSIM_MSYNC_REG] = 0x2C,
-	[DSIM_CONFIG_REG] = 0x30,
-	[DSIM_INTSRC_REG] = 0x34,
-	[DSIM_INTMSK_REG] = 0x38,
-	[DSIM_PKTHDR_REG] = 0x3C,
-	[DSIM_PAYLOAD_REG] = 0x40,
-	[DSIM_RXFIFO_REG] = 0x44,
-	[DSIM_SFRCTRL_REG] = 0x48,
 	[DSIM_FIFOCTRL_REG] = 0x4C,
 	[DSIM_PLLCTRL_REG] = 0x94,
 	[DSIM_PHYCTRL_REG] = 0xA4,
@@ -425,24 +382,6 @@ static const unsigned int exynos5433_reg_values[] = {
 	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0c),
 };
 
-static const unsigned int exynos7870_reg_values[] = {
-	[RESET_TYPE] = DSIM_SWRST,
-	[PLL_TIMER] = 80000,
-	[STOP_STATE_CNT] = 0xa,
-	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0x177),
-	[PHYCTRL_VREG_LP] = 0,
-	[PHYCTRL_SLEW_UP] = 0,
-	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x07),
-	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0c),
-	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x08),
-	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x2b),
-	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0d),
-	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x09),
-	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x09),
-	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x0f),
-	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0c),
-};
-
 static const unsigned int imx8mm_dsim_reg_values[] = {
 	[RESET_TYPE] = DSIM_SWRST,
 	[PLL_TIMER] = 500,
@@ -464,26 +403,13 @@ static const unsigned int imx8mm_dsim_reg_values[] = {
 static const struct samsung_dsim_driver_data exynos3_dsi_driver_data = {
 	.reg_ofs = exynos_reg_ofs,
 	.plltmr_reg = 0x50,
-	.has_legacy_status_reg = 1,
 	.has_freqband = 1,
 	.has_clklane_stop = 1,
-	.clk_data = exynos3_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos3_clk_bulk_data),
+	.num_clks = 2,
 	.max_freq = 1000,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	.pll_p_offset = 13,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = reg_values,
 	.pll_fin_min = 6,
 	.pll_fin_max = 12,
@@ -496,26 +422,13 @@ static const struct samsung_dsim_driver_data exynos3_dsi_driver_data = {
 static const struct samsung_dsim_driver_data exynos4_dsi_driver_data = {
 	.reg_ofs = exynos_reg_ofs,
 	.plltmr_reg = 0x50,
-	.has_legacy_status_reg = 1,
 	.has_freqband = 1,
 	.has_clklane_stop = 1,
-	.clk_data = exynos4_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos4_clk_bulk_data),
+	.num_clks = 2,
 	.max_freq = 1000,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	.pll_p_offset = 13,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = reg_values,
 	.pll_fin_min = 6,
 	.pll_fin_max = 12,
@@ -528,24 +441,11 @@ static const struct samsung_dsim_driver_data exynos4_dsi_driver_data = {
 static const struct samsung_dsim_driver_data exynos5_dsi_driver_data = {
 	.reg_ofs = exynos_reg_ofs,
 	.plltmr_reg = 0x58,
-	.has_legacy_status_reg = 1,
-	.clk_data = exynos3_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos3_clk_bulk_data),
+	.num_clks = 2,
 	.max_freq = 1000,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	.pll_p_offset = 13,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = reg_values,
 	.pll_fin_min = 6,
 	.pll_fin_max = 12,
@@ -557,25 +457,12 @@ static const struct samsung_dsim_driver_data exynos5_dsi_driver_data = {
 static const struct samsung_dsim_driver_data exynos5433_dsi_driver_data = {
 	.reg_ofs = exynos5433_reg_ofs,
 	.plltmr_reg = 0xa0,
-	.has_legacy_status_reg = 1,
 	.has_clklane_stop = 1,
-	.clk_data = exynos5433_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos5433_clk_bulk_data),
+	.num_clks = 5,
 	.max_freq = 1500,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 0,
 	.num_bits_resol = 12,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	.pll_p_offset = 13,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = exynos5433_reg_values,
 	.pll_fin_min = 6,
 	.pll_fin_max = 12,
@@ -587,56 +474,13 @@ static const struct samsung_dsim_driver_data exynos5433_dsi_driver_data = {
 static const struct samsung_dsim_driver_data exynos5422_dsi_driver_data = {
 	.reg_ofs = exynos5433_reg_ofs,
 	.plltmr_reg = 0xa0,
-	.has_legacy_status_reg = 1,
 	.has_clklane_stop = 1,
-	.clk_data = exynos3_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos3_clk_bulk_data),
+	.num_clks = 2,
 	.max_freq = 1500,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 1,
 	.num_bits_resol = 12,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	.pll_p_offset = 13,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = exynos5422_reg_values,
-	.pll_fin_min = 6,
-	.pll_fin_max = 12,
-	.m_min = 41,
-	.m_max = 125,
-	.min_freq = 500,
-};
-
-static const struct samsung_dsim_driver_data exynos7870_dsi_driver_data = {
-	.reg_ofs = exynos7870_reg_ofs,
-	.plltmr_reg = 0xa0,
-	.has_clklane_stop = 1,
-	.has_sfrctrl = 1,
-	.clk_data = exynos7870_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos7870_clk_bulk_data),
-	.max_freq = 1500,
-	.wait_for_hdr_fifo = 0,
-	.wait_for_reset = 1,
-	.num_bits_resol = 12,
-	.video_mode_bit = 18,
-	.pll_stable_bit = 24,
-	.esc_clken_bit = 16,
-	.byte_clken_bit = 17,
-	.tx_req_hsclk_bit = 20,
-	.lane_esc_clk_bit = 8,
-	.lane_esc_data_offset = 9,
-	.pll_p_offset = 13,
-	.pll_m_offset = 3,
-	.pll_s_offset = 0,
-	.main_vsa_offset = 16,
-	.reg_values = exynos7870_reg_values,
 	.pll_fin_min = 6,
 	.pll_fin_max = 12,
 	.m_min = 41,
@@ -647,29 +491,16 @@ static const struct samsung_dsim_driver_data exynos7870_dsi_driver_data = {
 static const struct samsung_dsim_driver_data imx8mm_dsi_driver_data = {
 	.reg_ofs = exynos5433_reg_ofs,
 	.plltmr_reg = 0xa0,
-	.has_legacy_status_reg = 1,
 	.has_clklane_stop = 1,
-	.clk_data = exynos4_clk_bulk_data,
-	.num_clks = ARRAY_SIZE(exynos4_clk_bulk_data),
+	.num_clks = 2,
 	.max_freq = 2100,
-	.wait_for_hdr_fifo = 1,
 	.wait_for_reset = 0,
 	.num_bits_resol = 12,
-	.video_mode_bit = 25,
-	.pll_stable_bit = 31,
-	.esc_clken_bit = 28,
-	.byte_clken_bit = 24,
-	.tx_req_hsclk_bit = 31,
-	.lane_esc_clk_bit = 19,
-	.lane_esc_data_offset = 20,
 	/*
 	 * Unlike Exynos, PLL_P(PMS_P) offset 14 is used in i.MX8M Mini/Nano/Plus
 	 * downstream driver - drivers/gpu/drm/bridge/sec-dsim.c
 	 */
 	.pll_p_offset = 14,
-	.pll_m_offset = 4,
-	.pll_s_offset = 1,
-	.main_vsa_offset = 22,
 	.reg_values = imx8mm_dsim_reg_values,
 	.pll_fin_min = 2,
 	.pll_fin_max = 30,
@@ -685,7 +516,6 @@ samsung_dsim_types[DSIM_TYPE_COUNT] = {
 	[DSIM_TYPE_EXYNOS5410] = &exynos5_dsi_driver_data,
 	[DSIM_TYPE_EXYNOS5422] = &exynos5422_dsi_driver_data,
 	[DSIM_TYPE_EXYNOS5433] = &exynos5433_dsi_driver_data,
-	[DSIM_TYPE_EXYNOS7870] = &exynos7870_dsi_driver_data,
 	[DSIM_TYPE_IMX8MM] = &imx8mm_dsi_driver_data,
 	[DSIM_TYPE_IMX8MP] = &imx8mm_dsi_driver_data,
 };
@@ -727,6 +557,10 @@ static void samsung_dsim_reset(struct samsung_dsim *dsi)
 	samsung_dsim_write(dsi, DSIM_SWRST_REG, reset_val);
 }
 
+#ifndef MHZ
+#define MHZ	(1000 * 1000)
+#endif
+
 static unsigned long samsung_dsim_pll_find_pms(struct samsung_dsim *dsi,
 					       unsigned long fin,
 					       unsigned long fout,
@@ -740,8 +574,8 @@ static unsigned long samsung_dsim_pll_find_pms(struct samsung_dsim *dsi,
 	u16 _m, best_m;
 	u8 _s, best_s;
 
-	p_min = DIV_ROUND_UP(fin, (driver_data->pll_fin_max * HZ_PER_MHZ));
-	p_max = fin / (driver_data->pll_fin_min * HZ_PER_MHZ);
+	p_min = DIV_ROUND_UP(fin, (driver_data->pll_fin_max * MHZ));
+	p_max = fin / (driver_data->pll_fin_min * MHZ);
 
 	for (_p = p_min; _p <= p_max; ++_p) {
 		for (_s = 0; _s <= 5; ++_s) {
@@ -756,8 +590,8 @@ static unsigned long samsung_dsim_pll_find_pms(struct samsung_dsim *dsi,
 
 			tmp = (u64)_m * fin;
 			do_div(tmp, _p);
-			if (tmp < driver_data->min_freq  * HZ_PER_MHZ ||
-			    tmp > driver_data->max_freq * HZ_PER_MHZ)
+			if (tmp < driver_data->min_freq  * MHZ ||
+			    tmp > driver_data->max_freq * MHZ)
 				continue;
 
 			tmp = (u64)_m * fin;
@@ -800,7 +634,7 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 		 * limit.
 		 */
 		fin = clk_get_rate(clk_get_parent(dsi->pll_clk));
-		while (fin > driver_data->pll_fin_max * HZ_PER_MHZ)
+		while (fin > driver_data->pll_fin_max * MHZ)
 			fin /= 2;
 		clk_set_rate(dsi->pll_clk, fin);
 
@@ -821,17 +655,15 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 	writel(driver_data->reg_values[PLL_TIMER],
 	       dsi->reg_base + driver_data->plltmr_reg);
 
-	reg = DSIM_PLL_EN | DSIM_PLL(p, driver_data->pll_p_offset)
-			  | DSIM_PLL(m, driver_data->pll_m_offset)
-			  | DSIM_PLL(s, driver_data->pll_s_offset);
+	reg = DSIM_PLL_EN | DSIM_PLL_P(p, driver_data->pll_p_offset) |
+	      DSIM_PLL_M(m) | DSIM_PLL_S(s);
 
 	if (driver_data->has_freqband) {
 		static const unsigned long freq_bands[] = {
-			100 * HZ_PER_MHZ, 120 * HZ_PER_MHZ, 160 * HZ_PER_MHZ,
-			200 * HZ_PER_MHZ, 270 * HZ_PER_MHZ, 320 * HZ_PER_MHZ,
-			390 * HZ_PER_MHZ, 450 * HZ_PER_MHZ, 510 * HZ_PER_MHZ,
-			560 * HZ_PER_MHZ, 640 * HZ_PER_MHZ, 690 * HZ_PER_MHZ,
-			770 * HZ_PER_MHZ, 870 * HZ_PER_MHZ, 950 * HZ_PER_MHZ,
+			100 * MHZ, 120 * MHZ, 160 * MHZ, 200 * MHZ,
+			270 * MHZ, 320 * MHZ, 390 * MHZ, 450 * MHZ,
+			510 * MHZ, 560 * MHZ, 640 * MHZ, 690 * MHZ,
+			770 * MHZ, 870 * MHZ, 950 * MHZ,
 		};
 		int band;
 
@@ -851,17 +683,14 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 
 	samsung_dsim_write(dsi, DSIM_PLLCTRL_REG, reg);
 
-	timeout = 3000;
+	timeout = 1000;
 	do {
 		if (timeout-- == 0) {
 			dev_err(dsi->dev, "PLL failed to stabilize\n");
 			return 0;
 		}
-		if (driver_data->has_legacy_status_reg)
-			reg = samsung_dsim_read(dsi, DSIM_STATUS_REG);
-		else
-			reg = samsung_dsim_read(dsi, DSIM_LINK_STATUS_REG);
-	} while ((reg & BIT(driver_data->pll_stable_bit)) == 0);
+		reg = samsung_dsim_read(dsi, DSIM_STATUS_REG);
+	} while ((reg & DSIM_PLL_STABLE) == 0);
 
 	dsi->hs_clock = fout;
 
@@ -870,7 +699,6 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 
 static int samsung_dsim_enable_clock(struct samsung_dsim *dsi)
 {
-	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
 	unsigned long hs_clk, byte_clk, esc_clk, pix_clk;
 	unsigned long esc_div;
 	u32 reg;
@@ -895,7 +723,7 @@ static int samsung_dsim_enable_clock(struct samsung_dsim *dsi)
 	esc_div = DIV_ROUND_UP(byte_clk, dsi->esc_clk_rate);
 	esc_clk = byte_clk / esc_div;
 
-	if (esc_clk > 20 * HZ_PER_MHZ) {
+	if (esc_clk > 20 * MHZ) {
 		++esc_div;
 		esc_clk = byte_clk / esc_div;
 	}
@@ -904,17 +732,15 @@ static int samsung_dsim_enable_clock(struct samsung_dsim *dsi)
 		hs_clk, byte_clk, esc_clk);
 
 	reg = samsung_dsim_read(dsi, DSIM_CLKCTRL_REG);
-	reg &= ~(DSIM_ESC_PRESCALER_MASK | BIT(driver_data->lane_esc_clk_bit)
-		| DSIM_LANE_ESC_CLK_EN_DATA_MASK(driver_data->lane_esc_data_offset)
-		| DSIM_PLL_BYPASS
-		| DSIM_BYTE_CLK_SRC_MASK);
-	reg |= BIT(driver_data->esc_clken_bit) | BIT(driver_data->byte_clken_bit)
-		| DSIM_ESC_PRESCALER(esc_div)
-		| BIT(driver_data->lane_esc_clk_bit)
-		| DSIM_LANE_ESC_CLK_EN_DATA(BIT(dsi->lanes) - 1,
-					    driver_data->lane_esc_data_offset)
-		| DSIM_BYTE_CLK_SRC(0)
-		| BIT(driver_data->tx_req_hsclk_bit);
+	reg &= ~(DSIM_ESC_PRESCALER_MASK | DSIM_LANE_ESC_CLK_EN_CLK
+			| DSIM_LANE_ESC_CLK_EN_DATA_MASK | DSIM_PLL_BYPASS
+			| DSIM_BYTE_CLK_SRC_MASK);
+	reg |= DSIM_ESC_CLKEN | DSIM_BYTE_CLKEN
+			| DSIM_ESC_PRESCALER(esc_div)
+			| DSIM_LANE_ESC_CLK_EN_CLK
+			| DSIM_LANE_ESC_CLK_EN_DATA(BIT(dsi->lanes) - 1)
+			| DSIM_BYTE_CLK_SRC(0)
+			| DSIM_TX_REQUEST_HSCLK;
 	samsung_dsim_write(dsi, DSIM_CLKCTRL_REG, reg);
 
 	return 0;
@@ -1018,14 +844,11 @@ static void samsung_dsim_set_phy_ctrl(struct samsung_dsim *dsi)
 
 static void samsung_dsim_disable_clock(struct samsung_dsim *dsi)
 {
-	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
 	u32 reg;
 
 	reg = samsung_dsim_read(dsi, DSIM_CLKCTRL_REG);
-	reg &= ~(BIT(driver_data->lane_esc_clk_bit)
-		| DSIM_LANE_ESC_CLK_EN_DATA_MASK(driver_data->lane_esc_data_offset)
-		| BIT(driver_data->esc_clken_bit)
-		| BIT(driver_data->byte_clken_bit));
+	reg &= ~(DSIM_LANE_ESC_CLK_EN_CLK | DSIM_LANE_ESC_CLK_EN_DATA_MASK
+			| DSIM_ESC_CLKEN | DSIM_BYTE_CLKEN);
 	samsung_dsim_write(dsi, DSIM_CLKCTRL_REG, reg);
 
 	reg = samsung_dsim_read(dsi, DSIM_PLLCTRL_REG);
@@ -1069,12 +892,14 @@ static int samsung_dsim_init_link(struct samsung_dsim *dsi)
 	 * mode, otherwise it will support command mode.
 	 */
 	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO) {
-		reg |= BIT(driver_data->video_mode_bit);
+		reg |= DSIM_VIDEO_MODE;
 
 		/*
 		 * The user manual describes that following bits are ignored in
 		 * command mode.
 		 */
+		if (!(dsi->mode_flags & MIPI_DSI_MODE_VSYNC_FLUSH))
+			reg |= DSIM_MFLUSH_VS;
 		if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE)
 			reg |= DSIM_SYNC_INFORM;
 		if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
@@ -1140,10 +965,7 @@ static int samsung_dsim_init_link(struct samsung_dsim *dsi)
 			return -EFAULT;
 		}
 
-		if (driver_data->has_legacy_status_reg)
-			reg = samsung_dsim_read(dsi, DSIM_STATUS_REG);
-		else
-			reg = samsung_dsim_read(dsi, DSIM_DPHY_STATUS_REG);
+		reg = samsung_dsim_read(dsi, DSIM_STATUS_REG);
 		if ((reg & DSIM_STOP_STATE_DAT(lanes_mask))
 		    != DSIM_STOP_STATE_DAT(lanes_mask))
 			continue;
@@ -1164,7 +986,6 @@ static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 {
 	struct drm_display_mode *m = &dsi->mode;
 	unsigned int num_bits_resol = dsi->driver_data->num_bits_resol;
-	unsigned int main_vsa_offset = dsi->driver_data->main_vsa_offset;
 	u32 reg;
 
 	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO) {
@@ -1191,7 +1012,7 @@ static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 		reg = DSIM_MAIN_HFP(hfp) | DSIM_MAIN_HBP(hbp);
 		samsung_dsim_write(dsi, DSIM_MHPORCH_REG, reg);
 
-		reg = DSIM_MAIN_VSA(m->vsync_end - m->vsync_start, main_vsa_offset)
+		reg = DSIM_MAIN_VSA(m->vsync_end - m->vsync_start)
 			| DSIM_MAIN_HSA(hsa);
 		samsung_dsim_write(dsi, DSIM_MSYNC_REG, reg);
 	}
@@ -1205,7 +1026,6 @@ static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 
 static void samsung_dsim_set_display_enable(struct samsung_dsim *dsi, bool enable)
 {
-	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
 	u32 reg;
 
 	reg = samsung_dsim_read(dsi, DSIM_MDRESOL_REG);
@@ -1214,15 +1034,6 @@ static void samsung_dsim_set_display_enable(struct samsung_dsim *dsi, bool enabl
 	else
 		reg &= ~DSIM_MAIN_STAND_BY;
 	samsung_dsim_write(dsi, DSIM_MDRESOL_REG, reg);
-
-	if (driver_data->has_sfrctrl) {
-		reg = samsung_dsim_read(dsi, DSIM_SFRCTRL_REG);
-		if (enable)
-			reg |= DSIM_SFR_CTRL_STAND_BY;
-		else
-			reg &= ~DSIM_SFR_CTRL_STAND_BY;
-		samsung_dsim_write(dsi, DSIM_SFRCTRL_REG, reg);
-	}
 }
 
 static int samsung_dsim_wait_for_hdr_fifo(struct samsung_dsim *dsi)
@@ -1279,13 +1090,12 @@ static void samsung_dsim_send_to_fifo(struct samsung_dsim *dsi,
 {
 	struct device *dev = dsi->dev;
 	struct mipi_dsi_packet *pkt = &xfer->packet;
-	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
 	const u8 *payload = pkt->payload + xfer->tx_done;
 	u16 length = pkt->payload_length - xfer->tx_done;
 	bool first = !xfer->tx_done;
 	u32 reg;
 
-	dev_dbg(dev, "< xfer %p: tx len %u, done %u, rx len %u, done %u\n",
+	dev_dbg(dev, "< xfer %pK: tx len %u, done %u, rx len %u, done %u\n",
 		xfer, length, xfer->tx_done, xfer->rx_len, xfer->rx_done);
 
 	if (length > DSI_TX_FIFO_SIZE)
@@ -1320,11 +1130,9 @@ static void samsung_dsim_send_to_fifo(struct samsung_dsim *dsi,
 		return;
 
 	reg = get_unaligned_le32(pkt->header);
-	if (driver_data->wait_for_hdr_fifo) {
-		if (samsung_dsim_wait_for_hdr_fifo(dsi)) {
-			dev_err(dev, "waiting for header FIFO timed out\n");
-			return;
-		}
+	if (samsung_dsim_wait_for_hdr_fifo(dsi)) {
+		dev_err(dev, "waiting for header FIFO timed out\n");
+		return;
 	}
 
 	if (NEQV(xfer->flags & MIPI_DSI_MSG_USE_LPM,
@@ -1427,34 +1235,43 @@ static void samsung_dsim_transfer_start(struct samsung_dsim *dsi)
 {
 	unsigned long flags;
 	struct samsung_dsim_transfer *xfer;
+	bool start = false;
+
+again:
+	spin_lock_irqsave(&dsi->transfer_lock, flags);
+
+	if (list_empty(&dsi->transfer_list)) {
+		spin_unlock_irqrestore(&dsi->transfer_lock, flags);
+		return;
+	}
+
+	xfer = list_first_entry(&dsi->transfer_list,
+				struct samsung_dsim_transfer, list);
+
+	spin_unlock_irqrestore(&dsi->transfer_lock, flags);
+
+	if (xfer->packet.payload_length &&
+	    xfer->tx_done == xfer->packet.payload_length)
+		/* waiting for RX */
+		return;
+
+	samsung_dsim_send_to_fifo(dsi, xfer);
+
+	if (xfer->packet.payload_length || xfer->rx_len)
+		return;
+
+	xfer->result = 0;
+	complete(&xfer->completed);
 
 	spin_lock_irqsave(&dsi->transfer_lock, flags);
 
-	while (!list_empty(&dsi->transfer_list)) {
-		xfer = list_first_entry(&dsi->transfer_list,
-					struct samsung_dsim_transfer, list);
-
-		spin_unlock_irqrestore(&dsi->transfer_lock, flags);
-
-		if (xfer->packet.payload_length &&
-		    xfer->tx_done == xfer->packet.payload_length)
-			/* waiting for RX */
-			return;
-
-		samsung_dsim_send_to_fifo(dsi, xfer);
-
-		if (xfer->packet.payload_length || xfer->rx_len)
-			return;
-
-		xfer->result = 0;
-		complete(&xfer->completed);
-
-		spin_lock_irqsave(&dsi->transfer_lock, flags);
-
-		list_del_init(&xfer->list);
-	}
+	list_del_init(&xfer->list);
+	start = !list_empty(&dsi->transfer_list);
 
 	spin_unlock_irqrestore(&dsi->transfer_lock, flags);
+
+	if (start)
+		goto again;
 }
 
 static bool samsung_dsim_transfer_finish(struct samsung_dsim *dsi)
@@ -1476,7 +1293,7 @@ static bool samsung_dsim_transfer_finish(struct samsung_dsim *dsi)
 	spin_unlock_irqrestore(&dsi->transfer_lock, flags);
 
 	dev_dbg(dsi->dev,
-		"> xfer %p, tx_len %zu, tx_done %u, rx_len %u, rx_done %u\n",
+		"> xfer %pK, tx_len %zu, tx_done %u, rx_len %u, rx_done %u\n",
 		xfer, xfer->packet.payload_length, xfer->tx_done, xfer->rx_len,
 		xfer->rx_done);
 
@@ -1640,7 +1457,7 @@ static int samsung_dsim_init(struct samsung_dsim *dsi)
 }
 
 static void samsung_dsim_atomic_pre_enable(struct drm_bridge *bridge,
-					   struct drm_atomic_state *state)
+					   struct drm_bridge_state *old_bridge_state)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
 	int ret;
@@ -1668,7 +1485,7 @@ static void samsung_dsim_atomic_pre_enable(struct drm_bridge *bridge,
 }
 
 static void samsung_dsim_atomic_enable(struct drm_bridge *bridge,
-				       struct drm_atomic_state *state)
+				       struct drm_bridge_state *old_bridge_state)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
 
@@ -1679,7 +1496,7 @@ static void samsung_dsim_atomic_enable(struct drm_bridge *bridge,
 }
 
 static void samsung_dsim_atomic_disable(struct drm_bridge *bridge,
-					struct drm_atomic_state *state)
+					struct drm_bridge_state *old_bridge_state)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
 
@@ -1691,7 +1508,7 @@ static void samsung_dsim_atomic_disable(struct drm_bridge *bridge,
 }
 
 static void samsung_dsim_atomic_post_disable(struct drm_bridge *bridge,
-					     struct drm_atomic_state *state)
+					     struct drm_bridge_state *old_bridge_state)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
 
@@ -1741,7 +1558,7 @@ samsung_dsim_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 {
 	u32 *input_fmts;
 
-	input_fmts = kmalloc_obj(*input_fmts);
+	input_fmts = kmalloc(sizeof(*input_fmts), GFP_KERNEL);
 	if (!input_fmts)
 		return NULL;
 
@@ -1823,12 +1640,11 @@ static void samsung_dsim_mode_set(struct drm_bridge *bridge,
 }
 
 static int samsung_dsim_attach(struct drm_bridge *bridge,
-			       struct drm_encoder *encoder,
 			       enum drm_bridge_attach_flags flags)
 {
 	struct samsung_dsim *dsi = bridge_to_dsi(bridge);
 
-	return drm_bridge_attach(encoder, dsi->bridge.next_bridge, bridge,
+	return drm_bridge_attach(bridge->encoder, dsi->out_bridge, bridge,
 				 flags);
 }
 
@@ -1894,12 +1710,11 @@ static int samsung_dsim_host_attach(struct mipi_dsi_host *host,
 {
 	struct samsung_dsim *dsi = host_to_dsi(host);
 	const struct samsung_dsim_plat_data *pdata = dsi->plat_data;
-	struct drm_bridge *next_bridge __free(drm_bridge_put) = NULL;
 	struct device *dev = dsi->dev;
 	struct device_node *np = dev->of_node;
 	struct device_node *remote;
 	struct drm_panel *panel;
-	int ret = 0;
+	int ret;
 
 	/*
 	 * Devices can also be child nodes when we also control that device
@@ -1933,22 +1748,17 @@ of_find_panel_or_bridge:
 
 	panel = of_drm_find_panel(remote);
 	if (!IS_ERR(panel)) {
-		next_bridge = devm_drm_panel_bridge_add(dev, panel);
-		if (IS_ERR(next_bridge)) {
-			ret = PTR_ERR(next_bridge);
-			next_bridge = NULL; // Inhibit the cleanup action on an ERR_PTR
-		} else {
-			drm_bridge_get(next_bridge);
-		}
+		dsi->out_bridge = devm_drm_panel_bridge_add(dev, panel);
 	} else {
-		next_bridge = of_drm_find_and_get_bridge(remote);
-		if (!next_bridge)
-			ret = -EINVAL;
+		dsi->out_bridge = of_drm_find_bridge(remote);
+		if (!dsi->out_bridge)
+			dsi->out_bridge = ERR_PTR(-EINVAL);
 	}
 
 	of_node_put(remote);
 
-	if (ret) {
+	if (IS_ERR(dsi->out_bridge)) {
+		ret = PTR_ERR(dsi->out_bridge);
 		DRM_DEV_ERROR(dev, "failed to find the bridge: %d\n", ret);
 		return ret;
 	}
@@ -1972,13 +1782,10 @@ of_find_panel_or_bridge:
 			goto err_remove_bridge;
 	}
 
-	// The next bridge can be used by host_ops->attach
-	dsi->bridge.next_bridge = drm_bridge_get(next_bridge);
-
 	if (pdata->host_ops && pdata->host_ops->attach) {
 		ret = pdata->host_ops->attach(dsi, device);
 		if (ret)
-			goto err_release_next_bridge;
+			goto err_unregister_te_irq;
 	}
 
 	dsi->lanes = device->lanes;
@@ -1987,8 +1794,7 @@ of_find_panel_or_bridge:
 
 	return 0;
 
-err_release_next_bridge:
-	drm_bridge_clear_and_put(&dsi->bridge.next_bridge);
+err_unregister_te_irq:
 	if (!(device->mode_flags & MIPI_DSI_MODE_VIDEO))
 		samsung_dsim_unregister_te_irq(dsi);
 err_remove_bridge:
@@ -2002,10 +1808,10 @@ static int samsung_dsim_host_detach(struct mipi_dsi_host *host,
 	struct samsung_dsim *dsi = host_to_dsi(host);
 	const struct samsung_dsim_plat_data *pdata = dsi->plat_data;
 
+	dsi->out_bridge = NULL;
+
 	if (pdata->host_ops && pdata->host_ops->detach)
 		pdata->host_ops->detach(dsi, device);
-
-	drm_bridge_clear_and_put(&dsi->bridge.next_bridge);
 
 	samsung_dsim_unregister_te_irq(dsi);
 
@@ -2134,11 +1940,11 @@ int samsung_dsim_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct samsung_dsim *dsi;
-	int ret;
+	int ret, i;
 
-	dsi = devm_drm_bridge_alloc(dev, struct samsung_dsim, bridge, &samsung_dsim_bridge_funcs);
-	if (IS_ERR(dsi))
-		return PTR_ERR(dsi);
+	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
+	if (!dsi)
+		return -ENOMEM;
 
 	init_completion(&dsi->completed);
 	spin_lock_init(&dsi->transfer_lock);
@@ -2158,11 +1964,23 @@ int samsung_dsim_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to get regulators\n");
 
-	ret = devm_clk_bulk_get(dev, dsi->driver_data->num_clks,
-				dsi->driver_data->clk_data);
-	if (ret) {
-		dev_err(dev, "failed to get clocks in bulk (%d)\n", ret);
-		return ret;
+	dsi->clks = devm_kcalloc(dev, dsi->driver_data->num_clks,
+				 sizeof(*dsi->clks), GFP_KERNEL);
+	if (!dsi->clks)
+		return -ENOMEM;
+
+	for (i = 0; i < dsi->driver_data->num_clks; i++) {
+		dsi->clks[i] = devm_clk_get(dev, clk_names[i]);
+		if (IS_ERR(dsi->clks[i])) {
+			if (strcmp(clk_names[i], "sclk_mipi") == 0) {
+				dsi->clks[i] = devm_clk_get(dev, OLD_SCLK_MIPI_CLK_NAME);
+				if (!IS_ERR(dsi->clks[i]))
+					continue;
+			}
+
+			dev_info(dev, "failed to get the clock: %s\n", clk_names[i]);
+			return PTR_ERR(dsi->clks[i]);
+		}
 	}
 
 	dsi->reg_base = devm_platform_ioremap_resource(pdev, 0);
@@ -2196,6 +2014,7 @@ int samsung_dsim_probe(struct platform_device *pdev)
 
 	pm_runtime_enable(dev);
 
+	dsi->bridge.funcs = &samsung_dsim_bridge_funcs;
 	dsi->bridge.of_node = dev->of_node;
 	dsi->bridge.type = DRM_MODE_CONNECTOR_DSI;
 
@@ -2231,11 +2050,11 @@ void samsung_dsim_remove(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(samsung_dsim_remove);
 
-static int samsung_dsim_suspend(struct device *dev)
+static int __maybe_unused samsung_dsim_suspend(struct device *dev)
 {
 	struct samsung_dsim *dsi = dev_get_drvdata(dev);
 	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
-	int ret;
+	int ret, i;
 
 	usleep_range(10000, 20000);
 
@@ -2251,7 +2070,8 @@ static int samsung_dsim_suspend(struct device *dev)
 
 	phy_power_off(dsi->phy);
 
-	clk_bulk_disable_unprepare(driver_data->num_clks, driver_data->clk_data);
+	for (i = driver_data->num_clks - 1; i > -1; i--)
+		clk_disable_unprepare(dsi->clks[i]);
 
 	ret = regulator_bulk_disable(ARRAY_SIZE(dsi->supplies), dsi->supplies);
 	if (ret < 0)
@@ -2260,11 +2080,11 @@ static int samsung_dsim_suspend(struct device *dev)
 	return 0;
 }
 
-static int samsung_dsim_resume(struct device *dev)
+static int __maybe_unused samsung_dsim_resume(struct device *dev)
 {
 	struct samsung_dsim *dsi = dev_get_drvdata(dev);
 	const struct samsung_dsim_driver_data *driver_data = dsi->driver_data;
-	int ret;
+	int ret, i;
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(dsi->supplies), dsi->supplies);
 	if (ret < 0) {
@@ -2272,9 +2092,11 @@ static int samsung_dsim_resume(struct device *dev)
 		return ret;
 	}
 
-	ret = clk_bulk_prepare_enable(driver_data->num_clks, driver_data->clk_data);
-	if (ret < 0)
-		goto err_clk;
+	for (i = 0; i < driver_data->num_clks; i++) {
+		ret = clk_prepare_enable(dsi->clks[i]);
+		if (ret < 0)
+			goto err_clk;
+	}
 
 	ret = phy_power_on(dsi->phy);
 	if (ret < 0) {
@@ -2285,14 +2107,15 @@ static int samsung_dsim_resume(struct device *dev)
 	return 0;
 
 err_clk:
-	clk_bulk_disable_unprepare(driver_data->num_clks, driver_data->clk_data);
+	while (--i > -1)
+		clk_disable_unprepare(dsi->clks[i]);
 	regulator_bulk_disable(ARRAY_SIZE(dsi->supplies), dsi->supplies);
 
 	return ret;
 }
 
 const struct dev_pm_ops samsung_dsim_pm_ops = {
-	RUNTIME_PM_OPS(samsung_dsim_suspend, samsung_dsim_resume, NULL)
+	SET_RUNTIME_PM_OPS(samsung_dsim_suspend, samsung_dsim_resume, NULL)
 	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
 				pm_runtime_force_resume)
 };
@@ -2323,10 +2146,10 @@ MODULE_DEVICE_TABLE(of, samsung_dsim_of_match);
 
 static struct platform_driver samsung_dsim_driver = {
 	.probe = samsung_dsim_probe,
-	.remove = samsung_dsim_remove,
+	.remove_new = samsung_dsim_remove,
 	.driver = {
 		   .name = "samsung-dsim",
-		   .pm = pm_ptr(&samsung_dsim_pm_ops),
+		   .pm = &samsung_dsim_pm_ops,
 		   .of_match_table = samsung_dsim_of_match,
 	},
 };

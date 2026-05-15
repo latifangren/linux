@@ -46,8 +46,7 @@ MODULE_PARM_DESC(hash_table_size,
 
 static struct file_system_type orangefs_fs_type = {
 	.name = "pvfs2",
-	.init_fs_context = orangefs_init_fs_context,
-	.parameters = orangefs_fs_param_spec,
+	.mount = orangefs_mount,
 	.kill_sb = orangefs_kill_sb,
 	.owner = THIS_MODULE,
 };
@@ -99,7 +98,7 @@ static int __init orangefs_init(void)
 		goto cleanup_op;
 
 	orangefs_htable_ops_in_progress =
-	    kzalloc_objs(struct list_head, hash_table_size);
+	    kcalloc(hash_table_size, sizeof(struct list_head), GFP_KERNEL);
 	if (!orangefs_htable_ops_in_progress) {
 		ret = -ENOMEM;
 		goto cleanup_inode;

@@ -95,7 +95,7 @@ struct sp_device {
 
 	struct device *dev;
 
-	const struct sp_dev_vdata *dev_vdata;
+	struct sp_dev_vdata *dev_vdata;
 	unsigned int ord;
 	char name[SP_MAX_NAME_LEN];
 

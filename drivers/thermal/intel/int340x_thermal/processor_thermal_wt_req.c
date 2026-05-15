@@ -7,7 +7,6 @@
  */
 
 #include <linux/pci.h>
-#include <linux/sysfs.h>
 #include "processor_thermal_device.h"
 
 /* List of workload types */
@@ -29,9 +28,9 @@ static ssize_t workload_available_types_show(struct device *dev,
 	int ret = 0;
 
 	while (workload_types[i] != NULL)
-		ret += sysfs_emit_at(buf, ret, "%s ", workload_types[i++]);
+		ret += sprintf(&buf[ret], "%s ", workload_types[i++]);
 
-	ret += sysfs_emit_at(buf, ret, "\n");
+	ret += sprintf(&buf[ret], "\n");
 
 	return ret;
 }
@@ -86,7 +85,7 @@ static ssize_t workload_type_show(struct device *dev,
 	if (cmd_resp > ARRAY_SIZE(workload_types) - 1)
 		return -EINVAL;
 
-	return sysfs_emit(buf, "%s\n", workload_types[cmd_resp]);
+	return sprintf(buf, "%s\n", workload_types[cmd_resp]);
 }
 
 static DEVICE_ATTR_RW(workload_type);
@@ -133,6 +132,6 @@ void proc_thermal_wt_req_remove(struct pci_dev *pdev)
 }
 EXPORT_SYMBOL_GPL(proc_thermal_wt_req_remove);
 
-MODULE_IMPORT_NS("INT340X_THERMAL");
+MODULE_IMPORT_NS(INT340X_THERMAL);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Processor Thermal Work Load type request Interface");

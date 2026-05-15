@@ -268,7 +268,7 @@ struct parman *parman_create(const struct parman_ops *ops, void *priv)
 {
 	struct parman *parman;
 
-	parman = kzalloc_obj(*parman);
+	parman = kzalloc(sizeof(*parman), GFP_KERNEL);
 	if (!parman)
 		return NULL;
 	INIT_LIST_HEAD(&parman->prio_list);

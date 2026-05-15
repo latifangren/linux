@@ -61,7 +61,7 @@ struct cpuidle_state {
 			struct cpuidle_driver *drv,
 			int index);
 
-	void (*enter_dead) (struct cpuidle_device *dev, int index);
+	int (*enter_dead) (struct cpuidle_device *dev, int index);
 
 	/*
 	 * CPUs execute ->enter_s2idle with the local tick or entire timekeeping
@@ -188,7 +188,6 @@ extern void cpuidle_driver_state_disabled(struct cpuidle_driver *drv, int idx,
 extern void cpuidle_unregister_driver(struct cpuidle_driver *drv);
 extern int cpuidle_register_device(struct cpuidle_device *dev);
 extern void cpuidle_unregister_device(struct cpuidle_device *dev);
-extern void cpuidle_unregister_device_no_lock(struct cpuidle_device *dev);
 extern int cpuidle_register(struct cpuidle_driver *drv,
 			    const struct cpumask *const coupled_cpus);
 extern void cpuidle_unregister(struct cpuidle_driver *drv);
@@ -227,7 +226,6 @@ static inline void cpuidle_unregister_driver(struct cpuidle_driver *drv) { }
 static inline int cpuidle_register_device(struct cpuidle_device *dev)
 {return -ENODEV; }
 static inline void cpuidle_unregister_device(struct cpuidle_device *dev) { }
-static inline void cpuidle_unregister_device_no_lock(struct cpuidle_device *dev) {}
 static inline int cpuidle_register(struct cpuidle_driver *drv,
 				   const struct cpumask *const coupled_cpus)
 {return -ENODEV; }
@@ -250,8 +248,7 @@ extern int cpuidle_find_deepest_state(struct cpuidle_driver *drv,
 				      struct cpuidle_device *dev,
 				      u64 latency_limit_ns);
 extern int cpuidle_enter_s2idle(struct cpuidle_driver *drv,
-				struct cpuidle_device *dev,
-				u64 latency_limit_ns);
+				struct cpuidle_device *dev);
 extern void cpuidle_use_deepest_state(u64 latency_limit_ns);
 #else
 static inline int cpuidle_find_deepest_state(struct cpuidle_driver *drv,
@@ -259,8 +256,7 @@ static inline int cpuidle_find_deepest_state(struct cpuidle_driver *drv,
 					     u64 latency_limit_ns)
 {return -ENODEV; }
 static inline int cpuidle_enter_s2idle(struct cpuidle_driver *drv,
-				       struct cpuidle_device *dev,
-				       u64 latency_limit_ns)
+				       struct cpuidle_device *dev)
 {return -ENODEV; }
 static inline void cpuidle_use_deepest_state(u64 latency_limit_ns)
 {

@@ -352,7 +352,7 @@ static int svc_pool_map_get_node(unsigned int pidx)
 		if (m->mode == SVC_POOL_PERNODE)
 			return m->pool_to[pidx];
 	}
-	return numa_mem_id();
+	return NUMA_NO_NODE;
 }
 /*
  * Set the given thread's cpus_allowed mask so that it
@@ -436,6 +436,7 @@ void svc_rpcb_cleanup(struct svc_serv *serv, struct net *net)
 	svc_unregister(serv, net);
 	rpcb_put_local(net);
 }
+EXPORT_SYMBOL_GPL(svc_rpcb_cleanup);
 
 static int svc_uses_rpcbind(struct svc_serv *serv)
 {
@@ -488,7 +489,7 @@ __svc_create(struct svc_program *prog, int nprogs, struct svc_stat *stats,
 	unsigned int xdrsize;
 	unsigned int i;
 
-	if (!(serv = kzalloc_obj(*serv)))
+	if (!(serv = kzalloc(sizeof(*serv), GFP_KERNEL)))
 		return NULL;
 	serv->sv_name      = prog->pg_name;
 	serv->sv_programs  = prog;
@@ -523,7 +524,8 @@ __svc_create(struct svc_program *prog, int nprogs, struct svc_stat *stats,
 
 	serv->sv_nrpools = npools;
 	serv->sv_pools =
-		kzalloc_objs(struct svc_pool, serv->sv_nrpools);
+		kcalloc(serv->sv_nrpools, sizeof(struct svc_pool),
+			GFP_KERNEL);
 	if (!serv->sv_pools) {
 		kfree(serv);
 		return NULL;
@@ -634,30 +636,24 @@ svc_destroy(struct svc_serv **servp)
 EXPORT_SYMBOL_GPL(svc_destroy);
 
 static bool
-svc_init_buffer(struct svc_rqst *rqstp, const struct svc_serv *serv, int node)
+svc_init_buffer(struct svc_rqst *rqstp, unsigned int size, int node)
 {
-	rqstp->rq_maxpages = svc_serv_maxpages(serv);
+	unsigned long pages, ret;
 
-	/* +1 for a NULL sentinel readable by nfsd_splice_actor() */
-	rqstp->rq_pages = kcalloc_node(rqstp->rq_maxpages + 1,
-				       sizeof(struct page *),
-				       GFP_KERNEL, node);
-	if (!rqstp->rq_pages)
-		return false;
+	/* bc_xprt uses fore channel allocated buffers */
+	if (svc_is_backchannel(rqstp))
+		return true;
 
-	/* +1 for a NULL sentinel at rq_page_end (see svc_rqst_replace_page) */
-	rqstp->rq_respages = kcalloc_node(rqstp->rq_maxpages + 1,
-					  sizeof(struct page *),
-					  GFP_KERNEL, node);
-	if (!rqstp->rq_respages) {
-		kfree(rqstp->rq_pages);
-		rqstp->rq_pages = NULL;
-		return false;
-	}
+	pages = size / PAGE_SIZE + 1; /* extra page as we hold both request and reply.
+				       * We assume one is at most one page
+				       */
+	WARN_ON_ONCE(pages > RPCSVC_MAXPAGES);
+	if (pages > RPCSVC_MAXPAGES)
+		pages = RPCSVC_MAXPAGES;
 
-	rqstp->rq_pages_nfree = rqstp->rq_maxpages;
-	rqstp->rq_next_page = rqstp->rq_respages + rqstp->rq_maxpages;
-	return true;
+	ret = alloc_pages_bulk_array_node(GFP_KERNEL, node, pages,
+					  rqstp->rq_pages);
+	return ret == pages;
 }
 
 /*
@@ -666,31 +662,20 @@ svc_init_buffer(struct svc_rqst *rqstp, const struct svc_serv *serv, int node)
 static void
 svc_release_buffer(struct svc_rqst *rqstp)
 {
-	unsigned long i;
+	unsigned int i;
 
-	if (rqstp->rq_pages) {
-		for (i = 0; i < rqstp->rq_maxpages; i++)
-			if (rqstp->rq_pages[i])
-				put_page(rqstp->rq_pages[i]);
-		kfree(rqstp->rq_pages);
-	}
-
-	if (rqstp->rq_respages) {
-		for (i = 0; i < rqstp->rq_maxpages; i++)
-			if (rqstp->rq_respages[i])
-				put_page(rqstp->rq_respages[i]);
-		kfree(rqstp->rq_respages);
-	}
+	for (i = 0; i < ARRAY_SIZE(rqstp->rq_pages); i++)
+		if (rqstp->rq_pages[i])
+			put_page(rqstp->rq_pages[i]);
 }
 
 static void
 svc_rqst_free(struct svc_rqst *rqstp)
 {
 	folio_batch_release(&rqstp->rq_fbatch);
-	kfree(rqstp->rq_bvec);
 	svc_release_buffer(rqstp);
-	if (rqstp->rq_scratch_folio)
-		folio_put(rqstp->rq_scratch_folio);
+	if (rqstp->rq_scratch_page)
+		put_page(rqstp->rq_scratch_page);
 	kfree(rqstp->rq_resp);
 	kfree(rqstp->rq_argp);
 	kfree(rqstp->rq_auth_data);
@@ -711,8 +696,8 @@ svc_prepare_thread(struct svc_serv *serv, struct svc_pool *pool, int node)
 	rqstp->rq_server = serv;
 	rqstp->rq_pool = pool;
 
-	rqstp->rq_scratch_folio = __folio_alloc_node(GFP_KERNEL, 0, node);
-	if (!rqstp->rq_scratch_folio)
+	rqstp->rq_scratch_page = alloc_pages_node(node, GFP_KERNEL, 0);
+	if (!rqstp->rq_scratch_page)
 		goto out_enomem;
 
 	rqstp->rq_argp = kmalloc_node(serv->sv_xdrsize, GFP_KERNEL, node);
@@ -723,13 +708,7 @@ svc_prepare_thread(struct svc_serv *serv, struct svc_pool *pool, int node)
 	if (!rqstp->rq_resp)
 		goto out_enomem;
 
-	if (!svc_init_buffer(rqstp, serv, node))
-		goto out_enomem;
-
-	rqstp->rq_bvec = kcalloc_node(rqstp->rq_maxpages,
-				      sizeof(struct bio_vec),
-				      GFP_KERNEL, node);
-	if (!rqstp->rq_bvec)
+	if (!svc_init_buffer(rqstp, serv->sv_max_mesg, node))
 		goto out_enomem;
 
 	rqstp->rq_err = -EAGAIN; /* No error yet */
@@ -770,101 +749,119 @@ void svc_pool_wake_idle_thread(struct svc_pool *pool)
 		WRITE_ONCE(rqstp->rq_qtime, ktime_get());
 		if (!task_is_running(rqstp->rq_task)) {
 			wake_up_process(rqstp->rq_task);
-			trace_svc_pool_thread_wake(pool, rqstp->rq_task->pid);
+			trace_svc_wake_up(rqstp->rq_task->pid);
 			percpu_counter_inc(&pool->sp_threads_woken);
-		} else {
-			trace_svc_pool_thread_running(pool, rqstp->rq_task->pid);
 		}
 		rcu_read_unlock();
 		return;
 	}
 	rcu_read_unlock();
-	trace_svc_pool_thread_noidle(pool, 0);
+
 }
 EXPORT_SYMBOL_GPL(svc_pool_wake_idle_thread);
 
-/**
- * svc_new_thread - spawn a new thread in the given pool
- * @serv: the serv to which the pool belongs
- * @pool: pool in which thread should be spawned
- *
- * Create a new thread inside @pool, which is a part of @serv.
- * Caller must hold the service mutex.
- *
- * Returns 0 on success, or -errno on failure.
- */
-int svc_new_thread(struct svc_serv *serv, struct svc_pool *pool)
+static struct svc_pool *
+svc_pool_next(struct svc_serv *serv, struct svc_pool *pool, unsigned int *state)
 {
-	struct svc_rqst	*rqstp;
-	struct task_struct *task;
-	int node;
-	int err = 0;
+	return pool ? pool : &serv->sv_pools[(*state)++ % serv->sv_nrpools];
+}
 
-	node = svc_pool_map_get_node(pool->sp_id);
+static struct svc_pool *
+svc_pool_victim(struct svc_serv *serv, struct svc_pool *target_pool,
+		unsigned int *state)
+{
+	struct svc_pool *pool;
+	unsigned int i;
 
-	rqstp = svc_prepare_thread(serv, pool, node);
-	if (!rqstp)
-		return -ENOMEM;
-	task = kthread_create_on_node(serv->sv_threadfn, rqstp,
-				      node, "%s", serv->sv_name);
-	if (IS_ERR(task)) {
-		err = PTR_ERR(task);
-		goto out;
+	pool = target_pool;
+
+	if (!pool) {
+		for (i = 0; i < serv->sv_nrpools; i++) {
+			pool = &serv->sv_pools[--(*state) % serv->sv_nrpools];
+			if (pool->sp_nrthreads)
+				break;
+		}
 	}
 
-	rqstp->rq_task = task;
-	if (serv->sv_nrpools > 1)
-		svc_pool_map_set_cpumask(task, pool->sp_id);
-
-	svc_sock_update_bufs(serv);
-	wake_up_process(task);
-
-	/* Wait for the thread to signal initialization status */
-	wait_var_event(&rqstp->rq_err, rqstp->rq_err != -EAGAIN);
-	err = rqstp->rq_err;
-out:
-	if (err)
-		svc_exit_thread(rqstp);
-	return err;
+	if (pool && pool->sp_nrthreads) {
+		set_bit(SP_VICTIM_REMAINS, &pool->sp_flags);
+		set_bit(SP_NEED_VICTIM, &pool->sp_flags);
+		return pool;
+	}
+	return NULL;
 }
-EXPORT_SYMBOL_GPL(svc_new_thread);
 
 static int
 svc_start_kthreads(struct svc_serv *serv, struct svc_pool *pool, int nrservs)
 {
-	int err = 0;
+	struct svc_rqst	*rqstp;
+	struct task_struct *task;
+	struct svc_pool *chosen_pool;
+	unsigned int state = serv->sv_nrthreads-1;
+	int node;
+	int err;
 
-	while (!err && nrservs--)
-		err = svc_new_thread(serv, pool);
+	do {
+		nrservs--;
+		chosen_pool = svc_pool_next(serv, pool, &state);
+		node = svc_pool_map_get_node(chosen_pool->sp_id);
 
-	return err;
+		rqstp = svc_prepare_thread(serv, chosen_pool, node);
+		if (!rqstp)
+			return -ENOMEM;
+		task = kthread_create_on_node(serv->sv_threadfn, rqstp,
+					      node, "%s", serv->sv_name);
+		if (IS_ERR(task)) {
+			svc_exit_thread(rqstp);
+			return PTR_ERR(task);
+		}
+
+		rqstp->rq_task = task;
+		if (serv->sv_nrpools > 1)
+			svc_pool_map_set_cpumask(task, chosen_pool->sp_id);
+
+		svc_sock_update_bufs(serv);
+		wake_up_process(task);
+
+		wait_var_event(&rqstp->rq_err, rqstp->rq_err != -EAGAIN);
+		err = rqstp->rq_err;
+		if (err) {
+			svc_exit_thread(rqstp);
+			return err;
+		}
+	} while (nrservs > 0);
+
+	return 0;
 }
 
 static int
 svc_stop_kthreads(struct svc_serv *serv, struct svc_pool *pool, int nrservs)
 {
+	unsigned int state = serv->sv_nrthreads-1;
+	struct svc_pool *victim;
+
 	do {
-		set_bit(SP_VICTIM_REMAINS, &pool->sp_flags);
-		set_bit(SP_NEED_VICTIM, &pool->sp_flags);
-		svc_pool_wake_idle_thread(pool);
-		wait_on_bit(&pool->sp_flags, SP_VICTIM_REMAINS, TASK_IDLE);
+		victim = svc_pool_victim(serv, pool, &state);
+		if (!victim)
+			break;
+		svc_pool_wake_idle_thread(victim);
+		wait_on_bit(&victim->sp_flags, SP_VICTIM_REMAINS,
+			    TASK_IDLE);
 		nrservs++;
 	} while (nrservs < 0);
 	return 0;
 }
 
 /**
- * svc_set_pool_threads - adjust number of threads per pool
+ * svc_set_num_threads - adjust number of threads per RPC service
  * @serv: RPC service to adjust
- * @pool: Specific pool from which to choose threads
- * @min_threads: min number of threads to run in @pool
- * @max_threads: max number of threads in @pool (0 means kill all threads)
+ * @pool: Specific pool from which to choose threads, or NULL
+ * @nrservs: New number of threads for @serv (0 or less means kill all threads)
  *
- * Create or destroy threads in @pool to bring it into an acceptable range
- * between @min_threads and @max_threads.
- *
- * If @min_threads is 0 or larger than @max_threads, then it is ignored and
- * the pool will be set to run a static @max_threads number of threads.
+ * Create or destroy threads to make the number of threads for @serv the
+ * given number. If @pool is non-NULL, change only threads in that pool;
+ * otherwise, round-robin between all pools for @serv. @serv's
+ * sv_nrthreads is adjusted for each thread created or destroyed.
  *
  * Caller must ensure mutual exclusion between this and server startup or
  * shutdown.
@@ -873,93 +870,27 @@ svc_stop_kthreads(struct svc_serv *serv, struct svc_pool *pool, int nrservs)
  * starting a thread.
  */
 int
-svc_set_pool_threads(struct svc_serv *serv, struct svc_pool *pool,
-		     unsigned int min_threads, unsigned int max_threads)
+svc_set_num_threads(struct svc_serv *serv, struct svc_pool *pool, int nrservs)
 {
-	int delta;
-
 	if (!pool)
-		return -EINVAL;
+		nrservs -= serv->sv_nrthreads;
+	else
+		nrservs -= pool->sp_nrthreads;
 
-	/* clamp min threads to the max */
-	if (min_threads > max_threads)
-		min_threads = max_threads;
-
-	pool->sp_nrthrmin = min_threads;
-	pool->sp_nrthrmax = max_threads;
-
-	/*
-	 * When min_threads is set, then only change the number of
-	 * threads to bring it within an acceptable range.
-	 */
-	if (min_threads) {
-		if (pool->sp_nrthreads > max_threads)
-			delta = max_threads;
-		else if (pool->sp_nrthreads < min_threads)
-			delta = min_threads;
-		else
-			return 0;
-	} else {
-		delta = max_threads;
-	}
-
-	delta -= pool->sp_nrthreads;
-	if (delta > 0)
-		return svc_start_kthreads(serv, pool, delta);
-	if (delta < 0)
-		return svc_stop_kthreads(serv, pool, delta);
+	if (nrservs > 0)
+		return svc_start_kthreads(serv, pool, nrservs);
+	if (nrservs < 0)
+		return svc_stop_kthreads(serv, pool, nrservs);
 	return 0;
-}
-EXPORT_SYMBOL_GPL(svc_set_pool_threads);
-
-/**
- * svc_set_num_threads - adjust number of threads in serv
- * @serv: RPC service to adjust
- * @min_threads: min number of threads to run per pool
- * @nrservs: New number of threads for @serv (0 means kill all threads)
- *
- * Create or destroy threads in @serv to bring it to @nrservs. If there
- * are multiple pools then the new threads or victims will be distributed
- * evenly among them.
- *
- * Caller must ensure mutual exclusion between this and server startup or
- * shutdown.
- *
- * Returns zero on success or a negative errno if an error occurred while
- * starting a thread. On failure, some pools may have already been
- * adjusted; the caller is responsible for recovery.
- */
-int
-svc_set_num_threads(struct svc_serv *serv, unsigned int min_threads,
-		    unsigned int nrservs)
-{
-	unsigned int base = nrservs / serv->sv_nrpools;
-	unsigned int remain = nrservs % serv->sv_nrpools;
-	int i, err = 0;
-
-	for (i = 0; i < serv->sv_nrpools; ++i) {
-		struct svc_pool *pool = &serv->sv_pools[i];
-		int threads = base;
-
-		if (remain) {
-			++threads;
-			--remain;
-		}
-
-		err = svc_set_pool_threads(serv, pool, min_threads, threads);
-		if (err)
-			break;
-	}
-	return err;
 }
 EXPORT_SYMBOL_GPL(svc_set_num_threads);
 
 /**
- * svc_rqst_replace_page - Replace one page in rq_respages[]
+ * svc_rqst_replace_page - Replace one page in rq_pages[]
  * @rqstp: svc_rqst with pages to replace
  * @page: replacement page
  *
- * When replacing a page in rq_respages, batch the release of the
+ * When replacing a page in rq_pages, batch the release of the
  * replaced pages to avoid hammering the page allocator.
  *
  * Return values:
@@ -968,16 +899,19 @@ EXPORT_SYMBOL_GPL(svc_set_num_threads);
  */
 bool svc_rqst_replace_page(struct svc_rqst *rqstp, struct page *page)
 {
-	struct page **begin = rqstp->rq_respages;
-	struct page **end = rqstp->rq_page_end;
+	struct page **begin = rqstp->rq_pages;
+	struct page **end = &rqstp->rq_pages[RPCSVC_MAXPAGES];
 
 	if (unlikely(rqstp->rq_next_page < begin || rqstp->rq_next_page > end)) {
 		trace_svc_replace_page_err(rqstp);
 		return false;
 	}
 
-	if (*rqstp->rq_next_page)
-		svc_rqst_page_release(rqstp, *rqstp->rq_next_page);
+	if (*rqstp->rq_next_page) {
+		if (!folio_batch_add(&rqstp->rq_fbatch,
+				page_folio(*rqstp->rq_next_page)))
+			__folio_batch_release(&rqstp->rq_fbatch);
+	}
 
 	get_page(page);
 	*(rqstp->rq_next_page++) = page;
@@ -989,24 +923,18 @@ EXPORT_SYMBOL_GPL(svc_rqst_replace_page);
  * svc_rqst_release_pages - Release Reply buffer pages
  * @rqstp: RPC transaction context
  *
- * Release response pages in the range [rq_respages, rq_next_page).
- * NULL entries in this range are skipped, allowing transports to
- * transfer pages to a send context before this function runs.
+ * Release response pages that might still be in flight after
+ * svc_send, and any spliced filesystem-owned pages.
  */
 void svc_rqst_release_pages(struct svc_rqst *rqstp)
 {
-	struct page **pp;
+	int i, count = rqstp->rq_next_page - rqstp->rq_respages;
 
-	for (pp = rqstp->rq_respages; pp < rqstp->rq_next_page; pp++) {
-		if (*pp) {
-			if (!folio_batch_add(&rqstp->rq_fbatch,
-					     page_folio(*pp)))
-				__folio_batch_release(&rqstp->rq_fbatch);
-			*pp = NULL;
-		}
+	if (count) {
+		release_pages(rqstp->rq_respages, count);
+		for (i = 0; i < count; i++)
+			rqstp->rq_respages[i] = NULL;
 	}
-	if (rqstp->rq_fbatch.nr)
-		__folio_batch_release(&rqstp->rq_fbatch);
 }
 
 /**
@@ -1402,9 +1330,6 @@ svc_process_common(struct svc_rqst *rqstp)
 	int			pr, rc;
 	__be32			*p;
 
-	/* Reset the accept_stat for the RPC */
-	rqstp->rq_accept_statp = NULL;
-
 	/* Will be turned off only when NFSv4 Sessions are used */
 	set_bit(RQ_USEDEFERRAL, &rqstp->rq_flags);
 	clear_bit(RQ_DROPME, &rqstp->rq_flags);
@@ -1446,6 +1371,8 @@ svc_process_common(struct svc_rqst *rqstp)
 	case SVC_GARBAGE:
 		rqstp->rq_auth_stat = rpc_autherr_badcred;
 		goto err_bad_auth;
+	case SVC_SYSERR:
+		goto err_system_err;
 	case SVC_DENIED:
 		goto err_bad_auth;
 	case SVC_CLOSE:
@@ -1456,8 +1383,7 @@ svc_process_common(struct svc_rqst *rqstp)
 		goto sendit;
 	default:
 		pr_warn_once("Unexpected svc_auth_status (%d)\n", auth_res);
-		rqstp->rq_auth_stat = rpc_autherr_failed;
-		goto err_bad_auth;
+		goto err_system_err;
 	}
 
 	if (progp == NULL)
@@ -1494,6 +1420,8 @@ svc_process_common(struct svc_rqst *rqstp)
 
 	/* Call the function that processes the request. */
 	rc = process.dispatch(rqstp);
+	if (procp->pc_release)
+		procp->pc_release(rqstp);
 	xdr_finish_decode(xdr);
 
 	if (!rc)
@@ -1582,6 +1510,12 @@ err_bad_proc:
 		serv->sv_stats->rpcbadfmt++;
 	*rqstp->rq_accept_statp = rpc_proc_unavail;
 	goto sendit;
+
+err_system_err:
+	if (serv->sv_stats)
+		serv->sv_stats->rpcbadfmt++;
+	*rqstp->rq_accept_statp = rpc_system_err;
+	goto sendit;
 }
 
 /*
@@ -1590,14 +1524,6 @@ err_bad_proc:
 static void svc_drop(struct svc_rqst *rqstp)
 {
 	trace_svc_drop(rqstp);
-}
-
-static void svc_release_rqst(struct svc_rqst *rqstp)
-{
-	const struct svc_procedure *procp = rqstp->rq_procinfo;
-
-	if (procp && procp->pc_release)
-		procp->pc_release(rqstp);
 }
 
 /**
@@ -1639,12 +1565,9 @@ void svc_process(struct svc_rqst *rqstp)
 	if (unlikely(*p != rpc_call))
 		goto out_baddir;
 
-	if (!svc_process_common(rqstp)) {
-		svc_release_rqst(rqstp);
+	if (!svc_process_common(rqstp))
 		goto out_drop;
-	}
 	svc_send(rqstp);
-	svc_release_rqst(rqstp);
 	return;
 
 out_baddir:
@@ -1712,7 +1635,6 @@ void svc_process_bc(struct rpc_rqst *req, struct svc_rqst *rqstp)
 	if (!proc_error) {
 		/* Processing error: drop the request */
 		xprt_free_bc_request(req);
-		svc_release_rqst(rqstp);
 		return;
 	}
 	/* Finally, send the reply synchronously */
@@ -1726,7 +1648,6 @@ void svc_process_bc(struct rpc_rqst *req, struct svc_rqst *rqstp)
 	timeout.to_maxval = timeout.to_initval;
 	memcpy(&req->rq_snd_buf, &rqstp->rq_res, sizeof(req->rq_snd_buf));
 	task = rpc_run_bc_task(req, &timeout);
-	svc_release_rqst(rqstp);
 
 	if (IS_ERR(task))
 		return;
@@ -1784,6 +1705,46 @@ int svc_encode_result_payload(struct svc_rqst *rqstp, unsigned int offset,
 							   length);
 }
 EXPORT_SYMBOL_GPL(svc_encode_result_payload);
+
+/**
+ * svc_fill_write_vector - Construct data argument for VFS write call
+ * @rqstp: svc_rqst to operate on
+ * @payload: xdr_buf containing only the write data payload
+ *
+ * Fills in rqstp::rq_vec, and returns the number of elements.
+ */
+unsigned int svc_fill_write_vector(struct svc_rqst *rqstp,
+				   struct xdr_buf *payload)
+{
+	struct page **pages = payload->pages;
+	struct kvec *first = payload->head;
+	struct kvec *vec = rqstp->rq_vec;
+	size_t total = payload->len;
+	unsigned int i;
+
+	/* Some types of transport can present the write payload
+	 * entirely in rq_arg.pages. In this case, @first is empty.
+	 */
+	i = 0;
+	if (first->iov_len) {
+		vec[i].iov_base = first->iov_base;
+		vec[i].iov_len = min_t(size_t, total, first->iov_len);
+		total -= vec[i].iov_len;
+		++i;
+	}
+
+	while (total) {
+		vec[i].iov_base = page_address(*pages);
+		vec[i].iov_len = min_t(size_t, total, PAGE_SIZE);
+		total -= vec[i].iov_len;
+		++i;
+		++pages;
+	}
+
+	WARN_ON_ONCE(i > ARRAY_SIZE(rqstp->rq_vec));
+	return i;
+}
+EXPORT_SYMBOL_GPL(svc_fill_write_vector);
 
 /**
  * svc_fill_symlink_pathname - Construct pathname argument for VFS symlink call

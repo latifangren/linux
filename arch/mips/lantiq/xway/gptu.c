@@ -121,7 +121,7 @@ static void gptu_disable(struct clk *clk)
 static inline void clkdev_add_gptu(struct device *dev, const char *con,
 							unsigned int timer)
 {
-	struct clk *clk = kzalloc_obj(struct clk);
+	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
 
 	if (!clk)
 		return;
@@ -194,7 +194,7 @@ static struct platform_driver dma_driver = {
 	},
 };
 
-static int __init gptu_init(void)
+int __init gptu_init(void)
 {
 	int ret = platform_driver_register(&dma_driver);
 

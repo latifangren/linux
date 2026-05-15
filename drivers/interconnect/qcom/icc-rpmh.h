@@ -53,7 +53,7 @@ struct bcm_db {
 	u8 reserved;
 };
 
-#define MAX_PORTS		4
+#define MAX_PORTS		2
 
 /**
  * struct qcom_icc_qosbox - Qualcomm specific QoS config
@@ -81,8 +81,8 @@ struct qcom_icc_qosbox {
 /**
  * struct qcom_icc_node - Qualcomm specific interconnect nodes
  * @name: the node name used in debugfs
- * @link_nodes: links associated with this node
- * @node: icc_node associated with this node
+ * @links: an array of nodes where we can go next while traversing
+ * @id: a unique node identifier
  * @num_links: the total number of @links
  * @channels: num of channels at this node
  * @buswidth: width of the interconnect between a node and the bus
@@ -94,7 +94,8 @@ struct qcom_icc_qosbox {
  */
 struct qcom_icc_node {
 	const char *name;
-	struct icc_node *node;
+	u16 links[MAX_LINKS];
+	u16 id;
 	u16 num_links;
 	u16 channels;
 	u16 buswidth;
@@ -103,7 +104,6 @@ struct qcom_icc_node {
 	struct qcom_icc_bcm *bcms[MAX_BCM_PER_NODE];
 	size_t num_bcms;
 	const struct qcom_icc_qosbox *qosbox;
-	struct qcom_icc_node *link_nodes[];
 };
 
 /**
@@ -153,7 +153,7 @@ struct qcom_icc_desc {
 	size_t num_nodes;
 	struct qcom_icc_bcm * const *bcms;
 	size_t num_bcms;
-	bool qos_requires_clocks;
+	bool qos_clks_required;
 };
 
 int qcom_icc_aggregate(struct icc_node *node, u32 tag, u32 avg_bw,

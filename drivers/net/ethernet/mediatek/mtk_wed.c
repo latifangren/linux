@@ -59,9 +59,7 @@ struct mtk_wed_flow_block_priv {
 static const struct mtk_wed_soc_data mt7622_data = {
 	.regmap = {
 		.tx_bm_tkid		= 0x088,
-		.wpdma_rx_ring = {
-			0x770,
-		},
+		.wpdma_rx_ring0		= 0x770,
 		.reset_idx_tx_mask	= GENMASK(3, 0),
 		.reset_idx_rx_mask	= GENMASK(17, 16),
 	},
@@ -72,9 +70,7 @@ static const struct mtk_wed_soc_data mt7622_data = {
 static const struct mtk_wed_soc_data mt7986_data = {
 	.regmap = {
 		.tx_bm_tkid		= 0x0c8,
-		.wpdma_rx_ring = {
-			0x770,
-		},
+		.wpdma_rx_ring0		= 0x770,
 		.reset_idx_tx_mask	= GENMASK(1, 0),
 		.reset_idx_rx_mask	= GENMASK(7, 6),
 	},
@@ -85,10 +81,7 @@ static const struct mtk_wed_soc_data mt7986_data = {
 static const struct mtk_wed_soc_data mt7988_data = {
 	.regmap = {
 		.tx_bm_tkid		= 0x0c8,
-		.wpdma_rx_ring = {
-			0x7d0,
-			0x7d8,
-		},
+		.wpdma_rx_ring0		= 0x7d0,
 		.reset_idx_tx_mask	= GENMASK(1, 0),
 		.reset_idx_rx_mask	= GENMASK(7, 6),
 	},
@@ -628,8 +621,8 @@ mtk_wed_amsdu_init(struct mtk_wed_device *dev)
 		return ret;
 	}
 
-	/* Kite and Eagle E1 PCIE1 tx ring 22 flow control issue */
-	if (dev->wlan.id == 0x7991 || dev->wlan.id == 0x7992)
+	/* eagle E1 PCIE1 tx ring 22 flow control issue */
+	if (dev->wlan.id == 0x7991)
 		wed_clr(dev, MTK_WED_AMSDU_FIFO, MTK_WED_AMSDU_IS_PRIOR0_RING);
 
 	wed_set(dev, MTK_WED_CTRL, MTK_WED_CTRL_TX_AMSDU_EN);
@@ -656,7 +649,7 @@ mtk_wed_tx_buffer_alloc(struct mtk_wed_device *dev)
 	}
 	n_pages = dev->tx_buf_ring.size / MTK_WED_BUF_PER_PAGE;
 
-	page_list = kzalloc_objs(*page_list, n_pages);
+	page_list = kcalloc(n_pages, sizeof(*page_list), GFP_KERNEL);
 	if (!page_list)
 		return -ENOMEM;
 
@@ -677,7 +670,7 @@ mtk_wed_tx_buffer_alloc(struct mtk_wed_device *dev)
 		void *buf;
 		int s;
 
-		page = __dev_alloc_page(GFP_KERNEL | GFP_DMA32);
+		page = __dev_alloc_page(GFP_KERNEL);
 		if (!page)
 			return -ENOMEM;
 
@@ -780,7 +773,7 @@ mtk_wed_hwrro_buffer_alloc(struct mtk_wed_device *dev)
 	if (!dev->wlan.hw_rro)
 		return 0;
 
-	page_list = kzalloc_objs(*page_list, n_pages);
+	page_list = kcalloc(n_pages, sizeof(*page_list), GFP_KERNEL);
 	if (!page_list)
 		return -ENOMEM;
 
@@ -800,7 +793,7 @@ mtk_wed_hwrro_buffer_alloc(struct mtk_wed_device *dev)
 		struct page *page;
 		int s;
 
-		page = __dev_alloc_page(GFP_KERNEL | GFP_DMA32);
+		page = __dev_alloc_page(GFP_KERNEL);
 		if (!page)
 			return -ENOMEM;
 
@@ -1246,11 +1239,7 @@ mtk_wed_set_wpdma(struct mtk_wed_device *dev)
 		return;
 
 	wed_w32(dev, MTK_WED_WPDMA_RX_GLO_CFG, dev->wlan.wpdma_rx_glo);
-	wed_w32(dev, dev->hw->soc->regmap.wpdma_rx_ring[0],
-		dev->wlan.wpdma_rx[0]);
-	if (mtk_wed_is_v3_or_greater(dev->hw))
-		wed_w32(dev, dev->hw->soc->regmap.wpdma_rx_ring[1],
-			dev->wlan.wpdma_rx[1]);
+	wed_w32(dev, dev->hw->soc->regmap.wpdma_rx_ring0, dev->wlan.wpdma_rx);
 
 	if (!dev->wlan.hw_rro)
 		return;
@@ -1329,14 +1318,26 @@ mtk_wed_rro_ring_alloc(struct mtk_wed_device *dev, struct mtk_wed_ring *ring,
 static int
 mtk_wed_rro_alloc(struct mtk_wed_device *dev)
 {
-	struct resource res;
-	int ret;
+	struct reserved_mem *rmem;
+	struct device_node *np;
+	int index;
 
-	ret = of_reserved_mem_region_to_resource_byname(dev->hw->node, "wo-dlm", &res);
-	if (ret)
-		return ret;
+	index = of_property_match_string(dev->hw->node, "memory-region-names",
+					 "wo-dlm");
+	if (index < 0)
+		return index;
 
-	dev->rro.miod_phys = res.start;
+	np = of_parse_phandle(dev->hw->node, "memory-region", index);
+	if (!np)
+		return -ENODEV;
+
+	rmem = of_reserved_mem_lookup(np);
+	of_node_put(np);
+
+	if (!rmem)
+		return -ENODEV;
+
+	dev->rro.miod_phys = rmem->base;
 	dev->rro.fdbk_phys = MTK_WED_MIOD_COUNT + dev->rro.miod_phys;
 
 	return mtk_wed_rro_ring_alloc(dev, &dev->rro.ring,
@@ -1999,7 +2000,7 @@ mtk_wed_configure_irq(struct mtk_wed_device *dev, u32 irq_mask)
 		if (mtk_wed_is_v3_or_greater(dev->hw))
 			wed_set(dev, MTK_WED_CTRL, MTK_WED_CTRL_TX_TKID_ALI_EN);
 
-		/* initial tx interrupt trigger */
+		/* initail tx interrupt trigger */
 		wed_w32(dev, MTK_WED_WPDMA_INT_CTRL_TX,
 			MTK_WED_WPDMA_INT_CTRL_TX0_DONE_EN |
 			MTK_WED_WPDMA_INT_CTRL_TX0_DONE_CLR |
@@ -2010,7 +2011,7 @@ mtk_wed_configure_irq(struct mtk_wed_device *dev, u32 irq_mask)
 			FIELD_PREP(MTK_WED_WPDMA_INT_CTRL_TX1_DONE_TRIG,
 				   dev->wlan.tx_tbit[1]));
 
-		/* initial txfree interrupt trigger */
+		/* initail txfree interrupt trigger */
 		wed_w32(dev, MTK_WED_WPDMA_INT_CTRL_TX_FREE,
 			MTK_WED_WPDMA_INT_CTRL_TX_FREE_DONE_EN |
 			MTK_WED_WPDMA_INT_CTRL_TX_FREE_DONE_CLR |
@@ -2334,16 +2335,6 @@ mtk_wed_start(struct mtk_wed_device *dev, u32 irq_mask)
 		if (!dev->rx_wdma[i].desc)
 			mtk_wed_wdma_rx_ring_setup(dev, i, 16, false);
 
-	if (dev->wlan.hw_rro) {
-		for (i = 0; i < MTK_WED_RX_PAGE_QUEUES; i++) {
-			u32 addr = MTK_WED_RRO_MSDU_PG_CTRL0(i) +
-				   MTK_WED_RING_OFS_COUNT;
-
-			if (!wed_r32(dev, addr))
-				wed_w32(dev, addr, 1);
-		}
-	}
-
 	mtk_wed_hw_init(dev);
 	mtk_wed_configure_irq(dev, irq_mask);
 
@@ -2425,10 +2416,6 @@ mtk_wed_attach(struct mtk_wed_device *dev)
 	dev->wdma_idx = hw->index;
 	dev->version = hw->version;
 	dev->hw->pcie_base = mtk_wed_get_pcie_base(dev);
-
-	ret = dma_set_mask_and_coherent(hw->dev, DMA_BIT_MASK(32));
-	if (ret)
-		goto out;
 
 	if (hw->eth->dma_dev == hw->eth->dev &&
 	    of_dma_is_coherent(hw->eth->dev->of_node))
@@ -2718,7 +2705,7 @@ mtk_wed_setup_tc_block(struct mtk_wed_hw *hw, struct net_device *dev,
 			return 0;
 		}
 
-		priv = kzalloc_obj(*priv);
+		priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 		if (!priv)
 			return -ENOMEM;
 
@@ -2822,7 +2809,7 @@ void mtk_wed_add_hw(struct device_node *np, struct mtk_eth *eth,
 	if (WARN_ON(hw_list[index]))
 		goto unlock;
 
-	hw = kzalloc_obj(*hw);
+	hw = kzalloc(sizeof(*hw), GFP_KERNEL);
 	if (!hw)
 		goto unlock;
 

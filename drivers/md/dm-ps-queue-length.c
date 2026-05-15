@@ -42,7 +42,7 @@ struct path_info {
 
 static struct selector *alloc_selector(void)
 {
-	struct selector *s = kmalloc_obj(*s);
+	struct selector *s = kmalloc(sizeof(*s), GFP_KERNEL);
 
 	if (s) {
 		INIT_LIST_HEAD(&s->valid_paths);
@@ -142,7 +142,7 @@ static int ql_add_path(struct path_selector *ps, struct dm_path *path,
 	}
 
 	/* Allocate the path information structure */
-	pi = kmalloc_obj(*pi);
+	pi = kmalloc(sizeof(*pi), GFP_KERNEL);
 	if (!pi) {
 		*error = "queue-length ps: Error allocating path information";
 		return -ENOMEM;
@@ -272,7 +272,10 @@ static int __init dm_ql_init(void)
 
 static void __exit dm_ql_exit(void)
 {
-	dm_unregister_path_selector(&ql_ps);
+	int r = dm_unregister_path_selector(&ql_ps);
+
+	if (r < 0)
+		DMERR("unregister failed %d", r);
 }
 
 module_init(dm_ql_init);

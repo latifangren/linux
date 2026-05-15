@@ -115,7 +115,8 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 	check = bio_kmalloc(nr_segs, GFP_NOIO);
 	if (!check)
 		return;
-	bio_init_inline(check, bio->bi_bdev, nr_segs, REQ_OP_READ);
+	bio_init(check, bio->bi_bdev, check->bi_inline_vecs, nr_segs,
+		 REQ_OP_READ);
 	check->bi_iter.bi_sector = bio->bi_iter.bi_sector;
 	check->bi_iter.bi_size = bio->bi_iter.bi_size;
 
@@ -208,7 +209,7 @@ static int bch_dump_open(struct inode *inode, struct file *file)
 	struct cache_set *c = inode->i_private;
 	struct dump_iterator *i;
 
-	i = kzalloc_obj(struct dump_iterator);
+	i = kzalloc(sizeof(struct dump_iterator), GFP_KERNEL);
 	if (!i)
 		return -ENOMEM;
 

@@ -375,21 +375,22 @@ static int clk_fs660c32_vco_get_params(unsigned long input,
 	return 0;
 }
 
-static int quadfs_pll_fs660c32_determine_rate(struct clk_hw *hw,
-					      struct clk_rate_request *req)
+static long quadfs_pll_fs660c32_round_rate(struct clk_hw *hw,
+					   unsigned long rate,
+					   unsigned long *prate)
 {
 	struct stm_fs params;
 
-	if (clk_fs660c32_vco_get_params(req->best_parent_rate, req->rate, &params))
-		return 0;
+	if (clk_fs660c32_vco_get_params(*prate, rate, &params))
+		return rate;
 
-	clk_fs660c32_vco_get_rate(req->best_parent_rate, &params, &req->rate);
+	clk_fs660c32_vco_get_rate(*prate, &params, &rate);
 
 	pr_debug("%s: %s new rate %ld [ndiv=%u]\n",
 		 __func__, clk_hw_get_name(hw),
-		 req->rate, (unsigned int)params.ndiv);
+		 rate, (unsigned int)params.ndiv);
 
-	return 0;
+	return rate;
 }
 
 static int quadfs_pll_fs660c32_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -435,7 +436,7 @@ static const struct clk_ops st_quadfs_pll_c32_ops = {
 	.disable	= quadfs_pll_disable,
 	.is_enabled	= quadfs_pll_is_enabled,
 	.recalc_rate	= quadfs_pll_fs660c32_recalc_rate,
-	.determine_rate = quadfs_pll_fs660c32_determine_rate,
+	.round_rate	= quadfs_pll_fs660c32_round_rate,
 	.set_rate	= quadfs_pll_fs660c32_set_rate,
 };
 
@@ -454,7 +455,7 @@ static struct clk * __init st_clk_register_quadfs_pll(
 	if (WARN_ON(!name || !parent_name))
 		return ERR_PTR(-EINVAL);
 
-	pll = kzalloc_obj(*pll);
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
 	if (!pll)
 		return ERR_PTR(-ENOMEM);
 
@@ -813,21 +814,19 @@ static unsigned long quadfs_recalc_rate(struct clk_hw *hw,
 	return rate;
 }
 
-static int quadfs_determine_rate(struct clk_hw *hw,
-				 struct clk_rate_request *req)
+static long quadfs_round_rate(struct clk_hw *hw, unsigned long rate,
+				     unsigned long *prate)
 {
 	struct stm_fs params;
 
-	req->rate = quadfs_find_best_rate(hw, req->rate,
-					  req->best_parent_rate, &params);
+	rate = quadfs_find_best_rate(hw, rate, *prate, &params);
 
 	pr_debug("%s: %s new rate %ld [sdiv=0x%x,md=0x%x,pe=0x%x,nsdiv3=%u]\n",
 		 __func__, clk_hw_get_name(hw),
-		 req->rate, (unsigned int)params.sdiv,
-		 (unsigned int)params.mdiv,
-		 (unsigned int)params.pe, (unsigned int)params.nsdiv);
+		 rate, (unsigned int)params.sdiv, (unsigned int)params.mdiv,
+			 (unsigned int)params.pe, (unsigned int)params.nsdiv);
 
-	return 0;
+	return rate;
 }
 
 
@@ -874,7 +873,7 @@ static const struct clk_ops st_quadfs_ops = {
 	.enable		= quadfs_fsynth_enable,
 	.disable	= quadfs_fsynth_disable,
 	.is_enabled	= quadfs_fsynth_is_enabled,
-	.determine_rate = quadfs_determine_rate,
+	.round_rate	= quadfs_round_rate,
 	.set_rate	= quadfs_set_rate,
 	.recalc_rate	= quadfs_recalc_rate,
 };
@@ -894,7 +893,7 @@ static struct clk * __init st_clk_register_quadfs_fsynth(
 	if (WARN_ON(!name || !parent_name))
 		return ERR_PTR(-EINVAL);
 
-	fs = kzalloc_obj(*fs);
+	fs = kzalloc(sizeof(*fs), GFP_KERNEL);
 	if (!fs)
 		return ERR_PTR(-ENOMEM);
 
@@ -926,12 +925,13 @@ static void __init st_of_create_quadfs_fsynths(
 	struct clk_onecell_data *clk_data;
 	int fschan;
 
-	clk_data = kzalloc_obj(*clk_data);
+	clk_data = kzalloc(sizeof(*clk_data), GFP_KERNEL);
 	if (!clk_data)
 		return;
 
 	clk_data->clk_num = QUADFS_MAX_CHAN;
-	clk_data->clks = kzalloc_objs(struct clk *, QUADFS_MAX_CHAN);
+	clk_data->clks = kcalloc(QUADFS_MAX_CHAN, sizeof(struct clk *),
+				 GFP_KERNEL);
 
 	if (!clk_data->clks) {
 		kfree(clk_data);
@@ -1012,7 +1012,7 @@ static void __init st_of_quadfs_setup(struct device_node *np,
 	if (!pll_name)
 		return;
 
-	lock = kzalloc_obj(*lock);
+	lock = kzalloc(sizeof(*lock), GFP_KERNEL);
 	if (!lock)
 		goto err_exit;
 

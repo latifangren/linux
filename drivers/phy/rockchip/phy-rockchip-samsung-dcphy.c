@@ -8,7 +8,6 @@
 #include <dt-bindings/phy/phy.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
-#include <linux/hw_bitfield.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/mfd/syscon.h>
@@ -20,6 +19,12 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
+
+#define FIELD_PREP_HIWORD(_mask, _val)		\
+	(					\
+		FIELD_PREP((_mask), (_val)) |	\
+		((_mask) << 16)			\
+	)
 
 #define BIAS_CON0		0x0000
 #define I_RES_CNTL_MASK		GENMASK(6, 4)
@@ -247,8 +252,8 @@
 
 /* MIPI_CDPHY_GRF registers */
 #define MIPI_DCPHY_GRF_CON0		0x0000
-#define S_CPHY_MODE			FIELD_PREP_WM16(BIT(3), 1)
-#define M_CPHY_MODE			FIELD_PREP_WM16(BIT(0), 1)
+#define S_CPHY_MODE			FIELD_PREP_HIWORD(BIT(3), 1)
+#define M_CPHY_MODE			FIELD_PREP_HIWORD(BIT(0), 1)
 
 enum hs_drv_res_ohm {
 	STRENGTH_30_OHM = 0x8,
@@ -1508,9 +1513,7 @@ static int samsung_mipi_dcphy_exit(struct phy *phy)
 {
 	struct samsung_mipi_dcphy *samsung = phy_get_drvdata(phy);
 
-	pm_runtime_put(samsung->dev);
-
-	return 0;
+	return pm_runtime_put(samsung->dev);
 }
 
 static const struct phy_ops samsung_mipi_dcphy_ops = {

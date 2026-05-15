@@ -501,12 +501,12 @@ mtk_cqdma_prep_dma_memcpy(struct dma_chan *c, dma_addr_t dest,
 	 * until all the child CVDs completed.
 	 */
 	nr_vd = DIV_ROUND_UP(len, MTK_CQDMA_MAX_LEN);
-	cvd = kzalloc_objs(*cvd, nr_vd, GFP_NOWAIT);
+	cvd = kcalloc(nr_vd, sizeof(*cvd), GFP_NOWAIT);
 	if (!cvd)
 		return NULL;
 
 	for (i = 0; i < nr_vd; ++i) {
-		cvd[i] = kzalloc_obj(*cvd[i], GFP_NOWAIT);
+		cvd[i] = kzalloc(sizeof(*cvd[i]), GFP_NOWAIT);
 		if (!cvd[i]) {
 			for (; i > 0; --i)
 				kfree(cvd[i - 1]);
@@ -920,7 +920,7 @@ static void mtk_cqdma_remove(struct platform_device *pdev)
 
 static struct platform_driver mtk_cqdma_driver = {
 	.probe = mtk_cqdma_probe,
-	.remove = mtk_cqdma_remove,
+	.remove_new = mtk_cqdma_remove,
 	.driver = {
 		.name           = KBUILD_MODNAME,
 		.of_match_table = mtk_cqdma_match,

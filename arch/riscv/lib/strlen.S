@@ -8,8 +8,7 @@
 /* int strlen(const char *s) */
 SYM_FUNC_START(strlen)
 
-	__ALTERNATIVE_CFG("nop", "j strlen_zbb", 0, RISCV_ISA_EXT_ZBB,
-		IS_ENABLED(CONFIG_RISCV_ISA_ZBB) && IS_ENABLED(CONFIG_TOOLCHAIN_HAS_ZBB))
+	ALTERNATIVE("nop", "j strlen_zbb", 0, RISCV_ISA_EXT_ZBB, CONFIG_RISCV_ISA_ZBB)
 
 	/*
 	 * Returns
@@ -21,18 +20,20 @@ SYM_FUNC_START(strlen)
 	 * Clobbers:
 	 *   t0, t1
 	 */
-	addi	t1, a0, -1
+	mv	t1, a0
 1:
-	addi	t1, t1, 1
 	lbu	t0, 0(t1)
-	bnez	t0, 1b
+	beqz	t0, 2f
+	addi	t1, t1, 1
+	j	1b
+2:
 	sub	a0, t1, a0
 	ret
 
 /*
  * Variant of strlen using the ZBB extension if available
  */
-#if defined(CONFIG_RISCV_ISA_ZBB) && defined(CONFIG_TOOLCHAIN_HAS_ZBB)
+#ifdef CONFIG_RISCV_ISA_ZBB
 strlen_zbb:
 
 #ifdef CONFIG_CPU_BIG_ENDIAN

@@ -53,13 +53,13 @@ static int vprbrd_probe(struct usb_interface *interface,
 	int pipe, ret;
 
 	/* allocate memory for our device state and initialize it */
-	vb = kzalloc_obj(*vb);
+	vb = kzalloc(sizeof(*vb), GFP_KERNEL);
 	if (!vb)
 		return -ENOMEM;
 
 	mutex_init(&vb->lock);
 
-	vb->usb_dev = interface_to_usbdev(interface);
+	vb->usb_dev = usb_get_dev(interface_to_usbdev(interface));
 
 	/* save our data pointer in this interface device */
 	usb_set_intfdata(interface, vb);
@@ -96,8 +96,10 @@ static int vprbrd_probe(struct usb_interface *interface,
 	return 0;
 
 error:
-	if (vb)
+	if (vb) {
+		usb_put_dev(vb->usb_dev);
 		kfree(vb);
+	}
 
 	return ret;
 }
@@ -108,6 +110,7 @@ static void vprbrd_disconnect(struct usb_interface *interface)
 
 	mfd_remove_devices(&interface->dev);
 	usb_set_intfdata(interface, NULL);
+	usb_put_dev(vb->usb_dev);
 	kfree(vb);
 
 	dev_dbg(&interface->dev, "disconnected\n");

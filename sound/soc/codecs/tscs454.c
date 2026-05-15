@@ -10,7 +10,6 @@
 #include <linux/i2c.h>
 #include <linux/err.h>
 #include <linux/string.h>
-#include <linux/string_choices.h>
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
@@ -308,7 +307,8 @@ struct reg_setting {
 static int coeff_ram_get(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
 	struct tscs454 *tscs454 = snd_soc_component_get_drvdata(component);
 	struct coeff_ram_ctl *ctl =
 		(struct coeff_ram_ctl *)kcontrol->private_value;
@@ -388,7 +388,8 @@ static int write_coeff_ram(struct snd_soc_component *component, u8 *coeff_ram,
 static int coeff_ram_put(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
 	struct tscs454 *tscs454 = snd_soc_component_get_drvdata(component);
 	struct coeff_ram_ctl *ctl =
 		(struct coeff_ram_ctl *)kcontrol->private_value;
@@ -736,7 +737,9 @@ static int pll_power_event(struct snd_soc_dapm_widget *w,
 	ret = snd_soc_component_update_bits(component, R_PLLCTL, msk, val);
 	if (ret < 0) {
 		dev_err(component->dev, "Failed to %s PLL %d  (%d)\n",
-			str_enable_disable(enable), pll1 ? 1 : 2, ret);
+				enable ? "enable" : "disable",
+				pll1 ? 1 : 2,
+				ret);
 		return ret;
 	}
 

@@ -114,8 +114,8 @@ struct snd_soc_acpi_endpoint {
  * @name_prefix: string used for codec controls
  */
 struct snd_soc_acpi_adr_device {
-	u64 adr;
-	u8 num_endpoints;
+	const u64 adr;
+	const u8 num_endpoints;
 	const struct snd_soc_acpi_endpoint *endpoints;
 	const char *name_prefix;
 };
@@ -131,8 +131,8 @@ struct snd_soc_acpi_adr_device {
  */
 
 struct snd_soc_acpi_link_adr {
-	u32 mask;
-	u32 num_adr;
+	const u32 mask;
+	const u32 num_adr;
 	const struct snd_soc_acpi_adr_device *adr_d;
 };
 
@@ -186,10 +186,6 @@ struct snd_soc_acpi_link_adr {
  * ACPI ID alone is not sufficient, wrong or misleading
  * @quirk_data: data used to uniquely identify a machine, usually a list of
  * audio codecs whose presence if checked with ACPI
- * @machine_check: pointer to quirk function. The functionality is similar to
- * the use of @machine_quirk, except that the return value is a boolean: the intent
- * is to skip a machine if the additional hardware/firmware verification invalidates
- * the initial selection in the snd_soc_acpi_mach table.
  * @pdata: intended for platform data or machine specific-ops. This structure
  *  is not constant since this field may be updated at run-time
  * @sof_tplg_filename: Sound Open Firmware topology file name, if enabled
@@ -203,8 +199,6 @@ struct snd_soc_acpi_link_adr {
  *	@mach: the pointer of the machine driver
  *	@prefix: the prefix of the topology file name. Typically, it is the path.
  *	@tplg_files: the pointer of the array of the topology file names.
- *	@best_effort: ignore non supported links and try to build the card in best effort
- *		      with supported links
  */
 /* Descriptor for SST ASoC machine driver */
 struct snd_soc_acpi_mach {
@@ -219,15 +213,13 @@ struct snd_soc_acpi_mach {
 	const char *board;
 	struct snd_soc_acpi_mach * (*machine_quirk)(void *arg);
 	const void *quirk_data;
-	bool (*machine_check)(void *arg);
 	void *pdata;
 	struct snd_soc_acpi_mach_params mach_params;
 	const char *sof_tplg_filename;
 	const u32 tplg_quirk_mask;
 	int (*get_function_tplg_files)(struct snd_soc_card *card,
 				       const struct snd_soc_acpi_mach *mach,
-				       const char *prefix, const char ***tplg_files,
-				       bool best_effort);
+				       const char *prefix, const char ***tplg_files);
 };
 
 #define SND_SOC_ACPI_MAX_CODECS 3
@@ -254,6 +246,7 @@ static inline bool snd_soc_acpi_sof_parent(struct device *dev)
 
 bool snd_soc_acpi_sdw_link_slaves_found(struct device *dev,
 					const struct snd_soc_acpi_link_adr *link,
-					struct sdw_peripherals *peripherals);
+					struct sdw_extended_slave_id *ids,
+					int num_slaves);
 
 #endif

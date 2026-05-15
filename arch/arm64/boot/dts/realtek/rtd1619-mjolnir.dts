@@ -12,9 +12,9 @@
 	compatible = "realtek,mjolnir", "realtek,rtd1619";
 	model = "Realtek Mjolnir EVB";
 
-	memory@2e000 {
+	memory@200000 {
 		device_type = "memory";
-		reg = <0x2e000 0x7ffd2000>; /* boot ROM to 2 GiB */
+		reg = <0x200000 0x7fe00000>; /* 2 MiB aligned start to 2 GiB */
 	};
 
 	chosen {

@@ -30,20 +30,17 @@ struct rtd_pinctrl {
 	struct pinctrl_desc desc;
 	const struct rtd_pinctrl_desc *info;
 	struct regmap *regmap_pinctrl;
-	u32 **saved_regs;
 };
 
 /* custom pinconf parameters */
 #define RTD_DRIVE_STRENGH_P (PIN_CONFIG_END + 1)
 #define RTD_DRIVE_STRENGH_N (PIN_CONFIG_END + 2)
 #define RTD_DUTY_CYCLE (PIN_CONFIG_END + 3)
-#define RTD_HIGH_VIL (PIN_CONFIG_END + 4)
 
 static const struct pinconf_generic_params rtd_custom_bindings[] = {
 	{"realtek,drive-strength-p", RTD_DRIVE_STRENGH_P, 0},
 	{"realtek,drive-strength-n", RTD_DRIVE_STRENGH_N, 0},
 	{"realtek,duty-cycle", RTD_DUTY_CYCLE, 0},
-	{"realtek,high-vil-microvolt", RTD_HIGH_VIL, 0},
 };
 
 static int rtd_pinctrl_get_groups_count(struct pinctrl_dev *pcdev)
@@ -282,7 +279,7 @@ static const struct rtd_pin_sconfig_desc *rtd_pinctrl_find_sconfig(struct rtd_pi
 static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 				unsigned int pinnr,
 				enum pin_config_param param,
-				unsigned int arg)
+				enum pin_config_param arg)
 {
 	const struct rtd_pin_config_desc *config_desc;
 	const struct rtd_pin_sconfig_desc *sconfig_desc;
@@ -290,21 +287,20 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	u16 strength;
 	u32 val;
 	u32 mask;
-	u32 pulsel_off, pulen_off, smt_off, curr_off, pow_off, reg_off, p_off, n_off,
-	    input_volt_off, sr_off, hvil_off;
+	u32 pulsel_off, pulen_off, smt_off, curr_off, pow_off, reg_off, p_off, n_off;
 	const char *name = data->info->pins[pinnr].name;
 	int ret = 0;
 
 	config_desc = rtd_pinctrl_find_config(data, pinnr);
 	if (!config_desc) {
-		dev_err(data->dev, "Pin config unsupported for pin: %s\n", name);
+		dev_err(data->dev, "Not support pin config for pin: %s\n", name);
 		return -ENOTSUPP;
 	}
 	switch ((u32)param) {
 	case PIN_CONFIG_INPUT_SCHMITT:
 	case PIN_CONFIG_INPUT_SCHMITT_ENABLE:
 		if (config_desc->smt_offset == NA) {
-			dev_err(data->dev, "Input schmitt unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support input schmitt for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		smt_off = config_desc->base_bit + config_desc->smt_offset;
@@ -317,7 +313,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_DRIVE_PUSH_PULL:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Push pull unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support push pull for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -329,7 +325,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_DISABLE:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Bias disable unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support bias disable for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -341,7 +337,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_PULL_UP:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Bias pull up unsupported for pin:%s\n", name);
+			dev_err(data->dev, "Not support bias pull up for pin:%s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -354,7 +350,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_PULL_DOWN:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Bias pull down unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support bias pull down for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -388,7 +384,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 				return -EINVAL;
 			break;
 		case NA:
-			dev_err(data->dev, "Drive strength unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support drive strength for pin: %s\n", name);
 			return -ENOTSUPP;
 		default:
 			return -EINVAL;
@@ -398,7 +394,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_POWER_SOURCE:
 		if (config_desc->power_offset == NA) {
-			dev_err(data->dev, "Power source unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support power source for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		reg_off = config_desc->reg_offset;
@@ -412,71 +408,10 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 		val = set_val ? mask : 0;
 		break;
 
-	case PIN_CONFIG_SLEW_RATE:
-		if (config_desc->slew_rate_offset == NA) {
-			dev_err(data->dev, "Slew rate setting unsupported for pin: %s\n", name);
-			return -ENOTSUPP;
-		}
-
-		switch (arg) {
-		case 1:
-			set_val = 0;
-			break;
-		case 10:
-			set_val = 1;
-			break;
-		case 20:
-			set_val = 2;
-			break;
-		case 30:
-			set_val = 3;
-			break;
-		default:
-			return -EINVAL;
-		}
-
-		sr_off = config_desc->base_bit + config_desc->slew_rate_offset;
-		reg_off = config_desc->reg_offset;
-		mask = 0x3 << sr_off;
-		val = arg << sr_off;
-		break;
-
-	case PIN_CONFIG_INPUT_VOLTAGE_UV:
-		if (config_desc->input_volt_offset == NA) {
-			dev_err(data->dev, "Input voltage level setting unsupported for pin:%s\n",
-				name);
-			return -ENOTSUPP;
-		}
-
-		if (arg == 3300000)
-			set_val = 1;
-		else if (arg == 1800000)
-			set_val = 0;
-		else
-			return -EINVAL;
-
-		input_volt_off = config_desc->base_bit + config_desc->input_volt_offset;
-		reg_off = config_desc->reg_offset;
-
-		mask = BIT(input_volt_off);
-		val = set_val ? BIT(input_volt_off) : 0;
-		break;
-
-	case RTD_HIGH_VIL:
-		if (config_desc->hvil_offset == NA) {
-			dev_err(data->dev, "High vil setting unsupported for pin:%s\n", name);
-			return -ENOTSUPP;
-		}
-		hvil_off = config_desc->base_bit + config_desc->hvil_offset;
-		reg_off = config_desc->reg_offset;
-		mask = BIT(hvil_off);
-		val = 1;
-		break;
-
 	case RTD_DRIVE_STRENGH_P:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc) {
-			dev_err(data->dev, "P driving unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support P driving for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -493,7 +428,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	case RTD_DRIVE_STRENGH_N:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc) {
-			dev_err(data->dev, "N driving unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support N driving for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -510,7 +445,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	case RTD_DUTY_CYCLE:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc || sconfig_desc->dcycle_offset == NA) {
-			dev_err(data->dev, "Duty cycle unsupported for pin: %s\n", name);
+			dev_err(data->dev, "Not support duty cycle for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -521,8 +456,8 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 		break;
 
 	default:
-		dev_dbg(data->dev, "unsupported pinconf: %d\n", (u32)param);
-		return -ENOTSUPP;
+		dev_err(data->dev, "unsupported pinconf: %d\n", (u32)param);
+		return -EINVAL;
 	}
 
 	ret = regmap_update_bits(data->regmap_pinctrl, reg_off, mask, val);
@@ -605,42 +540,18 @@ static const struct regmap_config rtd_pinctrl_regmap_config = {
 	.use_relaxed_mmio = true,
 };
 
-static int rtd_pinctrl_init_pm(struct rtd_pinctrl *data)
-{
-	const struct rtd_pin_range *pin_range = data->info->pin_range;
-	struct device *dev = data->pcdev->dev;
-	const struct rtd_reg_range *range;
-	size_t num_entries;
-	int i;
-
-	data->saved_regs = devm_kcalloc(dev, pin_range->num_ranges, sizeof(u32 *), GFP_KERNEL);
-	if (!data->saved_regs)
-		return -ENOMEM;
-
-	for (i = 0; i < pin_range->num_ranges; i++) {
-		range = &pin_range->ranges[i];
-		num_entries = range->len / 4;
-
-		data->saved_regs[i] = devm_kzalloc(dev, num_entries * sizeof(u32), GFP_KERNEL);
-		if (!data->saved_regs[i])
-			return -ENOMEM;
-	}
-
-	return 0;
-}
-
 int rtd_pinctrl_probe(struct platform_device *pdev, const struct rtd_pinctrl_desc *desc)
 {
 	struct rtd_pinctrl *data;
+	int ret;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	data->base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(data->base))
-		return dev_err_probe(&pdev->dev, PTR_ERR(data->base),
-				     "Failed to ioremap resource\n");
+	data->base = of_iomap(pdev->dev.of_node, 0);
+	if (!data->base)
+		return -ENOMEM;
 
 	data->dev = &pdev->dev;
 	data->info = desc;
@@ -656,95 +567,30 @@ int rtd_pinctrl_probe(struct platform_device *pdev, const struct rtd_pinctrl_des
 	data->regmap_pinctrl = devm_regmap_init_mmio(data->dev, data->base,
 						     &rtd_pinctrl_regmap_config);
 
-	if (IS_ERR(data->regmap_pinctrl))
-		return dev_err_probe(data->dev, PTR_ERR(data->regmap_pinctrl),
-				     "Failed to init regmap\n");
+	if (IS_ERR(data->regmap_pinctrl)) {
+		dev_err(data->dev, "failed to init regmap: %ld\n",
+			PTR_ERR(data->regmap_pinctrl));
+		ret = PTR_ERR(data->regmap_pinctrl);
+		goto unmap;
+	}
 
-	data->pcdev = devm_pinctrl_register(&pdev->dev, &data->desc, data);
-	if (IS_ERR(data->pcdev))
-		return dev_err_probe(data->dev, PTR_ERR(data->pcdev),
-				     "Failed to register pinctrl\n");
+	data->pcdev = pinctrl_register(&data->desc, &pdev->dev, data);
+	if (IS_ERR(data->pcdev)) {
+		ret = PTR_ERR(data->pcdev);
+		goto unmap;
+	}
 
 	platform_set_drvdata(pdev, data);
 
 	dev_dbg(&pdev->dev, "probed\n");
 
-	if (data->info->pin_range) {
-		if (rtd_pinctrl_init_pm(data))
-			return -ENOMEM;
-	}
-
 	return 0;
+
+unmap:
+	iounmap(data->base);
+	return ret;
 }
 EXPORT_SYMBOL(rtd_pinctrl_probe);
 
-static int realtek_pinctrl_suspend(struct device *dev)
-{
-	struct rtd_pinctrl *data = dev_get_drvdata(dev);
-	const struct rtd_pin_range *pin_range = data->info->pin_range;
-	const struct rtd_reg_range *range;
-	u32 *range_regs;
-	int count;
-	int i, j;
-	int ret;
-
-	if (!data->saved_regs)
-		return 0;
-
-	for (i = 0; i < pin_range->num_ranges; i++) {
-		range = &pin_range->ranges[i];
-		range_regs = data->saved_regs[i];
-		count = range->len / 4;
-
-		for (j = 0; j < count; j++) {
-			ret = regmap_read(data->regmap_pinctrl, range->offset + (j * 4),
-					  &range_regs[j]);
-			if (ret) {
-				dev_err(dev, "failed to store register 0x%x: %d\n",
-					range->offset + (j * 4), ret);
-				return ret;
-			}
-		}
-	}
-
-	return 0;
-}
-
-static int realtek_pinctrl_resume(struct device *dev)
-{
-	struct rtd_pinctrl *data = dev_get_drvdata(dev);
-	const struct rtd_pin_range *pin_range = data->info->pin_range;
-	const struct rtd_reg_range *range;
-	u32 *range_regs;
-	int count;
-	int i, j;
-	int ret;
-
-	if (!data->saved_regs)
-		return 0;
-
-	for (i = 0; i < pin_range->num_ranges; i++) {
-		range = &pin_range->ranges[i];
-		range_regs = data->saved_regs[i];
-		count = range->len / 4;
-
-		for (j = 0; j < count; j++) {
-			ret = regmap_write(data->regmap_pinctrl, range->offset + (j * 4),
-					   range_regs[j]);
-			if (ret) {
-				dev_err(dev, "failed to restore register 0x%x: %d\n",
-					range->offset + (j * 4), ret);
-				return ret;
-			}
-		}
-	}
-	return 0;
-}
-
-const struct dev_pm_ops realtek_pinctrl_pm_ops = {
-	NOIRQ_SYSTEM_SLEEP_PM_OPS(realtek_pinctrl_suspend, realtek_pinctrl_resume)
-};
-EXPORT_SYMBOL_GPL(realtek_pinctrl_pm_ops);
-
 MODULE_DESCRIPTION("Realtek DHC SoC pinctrl driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

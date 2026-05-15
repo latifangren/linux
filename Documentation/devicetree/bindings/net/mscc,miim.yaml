@@ -14,14 +14,9 @@ allOf:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - mscc,ocelot-miim
-          - microchip,lan966x-miim
-      - items:
-          - enum:
-              - microchip,lan9691-miim
-          - const: mscc,ocelot-miim
+    enum:
+      - mscc,ocelot-miim
+      - microchip,lan966x-miim
 
   "#address-cells":
     const: 1

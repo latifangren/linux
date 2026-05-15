@@ -85,8 +85,9 @@ static void virtsnd_event_notify_cb(struct virtqueue *vqueue)
 	struct virtio_snd_queue *queue = virtsnd_event_queue(snd);
 	struct virtio_snd_event *event;
 	u32 length;
+	unsigned long flags;
 
-	guard(spinlock_irqsave)(&queue->lock);
+	spin_lock_irqsave(&queue->lock, flags);
 	do {
 		virtqueue_disable_cb(vqueue);
 		while ((event = virtqueue_get_buf(vqueue, &length))) {
@@ -94,6 +95,7 @@ static void virtsnd_event_notify_cb(struct virtqueue *vqueue)
 			virtsnd_event_send(vqueue, event, true, GFP_ATOMIC);
 		}
 	} while (!virtqueue_enable_cb(vqueue));
+	spin_unlock_irqrestore(&queue->lock, flags);
 }
 
 /**
@@ -137,7 +139,8 @@ static int virtsnd_find_vqs(struct virtio_snd *snd)
 
 	n = virtqueue_get_vring_size(vqs[VIRTIO_SND_VQ_EVENT]);
 
-	snd->event_msgs = kmalloc_objs(*snd->event_msgs, n);
+	snd->event_msgs = kmalloc_array(n, sizeof(*snd->event_msgs),
+					GFP_KERNEL);
 	if (!snd->event_msgs)
 		return -ENOMEM;
 
@@ -173,12 +176,14 @@ static void virtsnd_disable_event_vq(struct virtio_snd *snd)
 	struct virtio_snd_queue *queue = virtsnd_event_queue(snd);
 	struct virtio_snd_event *event;
 	u32 length;
+	unsigned long flags;
 
 	if (queue->vqueue) {
-		guard(spinlock_irqsave)(&queue->lock);
+		spin_lock_irqsave(&queue->lock, flags);
 		virtqueue_disable_cb(queue->vqueue);
 		while ((event = virtqueue_get_buf(queue->vqueue, &length)))
 			virtsnd_event_dispatch(snd, event);
+		spin_unlock_irqrestore(&queue->lock, flags);
 	}
 }
 

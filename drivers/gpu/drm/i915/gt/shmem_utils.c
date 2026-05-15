@@ -19,8 +19,7 @@ struct file *shmem_create_from_data(const char *name, void *data, size_t len)
 	struct file *file;
 	int err;
 
-	file = shmem_file_setup(name, PAGE_ALIGN(len),
-				mk_vma_flags(VMA_NORESERVE_BIT));
+	file = shmem_file_setup(name, PAGE_ALIGN(len), VM_NORESERVE);
 	if (IS_ERR(file))
 		return file;
 
@@ -41,7 +40,7 @@ struct file *shmem_create_from_object(struct drm_i915_gem_object *obj)
 
 	if (i915_gem_object_is_shmem(obj)) {
 		file = obj->base.filp;
-		get_file(file);
+		atomic_long_inc(&file->f_count);
 		return file;
 	}
 
@@ -63,7 +62,7 @@ void *shmem_pin_map(struct file *file)
 	void *vaddr;
 
 	n_pages = file->f_mapping->host->i_size >> PAGE_SHIFT;
-	pages = kvmalloc_objs(*pages, n_pages);
+	pages = kvmalloc_array(n_pages, sizeof(*pages), GFP_KERNEL);
 	if (!pages)
 		return NULL;
 
@@ -109,7 +108,7 @@ static int __shmem_rw(struct file *file, loff_t off,
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		vaddr = kmap_local_page(page);
+		vaddr = kmap(page);
 		if (write) {
 			memcpy(vaddr + offset_in_page(off), ptr, this);
 			set_page_dirty(page);
@@ -117,7 +116,7 @@ static int __shmem_rw(struct file *file, loff_t off,
 			memcpy(ptr, vaddr + offset_in_page(off), this);
 		}
 		mark_page_accessed(page);
-		kunmap_local(vaddr);
+		kunmap(page);
 		put_page(page);
 
 		len -= this;
@@ -144,11 +143,11 @@ int shmem_read_to_iosys_map(struct file *file, loff_t off,
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		vaddr = kmap_local_page(page);
+		vaddr = kmap(page);
 		iosys_map_memcpy_to(map, map_off, vaddr + offset_in_page(off),
 				    this);
 		mark_page_accessed(page);
-		kunmap_local(vaddr);
+		kunmap(page);
 		put_page(page);
 
 		len -= this;

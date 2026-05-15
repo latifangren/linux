@@ -60,7 +60,9 @@ static int bcm_vk_dma_alloc(struct device *dev,
 	dma->nr_pages = last - first + 1;
 
 	/* Allocate DMA pages */
-	dma->pages = kmalloc_objs(struct page *, dma->nr_pages);
+	dma->pages = kmalloc_array(dma->nr_pages,
+				   sizeof(struct page *),
+				   GFP_KERNEL);
 	if (!dma->pages)
 		return -ENOMEM;
 

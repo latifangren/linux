@@ -9,7 +9,6 @@
 #include <keys/asymmetric-subtype.h>
 #include <keys/asymmetric-parser.h>
 #include <crypto/public_key.h>
-#include <linux/hex.h>
 #include <linux/seq_file.h>
 #include <linux/module.h>
 #include <linux/overflow.h>
@@ -19,6 +18,16 @@
 #include <keys/user-type.h>
 #include "asymmetric_keys.h"
 
+
+const char *const key_being_used_for[NR__KEY_BEING_USED_FOR] = {
+	[VERIFYING_MODULE_SIGNATURE]		= "mod sig",
+	[VERIFYING_FIRMWARE_SIGNATURE]		= "firmware sig",
+	[VERIFYING_KEXEC_PE_SIGNATURE]		= "kexec PE sig",
+	[VERIFYING_KEY_SIGNATURE]		= "key sig",
+	[VERIFYING_KEY_SELF_SIGNATURE]		= "key self sig",
+	[VERIFYING_UNSPECIFIED_SIGNATURE]	= "unspec sig",
+};
+EXPORT_SYMBOL_GPL(key_being_used_for);
 
 static LIST_HEAD(asymmetric_key_parsers);
 static DECLARE_RWSEM(asymmetric_key_parsers_sem);
@@ -486,7 +495,7 @@ static struct key_restriction *asymmetric_restriction_alloc(
 	struct key *key)
 {
 	struct key_restriction *keyres =
-		kzalloc_obj(struct key_restriction);
+		kzalloc(sizeof(struct key_restriction), GFP_KERNEL);
 
 	if (!keyres)
 		return ERR_PTR(-ENOMEM);
@@ -594,10 +603,10 @@ static int asymmetric_key_verify_signature(struct kernel_pkey_params *params,
 {
 	struct public_key_signature sig = {
 		.s_size		= params->in2_len,
-		.m_size		= params->in_len,
+		.digest_size	= params->in_len,
 		.encoding	= params->encoding,
 		.hash_algo	= params->hash_algo,
-		.m		= (void *)in,
+		.digest		= (void *)in,
 		.s		= (void *)in2,
 	};
 

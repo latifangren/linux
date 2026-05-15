@@ -294,8 +294,8 @@
 };
 
 &clks {
-	clocks = <&osc>, <&ckil>, <&ckih1>, <&anaclk1>, <&anaclk2>, <&clk50m_phy>;
-	clock-names = "osc", "ckil", "ckih1", "anaclk1", "anaclk2", "enet_ref_pad";
+	clocks = <&clk50m_phy>;
+	clock-names = "enet_ref_pad";
 	assigned-clocks = <&clks IMX6QDL_CLK_LDB_DI0_SEL>, <&clks IMX6QDL_CLK_ENET_REF_SEL>;
 	assigned-clock-parents = <&clks IMX6QDL_CLK_PLL5_VIDEO_DIV>, <&clk50m_phy>;
 };
@@ -557,6 +557,7 @@
 
 &usbh1 {
 	vbus-supply = <&reg_h1_vbus>;
+	pinctrl-names = "default";
 	phy_type = "utmi";
 	dr_mode = "host";
 	disable-over-current;
@@ -772,7 +773,7 @@
 		>;
 	};
 
-	pinctrl_pca9539: pca9539grp {
+	pinctrl_pca9539: pca9539 {
 		fsl,pins = <
 			MX6QDL_PAD_GPIO_19__GPIO4_IO05			0x1b0b0
 		>;

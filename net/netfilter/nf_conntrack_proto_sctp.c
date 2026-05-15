@@ -39,15 +39,20 @@ static const char *const sctp_conntrack_names[] = {
 	[SCTP_CONNTRACK_HEARTBEAT_SENT]		= "HEARTBEAT_SENT",
 };
 
+#define SECS  * HZ
+#define MINS  * 60 SECS
+#define HOURS * 60 MINS
+#define DAYS  * 24 HOURS
+
 static const unsigned int sctp_timeouts[SCTP_CONNTRACK_MAX] = {
-	[SCTP_CONNTRACK_CLOSED]			= secs_to_jiffies(10),
-	[SCTP_CONNTRACK_COOKIE_WAIT]		= secs_to_jiffies(3),
-	[SCTP_CONNTRACK_COOKIE_ECHOED]		= secs_to_jiffies(3),
-	[SCTP_CONNTRACK_ESTABLISHED]		= secs_to_jiffies(210),
-	[SCTP_CONNTRACK_SHUTDOWN_SENT]		= secs_to_jiffies(3),
-	[SCTP_CONNTRACK_SHUTDOWN_RECD]		= secs_to_jiffies(3),
-	[SCTP_CONNTRACK_SHUTDOWN_ACK_SENT]	= secs_to_jiffies(3),
-	[SCTP_CONNTRACK_HEARTBEAT_SENT]		= secs_to_jiffies(30),
+	[SCTP_CONNTRACK_CLOSED]			= 10 SECS,
+	[SCTP_CONNTRACK_COOKIE_WAIT]		= 3 SECS,
+	[SCTP_CONNTRACK_COOKIE_ECHOED]		= 3 SECS,
+	[SCTP_CONNTRACK_ESTABLISHED]		= 210 SECS,
+	[SCTP_CONNTRACK_SHUTDOWN_SENT]		= 3 SECS,
+	[SCTP_CONNTRACK_SHUTDOWN_RECD]		= 3 SECS,
+	[SCTP_CONNTRACK_SHUTDOWN_ACK_SENT]	= 3 SECS,
+	[SCTP_CONNTRACK_HEARTBEAT_SENT]		= 30 SECS,
 };
 
 #define	SCTP_FLAG_HEARTBEAT_VTAG_FAILED	1
@@ -466,13 +471,9 @@ int nf_conntrack_sctp_packet(struct nf_conn *ct,
 			if (!ih)
 				goto out_unlock;
 
-			/* Do not record INIT matching peer vtag (stale or retransmitted INIT). */
-			if (old_state == SCTP_CONNTRACK_NONE ||
-			    ct->proto.sctp.vtag[!dir] != ih->init_tag) {
-				if (ct->proto.sctp.init[dir] && ct->proto.sctp.init[!dir])
-					ct->proto.sctp.init[!dir] = 0;
-				ct->proto.sctp.init[dir] = 1;
-			}
+			if (ct->proto.sctp.init[dir] && ct->proto.sctp.init[!dir])
+				ct->proto.sctp.init[!dir] = 0;
+			ct->proto.sctp.init[dir] = 1;
 
 			pr_debug("Setting vtag %x for dir %d\n", ih->init_tag, !dir);
 			ct->proto.sctp.vtag[!dir] = ih->init_tag;

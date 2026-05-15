@@ -34,7 +34,7 @@ nvkm_runq_new(struct nvkm_fifo *fifo, int pbid)
 {
 	struct nvkm_runq *runq;
 
-	if (!(runq = kzalloc_obj(*runq)))
+	if (!(runq = kzalloc(sizeof(*runq), GFP_KERNEL)))
 		return NULL;
 
 	runq->func = fifo->func->runq;

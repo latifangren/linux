@@ -1560,42 +1560,18 @@ nvkm_device_pci(struct nvkm_device *device)
 	return container_of(device, struct nvkm_device_pci, device);
 }
 
-static int
-nvkm_device_pci_resource_idx(struct nvkm_device_pci *pdev, enum nvkm_bar_id bar)
+static resource_size_t
+nvkm_device_pci_resource_addr(struct nvkm_device *device, unsigned bar)
 {
-	int idx = 0;
-
-	if (bar == NVKM_BAR0_PRI)
-		return idx;
-
-	idx += (pci_resource_flags(pdev->pdev, idx) & IORESOURCE_MEM_64) ? 2 : 1;
-	if (bar == NVKM_BAR1_FB)
-		return idx;
-
-	idx += (pci_resource_flags(pdev->pdev, idx) & IORESOURCE_MEM_64) ? 2 : 1;
-	if (bar == NVKM_BAR2_INST)
-		return idx;
-
-	WARN_ON(1);
-	return -1;
+	struct nvkm_device_pci *pdev = nvkm_device_pci(device);
+	return pci_resource_start(pdev->pdev, bar);
 }
 
 static resource_size_t
-nvkm_device_pci_resource_addr(struct nvkm_device *device, enum nvkm_bar_id bar)
+nvkm_device_pci_resource_size(struct nvkm_device *device, unsigned bar)
 {
 	struct nvkm_device_pci *pdev = nvkm_device_pci(device);
-	int idx = nvkm_device_pci_resource_idx(pdev, bar);
-
-	return idx >= 0 ? pci_resource_start(pdev->pdev, idx) : 0;
-}
-
-static resource_size_t
-nvkm_device_pci_resource_size(struct nvkm_device *device, enum nvkm_bar_id bar)
-{
-	struct nvkm_device_pci *pdev = nvkm_device_pci(device);
-	int idx = nvkm_device_pci_resource_idx(pdev, bar);
-
-	return idx >= 0 ? pci_resource_len(pdev->pdev, idx) : 0;
+	return pci_resource_len(pdev->pdev, bar);
 }
 
 static int
@@ -1605,10 +1581,10 @@ nvkm_device_pci_irq(struct nvkm_device *device)
 }
 
 static void
-nvkm_device_pci_fini(struct nvkm_device *device, enum nvkm_suspend_state suspend)
+nvkm_device_pci_fini(struct nvkm_device *device, bool suspend)
 {
 	struct nvkm_device_pci *pdev = nvkm_device_pci(device);
-	if (suspend != NVKM_POWEROFF) {
+	if (suspend) {
 		pci_disable_device(pdev->pdev);
 		pdev->suspend = true;
 	}
@@ -1688,7 +1664,7 @@ nvkm_device_pci_new(struct pci_dev *pci_dev, const char *cfg, const char *dbg,
 		pcid++;
 	}
 
-	if (!(pdev = kzalloc_obj(*pdev))) {
+	if (!(pdev = kzalloc(sizeof(*pdev), GFP_KERNEL))) {
 		pci_disable_device(pci_dev);
 		return -ENOMEM;
 	}

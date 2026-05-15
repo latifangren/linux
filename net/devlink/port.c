@@ -220,9 +220,8 @@ size_t devlink_nl_port_handle_size(struct devlink_port *devlink_port)
 {
 	struct devlink *devlink = devlink_port->devlink;
 
-	return nla_total_size(strlen(devlink_bus_name(devlink)) + 1) /* DEVLINK_ATTR_BUS_NAME */
-	     + nla_total_size(strlen(devlink_dev_name(devlink)) + 1) /* DEVLINK_ATTR_DEV_NAME */
-	     + nla_total_size(8) /* DEVLINK_ATTR_INDEX */
+	return nla_total_size(strlen(devlink->dev->bus->name) + 1) /* DEVLINK_ATTR_BUS_NAME */
+	     + nla_total_size(strlen(dev_name(devlink->dev)) + 1) /* DEVLINK_ATTR_DEV_NAME */
 	     + nla_total_size(4); /* DEVLINK_ATTR_PORT_INDEX */
 }
 
@@ -976,7 +975,7 @@ static void devlink_port_type_warn(struct work_struct *work)
 	struct devlink_port *port = container_of(to_delayed_work(work),
 						 struct devlink_port,
 						 type_warn_dw);
-	devl_warn(port->devlink, "Type was not set for devlink port.");
+	dev_warn(port->devlink->dev, "Type was not set for devlink port.");
 }
 
 static bool devlink_port_type_should_warn(struct devlink_port *devlink_port)
@@ -1025,7 +1024,6 @@ void devlink_port_init(struct devlink *devlink,
 		return;
 	devlink_port->devlink = devlink;
 	INIT_LIST_HEAD(&devlink_port->region_list);
-	INIT_LIST_HEAD(&devlink_port->resource_list);
 	devlink_port->initialized = true;
 }
 EXPORT_SYMBOL_GPL(devlink_port_init);
@@ -1043,7 +1041,6 @@ EXPORT_SYMBOL_GPL(devlink_port_init);
 void devlink_port_fini(struct devlink_port *devlink_port)
 {
 	WARN_ON(!list_empty(&devlink_port->region_list));
-	WARN_ON(!list_empty(&devlink_port->resource_list));
 }
 EXPORT_SYMBOL_GPL(devlink_port_fini);
 
@@ -1244,9 +1241,9 @@ static void __devlink_port_type_set(struct devlink_port *devlink_port,
  */
 void devlink_port_type_eth_set(struct devlink_port *devlink_port)
 {
-	devl_warn(devlink_port->devlink,
-		  "devlink port type for port %d set to Ethernet without a software interface reference, device type not supported by the kernel?\n",
-		  devlink_port->index);
+	dev_warn(devlink_port->devlink->dev,
+		 "devlink port type for port %d set to Ethernet without a software interface reference, device type not supported by the kernel?\n",
+		 devlink_port->index);
 	__devlink_port_type_set(devlink_port, DEVLINK_PORT_TYPE_ETH, NULL);
 }
 EXPORT_SYMBOL_GPL(devlink_port_type_eth_set);
@@ -1275,9 +1272,9 @@ EXPORT_SYMBOL_GPL(devlink_port_type_ib_set);
 void devlink_port_type_clear(struct devlink_port *devlink_port)
 {
 	if (devlink_port->type == DEVLINK_PORT_TYPE_ETH)
-		devl_warn(devlink_port->devlink,
-			  "devlink port type for port %d cleared without a software interface reference, device type not supported by the kernel?\n",
-			  devlink_port->index);
+		dev_warn(devlink_port->devlink->dev,
+			 "devlink port type for port %d cleared without a software interface reference, device type not supported by the kernel?\n",
+			 devlink_port->index);
 	__devlink_port_type_set(devlink_port, DEVLINK_PORT_TYPE_NOTSET, NULL);
 }
 EXPORT_SYMBOL_GPL(devlink_port_type_clear);
@@ -1336,8 +1333,8 @@ int devlink_port_netdevice_event(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
-static void __devlink_port_attrs_set(struct devlink_port *devlink_port,
-				     enum devlink_port_flavour flavour)
+static int __devlink_port_attrs_set(struct devlink_port *devlink_port,
+				    enum devlink_port_flavour flavour)
 {
 	struct devlink_port_attrs *attrs = &devlink_port->attrs;
 
@@ -1350,6 +1347,7 @@ static void __devlink_port_attrs_set(struct devlink_port *devlink_port,
 	} else {
 		devlink_port->switch_port = false;
 	}
+	return 0;
 }
 
 /**
@@ -1359,13 +1357,17 @@ static void __devlink_port_attrs_set(struct devlink_port *devlink_port,
  *	@attrs: devlink port attrs
  */
 void devlink_port_attrs_set(struct devlink_port *devlink_port,
-			    const struct devlink_port_attrs *attrs)
+			    struct devlink_port_attrs *attrs)
 {
+	int ret;
+
 	ASSERT_DEVLINK_PORT_NOT_REGISTERED(devlink_port);
-	WARN_ON(attrs->splittable && attrs->split);
 
 	devlink_port->attrs = *attrs;
-	__devlink_port_attrs_set(devlink_port, attrs->flavour);
+	ret = __devlink_port_attrs_set(devlink_port, attrs->flavour);
+	if (ret)
+		return;
+	WARN_ON(attrs->splittable && attrs->split);
 }
 EXPORT_SYMBOL_GPL(devlink_port_attrs_set);
 
@@ -1374,17 +1376,21 @@ EXPORT_SYMBOL_GPL(devlink_port_attrs_set);
  *
  *	@devlink_port: devlink port
  *	@controller: associated controller number for the devlink port instance
- *	@pf: associated PCI function number for the devlink port instance
+ *	@pf: associated PF for the devlink port instance
  *	@external: indicates if the port is for an external controller
  */
 void devlink_port_attrs_pci_pf_set(struct devlink_port *devlink_port, u32 controller,
 				   u16 pf, bool external)
 {
 	struct devlink_port_attrs *attrs = &devlink_port->attrs;
+	int ret;
 
 	ASSERT_DEVLINK_PORT_NOT_REGISTERED(devlink_port);
 
-	__devlink_port_attrs_set(devlink_port, DEVLINK_PORT_FLAVOUR_PCI_PF);
+	ret = __devlink_port_attrs_set(devlink_port,
+				       DEVLINK_PORT_FLAVOUR_PCI_PF);
+	if (ret)
+		return;
 	attrs->pci_pf.controller = controller;
 	attrs->pci_pf.pf = pf;
 	attrs->pci_pf.external = external;
@@ -1396,19 +1402,22 @@ EXPORT_SYMBOL_GPL(devlink_port_attrs_pci_pf_set);
  *
  *	@devlink_port: devlink port
  *	@controller: associated controller number for the devlink port instance
- *	@pf: associated PCI function number for the devlink port instance
- *	@vf: associated PCI VF number of a PF for the devlink port instance;
- *	     VF number starts from 0 for the first PCI virtual function
+ *	@pf: associated PF for the devlink port instance
+ *	@vf: associated VF of a PF for the devlink port instance
  *	@external: indicates if the port is for an external controller
  */
 void devlink_port_attrs_pci_vf_set(struct devlink_port *devlink_port, u32 controller,
 				   u16 pf, u16 vf, bool external)
 {
 	struct devlink_port_attrs *attrs = &devlink_port->attrs;
+	int ret;
 
 	ASSERT_DEVLINK_PORT_NOT_REGISTERED(devlink_port);
 
-	__devlink_port_attrs_set(devlink_port, DEVLINK_PORT_FLAVOUR_PCI_VF);
+	ret = __devlink_port_attrs_set(devlink_port,
+				       DEVLINK_PORT_FLAVOUR_PCI_VF);
+	if (ret)
+		return;
 	attrs->pci_vf.controller = controller;
 	attrs->pci_vf.pf = pf;
 	attrs->pci_vf.vf = vf;
@@ -1421,18 +1430,22 @@ EXPORT_SYMBOL_GPL(devlink_port_attrs_pci_vf_set);
  *
  *	@devlink_port: devlink port
  *	@controller: associated controller number for the devlink port instance
- *	@pf: associated PCI function number for the devlink port instance
- *	@sf: associated SF number of a PF for the devlink port instance
+ *	@pf: associated PF for the devlink port instance
+ *	@sf: associated SF of a PF for the devlink port instance
  *	@external: indicates if the port is for an external controller
  */
 void devlink_port_attrs_pci_sf_set(struct devlink_port *devlink_port, u32 controller,
 				   u16 pf, u32 sf, bool external)
 {
 	struct devlink_port_attrs *attrs = &devlink_port->attrs;
+	int ret;
 
 	ASSERT_DEVLINK_PORT_NOT_REGISTERED(devlink_port);
 
-	__devlink_port_attrs_set(devlink_port, DEVLINK_PORT_FLAVOUR_PCI_SF);
+	ret = __devlink_port_attrs_set(devlink_port,
+				       DEVLINK_PORT_FLAVOUR_PCI_SF);
+	if (ret)
+		return;
 	attrs->pci_sf.controller = controller;
 	attrs->pci_sf.pf = pf;
 	attrs->pci_sf.sf = sf;
@@ -1505,7 +1518,7 @@ static int __devlink_port_phys_port_name_get(struct devlink_port *devlink_port,
 	struct devlink_port_attrs *attrs = &devlink_port->attrs;
 	int n = 0;
 
-	if (!devlink_port->attrs_set || devlink_port->attrs.no_phys_port_name)
+	if (!devlink_port->attrs_set)
 		return -EOPNOTSUPP;
 
 	switch (attrs->flavour) {

@@ -24,11 +24,6 @@ properties:
   reg:
     maxItems: 1
 
-  gpio-controller: true
-
-  "#gpio-cells":
-    const: 2
-
 additionalProperties: false
 
 required:

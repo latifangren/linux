@@ -5,11 +5,11 @@
 #ifndef TTM_MOCK_MANAGER_H
 #define TTM_MOCK_MANAGER_H
 
-#include <linux/gpu_buddy.h>
+#include <drm/drm_buddy.h>
 
 struct ttm_mock_manager {
 	struct ttm_resource_manager man;
-	struct gpu_buddy mm;
+	struct drm_buddy mm;
 	u64 default_page_size;
 	/* protects allocations of mock buffer objects */
 	struct mutex lock;

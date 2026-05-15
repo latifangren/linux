@@ -36,7 +36,7 @@ int zfcp_diag_adapter_setup(struct zfcp_adapter *const adapter)
 	struct zfcp_diag_adapter *diag;
 	struct zfcp_diag_header *hdr;
 
-	diag = kzalloc_obj(*diag);
+	diag = kzalloc(sizeof(*diag), GFP_KERNEL);
 	if (diag == NULL)
 		return -ENOMEM;
 

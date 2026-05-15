@@ -80,9 +80,6 @@ properties:
   power-domains:
     maxItems: 1
 
-  target-supply:
-    description: Power regulator for the SATA target device.
-
 required:
   - compatible
   - reg

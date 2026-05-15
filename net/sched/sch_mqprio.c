@@ -388,7 +388,8 @@ static int mqprio_init(struct Qdisc *sch, struct nlattr *opt,
 	}
 
 	/* pre-allocate qdisc, attachment can't fail */
-	priv->qdiscs = kzalloc_objs(priv->qdiscs[0], dev->num_tx_queues);
+	priv->qdiscs = kcalloc(dev->num_tx_queues, sizeof(priv->qdiscs[0]),
+			       GFP_KERNEL);
 	if (!priv->qdiscs)
 		return -ENOMEM;
 
@@ -469,7 +470,7 @@ static int mqprio_graft(struct Qdisc *sch, unsigned long cl, struct Qdisc *new,
 		return -EINVAL;
 
 	if (dev->flags & IFF_UP)
-		dev_deactivate(dev, false);
+		dev_deactivate(dev);
 
 	*old = dev_graft_qdisc(dev_queue, new);
 

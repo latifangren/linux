@@ -11,14 +11,10 @@ maintainers:
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - bosch,bmg160
-          - bosch,bmi055_gyro
-          - bosch,bmi088_gyro
-      - items:
-          - const: bosch,bmx055-gyro
-          - const: bosch,bmg160
+    enum:
+      - bosch,bmg160
+      - bosch,bmi055_gyro
+      - bosch,bmi088_gyro
 
   reg:
     maxItems: 1

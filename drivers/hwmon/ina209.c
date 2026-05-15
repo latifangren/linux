@@ -27,6 +27,8 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 
+#include <linux/platform_data/ina2xx.h>
+
 /* register definitions */
 #define INA209_CONFIGURATION		0x00
 #define INA209_STATUS			0x01
@@ -485,6 +487,7 @@ static void ina209_restore_conf(struct i2c_client *client,
 static int ina209_init_client(struct i2c_client *client,
 			      struct ina209_data *data)
 {
+	struct ina2xx_platform_data *pdata = dev_get_platdata(&client->dev);
 	u32 shunt;
 	int reg;
 
@@ -498,8 +501,12 @@ static int ina209_init_client(struct i2c_client *client,
 		return reg;
 	data->config_orig = reg;
 
-	if (!of_property_read_u32(client->dev.of_node, "shunt-resistor",
-				  &shunt)) {
+	if (pdata) {
+		if (pdata->shunt_uohms <= 0)
+			return -EINVAL;
+		shunt = pdata->shunt_uohms;
+	} else if (!of_property_read_u32(client->dev.of_node, "shunt-resistor",
+					 &shunt)) {
 		if (shunt == 0)
 			return -EINVAL;
 	} else {

@@ -208,18 +208,11 @@ static bool uac_clock_source_is_valid_quirk(struct snd_usb_audio *chip,
 	}
 
 	/*
-	 * Quirk for older MOTU AVB / hybrid interfaces
-	 *
-	 * These devices take more than 2 seconds to switch sample rate or
-	 * clock source. During this period the clock validity request
-	 * returns false, causing ALSA to fail prematurely.
-	 *
-	 * Affected models (all use vendor 0x07fd):
-	 *   - MicroBook IIc          → 0x0004
-	 *   - 1248, 624, 8A, UltraLite AVB, 8M, 16A, ... → 0x0005
+	 * MOTU MicroBook IIc
+	 * Sample rate changes takes more than 2 seconds for this device. Clock
+	 * validity request returns false during that period.
 	 */
-	if (chip->usb_id == USB_ID(0x07fd, 0x0004) ||  /* MicroBook IIc */
-	    chip->usb_id == USB_ID(0x07fd, 0x0005)) {  /* 1248 / 624 / 8A / UltraLite AVB / ... */
+	if (chip->usb_id == USB_ID(0x07fd, 0x0004)) {
 		count = 0;
 
 		while ((!ret) && (count < 50)) {

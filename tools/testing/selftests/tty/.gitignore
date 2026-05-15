@@ -1,3 +1,2 @@
 # SPDX-License-Identifier: GPL-2.0-only
-tty_tiocsti_test
 tty_tstamp_update

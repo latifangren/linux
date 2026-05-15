@@ -252,7 +252,6 @@ enum {
 #define AMDGPU_FAMILY_GC_11_0_0 145
 #define AMDGPU_FAMILY_GC_11_0_1 148
 #define AMDGPU_FAMILY_GC_11_5_0 150
-#define AMDGPU_FAMILY_GC_11_5_4	154
 #define GC_11_0_0_A0 0x1
 #define GC_11_0_2_A0 0x10
 #define GC_11_0_3_A0 0x20
@@ -263,7 +262,6 @@ enum {
 #define ASICREV_IS_GC_11_0_2(eChipRev) (eChipRev >= GC_11_0_2_A0 && eChipRev < GC_11_0_3_A0)
 #define ASICREV_IS_GC_11_0_3(eChipRev) (eChipRev >= GC_11_0_3_A0 && eChipRev < GC_11_UNKNOWN)
 #define ASICREV_IS_GC_11_0_4(eChipRev) (eChipRev >= GC_11_0_4_A0 && eChipRev < GC_11_UNKNOWN)
-#define ASICREV_IS_DCN36(eChipRev) ((eChipRev) >= 0x50 && (eChipRev) < 0xC0)
 
 #define AMDGPU_FAMILY_GC_12_0_0         152 /* GC 12.0.0 */
 

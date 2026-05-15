@@ -17,8 +17,8 @@
 
 #define pr_fmt(fmt) "microcode: " fmt
 
+#include <linux/platform_device.h>
 #include <linux/stop_machine.h>
-#include <linux/device/faux.h>
 #include <linux/syscore_ops.h>
 #include <linux/miscdevice.h>
 #include <linux/capability.h>
@@ -37,27 +37,15 @@
 #include <asm/perf_event.h>
 #include <asm/processor.h>
 #include <asm/cmdline.h>
-#include <asm/msr.h>
 #include <asm/setup.h>
 
 #include "internal.h"
 
 static struct microcode_ops *microcode_ops;
-static bool dis_ucode_ldr;
+static bool dis_ucode_ldr = false;
 
 bool force_minrev = IS_ENABLED(CONFIG_MICROCODE_LATE_FORCE_MINREV);
-
-/*
- * Those below should be behind CONFIG_MICROCODE_DBG ifdeffery but in
- * order to not uglify the code with ifdeffery and use IS_ENABLED()
- * instead, leave them in. When microcode debugging is not enabled,
- * those are meaningless anyway.
- */
-/* base microcode revision for debugging */
-u32 base_rev;
-u32 microcode_rev[NR_CPUS] = {};
-
-bool hypervisor_present;
+module_param(force_minrev, bool, S_IRUSR | S_IWUSR);
 
 /*
  * Synchronization.
@@ -119,13 +107,7 @@ bool __init microcode_loader_disabled(void)
 	 * Disable when:
 	 *
 	 * 1) The CPU does not support CPUID.
-	 */
-	if (!cpuid_feature()) {
-		dis_ucode_ldr = true;
-		return dis_ucode_ldr;
-	}
-
-	/*
+	 *
 	 * 2) Bit 31 in CPUID[1]:ECX is clear
 	 *    The bit is reserved for hypervisor use. This is still not
 	 *    completely accurate as XEN PV guests don't see that CPUID bit
@@ -135,41 +117,12 @@ bool __init microcode_loader_disabled(void)
 	 * 3) Certain AMD patch levels are not allowed to be
 	 *    overwritten.
 	 */
-	hypervisor_present = native_cpuid_ecx(1) & BIT(31);
-
-	if ((hypervisor_present && !IS_ENABLED(CONFIG_MICROCODE_DBG)) ||
+	if (!have_cpuid_p() ||
+	    native_cpuid_ecx(1) & BIT(31) ||
 	    amd_check_current_patch_level())
 		dis_ucode_ldr = true;
 
 	return dis_ucode_ldr;
-}
-
-static void __init early_parse_cmdline(void)
-{
-	char cmd_buf[64] = {};
-	char *s, *p = cmd_buf;
-
-	if (cmdline_find_option(boot_command_line, "microcode", cmd_buf, sizeof(cmd_buf)) > 0) {
-		while ((s = strsep(&p, ","))) {
-			if (IS_ENABLED(CONFIG_MICROCODE_DBG)) {
-				if (strstr(s, "base_rev=")) {
-					/* advance to the option arg */
-					strsep(&s, "=");
-					if (kstrtouint(s, 16, &base_rev)) { ; }
-				}
-			}
-
-			if (!strcmp("force_minrev", s))
-				force_minrev = true;
-
-			if (!strcmp(s, "dis_ucode_ldr"))
-				dis_ucode_ldr = true;
-		}
-	}
-
-	/* old, compat option */
-	if (cmdline_find_option_bool(boot_command_line, "dis_ucode_ldr") > 0)
-		dis_ucode_ldr = true;
 }
 
 void __init load_ucode_bsp(void)
@@ -177,7 +130,8 @@ void __init load_ucode_bsp(void)
 	unsigned int cpuid_1_eax;
 	bool intel = true;
 
-	early_parse_cmdline();
+	if (cmdline_find_option_bool(boot_command_line, "dis_ucode_ldr") > 0)
+		dis_ucode_ldr = true;
 
 	if (microcode_loader_disabled())
 		return;
@@ -294,7 +248,7 @@ static void reload_early_microcode(unsigned int cpu)
 }
 
 /* fake device for request_firmware */
-static struct faux_device *microcode_fdev;
+static struct platform_device	*microcode_pdev;
 
 #ifdef CONFIG_MICROCODE_LATE_LOADING
 /*
@@ -597,17 +551,6 @@ static int load_late_stop_cpus(bool is_safe)
 		pr_err("You should switch to early loading, if possible.\n");
 	}
 
-	/*
-	 * Pre-load the microcode image into a staging device. This
-	 * process is preemptible and does not require stopping CPUs.
-	 * Successful staging simplifies the subsequent late-loading
-	 * process, reducing rendezvous time.
-	 *
-	 * Even if the transfer fails, the update will proceed as usual.
-	 */
-	if (microcode_ops->use_staging)
-		microcode_ops->stage_microcode();
-
 	atomic_set(&late_cpus_in, num_online_cpus());
 	atomic_set(&offline_in_nmi, 0);
 	loops_per_usec = loops_per_jiffy / (TICK_NSEC / 1000);
@@ -746,7 +689,7 @@ static int load_late_locked(void)
 	if (!setup_cpus())
 		return -EBUSY;
 
-	switch (microcode_ops->request_microcode_fw(0, &microcode_fdev->dev)) {
+	switch (microcode_ops->request_microcode_fw(0, &microcode_pdev->dev)) {
 	case UCODE_NEW:
 		return load_late_stop_cpus(false);
 	case UCODE_NEW_SAFE:
@@ -831,17 +774,8 @@ void microcode_bsp_resume(void)
 		reload_early_microcode(cpu);
 }
 
-static void microcode_bsp_syscore_resume(void *data)
-{
-	microcode_bsp_resume();
-}
-
-static const struct syscore_ops mc_syscore_ops = {
-	.resume	= microcode_bsp_syscore_resume,
-};
-
-static struct syscore mc_syscore = {
-	.ops = &mc_syscore_ops,
+static struct syscore_ops mc_syscore_ops = {
+	.resume	= microcode_bsp_resume,
 };
 
 static int mc_cpu_online(unsigned int cpu)
@@ -906,9 +840,9 @@ static int __init microcode_init(void)
 	if (early_data.new_rev)
 		pr_info_once("Updated early from: 0x%08x\n", early_data.old_rev);
 
-	microcode_fdev = faux_device_create("microcode", NULL, NULL);
-	if (!microcode_fdev)
-		return -ENODEV;
+	microcode_pdev = platform_device_register_simple("microcode", -1, NULL, 0);
+	if (IS_ERR(microcode_pdev))
+		return PTR_ERR(microcode_pdev);
 
 	dev_root = bus_get_dev_root(&cpu_subsys);
 	if (dev_root) {
@@ -920,14 +854,14 @@ static int __init microcode_init(void)
 		}
 	}
 
-	register_syscore(&mc_syscore);
+	register_syscore_ops(&mc_syscore_ops);
 	cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "x86/microcode:online",
 			  mc_cpu_online, mc_cpu_down_prep);
 
 	return 0;
 
  out_pdev:
-	faux_device_destroy(microcode_fdev);
+	platform_device_unregister(microcode_pdev);
 	return error;
 
 }

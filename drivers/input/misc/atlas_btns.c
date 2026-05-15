@@ -14,7 +14,6 @@
 #include <linux/input.h>
 #include <linux/types.h>
 #include <linux/acpi.h>
-#include <linux/platform_device.h>
 #include <linux/uaccess.h>
 
 #define ACPI_ATLAS_NAME		"Atlas ACPI"
@@ -58,9 +57,8 @@ static acpi_status acpi_atlas_button_handler(u32 function,
 	return status;
 }
 
-static int atlas_acpi_button_probe(struct platform_device *pdev)
+static int atlas_acpi_button_add(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	acpi_status status;
 	int i;
 	int err;
@@ -108,9 +106,8 @@ static int atlas_acpi_button_probe(struct platform_device *pdev)
 	return err;
 }
 
-static void atlas_acpi_button_remove(struct platform_device *pdev)
+static void atlas_acpi_button_remove(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	acpi_status status;
 
 	status = acpi_remove_address_space_handler(device->handle,
@@ -127,15 +124,16 @@ static const struct acpi_device_id atlas_device_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, atlas_device_ids);
 
-static struct platform_driver atlas_acpi_driver = {
-	.probe = atlas_acpi_button_probe,
-	.remove = atlas_acpi_button_remove,
-	.driver = {
-		.name = ACPI_ATLAS_NAME,
-		.acpi_match_table = atlas_device_ids,
+static struct acpi_driver atlas_acpi_driver = {
+	.name	= ACPI_ATLAS_NAME,
+	.class	= ACPI_ATLAS_CLASS,
+	.ids	= atlas_device_ids,
+	.ops	= {
+		.add	= atlas_acpi_button_add,
+		.remove	= atlas_acpi_button_remove,
 	},
 };
-module_platform_driver(atlas_acpi_driver);
+module_acpi_driver(atlas_acpi_driver);
 
 MODULE_AUTHOR("Jaya Kumar");
 MODULE_LICENSE("GPL");

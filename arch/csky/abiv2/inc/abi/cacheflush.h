@@ -20,8 +20,8 @@
 
 static inline void flush_dcache_folio(struct folio *folio)
 {
-	if (test_bit(PG_dcache_clean, &folio->flags.f))
-		clear_bit(PG_dcache_clean, &folio->flags.f);
+	if (test_bit(PG_dcache_clean, &folio->flags))
+		clear_bit(PG_dcache_clean, &folio->flags);
 }
 #define flush_dcache_folio flush_dcache_folio
 

@@ -486,7 +486,7 @@ struct msc313_gpio {
 	u8 *saved;
 };
 
-static int msc313_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+static void msc313_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
 {
 	struct msc313_gpio *gpio = gpiochip_get_data(chip);
 	u8 gpioreg = readb_relaxed(gpio->base + gpio->gpio_data->offsets[offset]);
@@ -497,8 +497,6 @@ static int msc313_gpio_set(struct gpio_chip *chip, unsigned int offset, int valu
 		gpioreg &= ~MSC313_GPIO_OUT;
 
 	writeb_relaxed(gpioreg, gpio->base + gpio->gpio_data->offsets[offset]);
-
-	return 0;
 }
 
 static int msc313_gpio_get(struct gpio_chip *chip, unsigned int offset)
@@ -694,7 +692,7 @@ static const struct of_device_id msc313_gpio_of_match[] = {
  * SoC goes into suspend to memory mode so we need to save some
  * of the register bits before suspending and put it back when resuming
  */
-static int msc313_gpio_suspend(struct device *dev)
+static int __maybe_unused msc313_gpio_suspend(struct device *dev)
 {
 	struct msc313_gpio *gpio = dev_get_drvdata(dev);
 	int i;
@@ -705,7 +703,7 @@ static int msc313_gpio_suspend(struct device *dev)
 	return 0;
 }
 
-static int msc313_gpio_resume(struct device *dev)
+static int __maybe_unused msc313_gpio_resume(struct device *dev)
 {
 	struct msc313_gpio *gpio = dev_get_drvdata(dev);
 	int i;
@@ -716,13 +714,13 @@ static int msc313_gpio_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(msc313_gpio_ops, msc313_gpio_suspend, msc313_gpio_resume);
+static SIMPLE_DEV_PM_OPS(msc313_gpio_ops, msc313_gpio_suspend, msc313_gpio_resume);
 
 static struct platform_driver msc313_gpio_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = msc313_gpio_of_match,
-		.pm = pm_sleep_ptr(&msc313_gpio_ops),
+		.pm = &msc313_gpio_ops,
 	},
 	.probe = msc313_gpio_probe,
 };

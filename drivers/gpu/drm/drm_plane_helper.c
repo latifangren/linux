@@ -23,7 +23,6 @@
  * SOFTWARE.
  */
 
-#include <linux/export.h>
 #include <linux/list.h>
 
 #include <drm/drm_atomic.h>
@@ -217,7 +216,8 @@ int drm_plane_helper_update_primary(struct drm_plane *plane, struct drm_crtc *cr
 	/* Find current connectors for CRTC */
 	num_connectors = get_connectors_for_crtc(crtc, NULL, 0);
 	BUG_ON(num_connectors == 0);
-	connector_list = kzalloc_objs(*connector_list, num_connectors);
+	connector_list = kcalloc(num_connectors, sizeof(*connector_list),
+				 GFP_KERNEL);
 	if (!connector_list)
 		return -ENOMEM;
 	get_connectors_for_crtc(crtc, connector_list, num_connectors);

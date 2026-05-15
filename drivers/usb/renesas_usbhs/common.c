@@ -580,10 +580,6 @@ static const struct of_device_id usbhs_of_match[] = {
 		.data = &usbhs_rzg2l_plat_info,
 	},
 	{
-		.compatible = "renesas,usbhs-r9a09g077",
-		.data = &usbhs_rzg2l_plat_info,
-	},
-	{
 		.compatible = "renesas,rcar-gen2-usbhs",
 		.data = &usbhs_rcar_gen2_plat_info,
 	},
@@ -638,7 +634,7 @@ static int usbhs_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
-	if (of_property_present(dev_of_node(dev), "extcon")) {
+	if (of_property_read_bool(dev_of_node(dev), "extcon")) {
 		priv->edev = extcon_get_edev_by_phandle(dev, 0);
 		if (IS_ERR(priv->edev))
 			return PTR_ERR(priv->edev);
@@ -721,7 +717,7 @@ static int usbhs_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto probe_end_fifo_exit;
 
-	/* platform_set_drvdata() should be called after usbhs_mod_probe() */
+	/* dev_set_drvdata should be called after usbhs_mod_init */
 	platform_set_drvdata(pdev, priv);
 
 	ret = reset_control_deassert(priv->rsts);
@@ -729,7 +725,7 @@ static int usbhs_probe(struct platform_device *pdev)
 		goto probe_fail_rst;
 
 	/*
-	 * device reset here because
+	 * deviece reset here because
 	 * USB device might be used in boot loader.
 	 */
 	usbhs_sys_clock_ctrl(priv, 0);
@@ -836,7 +832,23 @@ static void usbhs_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 }
 
-static void usbhsc_restore(struct device *dev)
+static __maybe_unused int usbhsc_suspend(struct device *dev)
+{
+	struct usbhs_priv *priv = dev_get_drvdata(dev);
+	struct usbhs_mod *mod = usbhs_mod_get_current(priv);
+
+	if (mod) {
+		usbhs_mod_call(priv, stop, priv);
+		usbhs_mod_change(priv, -1);
+	}
+
+	if (mod || !usbhs_get_dparam(priv, runtime_pwctrl))
+		usbhsc_power_ctrl(priv, 0);
+
+	return 0;
+}
+
+static __maybe_unused int usbhsc_resume(struct device *dev)
 {
 	struct usbhs_priv *priv = dev_get_drvdata(dev);
 	struct platform_device *pdev = usbhs_priv_to_pdev(priv);
@@ -849,49 +861,16 @@ static void usbhsc_restore(struct device *dev)
 	usbhs_platform_call(priv, phy_reset, pdev);
 
 	usbhsc_schedule_notify_hotplug(pdev);
-}
-
-static int usbhsc_suspend(struct device *dev)
-{
-	struct usbhs_priv *priv = dev_get_drvdata(dev);
-	struct usbhs_mod *mod = usbhs_mod_get_current(priv);
-	int ret;
-
-	if (mod) {
-		usbhs_mod_call(priv, stop, priv);
-		usbhs_mod_change(priv, -1);
-	}
-
-	if (mod || !usbhs_get_dparam(priv, runtime_pwctrl))
-		usbhsc_power_ctrl(priv, 0);
-
-	ret = reset_control_assert(priv->rsts);
-	if (ret)
-		usbhsc_restore(dev);
-
-	return ret;
-}
-
-static int usbhsc_resume(struct device *dev)
-{
-	struct usbhs_priv *priv = dev_get_drvdata(dev);
-	int ret;
-
-	ret = reset_control_deassert(priv->rsts);
-	if (ret)
-		return ret;
-
-	usbhsc_restore(dev);
 
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(usbhsc_pm_ops, usbhsc_suspend, usbhsc_resume);
+static SIMPLE_DEV_PM_OPS(usbhsc_pm_ops, usbhsc_suspend, usbhsc_resume);
 
 static struct platform_driver renesas_usbhs_driver = {
 	.driver		= {
 		.name	= "renesas_usbhs",
-		.pm	= pm_sleep_ptr(&usbhsc_pm_ops),
+		.pm	= &usbhsc_pm_ops,
 		.of_match_table = usbhs_of_match,
 	},
 	.probe		= usbhs_probe,

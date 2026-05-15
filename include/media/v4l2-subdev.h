@@ -2,7 +2,7 @@
 /*
  *  V4L2 sub-device support header.
  *
- *  Copyright (C) 2008  Hans Verkuil <hverkuil@kernel.org>
+ *  Copyright (C) 2008  Hans Verkuil <hverkuil@xs4all.nl>
  */
 
 #ifndef _V4L2_SUBDEV_H
@@ -36,7 +36,6 @@ struct v4l2_event_subscription;
 struct v4l2_fh;
 struct v4l2_subdev;
 struct v4l2_subdev_fh;
-struct v4l2_subdev_stream_config;
 struct tuner_setup;
 struct v4l2_mbus_frame_desc;
 struct led_classdev;
@@ -451,15 +450,16 @@ enum v4l2_subdev_pre_streamon_flags {
  *	already started or stopped subdev. Also see call_s_stream wrapper in
  *	v4l2-subdev.c.
  *
- *	This callback is DEPRECATED. New drivers should instead implement
- *	&v4l2_subdev_pad_ops.enable_streams and
- *	&v4l2_subdev_pad_ops.disable_streams operations, and use
+ *	New drivers should instead implement &v4l2_subdev_pad_ops.enable_streams
+ *	and &v4l2_subdev_pad_ops.disable_streams operations, and use
  *	v4l2_subdev_s_stream_helper for the &v4l2_subdev_video_ops.s_stream
  *	operation to support legacy users.
  *
  *	Drivers should also not call the .s_stream() subdev operation directly,
  *	but use the v4l2_subdev_enable_streams() and
  *	v4l2_subdev_disable_streams() helpers.
+ *
+ * @g_pixelaspect: callback to return the pixelaspect ratio.
  *
  * @s_rx_buffer: set a host allocated memory buffer for the subdev. The subdev
  *	can adjust @size to a lower value and must not write more data to the
@@ -490,6 +490,7 @@ struct v4l2_subdev_video_ops {
 	int (*g_tvnorms_output)(struct v4l2_subdev *sd, v4l2_std_id *std);
 	int (*g_input_status)(struct v4l2_subdev *sd, u32 *status);
 	int (*s_stream)(struct v4l2_subdev *sd, int enable);
+	int (*g_pixelaspect)(struct v4l2_subdev *sd, struct v4l2_fract *aspect);
 	int (*s_rx_buffer)(struct v4l2_subdev *sd, void *buf,
 			   unsigned int *size);
 	int (*pre_streamon)(struct v4l2_subdev *sd, u32 flags);
@@ -685,6 +686,30 @@ struct v4l2_subdev_pad_config {
 };
 
 /**
+ * struct v4l2_subdev_stream_config - Used for storing stream configuration.
+ *
+ * @pad: pad number
+ * @stream: stream number
+ * @enabled: has the stream been enabled with v4l2_subdev_enable_streams()
+ * @fmt: &struct v4l2_mbus_framefmt
+ * @crop: &struct v4l2_rect to be used for crop
+ * @compose: &struct v4l2_rect to be used for compose
+ * @interval: frame interval
+ *
+ * This structure stores configuration for a stream.
+ */
+struct v4l2_subdev_stream_config {
+	u32 pad;
+	u32 stream;
+	bool enabled;
+
+	struct v4l2_mbus_framefmt fmt;
+	struct v4l2_rect crop;
+	struct v4l2_rect compose;
+	struct v4l2_fract interval;
+};
+
+/**
  * struct v4l2_subdev_stream_configs - A collection of stream configs.
  *
  * @num_configs: number of entries in @config.
@@ -810,19 +835,11 @@ struct v4l2_subdev_state {
  *	v4l2_subdev_init_finalize() at initialization time). Do not call
  *	directly, use v4l2_subdev_enable_streams() instead.
  *
- *	Drivers that support only a single stream without setting the
- *	V4L2_SUBDEV_CAP_STREAMS sub-device capability flag can ignore the mask
- *	argument.
- *
  * @disable_streams: Disable the streams defined in streams_mask on the given
  *	source pad. Subdevs that implement this operation must use the active
  *	state management provided by the subdev core (enabled through a call to
  *	v4l2_subdev_init_finalize() at initialization time). Do not call
  *	directly, use v4l2_subdev_disable_streams() instead.
- *
- *	Drivers that support only a single stream without setting the
- *	V4L2_SUBDEV_CAP_STREAMS sub-device capability flag can ignore the mask
- *	argument.
  */
 struct v4l2_subdev_pad_ops {
 	int (*enum_mbus_code)(struct v4l2_subdev *sd,
@@ -1103,7 +1120,7 @@ struct v4l2_subdev {
 	typeof(ent) __me_sd_ent = (ent);				\
 									\
 	__me_sd_ent ?							\
-		container_of_const(__me_sd_ent, struct v4l2_subdev, entity) : \
+		container_of(__me_sd_ent, struct v4l2_subdev, entity) :	\
 		NULL;							\
 })
 
@@ -1661,8 +1678,6 @@ int v4l2_subdev_routing_validate(struct v4l2_subdev *sd,
  * function implements a best-effort compatibility by calling the .s_stream()
  * operation, limited to subdevs that have a single source pad.
  *
- * Drivers that are not stream-aware shall set @streams_mask to BIT_ULL(0).
- *
  * Return:
  * * 0: Success
  * * -EALREADY: One of the streams in streams_mask is already enabled
@@ -1693,8 +1708,6 @@ int v4l2_subdev_enable_streams(struct v4l2_subdev *sd, u32 pad,
  * function implements a best-effort compatibility by calling the .s_stream()
  * operation, limited to subdevs that have a single source pad.
  *
- * Drivers that are not stream-aware shall set @streams_mask to BIT_ULL(0).
- *
  * Return:
  * * 0: Success
  * * -EALREADY: One of the streams in streams_mask is not enabled
@@ -1721,62 +1734,6 @@ int v4l2_subdev_disable_streams(struct v4l2_subdev *sd, u32 pad,
  * Return: 0 on success, or a negative error code otherwise.
  */
 int v4l2_subdev_s_stream_helper(struct v4l2_subdev *sd, int enable);
-
-/**
- * __v4l2_subdev_get_frame_desc_passthrough - Helper to implement the
- *	subdev get_frame_desc operation in simple passthrough cases
- * @sd: The subdevice
- * @state: The locked subdevice active state
- * @pad: The source pad index
- * @fd: The mbus frame desc
- *
- * This helper implements the get_frame_desc operation for subdevices that pass
- * streams through without modification.
- *
- * The helper iterates over the subdevice's sink pads, calls get_frame_desc on
- * the remote subdevice connected to each sink pad, and collects the frame desc
- * entries for streams that are routed to the given source pad according to the
- * subdevice's routing table. Each entry is copied as-is from the upstream
- * source, with the exception of the 'stream' field which is remapped to the
- * source stream ID from the routing table.
- *
- * The frame desc type is taken from the first upstream source. If multiple
- * sink pads are involved and the upstream sources report different frame desc
- * types, -EPIPE is returned.
- *
- * The caller must hold the subdevice's active state lock. This variant is
- * intended for drivers that need to perform additional work around the
- * passthrough frame descriptor collection. Drivers that do not need any
- * customization should use v4l2_subdev_get_frame_desc_passthrough() instead.
- *
- * Return: 0 on success, or a negative error code otherwise.
- */
-int __v4l2_subdev_get_frame_desc_passthrough(struct v4l2_subdev *sd,
-					     struct v4l2_subdev_state *state,
-					     unsigned int pad,
-					     struct v4l2_mbus_frame_desc *fd);
-
-/**
- * v4l2_subdev_get_frame_desc_passthrough() - Helper to implement the subdev
- *	get_frame_desc operation in simple passthrough cases
- * @sd: The subdevice
- * @pad: The source pad index
- * @fd: The mbus frame desc
- *
- * This function locks the subdevice's active state, calls
- * __v4l2_subdev_get_frame_desc_passthrough(), and unlocks the state.
- *
- * This function can be assigned directly as the .get_frame_desc callback in
- * &v4l2_subdev_pad_ops for subdevices that pass streams through without
- * modification. Drivers that need to perform additional work should use
- * __v4l2_subdev_get_frame_desc_passthrough() in their custom
- * .get_frame_desc implementation instead.
- *
- * Return: 0 on success, or a negative error code otherwise.
- */
-int v4l2_subdev_get_frame_desc_passthrough(struct v4l2_subdev *sd,
-					   unsigned int pad,
-					   struct v4l2_mbus_frame_desc *fd);
 
 #endif /* CONFIG_VIDEO_V4L2_SUBDEV_API */
 

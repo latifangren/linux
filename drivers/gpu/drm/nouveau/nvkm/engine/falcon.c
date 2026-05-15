@@ -93,13 +93,13 @@ nvkm_falcon_intr(struct nvkm_engine *engine)
 }
 
 static int
-nvkm_falcon_fini(struct nvkm_engine *engine, enum nvkm_suspend_state suspend)
+nvkm_falcon_fini(struct nvkm_engine *engine, bool suspend)
 {
 	struct nvkm_falcon *falcon = nvkm_falcon(engine);
 	struct nvkm_device *device = falcon->engine.subdev.device;
 	const u32 base = falcon->addr;
 
-	if (suspend == NVKM_POWEROFF) {
+	if (!suspend) {
 		nvkm_memory_unref(&falcon->core);
 		if (falcon->external) {
 			vfree(falcon->data.data);
@@ -341,7 +341,7 @@ nvkm_falcon_new_(const struct nvkm_falcon_func *func, struct nvkm_device *device
 {
 	struct nvkm_falcon *falcon;
 
-	if (!(falcon = kzalloc_obj(*falcon)))
+	if (!(falcon = kzalloc(sizeof(*falcon), GFP_KERNEL)))
 		return -ENOMEM;
 	falcon->func = func;
 	falcon->addr = addr;

@@ -10,7 +10,8 @@
  *		Ursula Braun <ursula.braun@de.ibm.com>
  */
 
-#define pr_fmt(fmt) "af_iucv: " fmt
+#define KMSG_COMPONENT "af_iucv"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/filter.h>
 #include <linux/module.h>
@@ -27,7 +28,6 @@
 #include <linux/poll.h>
 #include <linux/security.h>
 #include <net/sock.h>
-#include <asm/machine.h>
 #include <asm/ebcdic.h>
 #include <asm/cpcmd.h>
 #include <linux/kmod.h>
@@ -127,8 +127,6 @@ static inline void low_nmcpy(unsigned char *dst, char *src)
  * if the socket data len is > 7, the function returns 8.
  *
  * Use this function to allocate socket buffers to store iucv message data.
- *
- * Returns: Length of the IUCV message.
  */
 static inline size_t iucv_msg_length(struct iucv_message *msg)
 {
@@ -147,7 +145,7 @@ static inline size_t iucv_msg_length(struct iucv_message *msg)
  * @state:	first iucv sk state
  * @state2:	second iucv sk state
  *
- * Returns: true if the socket is either in the first or second state.
+ * Returns true if the socket in either in the first or second state.
  */
 static int iucv_sock_in_state(struct sock *sk, int state, int state2)
 {
@@ -158,9 +156,9 @@ static int iucv_sock_in_state(struct sock *sk, int state, int state2)
  * iucv_below_msglim() - function to check if messages can be sent
  * @sk:		sock structure
  *
- * Returns: true, if either the socket is not connected (no iucv path for
- * checking the message limit) or if the send queue length is lower
- * than the message limit.
+ * Returns true if the send queue length is lower than the message limit.
+ * Always returns true if the socket is not connected (no iucv path for
+ * checking the message limit).
  */
 static inline int iucv_below_msglim(struct sock *sk)
 {
@@ -554,17 +552,16 @@ static void __iucv_auto_name(struct iucv_sock *iucv)
 {
 	char name[12];
 
-	scnprintf(name, sizeof(name),
-		  "%08x", atomic_inc_return(&iucv_sk_list.autobind_name));
+	sprintf(name, "%08x", atomic_inc_return(&iucv_sk_list.autobind_name));
 	while (__iucv_get_sock_by_name(name)) {
-		scnprintf(name, sizeof(name), "%08x",
-			  atomic_inc_return(&iucv_sk_list.autobind_name));
+		sprintf(name, "%08x",
+			atomic_inc_return(&iucv_sk_list.autobind_name));
 	}
 	memcpy(iucv->src_name, name, 8);
 }
 
 /* Bind an unbound socket */
-static int iucv_sock_bind(struct socket *sock, struct sockaddr_unsized *addr,
+static int iucv_sock_bind(struct socket *sock, struct sockaddr *addr,
 			  int addr_len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_iucv *, sa, addr);
@@ -669,7 +666,7 @@ static int iucv_sock_autobind(struct sock *sk)
 	return err;
 }
 
-static int afiucv_path_connect(struct socket *sock, struct sockaddr_unsized *addr)
+static int afiucv_path_connect(struct socket *sock, struct sockaddr *addr)
 {
 	DECLARE_SOCKADDR(struct sockaddr_iucv *, sa, addr);
 	struct sock *sk = sock->sk;
@@ -715,7 +712,7 @@ done:
 }
 
 /* Connect an unconnected socket */
-static int iucv_sock_connect(struct socket *sock, struct sockaddr_unsized *addr,
+static int iucv_sock_connect(struct socket *sock, struct sockaddr *addr,
 			     int alen, int flags)
 {
 	DECLARE_SOCKADDR(struct sockaddr_iucv *, sa, addr);
@@ -885,7 +882,7 @@ static int iucv_sock_getname(struct socket *sock, struct sockaddr *addr,
  * list and the socket data len at index 7 (last byte).
  * See also iucv_msg_length().
  *
- * Returns: the return code from the iucv_message_send() call.
+ * Returns the error code from the iucv_message_send() call.
  */
 static int iucv_send_iprm(struct iucv_path *path, struct iucv_message *msg,
 			  struct sk_buff *skb)
@@ -1189,7 +1186,7 @@ static void iucv_process_message(struct sock *sk, struct sk_buff *skb,
 
 	IUCV_SKB_CB(skb)->offset = 0;
 	if (sk_filter(sk, skb)) {
-		sk_drops_inc(sk);	/* skb rejected by filter */
+		atomic_inc(&sk->sk_drops);	/* skb rejected by filter */
 		kfree_skb(skb);
 		return;
 	}
@@ -1721,7 +1718,7 @@ static void iucv_callback_rx(struct iucv_path *path, struct iucv_message *msg)
 	goto out_unlock;
 
 save_message:
-	save_msg = kzalloc_obj(struct sock_msg_q, GFP_ATOMIC | GFP_DMA);
+	save_msg = kzalloc(sizeof(struct sock_msg_q), GFP_ATOMIC | GFP_DMA);
 	if (!save_msg)
 		goto out_unlock;
 	save_msg->path = path;
@@ -2013,7 +2010,7 @@ static int afiucv_hs_callback_rx(struct sock *sk, struct sk_buff *skb)
 	skb_reset_network_header(skb);
 	IUCV_SKB_CB(skb)->offset = 0;
 	if (sk_filter(sk, skb)) {
-		sk_drops_inc(sk);	/* skb rejected by filter */
+		atomic_inc(&sk->sk_drops);	/* skb rejected by filter */
 		kfree_skb(skb);
 		return NET_RX_SUCCESS;
 	}
@@ -2275,7 +2272,7 @@ static int __init afiucv_init(void)
 {
 	int err;
 
-	if (machine_is_vm() && IS_ENABLED(CONFIG_IUCV)) {
+	if (MACHINE_IS_VM && IS_ENABLED(CONFIG_IUCV)) {
 		cpcmd("QUERY USERID", iucv_userid, sizeof(iucv_userid), &err);
 		if (unlikely(err)) {
 			WARN_ON(err);

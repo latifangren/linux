@@ -11,7 +11,6 @@
 
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_print.h>
 
 #include "framebuffer.h"
 #include "gem.h"
@@ -404,7 +403,7 @@ struct drm_display_mode *psb_intel_crtc_mode_get(struct drm_device *dev,
 		vsync = p->vsync;
 	}
 
-	mode = kzalloc_obj(*mode);
+	mode = kzalloc(sizeof(*mode), GFP_KERNEL);
 	if (!mode)
 		return NULL;
 
@@ -487,7 +486,7 @@ void psb_intel_crtc_init(struct drm_device *dev, int pipe,
 		return;
 
 	gma_crtc->crtc_state =
-		kzalloc_obj(struct psb_intel_crtc_state);
+		kzalloc(sizeof(struct psb_intel_crtc_state), GFP_KERNEL);
 	if (!gma_crtc->crtc_state) {
 		dev_err(dev->dev, "Crtc state error: No memory\n");
 		kfree(gma_crtc);

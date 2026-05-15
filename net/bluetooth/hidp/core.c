@@ -405,7 +405,7 @@ static int hidp_raw_request(struct hid_device *hid, unsigned char reportnum,
 
 static void hidp_idle_timeout(struct timer_list *t)
 {
-	struct hidp_session *session = timer_container_of(session, t, timer);
+	struct hidp_session *session = from_timer(session, t, timer);
 
 	/* The HIDP user-space API only contains calls to add and remove
 	 * devices. There is no way to forward events of any kind. Therefore,
@@ -433,7 +433,7 @@ static void hidp_set_timer(struct hidp_session *session)
 static void hidp_del_timer(struct hidp_session *session)
 {
 	if (session->idle_to > 0)
-		timer_delete_sync(&session->timer);
+		del_timer_sync(&session->timer);
 }
 
 static void hidp_process_report(struct hidp_session *session, int type,
@@ -920,7 +920,7 @@ static int hidp_session_new(struct hidp_session **out, const bdaddr_t *bdaddr,
 	ctrl = bt_sk(ctrl_sock->sk);
 	intr = bt_sk(intr_sock->sk);
 
-	session = kzalloc_obj(*session);
+	session = kzalloc(sizeof(*session), GFP_KERNEL);
 	if (!session)
 		return -ENOMEM;
 
@@ -1033,28 +1033,6 @@ static struct hidp_session *hidp_session_find(const bdaddr_t *bdaddr)
 	up_read(&hidp_session_sem);
 
 	return session;
-}
-
-/*
- * Consume session->conn: clear the member under hidp_session_sem, then
- * l2cap_unregister_user() and l2cap_conn_put() the snapshot outside the
- * sem.  At most one caller wins; later callers see NULL and skip.  The
- * reference is the one hidp_session_new() took via l2cap_conn_get().
- */
-static void hidp_session_unregister_conn(struct hidp_session *session)
-{
-	struct l2cap_conn *conn;
-
-	down_write(&hidp_session_sem);
-	conn = session->conn;
-	if (conn)
-		session->conn = NULL;
-	up_write(&hidp_session_sem);
-
-	if (conn) {
-		l2cap_unregister_user(conn, &session->user);
-		l2cap_conn_put(conn);
-	}
 }
 
 /*
@@ -1333,7 +1311,8 @@ static int hidp_session_thread(void *arg)
 	 * Instead, this call has the same semantics as if user-space tried to
 	 * delete the session.
 	 */
-	hidp_session_unregister_conn(session);
+	if (session->conn)
+		l2cap_unregister_user(session->conn, &session->user);
 
 	hidp_session_put(session);
 
@@ -1439,7 +1418,7 @@ int hidp_connection_del(struct hidp_conndel_req *req)
 				         HIDP_CTRL_VIRTUAL_CABLE_UNPLUG,
 				       NULL, 0);
 	else
-		hidp_session_unregister_conn(session);
+		l2cap_unregister_user(session->conn, &session->user);
 
 	hidp_session_put(session);
 

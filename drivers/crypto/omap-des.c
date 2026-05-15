@@ -19,6 +19,7 @@
 #include <crypto/engine.h>
 #include <crypto/internal/des.h>
 #include <crypto/internal/skcipher.h>
+#include <crypto/scatterwalk.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/err.h>
@@ -32,13 +33,14 @@
 #include <linux/pm_runtime.h>
 #include <linux/scatterlist.h>
 #include <linux/string.h>
-#include <linux/workqueue.h>
 
 #include "omap-crypto.h"
 
 #define DST_MAXBURST			2
 
 #define DES_BLOCK_WORDS		(DES_BLOCK_SIZE >> 2)
+
+#define _calc_walked(inout) (dd->inout##_walk.offset - dd->inout##_sg->offset)
 
 #define DES_REG_KEY(dd, x)		((dd)->pdata->key_ofs - \
 						((x ^ 0x01) * 0x04))
@@ -131,7 +133,7 @@ struct omap_des_dev {
 	unsigned long		flags;
 	int			err;
 
-	struct work_struct	done_task;
+	struct tasklet_struct	done_task;
 
 	struct skcipher_request	*req;
 	struct crypto_engine		*engine;
@@ -150,8 +152,8 @@ struct omap_des_dev {
 	struct scatterlist		out_sgl;
 	struct scatterlist		*orig_out;
 
-	unsigned int		in_sg_offset;
-	unsigned int		out_sg_offset;
+	struct scatter_walk		in_walk;
+	struct scatter_walk		out_walk;
 	struct dma_chan		*dma_lch_in;
 	struct dma_chan		*dma_lch_out;
 	int			in_sg_len;
@@ -326,7 +328,7 @@ static void omap_des_dma_out_callback(void *data)
 	struct omap_des_dev *dd = data;
 
 	/* dma_lch_out - completed */
-	queue_work(system_bh_wq, &dd->done_task);
+	tasklet_schedule(&dd->done_task);
 }
 
 static int omap_des_dma_init(struct omap_des_dev *dd)
@@ -377,8 +379,8 @@ static int omap_des_crypt_dma(struct crypto_tfm *tfm,
 	int ret;
 
 	if (dd->pio_only) {
-		dd->in_sg_offset = 0;
-		dd->out_sg_offset = 0;
+		scatterwalk_start(&dd->in_walk, dd->in_sg);
+		scatterwalk_start(&dd->out_walk, dd->out_sg);
 
 		/* Enable DATAIN interrupt and let it take
 		   care of the rest */
@@ -490,6 +492,7 @@ static void omap_des_finish_req(struct omap_des_dev *dd, int err)
 
 	crypto_finalize_skcipher_request(dd->engine, req, err);
 
+	pm_runtime_mark_last_busy(dd->dev);
 	pm_runtime_put_autosuspend(dd->dev);
 }
 
@@ -581,9 +584,9 @@ static int omap_des_crypt_req(struct crypto_engine *engine,
 	       omap_des_crypt_dma_start(dd);
 }
 
-static void omap_des_done_task(struct work_struct *t)
+static void omap_des_done_task(unsigned long data)
 {
-	struct omap_des_dev *dd = from_work(dd, t, done_task);
+	struct omap_des_dev *dd = (struct omap_des_dev *)data;
 	int i;
 
 	pr_debug("enter done_task\n");
@@ -833,18 +836,21 @@ static irqreturn_t omap_des_irq(int irq, void *dev_id)
 
 		BUG_ON(!dd->in_sg);
 
-		BUG_ON(dd->in_sg_offset > dd->in_sg->length);
+		BUG_ON(_calc_walked(in) > dd->in_sg->length);
 
-		src = sg_virt(dd->in_sg) + dd->in_sg_offset;
+		src = sg_virt(dd->in_sg) + _calc_walked(in);
 
 		for (i = 0; i < DES_BLOCK_WORDS; i++) {
 			omap_des_write(dd, DES_REG_DATA_N(dd, i), *src);
-			dd->in_sg_offset += 4;
-			if (dd->in_sg_offset == dd->in_sg->length) {
+
+			scatterwalk_advance(&dd->in_walk, 4);
+			if (dd->in_sg->length == _calc_walked(in)) {
 				dd->in_sg = sg_next(dd->in_sg);
 				if (dd->in_sg) {
-					dd->in_sg_offset = 0;
-					src = sg_virt(dd->in_sg);
+					scatterwalk_start(&dd->in_walk,
+							  dd->in_sg);
+					src = sg_virt(dd->in_sg) +
+					      _calc_walked(in);
 				}
 			} else {
 				src++;
@@ -863,18 +869,20 @@ static irqreturn_t omap_des_irq(int irq, void *dev_id)
 
 		BUG_ON(!dd->out_sg);
 
-		BUG_ON(dd->out_sg_offset > dd->out_sg->length);
+		BUG_ON(_calc_walked(out) > dd->out_sg->length);
 
-		dst = sg_virt(dd->out_sg) + dd->out_sg_offset;
+		dst = sg_virt(dd->out_sg) + _calc_walked(out);
 
 		for (i = 0; i < DES_BLOCK_WORDS; i++) {
 			*dst = omap_des_read(dd, DES_REG_DATA_N(dd, i));
-			dd->out_sg_offset += 4;
-			if (dd->out_sg_offset == dd->out_sg->length) {
+			scatterwalk_advance(&dd->out_walk, 4);
+			if (dd->out_sg->length == _calc_walked(out)) {
 				dd->out_sg = sg_next(dd->out_sg);
 				if (dd->out_sg) {
-					dd->out_sg_offset = 0;
-					dst = sg_virt(dd->out_sg);
+					scatterwalk_start(&dd->out_walk,
+							  dd->out_sg);
+					dst = sg_virt(dd->out_sg) +
+					      _calc_walked(out);
 				}
 			} else {
 				dst++;
@@ -891,7 +899,7 @@ static irqreturn_t omap_des_irq(int irq, void *dev_id)
 
 		if (!dd->total)
 			/* All bytes read! */
-			queue_work(system_bh_wq, &dd->done_task);
+			tasklet_schedule(&dd->done_task);
 		else
 			/* Enable DATA_IN interrupt for next block */
 			omap_des_write(dd, DES_REG_IRQ_ENABLE(dd), 0x2);
@@ -987,7 +995,7 @@ static int omap_des_probe(struct platform_device *pdev)
 		 (reg & dd->pdata->major_mask) >> dd->pdata->major_shift,
 		 (reg & dd->pdata->minor_mask) >> dd->pdata->minor_shift);
 
-	INIT_WORK(&dd->done_task, omap_des_done_task);
+	tasklet_init(&dd->done_task, omap_des_done_task, (unsigned long)dd);
 
 	err = omap_des_dma_init(dd);
 	if (err == -EPROBE_DEFER) {
@@ -1054,7 +1062,7 @@ err_engine:
 
 	omap_des_dma_cleanup(dd);
 err_irq:
-	cancel_work_sync(&dd->done_task);
+	tasklet_kill(&dd->done_task);
 err_get:
 	pm_runtime_disable(dev);
 err_res:
@@ -1078,7 +1086,7 @@ static void omap_des_remove(struct platform_device *pdev)
 			crypto_engine_unregister_skcipher(
 					&dd->pdata->algs_info[i].algs_list[j]);
 
-	cancel_work_sync(&dd->done_task);
+	tasklet_kill(&dd->done_task);
 	omap_des_dma_cleanup(dd);
 	pm_runtime_disable(dd->dev);
 }

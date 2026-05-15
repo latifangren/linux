@@ -55,7 +55,7 @@
 
 	iio-hwmon {
 		compatible = "iio-hwmon";
-		io-channels = <&vdiv_vaccu 0>;
+		io-channels = <&vdiv_vaccu>;
 	};
 
 	keys {
@@ -256,7 +256,7 @@
 			};
 		};
 
-		touch-0-thermal {
+		touch-thermal0 {
 			polling-delay = <20000>;
 			polling-delay-passive = <0>;
 			thermal-sensors = <&touch_temp0>;
@@ -270,7 +270,7 @@
 			};
 		};
 
-		touch-1-thermal {
+		touch-thermal1 {
 			polling-delay = <20000>;
 			polling-delay-passive = <0>;
 			thermal-sensors = <&touch_temp1>;
@@ -318,7 +318,7 @@
 		io-channels = <&adc_ts 2>;
 		output-ohms = <2500>;
 		full-ohms = <64000>;
-		#io-channel-cells = <1>;
+		#io-channel-cells = <0>;
 	};
 };
 
@@ -507,7 +507,7 @@
 		>;
 	};
 
-	pinctrl_can1phy: can1phygrp {
+	pinctrl_can1phy: can1phy {
 		fsl,pins = <
 			/* CAN1_SR */
 			MX6QDL_PAD_KEY_COL3__GPIO4_IO12		0x13070

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008, 2009 open80211s Ltd.
- * Copyright (C) 2019, 2021-2023, 2025-2026 Intel Corporation
+ * Copyright (C) 2019, 2021-2023 Intel Corporation
  * Author:     Luis Carlos Cobo <luisca@cozybit.com>
  */
 
@@ -105,11 +105,12 @@ static int mesh_path_sel_frame_tx(enum mpath_frame_type action, u8 flags,
 				  u32 lifetime, u32 metric, u32 preq_id,
 				  struct ieee80211_sub_if_data *sdata)
 {
-	int hdr_len = IEEE80211_MIN_ACTION_SIZE(mesh_action);
 	struct ieee80211_local *local = sdata->local;
 	struct sk_buff *skb;
 	struct ieee80211_mgmt *mgmt;
 	u8 *pos, ie_len;
+	int hdr_len = offsetofend(struct ieee80211_mgmt,
+				  u.action.u.mesh_action);
 
 	skb = dev_alloc_skb(local->tx_headroom +
 			    hdr_len +
@@ -126,7 +127,8 @@ static int mesh_path_sel_frame_tx(enum mpath_frame_type action, u8 flags,
 	/* BSSID == SA */
 	memcpy(mgmt->bssid, sdata->vif.addr, ETH_ALEN);
 	mgmt->u.action.category = WLAN_CATEGORY_MESH_ACTION;
-	mgmt->u.action.action_code = WLAN_MESH_ACTION_HWMP_PATH_SELECTION;
+	mgmt->u.action.u.mesh_action.action_code =
+					WLAN_MESH_ACTION_HWMP_PATH_SELECTION;
 
 	switch (action) {
 	case MPATH_PREQ:
@@ -218,12 +220,12 @@ static void prepare_frame_for_deferred_tx(struct ieee80211_sub_if_data *sdata,
 /**
  * mesh_path_error_tx - Sends a PERR mesh management frame
  *
- * @sdata: local mesh subif
  * @ttl: allowed remaining hops
  * @target: broken destination
  * @target_sn: SN of the broken destination
  * @target_rcode: reason code for this PERR
  * @ra: node this frame is addressed to
+ * @sdata: local mesh subif
  *
  * Note: This function may be called with driver locks taken that the driver
  * also acquires in the TX path.  To avoid a deadlock we don't transmit the
@@ -235,12 +237,13 @@ int mesh_path_error_tx(struct ieee80211_sub_if_data *sdata,
 		       u8 ttl, const u8 *target, u32 target_sn,
 		       u16 target_rcode, const u8 *ra)
 {
-	int hdr_len = IEEE80211_MIN_ACTION_SIZE(mesh_action);
 	struct ieee80211_local *local = sdata->local;
 	struct sk_buff *skb;
 	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
 	struct ieee80211_mgmt *mgmt;
 	u8 *pos, ie_len;
+	int hdr_len = offsetofend(struct ieee80211_mgmt,
+				  u.action.u.mesh_action);
 
 	if (time_before(jiffies, ifmsh->next_perr))
 		return -EAGAIN;
@@ -262,7 +265,8 @@ int mesh_path_error_tx(struct ieee80211_sub_if_data *sdata,
 	/* BSSID == SA */
 	memcpy(mgmt->bssid, sdata->vif.addr, ETH_ALEN);
 	mgmt->u.action.category = WLAN_CATEGORY_MESH_ACTION;
-	mgmt->u.action.action_code = WLAN_MESH_ACTION_HWMP_PATH_SELECTION;
+	mgmt->u.action.u.mesh_action.action_code =
+					WLAN_MESH_ACTION_HWMP_PATH_SELECTION;
 	ie_len = 15;
 	pos = skb_put(skb, 2 + ie_len);
 	*pos++ = WLAN_EID_PERR;
@@ -934,7 +938,7 @@ void mesh_rx_path_sel_frame(struct ieee80211_sub_if_data *sdata,
 	struct sta_info *sta;
 
 	/* need action_code */
-	if (len < IEEE80211_MIN_ACTION_SIZE(mesh_action))
+	if (len < IEEE80211_MIN_ACTION_SIZE + 1)
 		return;
 
 	rcu_read_lock();
@@ -945,12 +949,9 @@ void mesh_rx_path_sel_frame(struct ieee80211_sub_if_data *sdata,
 	}
 	rcu_read_unlock();
 
-	baselen = mgmt->u.action.mesh_action.variable - (u8 *)mgmt;
-	elems = ieee802_11_parse_elems(mgmt->u.action.mesh_action.variable,
-				       len - baselen,
-				       IEEE80211_FTYPE_MGMT |
-				       IEEE80211_STYPE_ACTION,
-				       NULL);
+	baselen = (u8 *) mgmt->u.action.u.mesh_action.variable - (u8 *) mgmt;
+	elems = ieee802_11_parse_elems(mgmt->u.action.u.mesh_action.variable,
+				       len - baselen, false, NULL);
 	if (!elems)
 		return;
 
@@ -1001,7 +1002,7 @@ static void mesh_queue_preq(struct mesh_path *mpath, u8 flags)
 	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
 	struct mesh_preq_queue *preq_node;
 
-	preq_node = kmalloc_obj(struct mesh_preq_queue, GFP_ATOMIC);
+	preq_node = kmalloc(sizeof(struct mesh_preq_queue), GFP_ATOMIC);
 	if (!preq_node) {
 		mhwmp_dbg(sdata, "could not allocate PREQ node\n");
 		return;
@@ -1144,8 +1145,8 @@ enddiscovery:
 /**
  * mesh_nexthop_resolve - lookup next hop; conditionally start path discovery
  *
- * @sdata: network subif the frame will be sent through
  * @skb: 802.11 frame to be sent
+ * @sdata: network subif the frame will be sent through
  *
  * Lookup next hop for given skb and start path discovery if no
  * forwarding information is found.
@@ -1252,8 +1253,8 @@ void mesh_path_refresh(struct ieee80211_sub_if_data *sdata,
  * this function is considered "using" the associated mpath, so preempt a path
  * refresh if this mpath expires soon.
  *
- * @sdata: network subif the frame will be sent through
  * @skb: 802.11 frame to be sent
+ * @sdata: network subif the frame will be sent through
  *
  * Returns: 0 if the next hop was found. Nonzero otherwise.
  */
@@ -1291,7 +1292,7 @@ int mesh_nexthop_lookup(struct ieee80211_sub_if_data *sdata,
 
 void mesh_path_timer(struct timer_list *t)
 {
-	struct mesh_path *mpath = timer_container_of(mpath, t, timer);
+	struct mesh_path *mpath = from_timer(mpath, t, timer);
 	struct ieee80211_sub_if_data *sdata = mpath->sdata;
 	int ret;
 

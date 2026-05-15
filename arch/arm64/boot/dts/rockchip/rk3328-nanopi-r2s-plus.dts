@@ -7,8 +7,7 @@
  */
 
 /dts-v1/;
-
-#include "rk3328-nanopi-r2s.dtsi"
+#include "rk3328-nanopi-r2s.dts"
 
 / {
 	compatible = "friendlyarm,nanopi-r2s-plus", "rockchip,rk3328";

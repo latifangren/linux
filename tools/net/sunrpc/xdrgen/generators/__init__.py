@@ -2,7 +2,7 @@
 
 """Define a base code generator class"""
 
-from pathlib import Path
+import sys
 from jinja2 import Environment, FileSystemLoader, Template
 
 from xdr_ast import _XdrAst, Specification, _RpcProgram, _XdrTypeSpecifier
@@ -14,11 +14,8 @@ def create_jinja2_environment(language: str, xdr_type: str) -> Environment:
     """Open a set of templates based on output language"""
     match language:
         case "C":
-            templates_dir = (
-                Path(__file__).parent.parent / "templates" / language / xdr_type
-            )
             environment = Environment(
-                loader=FileSystemLoader(templates_dir),
+                loader=FileSystemLoader(sys.path[0] + "/templates/C/" + xdr_type + "/"),
                 trim_blocks=True,
                 lstrip_blocks=True,
             )
@@ -52,15 +49,15 @@ def find_xdr_program_name(root: Specification) -> str:
 
 def header_guard_infix(filename: str) -> str:
     """Extract the header guard infix from the specification filename"""
-    return Path(filename).stem.upper()
+    basename = filename.split("/")[-1]
+    program = basename.replace(".x", "")
+    return program.upper()
 
 
 def kernel_c_type(spec: _XdrTypeSpecifier) -> str:
     """Return name of C type"""
     builtin_native_c_type = {
         "bool": "bool",
-        "short": "s16",
-        "unsigned_short": "u16",
         "int": "s32",
         "unsigned_int": "u32",
         "long": "s32",
@@ -115,7 +112,3 @@ class SourceGenerator:
     def emit_encoder(self, node: _XdrAst) -> None:
         """Emit one encoder function for this XDR type"""
         raise NotImplementedError("Encoder generation not supported")
-
-    def emit_maxsize(self, node: _XdrAst) -> None:
-        """Emit one maxsize macro for this XDR type"""
-        raise NotImplementedError("Maxsize macro generation not supported")

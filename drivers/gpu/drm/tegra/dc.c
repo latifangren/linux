@@ -27,7 +27,6 @@
 #include <drm/drm_debugfs.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
-#include <drm/drm_print.h>
 #include <drm/drm_vblank.h>
 
 #include "dc.h"
@@ -812,7 +811,7 @@ static struct drm_plane *tegra_primary_plane_create(struct drm_device *drm,
 	const u32 *formats;
 	int err;
 
-	plane = kzalloc_obj(*plane);
+	plane = kzalloc(sizeof(*plane), GFP_KERNEL);
 	if (!plane)
 		return ERR_PTR(-ENOMEM);
 
@@ -1026,15 +1025,14 @@ static void tegra_cursor_atomic_disable(struct drm_plane *plane,
 	tegra_dc_writel(dc, value, DC_DISP_DISP_WIN_OPTIONS);
 }
 
-static int tegra_cursor_atomic_async_check(struct drm_plane *plane, struct drm_atomic_state *state,
-					   bool flip)
+static int tegra_cursor_atomic_async_check(struct drm_plane *plane, struct drm_atomic_state *state)
 {
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *crtc_state;
 	int min_scale, max_scale;
 	int err;
 
-	crtc_state = drm_atomic_get_new_crtc_state(state, new_state->crtc);
+	crtc_state = drm_atomic_get_existing_crtc_state(state, new_state->crtc);
 	if (WARN_ON(!crtc_state))
 		return -EINVAL;
 
@@ -1115,7 +1113,7 @@ static struct drm_plane *tegra_dc_cursor_plane_create(struct drm_device *drm,
 	const u32 *formats;
 	int err;
 
-	plane = kzalloc_obj(*plane);
+	plane = kzalloc(sizeof(*plane), GFP_KERNEL);
 	if (!plane)
 		return ERR_PTR(-ENOMEM);
 
@@ -1263,7 +1261,7 @@ static struct drm_plane *tegra_dc_overlay_plane_create(struct drm_device *drm,
 	const u32 *formats;
 	int err;
 
-	plane = kzalloc_obj(*plane);
+	plane = kzalloc(sizeof(*plane), GFP_KERNEL);
 	if (!plane)
 		return ERR_PTR(-ENOMEM);
 
@@ -1389,7 +1387,7 @@ static void tegra_dc_destroy(struct drm_crtc *crtc)
 
 static void tegra_crtc_reset(struct drm_crtc *crtc)
 {
-	struct tegra_dc_state *state = kzalloc_obj(*state);
+	struct tegra_dc_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
 
 	if (crtc->state)
 		tegra_crtc_atomic_destroy_state(crtc, crtc->state);
@@ -1406,7 +1404,7 @@ tegra_crtc_atomic_duplicate_state(struct drm_crtc *crtc)
 	struct tegra_dc_state *state = to_dc_state(crtc->state);
 	struct tegra_dc_state *copy;
 
-	copy = kmalloc_obj(*copy);
+	copy = kmalloc(sizeof(*copy), GFP_KERNEL);
 	if (!copy)
 		return NULL;
 
@@ -3296,5 +3294,5 @@ struct platform_driver tegra_dc_driver = {
 		.of_match_table = tegra_dc_of_match,
 	},
 	.probe = tegra_dc_probe,
-	.remove = tegra_dc_remove,
+	.remove_new = tegra_dc_remove,
 };

@@ -12,7 +12,6 @@
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_plane_helper.h>
-#include <drm/drm_print.h>
 
 #include "armada_crtc.h"
 #include "armada_drm.h"
@@ -310,7 +309,7 @@ static void armada_overlay_reset(struct drm_plane *plane)
 	kfree(plane->state);
 	plane->state = NULL;
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (state) {
 		state->colorkey_yr = 0xfefefe00;
 		state->colorkey_ug = 0x01010100;
@@ -550,7 +549,7 @@ int armada_overlay_plane_create(struct drm_device *dev, unsigned long crtcs)
 	if (ret)
 		return ret;
 
-	overlay = kzalloc_obj(*overlay);
+	overlay = kzalloc(sizeof(*overlay), GFP_KERNEL);
 	if (!overlay)
 		return -ENOMEM;
 

@@ -29,7 +29,7 @@ static int esw_acl_ingress_prio_tag_create(struct mlx5_eswitch *esw,
 	 * required, allow
 	 * Unmatched traffic is allowed by default
 	 */
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 

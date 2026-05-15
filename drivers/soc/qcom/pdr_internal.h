@@ -4,6 +4,9 @@
 
 #include <linux/soc/qcom/pdr.h>
 
+#define SERVREG_LOCATOR_SERVICE				0x40
+#define SERVREG_NOTIFIER_SERVICE			0x42
+
 #define SERVREG_REGISTER_LISTENER_REQ			0x20
 #define SERVREG_GET_DOMAIN_LIST_REQ			0x21
 #define SERVREG_STATE_UPDATED_IND_ID			0x22
@@ -88,6 +91,7 @@ struct servreg_loc_pfr_resp {
 	struct qmi_response_type_v01 rsp;
 };
 
+extern const struct qmi_elem_info servreg_location_entry_ei[];
 extern const struct qmi_elem_info servreg_get_domain_list_req_ei[];
 extern const struct qmi_elem_info servreg_get_domain_list_resp_ei[];
 extern const struct qmi_elem_info servreg_register_listener_req_ei[];

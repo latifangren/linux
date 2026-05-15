@@ -429,7 +429,7 @@ struct imgu_mmu_info *imgu_mmu_init(struct device *parent, void __iomem *base)
 	struct imgu_mmu *mmu;
 	u32 pteval;
 
-	mmu = kzalloc_obj(*mmu);
+	mmu = kzalloc(sizeof(*mmu), GFP_KERNEL);
 	if (!mmu)
 		return ERR_PTR(-ENOMEM);
 

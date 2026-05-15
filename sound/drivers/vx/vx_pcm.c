@@ -414,7 +414,7 @@ static int vx_alloc_pipe(struct vx_core *chip, int capture,
 		return err;
 
 	/* initialize the pipe record */
-	pipe = kzalloc_obj(*pipe);
+	pipe = kzalloc(sizeof(*pipe), GFP_KERNEL);
 	if (! pipe) {
 		/* release the pipe */
 		vx_init_rmh(&rmh, CMD_FREE_PIPE);
@@ -630,11 +630,12 @@ static int vx_pcm_playback_transfer_chunk(struct vx_core *chip,
 	/* we don't need irqsave here, because this function
 	 * is called from either trigger callback or irq handler
 	 */
-	guard(mutex)(&chip->lock);
+	mutex_lock(&chip->lock);
 	vx_pseudo_dma_write(chip, runtime, pipe, size);
 	err = vx_notify_end_of_buffer(chip, pipe);
 	/* disconnect the host, SIZE_HBUF command always switches to the stream mode */
 	vx_send_rih_nolock(chip, IRQ_CONNECT_STREAM_NEXT);
+	mutex_unlock(&chip->lock);
 	return err;
 }
 
@@ -1154,10 +1155,10 @@ static int vx_init_audio_io(struct vx_core *chip)
 	chip->audio_info = rmh.Stat[1];
 
 	/* allocate pipes */
-	chip->playback_pipes = kzalloc_objs(struct vx_pipe *, chip->audio_outs);
+	chip->playback_pipes = kcalloc(chip->audio_outs, sizeof(struct vx_pipe *), GFP_KERNEL);
 	if (!chip->playback_pipes)
 		return -ENOMEM;
-	chip->capture_pipes = kzalloc_objs(struct vx_pipe *, chip->audio_ins);
+	chip->capture_pipes = kcalloc(chip->audio_ins, sizeof(struct vx_pipe *), GFP_KERNEL);
 	if (!chip->capture_pipes) {
 		kfree(chip->playback_pipes);
 		return -ENOMEM;
@@ -1225,7 +1226,7 @@ int snd_vx_pcm_new(struct vx_core *chip)
 		pcm->private_free = snd_vx_pcm_free;
 		pcm->info_flags = 0;
 		pcm->nonatomic = true;
-		strscpy(pcm->name, chip->card->shortname);
+		strcpy(pcm->name, chip->card->shortname);
 		chip->pcm[i] = pcm;
 	}
 

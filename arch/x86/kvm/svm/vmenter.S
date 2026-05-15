@@ -52,23 +52,11 @@
 	 * there must not be any returns or indirect branches between this code
 	 * and vmentry.
 	 */
-#ifdef CONFIG_X86_64
-	mov SVM_spec_ctrl(%rdi), %rdx
-	cmp PER_CPU_VAR(x86_spec_ctrl_current), %rdx
+	movl SVM_spec_ctrl(%_ASM_DI), %eax
+	cmp PER_CPU_VAR(x86_spec_ctrl_current), %eax
 	je 801b
-	movl %edx, %eax
-	shr $32, %rdx
-#else
-	mov SVM_spec_ctrl(%edi), %eax
-	mov PER_CPU_VAR(x86_spec_ctrl_current), %ecx
-	xor %eax, %ecx
-	mov SVM_spec_ctrl + 4(%edi), %edx
-	mov PER_CPU_VAR(x86_spec_ctrl_current + 4), %esi
-	xor %edx, %esi
-	or %esi, %ecx
-	je 801b
-#endif
 	mov $MSR_IA32_SPEC_CTRL, %ecx
+	xor %edx, %edx
 	wrmsr
 	jmp 801b
 .endm
@@ -93,31 +81,17 @@
 	jnz 998f
 	rdmsr
 	movl %eax, SVM_spec_ctrl(%_ASM_DI)
-	movl %edx, SVM_spec_ctrl + 4(%_ASM_DI)
 998:
+
 	/* Now restore the host value of the MSR if different from the guest's.  */
-#ifdef CONFIG_X86_64
-	mov PER_CPU_VAR(x86_spec_ctrl_current), %rdx
-	cmp SVM_spec_ctrl(%rdi), %rdx
+	movl PER_CPU_VAR(x86_spec_ctrl_current), %eax
+	cmp SVM_spec_ctrl(%_ASM_DI), %eax
 	je 901b
-	movl %edx, %eax
-	shr $32, %rdx
-#else
-	mov PER_CPU_VAR(x86_spec_ctrl_current), %eax
-	mov SVM_spec_ctrl(%edi), %esi
-	xor %eax, %esi
-	mov PER_CPU_VAR(x86_spec_ctrl_current + 4), %edx
-	mov SVM_spec_ctrl + 4(%edi), %edi
-	xor %edx, %edi
-	or %edi, %esi
-	je 901b
-#endif
+	xor %edx, %edx
 	wrmsr
 	jmp 901b
 .endm
 
-#define SVM_CLEAR_CPU_BUFFERS \
-	ALTERNATIVE "", __CLEAR_CPU_BUFFERS, X86_FEATURE_CLEAR_CPU_BUF_VM
 
 /**
  * __svm_vcpu_run - Run a vCPU via a transition to SVM guest mode
@@ -160,7 +134,7 @@ SYM_FUNC_START(__svm_vcpu_run)
 	mov %_ASM_ARG1, %_ASM_DI
 .endif
 
-	/* Clobbers RAX, RCX, RDX (and ESI on 32-bit), consumes RDI (@svm). */
+	/* Clobbers RAX, RCX, RDX.  */
 	RESTORE_GUEST_SPEC_CTRL
 
 	/*
@@ -196,7 +170,7 @@ SYM_FUNC_START(__svm_vcpu_run)
 	mov VCPU_RDI(%_ASM_DI), %_ASM_DI
 
 	/* Clobbers EFLAGS.ZF */
-	SVM_CLEAR_CPU_BUFFERS
+	VM_CLEAR_CPU_BUFFERS
 
 	/* Enter guest mode */
 3:	vmrun %_ASM_AX
@@ -237,10 +211,7 @@ SYM_FUNC_START(__svm_vcpu_run)
 	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
 	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_VMEXIT
 
-	/*
-	 * Clobbers RAX, RCX, RDX (and ESI, EDI on 32-bit), consumes RDI (@svm)
-	 * and RSP (pointer to @spec_ctrl_intercepted).
-	 */
+	/* Clobbers RAX, RCX, RDX.  */
 	RESTORE_HOST_SPEC_CTRL
 
 	/*
@@ -298,16 +269,16 @@ SYM_FUNC_START(__svm_vcpu_run)
 	RESTORE_GUEST_SPEC_CTRL_BODY
 	RESTORE_HOST_SPEC_CTRL_BODY (%_ASM_SP)
 
-10:	cmpb $0, _ASM_RIP(virt_rebooting)
+10:	cmpb $0, _ASM_RIP(kvm_rebooting)
 	jne 2b
 	ud2
-30:	cmpb $0, _ASM_RIP(virt_rebooting)
+30:	cmpb $0, _ASM_RIP(kvm_rebooting)
 	jne 4b
 	ud2
-50:	cmpb $0, _ASM_RIP(virt_rebooting)
+50:	cmpb $0, _ASM_RIP(kvm_rebooting)
 	jne 6b
 	ud2
-70:	cmpb $0, _ASM_RIP(virt_rebooting)
+70:	cmpb $0, _ASM_RIP(kvm_rebooting)
 	jne 8b
 	ud2
 
@@ -360,7 +331,7 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	mov %rdi, SEV_ES_RDI (%rdx)
 	mov %rsi, SEV_ES_RSI (%rdx)
 
-	/* Clobbers RAX, RCX, and RDX (@hostsa), consumes RDI (@svm). */
+	/* Clobbers RAX, RCX, RDX (@hostsa). */
 	RESTORE_GUEST_SPEC_CTRL
 
 	/* Get svm->current_vmcb->pa into RAX. */
@@ -368,7 +339,7 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	mov KVM_VMCB_pa(%rax), %rax
 
 	/* Clobbers EFLAGS.ZF */
-	SVM_CLEAR_CPU_BUFFERS
+	VM_CLEAR_CPU_BUFFERS
 
 	/* Enter guest mode */
 1:	vmrun %rax
@@ -394,7 +365,7 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 	RESTORE_GUEST_SPEC_CTRL_BODY
 	RESTORE_HOST_SPEC_CTRL_BODY %sil
 
-3:	cmpb $0, virt_rebooting(%rip)
+3:	cmpb $0, kvm_rebooting(%rip)
 	jne 2b
 	ud2
 

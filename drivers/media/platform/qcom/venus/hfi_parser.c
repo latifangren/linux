@@ -282,7 +282,7 @@ static int hfi_platform_parser(struct venus_core *core, struct venus_inst *inst)
 		return ret;
 
 	if (plat->capabilities)
-		caps = plat->capabilities(core, &entries);
+		caps = plat->capabilities(&entries);
 
 	if (!caps || !entries || !count)
 		return -EINVAL;

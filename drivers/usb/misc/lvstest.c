@@ -260,7 +260,7 @@ static ssize_t get_dev_desc_store(struct device *dev,
 	struct usb_device_descriptor *descriptor;
 	int ret;
 
-	descriptor = kmalloc_obj(*descriptor);
+	descriptor = kmalloc(sizeof(*descriptor), GFP_KERNEL);
 	if (!descriptor)
 		return -ENOMEM;
 

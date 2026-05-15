@@ -16,7 +16,6 @@
 #include <linux/gfp.h>
 #include <linux/jhash.h>
 #include <net/tcp.h>
-#include <net/tcp_ecn.h>
 #include <trace/events/tcp.h>
 
 static DEFINE_SPINLOCK(tcp_cong_list_lock);
@@ -228,7 +227,7 @@ void tcp_assign_congestion_control(struct sock *sk)
 
 	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 	if (ca->flags & TCP_CONG_NEEDS_ECN)
-		INET_ECN_xmit_ect_1_negotiation(sk);
+		INET_ECN_xmit(sk);
 	else
 		INET_ECN_dontxmit(sk);
 }
@@ -258,7 +257,7 @@ static void tcp_reinit_congestion_control(struct sock *sk,
 	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 
 	if (ca->flags & TCP_CONG_NEEDS_ECN)
-		INET_ECN_xmit_ect_1_negotiation(sk);
+		INET_ECN_xmit(sk);
 	else
 		INET_ECN_dontxmit(sk);
 
@@ -271,9 +270,8 @@ void tcp_cleanup_congestion_control(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
-	if (icsk->icsk_ca_initialized && icsk->icsk_ca_ops->release)
+	if (icsk->icsk_ca_ops->release)
 		icsk->icsk_ca_ops->release(sk);
-	icsk->icsk_ca_initialized = 0;
 	bpf_module_put(icsk->icsk_ca_ops, icsk->icsk_ca_ops->owner);
 }
 

@@ -107,7 +107,7 @@ int qed_ooo_alloc(struct qed_hwfn *p_hwfn)
 		return -EINVAL;
 	}
 
-	p_ooo_info = kzalloc_obj(*p_ooo_info);
+	p_ooo_info = kzalloc(sizeof(*p_ooo_info), GFP_KERNEL);
 	if (!p_ooo_info)
 		return -ENOMEM;
 
@@ -118,8 +118,9 @@ int qed_ooo_alloc(struct qed_hwfn *p_hwfn)
 	INIT_LIST_HEAD(&p_ooo_info->ready_buffers_list);
 	INIT_LIST_HEAD(&p_ooo_info->free_isles_list);
 
-	p_ooo_info->p_isles_mem = kzalloc_objs(struct qed_ooo_isle,
-					       max_num_isles);
+	p_ooo_info->p_isles_mem = kcalloc(max_num_isles,
+					  sizeof(struct qed_ooo_isle),
+					  GFP_KERNEL);
 	if (!p_ooo_info->p_isles_mem)
 		goto no_isles_mem;
 
@@ -130,8 +131,9 @@ int qed_ooo_alloc(struct qed_hwfn *p_hwfn)
 	}
 
 	p_ooo_info->p_archipelagos_mem =
-				kzalloc_objs(struct qed_ooo_archipelago,
-					     max_num_archipelagos);
+				kcalloc(max_num_archipelagos,
+					sizeof(struct qed_ooo_archipelago),
+					GFP_KERNEL);
 	if (!p_ooo_info->p_archipelagos_mem)
 		goto no_archipelagos_mem;
 
@@ -139,8 +141,9 @@ int qed_ooo_alloc(struct qed_hwfn *p_hwfn)
 		INIT_LIST_HEAD(&p_ooo_info->p_archipelagos_mem[i].isles_list);
 
 	p_ooo_info->ooo_history.p_cqes =
-				kzalloc_objs(struct ooo_opaque,
-					     QED_MAX_NUM_OOO_HISTORY_ENTRIES);
+				kcalloc(QED_MAX_NUM_OOO_HISTORY_ENTRIES,
+					sizeof(struct ooo_opaque),
+					GFP_KERNEL);
 	if (!p_ooo_info->ooo_history.p_cqes)
 		goto no_history_mem;
 
@@ -180,6 +183,9 @@ void qed_ooo_release_connection_isles(struct qed_hwfn *p_hwfn,
 						    struct qed_ooo_buffer,
 						    list_entry);
 
+			if (!p_buffer)
+				break;
+
 			list_move_tail(&p_buffer->list_entry,
 				       &p_ooo_info->free_buffers_list);
 		}
@@ -211,6 +217,9 @@ void qed_ooo_release_all_isles(struct qed_hwfn *p_hwfn,
 				    list_first_entry(&p_isle->buffers_list,
 						     struct qed_ooo_buffer,
 						     list_entry);
+
+				if (!p_buffer)
+					break;
 
 				list_move_tail(&p_buffer->list_entry,
 					       &p_ooo_info->free_buffers_list);
@@ -245,6 +254,9 @@ void qed_ooo_free(struct qed_hwfn *p_hwfn)
 	while (!list_empty(&p_ooo_info->free_buffers_list)) {
 		p_buffer = list_first_entry(&p_ooo_info->free_buffers_list,
 					    struct qed_ooo_buffer, list_entry);
+
+		if (!p_buffer)
+			break;
 
 		list_del(&p_buffer->list_entry);
 		dma_free_coherent(&p_hwfn->cdev->pdev->dev,

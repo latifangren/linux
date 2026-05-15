@@ -372,7 +372,7 @@ struct iio_poll_func
 	va_list vargs;
 	struct iio_poll_func *pf;
 
-	pf = kmalloc_obj(*pf);
+	pf = kmalloc(sizeof(*pf), GFP_KERNEL);
 	if (!pf)
 		return NULL;
 	va_start(vargs, fmt);
@@ -557,10 +557,14 @@ struct iio_trigger *viio_trigger_alloc(struct device *parent,
 	struct iio_trigger *trig;
 	int i;
 
-	trig = kzalloc_obj(*trig);
+	trig = kzalloc(sizeof(*trig), GFP_KERNEL);
 	if (!trig)
 		return NULL;
 
+	trig->dev.parent = parent;
+	trig->dev.type = &iio_trig_type;
+	trig->dev.bus = &iio_bus_type;
+	device_initialize(&trig->dev);
 	INIT_WORK(&trig->reenable_work, iio_reenable_work_fn);
 
 	mutex_init(&trig->pool_lock);
@@ -587,11 +591,6 @@ struct iio_trigger *viio_trigger_alloc(struct device *parent,
 		irq_modify_status(trig->subirq_base + i,
 				  IRQ_NOREQUEST | IRQ_NOAUTOEN, IRQ_NOPROBE);
 	}
-
-	trig->dev.parent = parent;
-	trig->dev.type = &iio_trig_type;
-	trig->dev.bus = &iio_bus_type;
-	device_initialize(&trig->dev);
 
 	return trig;
 
@@ -635,9 +634,9 @@ void iio_trigger_free(struct iio_trigger *trig)
 }
 EXPORT_SYMBOL(iio_trigger_free);
 
-static void devm_iio_trigger_release(void *trig)
+static void devm_iio_trigger_release(struct device *dev, void *res)
 {
-	iio_trigger_free(trig);
+	iio_trigger_free(*(struct iio_trigger **)res);
 }
 
 /**
@@ -659,20 +658,24 @@ struct iio_trigger *__devm_iio_trigger_alloc(struct device *parent,
 					     struct module *this_mod,
 					     const char *fmt, ...)
 {
-	struct iio_trigger *trig;
+	struct iio_trigger **ptr, *trig;
 	va_list vargs;
-	int ret;
+
+	ptr = devres_alloc(devm_iio_trigger_release, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return NULL;
 
 	/* use raw alloc_dr for kmalloc caller tracing */
 	va_start(vargs, fmt);
 	trig = viio_trigger_alloc(parent, this_mod, fmt, vargs);
 	va_end(vargs);
-	if (!trig)
-		return NULL;
-
-	ret = devm_add_action_or_reset(parent, devm_iio_trigger_release, trig);
-	if (ret)
-		return NULL;
+	if (trig) {
+		*ptr = trig;
+		devres_add(parent, ptr);
+	} else {
+		devres_free(ptr);
+	}
 
 	return trig;
 }

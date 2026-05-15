@@ -73,6 +73,21 @@ static int imx8m_clk_composite_compute_dividers(unsigned long rate,
 	return ret;
 }
 
+static long imx8m_clk_composite_divider_round_rate(struct clk_hw *hw,
+						unsigned long rate,
+						unsigned long *prate)
+{
+	int prediv_value;
+	int div_value;
+
+	imx8m_clk_composite_compute_dividers(rate, *prate,
+						&prediv_value, &div_value);
+	rate = DIV_ROUND_UP(*prate, prediv_value);
+
+	return DIV_ROUND_UP(rate, div_value);
+
+}
+
 static int imx8m_clk_composite_divider_set_rate(struct clk_hw *hw,
 					unsigned long rate,
 					unsigned long parent_rate)
@@ -138,6 +153,7 @@ static int imx8m_divider_determine_rate(struct clk_hw *hw,
 
 static const struct clk_ops imx8m_clk_composite_divider_ops = {
 	.recalc_rate = imx8m_clk_composite_divider_recalc_rate,
+	.round_rate = imx8m_clk_composite_divider_round_rate,
 	.set_rate = imx8m_clk_composite_divider_set_rate,
 	.determine_rate = imx8m_divider_determine_rate,
 };
@@ -231,7 +247,7 @@ struct clk_hw *__imx8m_clk_hw_composite(const char *name,
 	const struct clk_ops *mux_ops;
 	const struct clk_ops *gate_ops;
 
-	mux = kzalloc_obj(*mux);
+	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 	if (!mux)
 		return ERR_CAST(hw);
 
@@ -241,7 +257,7 @@ struct clk_hw *__imx8m_clk_hw_composite(const char *name,
 	mux->mask = PCG_PCS_MASK;
 	mux->lock = &imx_ccm_lock;
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div)
 		goto free_mux;
 
@@ -270,7 +286,7 @@ struct clk_hw *__imx8m_clk_hw_composite(const char *name,
 	div->flags = CLK_DIVIDER_ROUND_CLOSEST;
 
 	/* skip registering the gate ops if M4 is enabled */
-	gate = kzalloc_obj(*gate);
+	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
 	if (!gate)
 		goto free_div;
 

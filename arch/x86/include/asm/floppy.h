@@ -10,7 +10,6 @@
 #ifndef _ASM_X86_FLOPPY_H
 #define _ASM_X86_FLOPPY_H
 
-#include <linux/sizes.h>
 #include <linux/vmalloc.h>
 
 /*
@@ -23,11 +22,17 @@
  */
 #define _CROSS_64KB(a, s, vdma)						\
 	(!(vdma) &&							\
-	 ((unsigned long)(a) / SZ_64K != ((unsigned long)(a) + (s) - 1) / SZ_64K))
+	 ((unsigned long)(a)/K_64 != ((unsigned long)(a) + (s) - 1) / K_64))
+
+#define CROSS_64KB(a, s) _CROSS_64KB(a, s, use_virtual_dma & 1)
+
 
 #define SW fd_routine[use_virtual_dma & 1]
 #define CSW fd_routine[can_use_virtual_dma & 1]
 
+
+#define fd_inb(base, reg)		inb_p((base) + (reg))
+#define fd_outb(value, base, reg)	outb_p(value, (base) + (reg))
 
 #define fd_request_dma()	CSW._request_dma(FLOPPY_DMA, "floppy")
 #define fd_free_dma()		CSW._free_dma(FLOPPY_DMA)
@@ -45,26 +50,6 @@ static int virtual_dma_residue;
 static char *virtual_dma_addr;
 static int virtual_dma_mode;
 static int doing_pdma;
-
-static inline u8 fd_inb(u16 base, u16 reg)
-{
-	u8 ret = inb_p(base + reg);
-
-	native_io_delay();
-	native_io_delay();
-	native_io_delay();
-
-	return ret;
-}
-
-static inline void fd_outb(u8 value, u16 base, u16 reg)
-{
-	outb_p(value, base + reg);
-
-	native_io_delay();
-	native_io_delay();
-	native_io_delay();
-}
 
 static irqreturn_t floppy_hardint(int irq, void *dev_id)
 {
@@ -96,9 +81,9 @@ static irqreturn_t floppy_hardint(int irq, void *dev_id)
 			if (st != (STATUS_DMA | STATUS_READY))
 				break;
 			if (virtual_dma_mode)
-				fd_outb(*lptr, virtual_dma_port, FD_DATA);
+				outb_p(*lptr, virtual_dma_port + FD_DATA);
 			else
-				*lptr = fd_inb(virtual_dma_port, FD_DATA);
+				*lptr = inb_p(virtual_dma_port + FD_DATA);
 		}
 		virtual_dma_count = lcount;
 		virtual_dma_addr = lptr;
@@ -221,7 +206,7 @@ static int vdma_dma_setup(char *addr, unsigned long size, int mode, int io)
 static int hard_dma_setup(char *addr, unsigned long size, int mode, int io)
 {
 #ifdef FLOPPY_SANITY_CHECK
-	if (_CROSS_64KB(addr, size, use_virtual_dma & 1)) {
+	if (CROSS_64KB(addr, size)) {
 		printk("DMA crossing 64-K boundary %p-%p\n", addr, addr+size);
 		return -1;
 	}

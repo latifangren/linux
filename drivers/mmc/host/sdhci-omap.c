@@ -1257,7 +1257,7 @@ static int sdhci_omap_probe(struct platform_device *pdev)
 	sdhci_get_of_property(pdev);
 	ret = mmc_of_parse(mmc);
 	if (ret)
-		return ret;
+		goto err_pltfm_free;
 
 	soc = soc_device_match(sdhci_omap_soc_devices);
 	if (soc) {
@@ -1270,23 +1270,26 @@ static int sdhci_omap_probe(struct platform_device *pdev)
 			mmc->f_max = 48000000;
 	}
 
-	if (!mmc_host_can_gpio_ro(mmc))
+	if (!mmc_can_gpio_ro(mmc))
 		mmc->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
 
 	pltfm_host->clk = devm_clk_get(dev, "fck");
-	if (IS_ERR(pltfm_host->clk))
-		return PTR_ERR(pltfm_host->clk);
+	if (IS_ERR(pltfm_host->clk)) {
+		ret = PTR_ERR(pltfm_host->clk);
+		goto err_pltfm_free;
+	}
 
 	ret = clk_set_rate(pltfm_host->clk, mmc->f_max);
-	if (ret)
-		return dev_err_probe(dev, ret,
-				     "failed to set clock to %d\n", mmc->f_max);
+	if (ret) {
+		dev_err(dev, "failed to set clock to %d\n", mmc->f_max);
+		goto err_pltfm_free;
+	}
 
 	omap_host->pbias = devm_regulator_get_optional(dev, "pbias");
 	if (IS_ERR(omap_host->pbias)) {
 		ret = PTR_ERR(omap_host->pbias);
 		if (ret != -ENODEV)
-			return ret;
+			goto err_pltfm_free;
 		dev_dbg(dev, "unable to get pbias regulator %d\n", ret);
 	}
 	omap_host->pbias_enabled = false;
@@ -1370,6 +1373,7 @@ static int sdhci_omap_probe(struct platform_device *pdev)
 		host->mmc->pm_caps |= MMC_PM_KEEP_POWER | MMC_PM_WAKE_SDIO_IRQ;
 	}
 
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return 0;
@@ -1378,10 +1382,14 @@ err_cleanup_host:
 	sdhci_cleanup_host(host);
 
 err_rpm_put:
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 err_rpm_disable:
 	pm_runtime_dont_use_autosuspend(dev);
 	pm_runtime_disable(dev);
+
+err_pltfm_free:
+	sdhci_pltfm_free(pdev);
 	return ret;
 }
 
@@ -1398,9 +1406,11 @@ static void sdhci_omap_remove(struct platform_device *pdev)
 	pm_runtime_put_sync(dev);
 	/* Ensure device gets disabled despite userspace sysfs config */
 	pm_runtime_force_suspend(dev);
+	sdhci_pltfm_free(pdev);
 }
 
-static void sdhci_omap_context_save(struct sdhci_omap_host *omap_host)
+#ifdef CONFIG_PM
+static void __maybe_unused sdhci_omap_context_save(struct sdhci_omap_host *omap_host)
 {
 	omap_host->con = sdhci_omap_readl(omap_host, SDHCI_OMAP_CON);
 	omap_host->hctl = sdhci_omap_readl(omap_host, SDHCI_OMAP_HCTL);
@@ -1411,7 +1421,7 @@ static void sdhci_omap_context_save(struct sdhci_omap_host *omap_host)
 }
 
 /* Order matters here, HCTL must be restored in two phases */
-static void sdhci_omap_context_restore(struct sdhci_omap_host *omap_host)
+static void __maybe_unused sdhci_omap_context_restore(struct sdhci_omap_host *omap_host)
 {
 	sdhci_omap_writel(omap_host, SDHCI_OMAP_HCTL, omap_host->hctl);
 	sdhci_omap_writel(omap_host, SDHCI_OMAP_CAPA, omap_host->capa);
@@ -1423,7 +1433,7 @@ static void sdhci_omap_context_restore(struct sdhci_omap_host *omap_host)
 	sdhci_omap_writel(omap_host, SDHCI_OMAP_ISE, omap_host->ise);
 }
 
-static int sdhci_omap_runtime_suspend(struct device *dev)
+static int __maybe_unused sdhci_omap_runtime_suspend(struct device *dev)
 {
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
@@ -1442,7 +1452,7 @@ static int sdhci_omap_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int sdhci_omap_runtime_resume(struct device *dev)
+static int __maybe_unused sdhci_omap_runtime_resume(struct device *dev)
 {
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
@@ -1457,10 +1467,13 @@ static int sdhci_omap_runtime_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static const struct dev_pm_ops sdhci_omap_dev_pm_ops = {
-	RUNTIME_PM_OPS(sdhci_omap_runtime_suspend, sdhci_omap_runtime_resume, NULL)
-	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+	SET_RUNTIME_PM_OPS(sdhci_omap_runtime_suspend,
+			   sdhci_omap_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
 };
 
 static struct platform_driver sdhci_omap_driver = {
@@ -1469,7 +1482,7 @@ static struct platform_driver sdhci_omap_driver = {
 	.driver = {
 		   .name = "sdhci-omap",
 		   .probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		   .pm = pm_ptr(&sdhci_omap_dev_pm_ops),
+		   .pm = &sdhci_omap_dev_pm_ops,
 		   .of_match_table = omap_sdhci_match,
 		  },
 };

@@ -43,9 +43,7 @@
 				compatible = "lg,ld070wx3-sl01";
 				reg = <0>;
 
-				vdd-supply = <&avdd_lcd>;
-				vcc-supply = <&dvdd_lcd>;
-
+				power-supply = <&vdd_lcd>;
 				backlight = <&backlight>;
 			};
 		};
@@ -103,10 +101,11 @@
 						regulator-boot-on;
 					};
 
-					avdd_lcd: smps6 {
+					smps6 {
 						regulator-name = "va-lcd-hv";
-						regulator-min-microvolt = <3160000>;
-						regulator-max-microvolt = <3160000>;
+						regulator-min-microvolt = <3000000>;
+						regulator-max-microvolt = <3000000>;
+						regulator-always-on;
 						regulator-boot-on;
 					};
 
@@ -326,7 +325,7 @@
 		regulator-boot-on;
 	};
 
-	dvdd_lcd: regulator-lcd {
+	vdd_lcd: regulator-lcd {
 		compatible = "regulator-fixed";
 		regulator-name = "VD_LCD_1V8";
 		regulator-min-microvolt = <1800000>;

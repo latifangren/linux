@@ -29,7 +29,7 @@ struct nfp_nsp_identify *__nfp_nsp_identify(struct nfp_nsp *nsp)
 	if (nfp_nsp_get_abi_ver_minor(nsp) < 15)
 		return NULL;
 
-	ni = kzalloc_obj(*ni);
+	ni = kzalloc(sizeof(*ni), GFP_KERNEL);
 	if (!ni)
 		return NULL;
 
@@ -40,7 +40,7 @@ struct nfp_nsp_identify *__nfp_nsp_identify(struct nfp_nsp *nsp)
 		goto exit_free;
 	}
 
-	nspi = kzalloc_obj(*nspi);
+	nspi = kzalloc(sizeof(*nspi), GFP_KERNEL);
 	if (!nspi)
 		goto exit_free;
 

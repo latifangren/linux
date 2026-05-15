@@ -94,7 +94,7 @@ static int psp_v10_0_ring_create(struct psp_context *psp,
 
 	/* Wait for response flag (bit 31) in C2PMSG_64 */
 	ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_64),
-			   MBOX_TOS_RESP_FLAG, MBOX_TOS_RESP_MASK, 0);
+			   0x80000000, 0x8000FFFF, false);
 
 	return ret;
 }
@@ -115,7 +115,7 @@ static int psp_v10_0_ring_stop(struct psp_context *psp,
 
 	/* Wait for response flag (bit 31) in C2PMSG_64 */
 	ret = psp_wait_for(psp, SOC15_REG_OFFSET(MP0, 0, mmMP0_SMN_C2PMSG_64),
-			   MBOX_TOS_RESP_FLAG, MBOX_TOS_RESP_MASK, 0);
+			   0x80000000, 0x80000000, false);
 
 	return ret;
 }
@@ -140,7 +140,7 @@ static int psp_v10_0_ring_destroy(struct psp_context *psp,
 
 static int psp_v10_0_mode1_reset(struct psp_context *psp)
 {
-	drm_info(adev_to_drm(psp->adev), "psp mode 1 reset not supported now!\n");
+	DRM_INFO("psp mode 1 reset not supported now! \n");
 	return -EINVAL;
 }
 

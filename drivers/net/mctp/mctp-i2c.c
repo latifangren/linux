@@ -154,7 +154,7 @@ static struct mctp_i2c_client *mctp_i2c_new_client(struct i2c_client *client)
 		goto err;
 	}
 
-	mcli = kzalloc_obj(*mcli);
+	mcli = kzalloc(sizeof(*mcli), GFP_KERNEL);
 	if (!mcli) {
 		rc = -ENOMEM;
 		goto err;
@@ -177,7 +177,8 @@ static struct mctp_i2c_client *mctp_i2c_new_client(struct i2c_client *client)
 	return mcli;
 err:
 	if (mcli) {
-		i2c_unregister_device(mcli->client);
+		if (mcli->client)
+			i2c_unregister_device(mcli->client);
 		kfree(mcli);
 	}
 	return ERR_PTR(rc);
@@ -496,6 +497,8 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
 	u8 *pecp;
 	int rc;
 
+	fs = mctp_i2c_get_tx_flow_state(midev, skb);
+
 	hdr = (void *)skb_mac_header(skb);
 	/* Sanity check that packet contents matches skb length,
 	 * and can't exceed MCTP_I2C_BUFSZ
@@ -506,8 +509,6 @@ static void mctp_i2c_xmit(struct mctp_i2c_dev *midev, struct sk_buff *skb)
 				     hdr->byte_count + 3, skb->len);
 		return;
 	}
-
-	fs = mctp_i2c_get_tx_flow_state(midev, skb);
 
 	if (skb_tailroom(skb) >= 1) {
 		/* Linear case with space, we can just append the PEC */
@@ -894,8 +895,7 @@ static int mctp_i2c_add_netdev(struct mctp_i2c_client *mcli,
 		goto err;
 	}
 
-	rc = mctp_register_netdev(ndev, &mctp_i2c_mctp_ops,
-				  MCTP_PHYS_BINDING_SMBUS);
+	rc = mctp_register_netdev(ndev, &mctp_i2c_mctp_ops);
 	if (rc < 0) {
 		dev_err(&mcli->client->dev,
 			"register netdev \"%s\" failed %d\n",

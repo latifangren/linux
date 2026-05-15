@@ -231,7 +231,7 @@ int digital_send_cmd(struct nfc_digital_dev *ddev, u8 cmd_type,
 {
 	struct digital_cmd *cmd;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
@@ -279,7 +279,7 @@ static int digital_tg_listen_mdaa(struct nfc_digital_dev *ddev, u8 rf_tech)
 	struct digital_tg_mdaa_params *params;
 	int rc;
 
-	params = kzalloc_obj(*params);
+	params = kzalloc(sizeof(*params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -706,11 +706,9 @@ static int digital_in_send(struct nfc_dev *nfc_dev, struct nfc_target *target,
 	struct digital_data_exch *data_exch;
 	int rc;
 
-	data_exch = kzalloc_obj(*data_exch);
-	if (!data_exch) {
-		kfree_skb(skb);
+	data_exch = kzalloc(sizeof(*data_exch), GFP_KERNEL);
+	if (!data_exch)
 		return -ENOMEM;
-	}
 
 	data_exch->cb = cb;
 	data_exch->cb_context = cb_context;
@@ -733,10 +731,8 @@ static int digital_in_send(struct nfc_dev *nfc_dev, struct nfc_target *target,
 				 data_exch);
 
 exit:
-	if (rc) {
-		kfree_skb(skb);
+	if (rc)
 		kfree(data_exch);
-	}
 
 	return rc;
 }
@@ -766,7 +762,7 @@ struct nfc_digital_dev *nfc_digital_allocate_device(const struct nfc_digital_ops
 	    !ops->switch_rf || (ops->tg_listen_md && !ops->tg_get_rf_tech))
 		return NULL;
 
-	ddev = kzalloc_obj(*ddev);
+	ddev = kzalloc(sizeof(*ddev), GFP_KERNEL);
 	if (!ddev)
 		return NULL;
 

@@ -69,7 +69,7 @@ static int ipc_protocol_msg_prepipe_open(struct iosm_protocol *ipc_protocol,
 	 * SKB ring is internal memory allocation for driver. No need to
 	 * re-calculate the start and end addresses.
 	 */
-	skbr = kzalloc_objs(*skbr, pipe->nr_of_entries, GFP_ATOMIC);
+	skbr = kcalloc(pipe->nr_of_entries, sizeof(*skbr), GFP_ATOMIC);
 	if (!skbr)
 		return -ENOMEM;
 

@@ -8,6 +8,8 @@ char _license[] SEC("license") = "GPL";
 
 #define USEC_PER_SEC 1000000UL
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 static unsigned int tcp_left_out(const struct tcp_sock *tp)
 {
 	return tp->sacked_out + tp->lost_out;

@@ -20,6 +20,10 @@ properties:
   reg:
     maxItems: 1
 
+  display-timings: true
+  port: true
+  reset-gpios: true
+
   vdd3-supply:
     description: core voltage supply
 

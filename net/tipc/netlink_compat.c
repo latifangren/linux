@@ -202,7 +202,8 @@ static int __tipc_nl_compat_dumpit(struct tipc_nl_compat_cmd_dump *cmd,
 		return -ENOMEM;
 	}
 
-	attrbuf = kzalloc_objs(struct nlattr *, tipc_genl_family.maxattr + 1);
+	attrbuf = kcalloc(tipc_genl_family.maxattr + 1,
+			  sizeof(struct nlattr *), GFP_KERNEL);
 	if (!attrbuf) {
 		err = -ENOMEM;
 		goto err_out;
@@ -337,7 +338,9 @@ static int __tipc_nl_compat_doit(struct tipc_nl_compat_cmd_doit *cmd,
 	if (!trans_buf)
 		return -ENOMEM;
 
-	attrbuf = kmalloc_objs(struct nlattr *, tipc_genl_family.maxattr + 1);
+	attrbuf = kmalloc_array(tipc_genl_family.maxattr + 1,
+				sizeof(struct nlattr *),
+				GFP_KERNEL);
 	if (!attrbuf) {
 		err = -ENOMEM;
 		goto trans_out;
@@ -1292,7 +1295,7 @@ static int tipc_nl_compat_recv(struct sk_buff *skb, struct genl_info *info)
 	struct tipc_nl_compat_msg msg;
 	struct nlmsghdr *req_nlh;
 	struct nlmsghdr *rep_nlh;
-	struct tipc_genlmsghdr *req_userhdr = genl_info_userhdr(info);
+	struct tipc_genlmsghdr *req_userhdr = info->userhdr;
 
 	memset(&msg, 0, sizeof(msg));
 

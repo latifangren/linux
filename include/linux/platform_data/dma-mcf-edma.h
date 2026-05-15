@@ -26,9 +26,8 @@ bool mcf_edma_filter_fn(struct dma_chan *chan, void *param);
 /**
  * struct mcf_edma_platform_data - platform specific data for eDMA engine
  *
- * @dma_channels:	The number of eDMA channels.
- * @slave_map:		Slave device map
- * @slavecnt:		Number of entries in @slave_map
+ * @ver			The eDMA module version.
+ * @dma_channels	The number of eDMA channels.
  */
 struct mcf_edma_platform_data {
 	int dma_channels;

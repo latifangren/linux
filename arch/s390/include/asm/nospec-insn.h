@@ -3,10 +3,9 @@
 #define _ASM_S390_NOSPEC_ASM_H
 
 #include <linux/linkage.h>
-#include <linux/export.h>
 #include <asm/dwarf.h>
 
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 
 #ifdef CC_USING_EXPOLINE
 
@@ -19,7 +18,7 @@
 #ifdef CONFIG_EXPOLINE_EXTERN
 	SYM_CODE_START(\name)
 #else
-	.pushsection .text..\name,"axG",@progbits,\name,comdat
+	.pushsection .text.\name,"axG",@progbits,\name,comdat
 	.globl \name
 	.hidden \name
 	.type \name,@function
@@ -129,6 +128,6 @@
 	.endm
 #endif /* CC_USING_EXPOLINE */
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_S390_NOSPEC_ASM_H */

@@ -134,7 +134,7 @@ get_cg_rpool_locked(struct rdma_cgroup *cg, struct rdmacg_device *device)
 	if (rpool)
 		return rpool;
 
-	rpool = kzalloc_obj(*rpool);
+	rpool = kzalloc(sizeof(*rpool), GFP_KERNEL);
 	if (!rpool)
 		return ERR_PTR(-ENOMEM);
 
@@ -173,7 +173,7 @@ uncharge_cg_locked(struct rdma_cgroup *cg,
 	 * the system.
 	 */
 	if (unlikely(!rpool)) {
-		pr_warn("Invalid device %p or rdma cgroup %p\n", device, cg);
+		pr_warn("Invalid device %p or rdma cgroup %p\n", cg, device);
 		return;
 	}
 
@@ -283,7 +283,7 @@ int rdmacg_try_charge(struct rdma_cgroup **rdmacg,
 			ret = PTR_ERR(rpool);
 			goto err;
 		} else {
-			new = (s64)rpool->resources[index].usage + 1;
+			new = rpool->resources[index].usage + 1;
 			if (new > rpool->resources[index].max) {
 				ret = -EAGAIN;
 				goto err;
@@ -443,7 +443,7 @@ static ssize_t rdmacg_resource_set_max(struct kernfs_open_file *of,
 		goto err;
 	}
 
-	new_limits = kzalloc_objs(int, RDMACG_RESOURCE_MAX);
+	new_limits = kcalloc(RDMACG_RESOURCE_MAX, sizeof(int), GFP_KERNEL);
 	if (!new_limits) {
 		ret = -ENOMEM;
 		goto err;
@@ -566,7 +566,7 @@ rdmacg_css_alloc(struct cgroup_subsys_state *parent)
 {
 	struct rdma_cgroup *cg;
 
-	cg = kzalloc_obj(*cg);
+	cg = kzalloc(sizeof(*cg), GFP_KERNEL);
 	if (!cg)
 		return ERR_PTR(-ENOMEM);
 

@@ -19,7 +19,6 @@
 #include <linux/mount.h>
 #include <linux/writeback.h>
 #include <linux/falloc.h>
-#include <linux/filelock.h>
 #include <linux/quotaops.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
@@ -54,7 +53,7 @@ static int ocfs2_init_file_private(struct inode *inode, struct file *file)
 {
 	struct ocfs2_file_private *fp;
 
-	fp = kzalloc_obj(struct ocfs2_file_private);
+	fp = kzalloc(sizeof(struct ocfs2_file_private), GFP_KERNEL);
 	if (!fp)
 		return -ENOMEM;
 
@@ -180,7 +179,7 @@ static int ocfs2_sync_file(struct file *file, loff_t start, loff_t end,
 			      file->f_path.dentry->d_name.name,
 			      (unsigned long long)datasync);
 
-	if (unlikely(ocfs2_emergency_state(osb)))
+	if (ocfs2_is_hard_readonly(osb) || ocfs2_is_soft_readonly(osb))
 		return -EROFS;
 
 	err = file_write_and_wait_range(file, start, end);
@@ -210,7 +209,7 @@ int ocfs2_should_update_atime(struct inode *inode,
 	struct timespec64 now;
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 
-	if (unlikely(ocfs2_emergency_state(osb)))
+	if (ocfs2_is_hard_readonly(osb) || ocfs2_is_soft_readonly(osb))
 		return 0;
 
 	if ((inode->i_flags & S_NOATIME) ||
@@ -783,11 +782,11 @@ static int ocfs2_write_zero_page(struct inode *inode, u64 abs_from,
 		goto out_commit_trans;
 	}
 
-	/* Get the offsets within the folio that we want to zero */
-	zero_from = offset_in_folio(folio, abs_from);
-	zero_to = offset_in_folio(folio, abs_to);
+	/* Get the offsets within the page that we want to zero */
+	zero_from = abs_from & (PAGE_SIZE - 1);
+	zero_to = abs_to & (PAGE_SIZE - 1);
 	if (!zero_to)
-		zero_to = folio_size(folio);
+		zero_to = PAGE_SIZE;
 
 	trace_ocfs2_write_zero_page(
 			(unsigned long long)OCFS2_I(inode)->ip_blkno,
@@ -814,7 +813,7 @@ static int ocfs2_write_zero_page(struct inode *inode, u64 abs_from,
 
 
 		/* must not update i_size! */
-		block_commit_write(folio, block_start + 1, block_start + 1);
+		block_commit_write(&folio->page, block_start + 1, block_start + 1);
 	}
 
 	/*
@@ -1136,12 +1135,6 @@ int ocfs2_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
 					from_kuid(&init_user_ns, attr->ia_uid) : 0,
 				attr->ia_valid & ATTR_GID ?
 					from_kgid(&init_user_ns, attr->ia_gid) : 0);
-
-	status = ocfs2_emergency_state(osb);
-	if (unlikely(status)) {
-		mlog_errno(status);
-		goto bail;
-	}
 
 	/* ensuring we don't even attempt to truncate a symlink */
 	if (S_ISLNK(inode->i_mode))
@@ -1950,7 +1943,7 @@ static int __ocfs2_change_file_space(struct file *file, struct inode *inode,
 	handle_t *handle;
 	unsigned long long max_off = inode->i_sb->s_maxbytes;
 
-	if (unlikely(ocfs2_emergency_state(osb)))
+	if (ocfs2_is_hard_readonly(osb) || ocfs2_is_soft_readonly(osb))
 		return -EROFS;
 
 	inode_lock(inode);
@@ -2714,7 +2707,7 @@ static loff_t ocfs2_remap_file_range(struct file *file_in, loff_t pos_in,
 		return -EINVAL;
 	if (!ocfs2_refcount_tree(osb))
 		return -EOPNOTSUPP;
-	if (unlikely(ocfs2_emergency_state(osb)))
+	if (ocfs2_is_hard_readonly(osb) || ocfs2_is_soft_readonly(osb))
 		return -EROFS;
 
 	/* Lock both files against IO */
@@ -2807,7 +2800,7 @@ const struct inode_operations ocfs2_special_file_iops = {
  */
 const struct file_operations ocfs2_fops = {
 	.llseek		= ocfs2_file_llseek,
-	.mmap_prepare	= ocfs2_mmap_prepare,
+	.mmap		= ocfs2_mmap,
 	.fsync		= ocfs2_sync_file,
 	.release	= ocfs2_file_release,
 	.open		= ocfs2_file_open,
@@ -2823,8 +2816,6 @@ const struct file_operations ocfs2_fops = {
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= ocfs2_fallocate,
 	.remap_file_range = ocfs2_remap_file_range,
-	.fop_flags	= FOP_ASYNC_LOCK,
-	.setlease	= generic_setlease,
 };
 
 WRAP_DIR_ITER(ocfs2_readdir) // FIXME!
@@ -2841,8 +2832,6 @@ const struct file_operations ocfs2_dops = {
 #endif
 	.lock		= ocfs2_lock,
 	.flock		= ocfs2_flock,
-	.fop_flags	= FOP_ASYNC_LOCK,
-	.setlease	= generic_setlease,
 };
 
 /*
@@ -2859,7 +2848,7 @@ const struct file_operations ocfs2_dops = {
  */
 const struct file_operations ocfs2_fops_no_plocks = {
 	.llseek		= ocfs2_file_llseek,
-	.mmap_prepare	= ocfs2_mmap_prepare,
+	.mmap		= ocfs2_mmap,
 	.fsync		= ocfs2_sync_file,
 	.release	= ocfs2_file_release,
 	.open		= ocfs2_file_open,
@@ -2874,7 +2863,6 @@ const struct file_operations ocfs2_fops_no_plocks = {
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= ocfs2_fallocate,
 	.remap_file_range = ocfs2_remap_file_range,
-	.setlease	= generic_setlease,
 };
 
 const struct file_operations ocfs2_dops_no_plocks = {
@@ -2889,5 +2877,4 @@ const struct file_operations ocfs2_dops_no_plocks = {
 	.compat_ioctl   = ocfs2_compat_ioctl,
 #endif
 	.flock		= ocfs2_flock,
-	.setlease	= generic_setlease,
 };

@@ -42,6 +42,9 @@
 /* Fields are padded to 32 bits in input registers */
 #define NFT_PIPAPO_GROUPS_PADDED_SIZE(f)				\
 	(round_up((f)->groups / NFT_PIPAPO_GROUPS_PER_BYTE(f), sizeof(u32)))
+#define NFT_PIPAPO_GROUPS_PADDING(f)					\
+	(NFT_PIPAPO_GROUPS_PADDED_SIZE(f) - (f)->groups /		\
+					    NFT_PIPAPO_GROUPS_PER_BYTE(f))
 
 /* Number of buckets given by 2 ^ n, with n bucket bits */
 #define NFT_PIPAPO_BUCKETS(bb)		(1 << (bb))
@@ -121,14 +124,14 @@ struct nft_pipapo_field {
 
 /**
  * struct nft_pipapo_scratch - percpu data used for lookup and matching
- * @bh_lock:    PREEMPT_RT local spinlock
  * @map_index:	Current working bitmap index, toggled between field matches
- * @__map:	store partial matching results during lookup
+ * @align_off:	Offset to get the originally allocated address
+ * @map:	store partial matching results during lookup
  */
 struct nft_pipapo_scratch {
-	local_lock_t bh_lock;
 	u8 map_index;
-	unsigned long __map[];
+	u32 align_off;
+	unsigned long map[];
 };
 
 /**

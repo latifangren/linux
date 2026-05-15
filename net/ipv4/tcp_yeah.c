@@ -147,8 +147,7 @@ do_vegas:
 					tcp_snd_cwnd_set(tp, max(tcp_snd_cwnd(tp),
 								 yeah->reno_count));
 
-					WRITE_ONCE(tp->snd_ssthresh,
-						   tcp_snd_cwnd(tp));
+					tp->snd_ssthresh = tcp_snd_cwnd(tp);
 				}
 
 				if (yeah->reno_count <= 2)
@@ -213,7 +212,6 @@ static struct tcp_congestion_ops tcp_yeah __read_mostly = {
 	.cong_avoid	= tcp_yeah_cong_avoid,
 	.set_state	= tcp_vegas_state,
 	.cwnd_event	= tcp_vegas_cwnd_event,
-	.cwnd_event_tx_start = tcp_vegas_cwnd_event_tx_start,
 	.get_info	= tcp_vegas_get_info,
 	.pkts_acked	= tcp_vegas_pkts_acked,
 

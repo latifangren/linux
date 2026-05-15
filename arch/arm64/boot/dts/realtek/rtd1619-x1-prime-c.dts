@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-2-Clause)
+/*
+ * @sib0ndt
+ */
+
+/dts-v1/;
+
+#include "rtd1619.dtsi"
+
+/ {
+	compatible = "realtek,mjolnir", "realtek,rtd1619";
+	model = "X1 PRIME C";
+
+	memory@200000 {
+		device_type = "memory";
+		reg = <0x200000 0x7fe00000>;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	aliases {
+		serial0 = &uart0;
+		serial1 = &uart1;
+		serial2 = &uart2;
+	};
+};
+
+/* debug console (J1) */
+&uart0 {
+	status = "okay";
+};
+
+/* M.2 slot (CON4) */
+&uart1 {
+	status = "disabled";
+};
+
+/* GPIO connector (T1) */
+&uart2 {
+	status = "disabled";
+};
+
+/* USB host ports */
+&usb0 {
+	status = "okay";
+};
+
+&usb0_dwc3 {
+	dr_mode = "host";
+	phys = <&usb2phy0>;
+	phy-names = "usb2-phy";
+};
+
+&usb1 {
+	status = "okay";
+};
+
+&usb2 {
+	status = "okay";
+};

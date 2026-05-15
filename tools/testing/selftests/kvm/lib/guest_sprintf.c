@@ -35,8 +35,8 @@ static int skip_atoi(const char **s)
 ({							\
 	int __res;					\
 							\
-	__res = ((u64)n) % (u32)base;			\
-	n = ((u64)n) / (u32)base;			\
+	__res = ((uint64_t) n) % (uint32_t) base;	\
+	n = ((uint64_t) n) / (uint32_t) base;		\
 	__res;						\
 })
 
@@ -119,7 +119,7 @@ int guest_vsnprintf(char *buf, int n, const char *fmt, va_list args)
 {
 	char *str, *end;
 	const char *s;
-	u64 num;
+	uint64_t num;
 	int i, base;
 	int len;
 
@@ -216,7 +216,7 @@ repeat:
 				while (--field_width > 0)
 					APPEND_BUFFER_SAFE(str, end, ' ');
 			APPEND_BUFFER_SAFE(str, end,
-					    (u8)va_arg(args, int));
+					    (uint8_t)va_arg(args, int));
 			while (--field_width > 0)
 				APPEND_BUFFER_SAFE(str, end, ' ');
 			continue;
@@ -240,7 +240,7 @@ repeat:
 				flags |= SPECIAL | SMALL | ZEROPAD;
 			}
 			str = number(str, end,
-				     (u64)va_arg(args, void *), 16,
+				     (uint64_t)va_arg(args, void *), 16,
 				     field_width, precision, flags);
 			continue;
 
@@ -284,15 +284,15 @@ repeat:
 			continue;
 		}
 		if (qualifier == 'l')
-			num = va_arg(args, u64);
+			num = va_arg(args, uint64_t);
 		else if (qualifier == 'h') {
-			num = (u16)va_arg(args, int);
+			num = (uint16_t)va_arg(args, int);
 			if (flags & SIGN)
-				num = (s16)num;
+				num = (int16_t)num;
 		} else if (flags & SIGN)
 			num = va_arg(args, int);
 		else
-			num = va_arg(args, u32);
+			num = va_arg(args, uint32_t);
 		str = number(str, end, num, base, field_width, precision, flags);
 	}
 

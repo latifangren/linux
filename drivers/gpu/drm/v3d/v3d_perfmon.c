@@ -6,6 +6,9 @@
 #include "v3d_drv.h"
 #include "v3d_regs.h"
 
+#define V3D_PERFMONID_MIN	1
+#define V3D_PERFMONID_MAX	U32_MAX
+
 static const struct v3d_perf_counter_desc v3d_v42_performance_counters[] = {
 	{"FEP", "FEP-valid-primitives-no-rendered-pixels", "[FEP] Valid primitives that result in no rendered pixels, for all rendered tiles"},
 	{"FEP", "FEP-valid-primitives-rendered-pixels", "[FEP] Valid primitives for all rendered tiles (primitives may be counted in more than one tile)"},
@@ -197,10 +200,10 @@ void v3d_perfmon_init(struct v3d_dev *v3d)
 	const struct v3d_perf_counter_desc *counters = NULL;
 	unsigned int max = 0;
 
-	if (v3d->ver >= V3D_GEN_71) {
+	if (v3d->ver >= 71) {
 		counters = v3d_v71_performance_counters;
 		max = ARRAY_SIZE(v3d_v71_performance_counters);
-	} else if (v3d->ver >= V3D_GEN_42) {
+	} else if (v3d->ver >= 42) {
 		counters = v3d_v42_performance_counters;
 		max = ARRAY_SIZE(v3d_v42_performance_counters);
 	}
@@ -287,43 +290,43 @@ struct v3d_perfmon *v3d_perfmon_find(struct v3d_file_priv *v3d_priv, int id)
 {
 	struct v3d_perfmon *perfmon;
 
-	xa_lock(&v3d_priv->perfmons);
-	perfmon = xa_load(&v3d_priv->perfmons, id);
+	mutex_lock(&v3d_priv->perfmon.lock);
+	perfmon = idr_find(&v3d_priv->perfmon.idr, id);
 	v3d_perfmon_get(perfmon);
-	xa_unlock(&v3d_priv->perfmons);
+	mutex_unlock(&v3d_priv->perfmon.lock);
 
 	return perfmon;
 }
 
 void v3d_perfmon_open_file(struct v3d_file_priv *v3d_priv)
 {
-	xa_init_flags(&v3d_priv->perfmons, XA_FLAGS_ALLOC1);
+	mutex_init(&v3d_priv->perfmon.lock);
+	idr_init_base(&v3d_priv->perfmon.idr, 1);
 }
 
-static void v3d_perfmon_delete(struct v3d_file_priv *v3d_priv,
-			       struct v3d_perfmon *perfmon)
+static int v3d_perfmon_idr_del(int id, void *elem, void *data)
 {
-	struct v3d_dev *v3d = v3d_priv->v3d;
+	struct v3d_perfmon *perfmon = elem;
+	struct v3d_dev *v3d = (struct v3d_dev *)data;
 
 	/* If the active perfmon is being destroyed, stop it first */
 	if (perfmon == v3d->active_perfmon)
 		v3d_perfmon_stop(v3d, perfmon, false);
 
-	/* If the global perfmon is being destroyed, set it to NULL */
-	cmpxchg(&v3d->global_perfmon, perfmon, NULL);
-
 	v3d_perfmon_put(perfmon);
+
+	return 0;
 }
 
 void v3d_perfmon_close_file(struct v3d_file_priv *v3d_priv)
 {
-	struct v3d_perfmon *perfmon;
-	unsigned long id;
+	struct v3d_dev *v3d = v3d_priv->v3d;
 
-	xa_for_each(&v3d_priv->perfmons, id, perfmon)
-		v3d_perfmon_delete(v3d_priv, perfmon);
-
-	xa_destroy(&v3d_priv->perfmons);
+	mutex_lock(&v3d_priv->perfmon.lock);
+	idr_for_each(&v3d_priv->perfmon.idr, v3d_perfmon_idr_del, v3d);
+	idr_destroy(&v3d_priv->perfmon.idr);
+	mutex_unlock(&v3d_priv->perfmon.lock);
+	mutex_destroy(&v3d_priv->perfmon.lock);
 }
 
 int v3d_perfmon_create_ioctl(struct drm_device *dev, void *data,
@@ -335,7 +338,6 @@ int v3d_perfmon_create_ioctl(struct drm_device *dev, void *data,
 	struct v3d_perfmon *perfmon;
 	unsigned int i;
 	int ret;
-	u32 id;
 
 	/* Number of monitored counters cannot exceed HW limits. */
 	if (req->ncounters > DRM_V3D_MAX_PERF_COUNTERS ||
@@ -348,7 +350,8 @@ int v3d_perfmon_create_ioctl(struct drm_device *dev, void *data,
 			return -EINVAL;
 	}
 
-	perfmon = kzalloc_flex(*perfmon, values, req->ncounters);
+	perfmon = kzalloc(struct_size(perfmon, values, req->ncounters),
+			  GFP_KERNEL);
 	if (!perfmon)
 		return -ENOMEM;
 
@@ -360,15 +363,18 @@ int v3d_perfmon_create_ioctl(struct drm_device *dev, void *data,
 	refcount_set(&perfmon->refcnt, 1);
 	mutex_init(&perfmon->lock);
 
-	ret = xa_alloc(&v3d_priv->perfmons, &id, perfmon, xa_limit_32b,
-		       GFP_KERNEL);
+	mutex_lock(&v3d_priv->perfmon.lock);
+	ret = idr_alloc(&v3d_priv->perfmon.idr, perfmon, V3D_PERFMONID_MIN,
+			V3D_PERFMONID_MAX, GFP_KERNEL);
+	mutex_unlock(&v3d_priv->perfmon.lock);
+
 	if (ret < 0) {
 		mutex_destroy(&perfmon->lock);
 		kfree(perfmon);
 		return ret;
 	}
 
-	req->id = id;
+	req->id = ret;
 
 	return 0;
 }
@@ -378,13 +384,21 @@ int v3d_perfmon_destroy_ioctl(struct drm_device *dev, void *data,
 {
 	struct v3d_file_priv *v3d_priv = file_priv->driver_priv;
 	struct drm_v3d_perfmon_destroy *req = data;
+	struct v3d_dev *v3d = v3d_priv->v3d;
 	struct v3d_perfmon *perfmon;
 
-	perfmon = xa_erase(&v3d_priv->perfmons, req->id);
+	mutex_lock(&v3d_priv->perfmon.lock);
+	perfmon = idr_remove(&v3d_priv->perfmon.idr, req->id);
+	mutex_unlock(&v3d_priv->perfmon.lock);
+
 	if (!perfmon)
 		return -EINVAL;
 
-	v3d_perfmon_delete(v3d_priv, perfmon);
+	/* If the active perfmon is being destroyed, stop it first */
+	if (perfmon == v3d->active_perfmon)
+		v3d_perfmon_stop(v3d, perfmon, false);
+
+	v3d_perfmon_put(perfmon);
 
 	return 0;
 }
@@ -401,7 +415,11 @@ int v3d_perfmon_get_values_ioctl(struct drm_device *dev, void *data,
 	if (req->pad != 0)
 		return -EINVAL;
 
-	perfmon = v3d_perfmon_find(v3d_priv, req->id);
+	mutex_lock(&v3d_priv->perfmon.lock);
+	perfmon = idr_find(&v3d_priv->perfmon.idr, req->id);
+	v3d_perfmon_get(perfmon);
+	mutex_unlock(&v3d_priv->perfmon.lock);
+
 	if (!perfmon)
 		return -EINVAL;
 
@@ -440,37 +458,6 @@ int v3d_perfmon_get_counter_ioctl(struct drm_device *dev, void *data,
 	strscpy(req->name, counter->name, sizeof(req->name));
 	strscpy(req->category, counter->category, sizeof(req->category));
 	strscpy(req->description, counter->description, sizeof(req->description));
-
-	return 0;
-}
-
-int v3d_perfmon_set_global_ioctl(struct drm_device *dev, void *data,
-				 struct drm_file *file_priv)
-{
-	struct v3d_file_priv *v3d_priv = file_priv->driver_priv;
-	struct drm_v3d_perfmon_set_global *req = data;
-	struct v3d_dev *v3d = to_v3d_dev(dev);
-	struct v3d_perfmon *perfmon;
-
-	if (req->flags & ~DRM_V3D_PERFMON_CLEAR_GLOBAL)
-		return -EINVAL;
-
-	perfmon = v3d_perfmon_find(v3d_priv, req->id);
-	if (!perfmon)
-		return -EINVAL;
-
-	/* If the request is to clear the global performance monitor */
-	if (req->flags & DRM_V3D_PERFMON_CLEAR_GLOBAL) {
-		if (!v3d->global_perfmon)
-			return -EINVAL;
-
-		xchg(&v3d->global_perfmon, NULL);
-
-		return 0;
-	}
-
-	if (cmpxchg(&v3d->global_perfmon, NULL, perfmon))
-		return -EBUSY;
 
 	return 0;
 }

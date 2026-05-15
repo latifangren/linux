@@ -25,12 +25,12 @@ void flush_dcache_folio(struct folio *folio)
 	mapping = folio_flush_mapping(folio);
 
 	if (mapping && !folio_mapped(folio))
-		clear_bit(PG_dcache_clean, &folio->flags.f);
+		clear_bit(PG_dcache_clean, &folio->flags);
 	else {
 		dcache_wbinv_all();
 		if (mapping)
 			icache_inv_all();
-		set_bit(PG_dcache_clean, &folio->flags.f);
+		set_bit(PG_dcache_clean, &folio->flags);
 	}
 }
 EXPORT_SYMBOL(flush_dcache_folio);
@@ -56,7 +56,7 @@ void update_mmu_cache_range(struct vm_fault *vmf, struct vm_area_struct *vma,
 		return;
 
 	folio = page_folio(pfn_to_page(pfn));
-	if (!test_and_set_bit(PG_dcache_clean, &folio->flags.f))
+	if (!test_and_set_bit(PG_dcache_clean, &folio->flags))
 		dcache_wbinv_all();
 
 	if (folio_flush_mapping(folio)) {

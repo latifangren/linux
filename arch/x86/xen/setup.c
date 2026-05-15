@@ -695,22 +695,17 @@ static void __init xen_e820_resolve_conflicts(phys_addr_t start,
 		return;
 
 	end = start + size;
-	mapcnt = 0;
+	entry = xen_e820_table.entries;
 
-	while (mapcnt < xen_e820_table.nr_entries) {
-		entry = xen_e820_table.entries + mapcnt;
+	for (mapcnt = 0; mapcnt < xen_e820_table.nr_entries; mapcnt++) {
 		if (entry->addr >= end)
 			return;
 
 		if (entry->addr + entry->size > start &&
-		    entry->type == E820_TYPE_NVS) {
+		    entry->type == E820_TYPE_NVS)
 			xen_e820_swap_entry_with_ram(entry);
-			/* E820 map has been changed, restart loop! */
-			mapcnt = 0;
-			continue;
-		}
 
-		mapcnt++;
+		entry++;
 	}
 }
 
@@ -995,6 +990,13 @@ static int register_callback(unsigned type, const void *func)
 	return HYPERVISOR_callback_op(CALLBACKOP_register, &callback);
 }
 
+void xen_enable_sysenter(void)
+{
+	if (cpu_feature_enabled(X86_FEATURE_SYSENTER32) &&
+	    register_callback(CALLBACKTYPE_sysenter, xen_entry_SYSENTER_compat))
+		setup_clear_cpu_cap(X86_FEATURE_SYSENTER32);
+}
+
 void xen_enable_syscall(void)
 {
 	int ret;
@@ -1006,26 +1008,10 @@ void xen_enable_syscall(void)
 		   mechanism for syscalls. */
 	}
 
-	if (!cpu_feature_enabled(X86_FEATURE_SYSFAST32))
-		return;
-
-	if (cpu_feature_enabled(X86_FEATURE_SYSCALL32)) {
-		/* Use SYSCALL32 */
-		ret = register_callback(CALLBACKTYPE_syscall32,
-					xen_entry_SYSCALL_compat);
-
-	} else {
-		/* Use SYSENTER32 */
-		ret = register_callback(CALLBACKTYPE_sysenter,
-					xen_entry_SYSENTER_compat);
-	}
-
-	if (ret) {
+	if (cpu_feature_enabled(X86_FEATURE_SYSCALL32) &&
+	    register_callback(CALLBACKTYPE_syscall32, xen_entry_SYSCALL_compat))
 		setup_clear_cpu_cap(X86_FEATURE_SYSCALL32);
-		setup_clear_cpu_cap(X86_FEATURE_SYSFAST32);
-	}
 }
-
 
 static void __init xen_pvmmu_arch_setup(void)
 {
@@ -1036,6 +1022,7 @@ static void __init xen_pvmmu_arch_setup(void)
 	    register_callback(CALLBACKTYPE_failsafe, xen_failsafe_callback))
 		BUG();
 
+	xen_enable_sysenter();
 	xen_enable_syscall();
 }
 

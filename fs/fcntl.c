@@ -12,6 +12,7 @@
 #include <linux/fs.h>
 #include <linux/filelock.h>
 #include <linux/file.h>
+#include <linux/fdtable.h>
 #include <linux/capability.h>
 #include <linux/dnotify.h>
 #include <linux/slab.h>
@@ -100,7 +101,7 @@ int file_f_owner_allocate(struct file *file)
 	if (f_owner)
 		return 0;
 
-	f_owner = kzalloc_obj(struct fown_struct);
+	f_owner = kzalloc(sizeof(struct fown_struct), GFP_KERNEL);
 	if (!f_owner)
 		return -ENOMEM;
 
@@ -355,7 +356,8 @@ static bool rw_hint_valid(u64 hint)
 	}
 }
 
-static long fcntl_get_rw_hint(struct file *file, unsigned long arg)
+static long fcntl_get_rw_hint(struct file *file, unsigned int cmd,
+			      unsigned long arg)
 {
 	struct inode *inode = file_inode(file);
 	u64 __user *argp = (u64 __user *)arg;
@@ -366,14 +368,12 @@ static long fcntl_get_rw_hint(struct file *file, unsigned long arg)
 	return 0;
 }
 
-static long fcntl_set_rw_hint(struct file *file, unsigned long arg)
+static long fcntl_set_rw_hint(struct file *file, unsigned int cmd,
+			      unsigned long arg)
 {
 	struct inode *inode = file_inode(file);
 	u64 __user *argp = (u64 __user *)arg;
 	u64 hint;
-
-	if (!inode_owner_or_capable(file_mnt_idmap(file), inode))
-		return -EPERM;
 
 	if (copy_from_user(&hint, argp, sizeof(hint)))
 		return -EFAULT;
@@ -445,7 +445,6 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		struct file *filp)
 {
 	void __user *argp = (void __user *)arg;
-	struct delegation deleg;
 	int argi = (int)arg;
 	struct flock flock;
 	long err = -EINVAL;
@@ -546,22 +545,10 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		err = memfd_fcntl(filp, cmd, argi);
 		break;
 	case F_GET_RW_HINT:
-		err = fcntl_get_rw_hint(filp, arg);
+		err = fcntl_get_rw_hint(filp, cmd, arg);
 		break;
 	case F_SET_RW_HINT:
-		err = fcntl_set_rw_hint(filp, arg);
-		break;
-	case F_GETDELEG:
-		if (copy_from_user(&deleg, argp, sizeof(deleg)))
-			return -EFAULT;
-		err = fcntl_getdeleg(filp, &deleg);
-		if (!err && copy_to_user(argp, &deleg, sizeof(deleg)))
-			return -EFAULT;
-		break;
-	case F_SETDELEG:
-		if (copy_from_user(&deleg, argp, sizeof(deleg)))
-			return -EFAULT;
-		err = fcntl_setdeleg(fd, filp, &deleg);
+		err = fcntl_set_rw_hint(filp, cmd, arg);
 		break;
 	default:
 		break;
@@ -586,21 +573,24 @@ static int check_fcntl_cmd(unsigned cmd)
 
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 {	
-	CLASS(fd_raw, f)(fd);
-	long err;
+	struct fd f = fdget_raw(fd);
+	long err = -EBADF;
 
-	if (fd_empty(f))
-		return -EBADF;
+	if (!fd_file(f))
+		goto out;
 
 	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
-			return -EBADF;
+			goto out1;
 	}
 
 	err = security_file_fcntl(fd_file(f), cmd, arg);
 	if (!err)
 		err = do_fcntl(fd, cmd, arg, fd_file(f));
 
+out1:
+ 	fdput(f);
+out:
 	return err;
 }
 
@@ -609,21 +599,21 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
 	void __user *argp = (void __user *)arg;
-	CLASS(fd_raw, f)(fd);
+	struct fd f = fdget_raw(fd);
 	struct flock64 flock;
-	long err;
+	long err = -EBADF;
 
-	if (fd_empty(f))
-		return -EBADF;
+	if (!fd_file(f))
+		goto out;
 
 	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
-			return -EBADF;
+			goto out1;
 	}
 
 	err = security_file_fcntl(fd_file(f), cmd, arg);
 	if (err)
-		return err;
+		goto out1;
 	
 	switch (cmd) {
 	case F_GETLK64:
@@ -648,6 +638,9 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		err = do_fcntl(fd, cmd, arg, fd_file(f));
 		break;
 	}
+out1:
+	fdput(f);
+out:
 	return err;
 }
 #endif
@@ -743,21 +736,21 @@ static int fixup_compat_flock(struct flock *flock)
 static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 			     compat_ulong_t arg)
 {
-	CLASS(fd_raw, f)(fd);
+	struct fd f = fdget_raw(fd);
 	struct flock flock;
-	long err;
+	long err = -EBADF;
 
-	if (fd_empty(f))
-		return -EBADF;
+	if (!fd_file(f))
+		return err;
 
 	if (unlikely(fd_file(f)->f_mode & FMODE_PATH)) {
 		if (!check_fcntl_cmd(cmd))
-			return -EBADF;
+			goto out_put;
 	}
 
 	err = security_file_fcntl(fd_file(f), cmd, arg);
 	if (err)
-		return err;
+		goto out_put;
 
 	switch (cmd) {
 	case F_GETLK:
@@ -800,6 +793,8 @@ static long do_compat_fcntl64(unsigned int fd, unsigned int cmd,
 		err = do_fcntl(fd, cmd, arg, fd_file(f));
 		break;
 	}
+out_put:
+	fdput(f);
 	return err;
 }
 
@@ -1169,10 +1164,10 @@ static int __init fcntl_init(void)
 	 * Exceptions: O_NONBLOCK is a two bit define on parisc; O_NDELAY
 	 * is defined as O_NONBLOCK on some platforms and not on others.
 	 */
-	BUILD_BUG_ON(20 - 1 /* for O_RDONLY being 0 */ !=
+	BUILD_BUG_ON(21 - 1 /* for O_RDONLY being 0 */ !=
 		HWEIGHT32(
 			(VALID_OPEN_FLAGS & ~(O_NONBLOCK | O_NDELAY)) |
-			__FMODE_EXEC));
+			__FMODE_EXEC | __FMODE_NONOTIFY));
 
 	fasync_cache = kmem_cache_create("fasync_cache",
 					 sizeof(struct fasync_struct), 0,

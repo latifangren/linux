@@ -390,8 +390,9 @@ static bool dmub_psr_copy_settings(struct dmub_psr *dmub,
 		!memcmp(link->dpcd_caps.sink_dev_id_str, DP_SINK_DEVICE_STR_ID_1,
 			sizeof(DP_SINK_DEVICE_STR_ID_1)))
 		link->psr_settings.force_ffu_mode = 1;
-
-	copy_settings_data->force_ffu_mode = link->psr_settings.force_ffu_mode || psr_context->os_request_force_ffu;
+	else
+		link->psr_settings.force_ffu_mode = 0;
+	copy_settings_data->force_ffu_mode = link->psr_settings.force_ffu_mode;
 
 	if (((link->dpcd_caps.fec_cap.bits.FEC_CAPABLE &&
 		!link->dc->debug.disable_fec) &&
@@ -488,7 +489,7 @@ static void dmub_psr_construct(struct dmub_psr *psr, struct dc_context *ctx)
  */
 struct dmub_psr *dmub_psr_create(struct dc_context *ctx)
 {
-	struct dmub_psr *psr = kzalloc_obj(struct dmub_psr);
+	struct dmub_psr *psr = kzalloc(sizeof(struct dmub_psr), GFP_KERNEL);
 
 	if (psr == NULL) {
 		BREAK_TO_DEBUGGER();

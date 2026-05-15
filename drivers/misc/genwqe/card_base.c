@@ -141,7 +141,7 @@ static struct genwqe_dev *genwqe_dev_alloc(void)
 	if (i >= GENWQE_CARD_NO_MAX)
 		return ERR_PTR(-ENODEV);
 
-	cd = kzalloc_obj(struct genwqe_dev);
+	cd = kzalloc(sizeof(struct genwqe_dev), GFP_KERNEL);
 	if (!cd)
 		return ERR_PTR(-ENOMEM);
 
@@ -403,7 +403,8 @@ static int genwqe_ffdc_buffs_alloc(struct genwqe_dev *cd)
 		/* currently support only the debug units mentioned here */
 		cd->ffdc[type].entries = e;
 		cd->ffdc[type].regs =
-			kmalloc_objs(struct genwqe_reg, e);
+			kmalloc_array(e, sizeof(struct genwqe_reg),
+				      GFP_KERNEL);
 		/*
 		 * regs == NULL is ok, the using code treats this as no regs,
 		 * Printing warning is ok in this case.

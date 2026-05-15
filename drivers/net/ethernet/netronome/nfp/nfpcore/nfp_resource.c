@@ -155,7 +155,7 @@ nfp_resource_acquire(struct nfp_cpp *cpp, const char *name)
 	struct nfp_resource *res;
 	int err;
 
-	res = kzalloc_obj(*res);
+	res = kzalloc(sizeof(*res), GFP_KERNEL);
 	if (!res)
 		return ERR_PTR(-ENOMEM);
 

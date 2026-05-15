@@ -6,7 +6,6 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_print.h>
 
 #include "omap_dmm_tiler.h"
 #include "omap_drv.h"
@@ -159,7 +158,7 @@ static struct omap_hw_overlay *omap_overlay_init(enum omap_plane_id overlay_id,
 {
 	struct omap_hw_overlay *overlay;
 
-	overlay = kzalloc_obj(*overlay);
+	overlay = kzalloc(sizeof(*overlay), GFP_KERNEL);
 	if (!overlay)
 		return ERR_PTR(-ENOMEM);
 

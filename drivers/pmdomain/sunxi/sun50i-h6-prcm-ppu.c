@@ -51,33 +51,20 @@ struct sun50i_h6_ppu_desc {
 	unsigned int flags;
 };
 
-static const struct sun50i_h6_ppu_desc sun50i_h6_ppus[] = {
+struct sun50i_h6_ppu_desc sun50i_h6_ppus[] = {
 	{ "AVCC", PD_H6_VDD_SYS_REG, PD_H6_AVCC_VDD_GATE },
 	{ "CPUS", PD_H6_VDD_SYS_REG, PD_H6_CPUS_VDD_GATE },
 	{ "GPU", PD_H6_GPU_REG, PD_H6_GPU_GATE },
+	{}
 };
-static const struct sun50i_h6_ppu_desc sun50i_h616_ppus[] = {
+
+struct sun50i_h6_ppu_desc sun50i_h616_ppus[] = {
 	{ "PLL", PD_H6_VDD_SYS_REG, PD_H6_AVCC_VDD_GATE,
 		FLAG_PPU_ALWAYS_ON | FLAG_PPU_NEGATED },
 	{ "ANA", PD_H6_VDD_SYS_REG, PD_H616_ANA_VDD_GATE, FLAG_PPU_ALWAYS_ON },
 	{ "GPU", PD_H6_GPU_REG, PD_H6_GPU_GATE, FLAG_PPU_NEGATED },
+	{}
 };
-
-struct sun50i_h6_ppu_data {
-	const struct sun50i_h6_ppu_desc *descs;
-	int nr_domains;
-};
-
-static const struct sun50i_h6_ppu_data sun50i_h6_ppu_data = {
-	.descs = sun50i_h6_ppus,
-	.nr_domains = ARRAY_SIZE(sun50i_h6_ppus),
-};
-
-static const struct sun50i_h6_ppu_data sun50i_h616_ppu_data = {
-	.descs = sun50i_h616_ppus,
-	.nr_domains = ARRAY_SIZE(sun50i_h616_ppus),
-};
-
 #define to_sun50i_h6_ppu_pd(_genpd) \
 	container_of(_genpd, struct sun50i_h6_ppu_pd, genpd)
 
@@ -120,15 +107,18 @@ static int sun50i_h6_ppu_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct genpd_onecell_data *ppu;
 	struct sun50i_h6_ppu_pd *pds;
-	const struct sun50i_h6_ppu_data *data;
+	const struct sun50i_h6_ppu_desc *desc;
 	void __iomem *base;
-	int ret, i;
+	int ret, i, count;
 
-	data = of_device_get_match_data(dev);
-	if (!data)
+	desc = of_device_get_match_data(dev);
+	if (!desc)
 		return -EINVAL;
 
-	pds = devm_kcalloc(dev, data->nr_domains, sizeof(*pds), GFP_KERNEL);
+	for (count = 0; desc[count].name; count++)
+		;
+
+	pds = devm_kcalloc(dev, count, sizeof(*pds), GFP_KERNEL);
 	if (!pds)
 		return -ENOMEM;
 
@@ -136,9 +126,9 @@ static int sun50i_h6_ppu_probe(struct platform_device *pdev)
 	if (!ppu)
 		return -ENOMEM;
 
-	ppu->num_domains = data->nr_domains;
-	ppu->domains = devm_kcalloc(dev, data->nr_domains,
-				    sizeof(*ppu->domains), GFP_KERNEL);
+	ppu->num_domains = count;
+	ppu->domains = devm_kcalloc(dev, count, sizeof(*ppu->domains),
+				    GFP_KERNEL);
 	if (!ppu->domains)
 		return -ENOMEM;
 
@@ -148,46 +138,39 @@ static int sun50i_h6_ppu_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	for (i = 0; i < data->nr_domains; i++) {
+	for (i = 0; i < count; i++) {
 		struct sun50i_h6_ppu_pd *pd = &pds[i];
-		const struct sun50i_h6_ppu_desc *desc = &data->descs[i];
 
-		pd->genpd.name		= desc->name;
+		pd->genpd.name		= desc[i].name;
 		pd->genpd.power_off	= sun50i_h6_ppu_pd_power_off;
 		pd->genpd.power_on	= sun50i_h6_ppu_pd_power_on;
-		if (desc->flags & FLAG_PPU_ALWAYS_ON)
+		if (desc[i].flags & FLAG_PPU_ALWAYS_ON)
 			pd->genpd.flags = GENPD_FLAG_ALWAYS_ON;
-		pd->negated		= !!(desc->flags & FLAG_PPU_NEGATED);
-		pd->reg			= base + desc->offset - PD_H6_PPU_OFFSET;
-		pd->gate_mask		= desc->mask;
+		pd->negated		= !!(desc[i].flags & FLAG_PPU_NEGATED);
+		pd->reg			= base + desc[i].offset - PD_H6_PPU_OFFSET;
+		pd->gate_mask		= desc[i].mask;
 
 		ret = pm_genpd_init(&pd->genpd, NULL,
 				    !sun50i_h6_ppu_power_status(pd));
 		if (ret) {
-			dev_warn(dev, "Failed to add %s power domain: %d\n",
-				 desc->name, ret);
-			goto out_remove_pds;
+			dev_warn(dev, "Failed to add GPU power domain: %d\n", ret);
+			return ret;
 		}
 		ppu->domains[i] = &pd->genpd;
 	}
 
 	ret = of_genpd_add_provider_onecell(dev->of_node, ppu);
-	if (!ret)
-		return 0;
+	if (ret)
+		dev_warn(dev, "Failed to add provider: %d\n", ret);
 
-	dev_warn(dev, "Failed to add provider: %d\n", ret);
-out_remove_pds:
-	for (i--; i >= 0; i--)
-		pm_genpd_remove(&pds[i].genpd);
-
-	return ret;
+	return 0;
 }
 
 static const struct of_device_id sun50i_h6_ppu_of_match[] = {
 	{ .compatible	= "allwinner,sun50i-h6-prcm-ppu",
-	  .data		= &sun50i_h6_ppu_data },
+	  .data		= &sun50i_h6_ppus },
 	{ .compatible	= "allwinner,sun50i-h616-prcm-ppu",
-	  .data		= &sun50i_h616_ppu_data },
+	  .data		= &sun50i_h616_ppus },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sun50i_h6_ppu_of_match);

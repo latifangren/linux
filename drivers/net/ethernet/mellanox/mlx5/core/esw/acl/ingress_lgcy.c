@@ -200,7 +200,7 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 		  "vport[%d] configure ingress rules, vlan(%d) qos(%d)\n",
 		  vport->vport, vport->info.vlan, vport->info.qos);
 
-	spec = kvzalloc_obj(*spec);
+	spec = kvzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec) {
 		err = -ENOMEM;
 		goto out;
@@ -260,7 +260,7 @@ int esw_acl_ingress_lgcy_setup(struct mlx5_eswitch *esw,
 	if (counter) {
 		flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_COUNT;
 		drop_ctr_dst.type = MLX5_FLOW_DESTINATION_TYPE_COUNTER;
-		drop_ctr_dst.counter = counter;
+		drop_ctr_dst.counter_id = mlx5_fc_id(counter);
 		dst = &drop_ctr_dst;
 		dest_num++;
 	}

@@ -204,7 +204,7 @@ int __init register_intc_controller(struct intc_desc *desc)
 	pr_info("Registered controller '%s' with %u IRQs\n",
 		desc->name, hw->nr_vectors);
 
-	d = kzalloc_obj(*d, GFP_NOWAIT);
+	d = kzalloc(sizeof(*d), GFP_NOWAIT);
 	if (!d)
 		goto err0;
 
@@ -217,7 +217,8 @@ int __init register_intc_controller(struct intc_desc *desc)
 
 	if (desc->num_resources) {
 		d->nr_windows = desc->num_resources;
-		d->window = kzalloc_objs(*d->window, d->nr_windows, GFP_NOWAIT);
+		d->window = kcalloc(d->nr_windows, sizeof(*d->window),
+				    GFP_NOWAIT);
 		if (!d->window)
 			goto err1;
 
@@ -266,7 +267,8 @@ int __init register_intc_controller(struct intc_desc *desc)
 	}
 
 	if (hw->prio_regs) {
-		d->prio = kzalloc_objs(*d->prio, hw->nr_vectors, GFP_NOWAIT);
+		d->prio = kcalloc(hw->nr_vectors, sizeof(*d->prio),
+				  GFP_NOWAIT);
 		if (!d->prio)
 			goto err4;
 
@@ -281,7 +283,8 @@ int __init register_intc_controller(struct intc_desc *desc)
 	}
 
 	if (hw->sense_regs) {
-		d->sense = kzalloc_objs(*d->sense, hw->nr_vectors, GFP_NOWAIT);
+		d->sense = kcalloc(hw->nr_vectors, sizeof(*d->sense),
+				   GFP_NOWAIT);
 		if (!d->sense)
 			goto err5;
 
@@ -391,7 +394,7 @@ err0:
 	return -ENOMEM;
 }
 
-static int intc_suspend(void *data)
+static int intc_suspend(void)
 {
 	struct intc_desc_int *d;
 
@@ -417,7 +420,7 @@ static int intc_suspend(void *data)
 	return 0;
 }
 
-static void intc_resume(void *data)
+static void intc_resume(void)
 {
 	struct intc_desc_int *d;
 
@@ -447,13 +450,9 @@ static void intc_resume(void *data)
 	}
 }
 
-static const struct syscore_ops intc_syscore_ops = {
+struct syscore_ops intc_syscore_ops = {
 	.suspend	= intc_suspend,
 	.resume		= intc_resume,
-};
-
-static struct syscore intc_syscore = {
-	.ops = &intc_syscore_ops,
 };
 
 const struct bus_type intc_subsys = {
@@ -478,7 +477,7 @@ static int __init register_intc_devs(void)
 	struct intc_desc_int *d;
 	int error;
 
-	register_syscore(&intc_syscore);
+	register_syscore_ops(&intc_syscore_ops);
 
 	error = subsys_system_register(&intc_subsys, NULL);
 	if (!error) {

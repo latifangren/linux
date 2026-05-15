@@ -20,7 +20,6 @@
 #include <asm/cpu.h>
 #include <asm/cpu_device_id.h>
 #include <asm/intel-family.h>
-#include <asm/msr.h>
 
 #include "cpu.h"
 
@@ -37,12 +36,12 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct aperfmperf, cpu_samples) = {
 	.seq = SEQCNT_ZERO(cpu_samples.seq)
 };
 
-static void init_counter_refs(void *data)
+static void init_counter_refs(void)
 {
 	u64 aperf, mperf;
 
-	rdmsrq(MSR_IA32_APERF, aperf);
-	rdmsrq(MSR_IA32_MPERF, mperf);
+	rdmsrl(MSR_IA32_APERF, aperf);
+	rdmsrl(MSR_IA32_MPERF, mperf);
 
 	this_cpu_write(cpu_samples.aperf, aperf);
 	this_cpu_write(cpu_samples.mperf, mperf);
@@ -100,7 +99,7 @@ static bool __init turbo_disabled(void)
 	u64 misc_en;
 	int err;
 
-	err = rdmsrq_safe(MSR_IA32_MISC_ENABLE, &misc_en);
+	err = rdmsrl_safe(MSR_IA32_MISC_ENABLE, &misc_en);
 	if (err)
 		return false;
 
@@ -111,11 +110,11 @@ static bool __init slv_set_max_freq_ratio(u64 *base_freq, u64 *turbo_freq)
 {
 	int err;
 
-	err = rdmsrq_safe(MSR_ATOM_CORE_RATIOS, base_freq);
+	err = rdmsrl_safe(MSR_ATOM_CORE_RATIOS, base_freq);
 	if (err)
 		return false;
 
-	err = rdmsrq_safe(MSR_ATOM_CORE_TURBO_RATIOS, turbo_freq);
+	err = rdmsrl_safe(MSR_ATOM_CORE_TURBO_RATIOS, turbo_freq);
 	if (err)
 		return false;
 
@@ -153,13 +152,13 @@ static bool __init knl_set_max_freq_ratio(u64 *base_freq, u64 *turbo_freq,
 	int err, i;
 	u64 msr;
 
-	err = rdmsrq_safe(MSR_PLATFORM_INFO, base_freq);
+	err = rdmsrl_safe(MSR_PLATFORM_INFO, base_freq);
 	if (err)
 		return false;
 
 	*base_freq = (*base_freq >> 8) & 0xFF;	    /* max P state */
 
-	err = rdmsrq_safe(MSR_TURBO_RATIO_LIMIT, &msr);
+	err = rdmsrl_safe(MSR_TURBO_RATIO_LIMIT, &msr);
 	if (err)
 		return false;
 
@@ -191,17 +190,17 @@ static bool __init skx_set_max_freq_ratio(u64 *base_freq, u64 *turbo_freq, int s
 	u32 group_size;
 	int err, i;
 
-	err = rdmsrq_safe(MSR_PLATFORM_INFO, base_freq);
+	err = rdmsrl_safe(MSR_PLATFORM_INFO, base_freq);
 	if (err)
 		return false;
 
 	*base_freq = (*base_freq >> 8) & 0xFF;      /* max P state */
 
-	err = rdmsrq_safe(MSR_TURBO_RATIO_LIMIT, &ratios);
+	err = rdmsrl_safe(MSR_TURBO_RATIO_LIMIT, &ratios);
 	if (err)
 		return false;
 
-	err = rdmsrq_safe(MSR_TURBO_RATIO_LIMIT1, &counts);
+	err = rdmsrl_safe(MSR_TURBO_RATIO_LIMIT1, &counts);
 	if (err)
 		return false;
 
@@ -221,11 +220,11 @@ static bool __init core_set_max_freq_ratio(u64 *base_freq, u64 *turbo_freq)
 	u64 msr;
 	int err;
 
-	err = rdmsrq_safe(MSR_PLATFORM_INFO, base_freq);
+	err = rdmsrl_safe(MSR_PLATFORM_INFO, base_freq);
 	if (err)
 		return false;
 
-	err = rdmsrq_safe(MSR_TURBO_RATIO_LIMIT, &msr);
+	err = rdmsrl_safe(MSR_TURBO_RATIO_LIMIT, &msr);
 	if (err)
 		return false;
 
@@ -289,20 +288,16 @@ out:
 }
 
 #ifdef CONFIG_PM_SLEEP
-static const struct syscore_ops freq_invariance_syscore_ops = {
+static struct syscore_ops freq_invariance_syscore_ops = {
 	.resume = init_counter_refs,
 };
 
-static struct syscore freq_invariance_syscore = {
-	.ops = &freq_invariance_syscore_ops,
-};
-
-static void register_freq_invariance_syscore(void)
+static void register_freq_invariance_syscore_ops(void)
 {
-	register_syscore(&freq_invariance_syscore);
+	register_syscore_ops(&freq_invariance_syscore_ops);
 }
 #else
-static inline void register_freq_invariance_syscore(void) {}
+static inline void register_freq_invariance_syscore_ops(void) {}
 #endif
 
 static void freq_invariance_enable(void)
@@ -312,7 +307,7 @@ static void freq_invariance_enable(void)
 		return;
 	}
 	static_branch_enable_cpuslocked(&arch_scale_freq_key);
-	register_freq_invariance_syscore();
+	register_freq_invariance_syscore_ops();
 	pr_info("Estimated ratio of average max frequency by base frequency (times 1024): %llu\n", arch_max_freq_ratio);
 }
 
@@ -479,8 +474,8 @@ void arch_scale_freq_tick(void)
 	if (!cpu_feature_enabled(X86_FEATURE_APERFMPERF))
 		return;
 
-	rdmsrq(MSR_IA32_APERF, aperf);
-	rdmsrq(MSR_IA32_MPERF, mperf);
+	rdmsrl(MSR_IA32_APERF, aperf);
+	rdmsrl(MSR_IA32_MPERF, mperf);
 	acnt = aperf - s->aperf;
 	mcnt = mperf - s->mperf;
 
@@ -503,7 +498,7 @@ void arch_scale_freq_tick(void)
  */
 #define MAX_SAMPLE_AGE	((unsigned long)HZ / 50)
 
-int arch_freq_get_on_cpu(int cpu)
+unsigned int arch_freq_get_on_cpu(int cpu)
 {
 	struct aperfmperf *s = per_cpu_ptr(&cpu_samples, cpu);
 	unsigned int seq, freq;
@@ -539,7 +534,7 @@ static int __init bp_init_aperfmperf(void)
 	if (!cpu_feature_enabled(X86_FEATURE_APERFMPERF))
 		return 0;
 
-	init_counter_refs(NULL);
+	init_counter_refs();
 	bp_init_freq_invariance();
 	return 0;
 }
@@ -548,5 +543,5 @@ early_initcall(bp_init_aperfmperf);
 void ap_init_aperfmperf(void)
 {
 	if (cpu_feature_enabled(X86_FEATURE_APERFMPERF))
-		init_counter_refs(NULL);
+		init_counter_refs();
 }

@@ -358,7 +358,7 @@ int smsdvb_debugfs_create(struct smsdvb_client_t *client)
 	if (!smsdvb_debugfs_usb_root || !coredev->is_usb_device)
 		return -ENODEV;
 
-	debug_data = kzalloc_obj(*client->debug_data);
+	debug_data = kzalloc(sizeof(*client->debug_data), GFP_KERNEL);
 	if (!debug_data)
 		return -ENOMEM;
 
@@ -398,6 +398,8 @@ void smsdvb_debugfs_release(struct smsdvb_client_t *client)
 
 void smsdvb_debugfs_register(void)
 {
+	struct dentry *d;
+
 	/*
 	 * FIXME: This was written to debug Siano USB devices. So, it creates
 	 * the debugfs node under <debugfs>/usb.
@@ -408,7 +410,12 @@ void smsdvb_debugfs_register(void)
 	 * node for sdio-based boards, but this may need some logic at sdio
 	 * subsystem.
 	 */
-	smsdvb_debugfs_usb_root = debugfs_create_dir("smsdvb", usb_debug_root);
+	d = debugfs_create_dir("smsdvb", usb_debug_root);
+	if (IS_ERR_OR_NULL(d)) {
+		pr_err("Couldn't create sysfs node for smsdvb\n");
+		return;
+	}
+	smsdvb_debugfs_usb_root = d;
 }
 
 void smsdvb_debugfs_unregister(void)

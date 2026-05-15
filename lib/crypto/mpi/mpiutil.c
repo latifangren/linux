@@ -18,8 +18,6 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
  */
 
-#include <linux/export.h>
-
 #include "mpi-internal.h"
 
 /****************
@@ -33,7 +31,7 @@ MPI mpi_alloc(unsigned nlimbs)
 {
 	MPI a;
 
-	a = kmalloc_obj(*a);
+	a = kmalloc(sizeof *a, GFP_KERNEL);
 	if (!a)
 		return a;
 
@@ -93,14 +91,14 @@ int mpi_resize(MPI a, unsigned nlimbs)
 		return 0;	/* no need to do it */
 
 	if (a->d) {
-		p = kzalloc_objs(mpi_limb_t, nlimbs);
+		p = kcalloc(nlimbs, sizeof(mpi_limb_t), GFP_KERNEL);
 		if (!p)
 			return -ENOMEM;
 		memcpy(p, a->d, a->alloced * sizeof(mpi_limb_t));
 		kfree_sensitive(a->d);
 		a->d = p;
 	} else {
-		a->d = kzalloc_objs(mpi_limb_t, nlimbs);
+		a->d = kcalloc(nlimbs, sizeof(mpi_limb_t), GFP_KERNEL);
 		if (!a->d)
 			return -ENOMEM;
 	}

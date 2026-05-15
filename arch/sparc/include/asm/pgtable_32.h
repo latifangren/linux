@@ -21,7 +21,7 @@
 #define PGDIR_MASK      	(~(PGDIR_SIZE-1))
 #define PGDIR_ALIGN(__addr) 	(((__addr) + ~PGDIR_MASK) & PGDIR_MASK)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <asm-generic/pgtable-nopud.h>
 
 #include <linux/spinlock.h>
@@ -70,6 +70,14 @@ extern unsigned long ptr_in_current_pgd;
  */
 extern unsigned long phys_base;
 extern unsigned long pfn_base;
+
+/*
+ * ZERO_PAGE is a global shared page that is always zero: used
+ * for zero-mapped memory areas etc..
+ */
+extern unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)];
+
+#define ZERO_PAGE(vaddr) (virt_to_page(empty_zero_page))
 
 /*
  * In general all page table modifications should use the V8 atomic
@@ -247,11 +255,7 @@ static inline pte_t pte_mkyoung(pte_t pte)
 }
 
 #define PFN_PTE_SHIFT			(PAGE_SHIFT - 4)
-
-static inline pte_t pfn_pte(unsigned long pfn, pgprot_t pgprot)
-{
-	return __pte((pfn << PFN_PTE_SHIFT) | pgprot_val(pgprot));
-}
+#define pfn_pte(pfn, prot)		mk_pte(pfn_to_page(pfn), prot)
 
 static inline unsigned long pte_pfn(pte_t pte)
 {
@@ -267,6 +271,15 @@ static inline unsigned long pte_pfn(pte_t pte)
 }
 
 #define pte_page(pte)	pfn_to_page(pte_pfn(pte))
+
+/*
+ * Conversion functions: convert a page and protection to a page entry,
+ * and a page entry and page directory to the page they refer to.
+ */
+static inline pte_t mk_pte(struct page *page, pgprot_t pgprot)
+{
+	return __pte((page_to_pfn(page) << (PAGE_SHIFT-4)) | pgprot_val(pgprot));
+}
 
 static inline pte_t mk_pte_phys(unsigned long page, pgprot_t pgprot)
 {
@@ -340,7 +353,7 @@ static inline swp_entry_t __swp_entry(unsigned long type, unsigned long offset)
 #define __pte_to_swp_entry(pte)		((swp_entry_t) { pte_val(pte) })
 #define __swp_entry_to_pte(x)		((pte_t) { (x).val })
 
-static inline bool pte_swp_exclusive(pte_t pte)
+static inline int pte_swp_exclusive(pte_t pte)
 {
 	return pte_val(pte) & SRMMU_SWP_EXCLUSIVE;
 }
@@ -387,8 +400,12 @@ __get_iospace (unsigned long addr)
 #define GET_IOSPACE(pfn)		(pfn >> (BITS_PER_LONG - 4))
 #define GET_PFN(pfn)			(pfn & 0x0fffffffUL)
 
-static inline unsigned long io_remap_pfn_range_pfn(unsigned long pfn,
-		unsigned long size)
+int remap_pfn_range(struct vm_area_struct *, unsigned long, unsigned long,
+		    unsigned long, pgprot_t);
+
+static inline int io_remap_pfn_range(struct vm_area_struct *vma,
+				     unsigned long from, unsigned long pfn,
+				     unsigned long size, pgprot_t prot)
 {
 	unsigned long long offset, space, phys_base;
 
@@ -396,9 +413,9 @@ static inline unsigned long io_remap_pfn_range_pfn(unsigned long pfn,
 	space = GET_IOSPACE(pfn);
 	phys_base = offset | (space << 32ULL);
 
-	return phys_base >> PAGE_SHIFT;
+	return remap_pfn_range(vma, from, phys_base >> PAGE_SHIFT, size, prot);
 }
-#define io_remap_pfn_range_pfn io_remap_pfn_range_pfn
+#define io_remap_pfn_range io_remap_pfn_range
 
 #define __HAVE_ARCH_PTEP_SET_ACCESS_FLAGS
 #define ptep_set_access_flags(__vma, __address, __ptep, __entry, __dirty) \
@@ -411,7 +428,7 @@ static inline unsigned long io_remap_pfn_range_pfn(unsigned long pfn,
 	__changed;							  \
 })
 
-#endif /* !(__ASSEMBLER__) */
+#endif /* !(__ASSEMBLY__) */
 
 #define VMALLOC_START           _AC(0xfe600000,UL)
 #define VMALLOC_END             _AC(0xffc00000,UL)

@@ -9,7 +9,7 @@
 
 #define CPS_ENTRY_PATCH_INSNS	6
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 struct vpe_boot_config {
 	unsigned long pc;
@@ -22,13 +22,7 @@ struct core_boot_config {
 	struct vpe_boot_config *vpe_config;
 };
 
-struct cluster_boot_config {
-	unsigned long *core_power;
-	struct cpumask cpumask;
-	struct core_boot_config *core_config;
-};
-
-extern struct cluster_boot_config *mips_cps_cluster_bootcfg;
+extern struct core_boot_config *mips_cps_core_bootcfg;
 
 extern void mips_cps_core_boot(int cca, void __iomem *gcr_base);
 extern void mips_cps_core_init(void);
@@ -55,9 +49,9 @@ static inline bool mips_cps_smp_in_use(void) { return false; }
 
 #endif /* !CONFIG_MIPS_CPS */
 
-#else /* __ASSEMBLER__ */
+#else /* __ASSEMBLY__ */
 
 .extern mips_cps_bootcfg;
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif /* __MIPS_ASM_SMP_CPS_H__ */

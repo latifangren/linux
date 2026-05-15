@@ -19,7 +19,6 @@ properties:
       - const: atmel,at91rm9200-spi
       - items:
           - enum:
-              - microchip,lan9691-spi
               - microchip,sam9x60-spi
               - microchip,sam9x7-spi
               - microchip,sama7d65-spi
@@ -32,16 +31,11 @@ properties:
     maxItems: 1
 
   clock-names:
-    items:
-      - const: spi_clk
-      - const: spi_gclk
-    minItems: 1
+    contains:
+      const: spi_clk
 
   clocks:
-    items:
-      - description: Peripheral Bus clock
-      - description: Programmable Generic clock
-    minItems: 1
+    maxItems: 1
 
   dmas:
     items:

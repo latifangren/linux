@@ -2,8 +2,8 @@
 /*
  * Copyright 2021 NXP
  */
-#include "common.h"
 #include "netlink.h"
+#include "common.h"
 
 struct phc_vclocks_req_info {
 	struct ethnl_req_info		base;

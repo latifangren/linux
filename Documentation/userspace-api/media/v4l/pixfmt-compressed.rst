@@ -1,5 +1,4 @@
 .. SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
-.. c:namespace:: V4L
 
 ******************
 Compressed Formats
@@ -275,14 +274,6 @@ Compressed Formats
         of macroblocks to decode a full corresponding frame to the matching
         capture buffer.
 
-    * .. _V4L2-PIX-FMT-AV1:
-
-      - ``V4L2_PIX_FMT_AV1``
-      - 'AV01'
-      - AV1 compressed video frame. This format is adapted for implementing AV1
-        pipeline. The decoder implements stateful video decoder and expects one
-        temporal unit per buffer in OBU stream format.
-        The encoder generates one Temporal Unit per buffer.
 .. raw:: latex
 
     \normalsize

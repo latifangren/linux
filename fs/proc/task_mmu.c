@@ -14,7 +14,7 @@
 #include <linux/rmap.h>
 #include <linux/swap.h>
 #include <linux/sched/mm.h>
-#include <linux/leafops.h>
+#include <linux/swapops.h>
 #include <linux/mmu_notifier.h>
 #include <linux/page_idle.h>
 #include <linux/shmem_fs.h>
@@ -28,9 +28,6 @@
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include "internal.h"
-
-#define SENTINEL_VMA_END	-1
-#define SENTINEL_VMA_GATE	-2
 
 #define SEQ_PUT_DEC(str, val) \
 		seq_put_decimal_ull_width(m, str, (val) << (PAGE_SHIFT-10), 8)
@@ -130,143 +127,16 @@ static void release_task_mempolicy(struct proc_maps_private *priv)
 }
 #endif
 
-#ifdef CONFIG_PER_VMA_LOCK
-
-static void reset_lock_ctx(struct proc_maps_locking_ctx *lock_ctx)
+static struct vm_area_struct *proc_get_vma(struct proc_maps_private *priv,
+						loff_t *ppos)
 {
-	lock_ctx->locked_vma = NULL;
-	lock_ctx->mmap_locked = false;
-}
+	struct vm_area_struct *vma = vma_next(&priv->iter);
 
-static void unlock_ctx_vma(struct proc_maps_locking_ctx *lock_ctx)
-{
-	if (lock_ctx->locked_vma) {
-		vma_end_read(lock_ctx->locked_vma);
-		lock_ctx->locked_vma = NULL;
-	}
-}
-
-static const struct seq_operations proc_pid_maps_op;
-
-static inline bool lock_vma_range(struct seq_file *m,
-				  struct proc_maps_locking_ctx *lock_ctx)
-{
-	/*
-	 * smaps and numa_maps perform page table walk, therefore require
-	 * mmap_lock but maps can be read with locking just the vma and
-	 * walking the vma tree under rcu read protection.
-	 */
-	if (m->op != &proc_pid_maps_op) {
-		if (mmap_read_lock_killable(lock_ctx->mm))
-			return false;
-
-		lock_ctx->mmap_locked = true;
-	} else {
-		rcu_read_lock();
-		reset_lock_ctx(lock_ctx);
-	}
-
-	return true;
-}
-
-static inline void unlock_vma_range(struct proc_maps_locking_ctx *lock_ctx)
-{
-	if (lock_ctx->mmap_locked) {
-		mmap_read_unlock(lock_ctx->mm);
-	} else {
-		unlock_ctx_vma(lock_ctx);
-		rcu_read_unlock();
-	}
-}
-
-static struct vm_area_struct *get_next_vma(struct proc_maps_private *priv,
-					   loff_t last_pos)
-{
-	struct proc_maps_locking_ctx *lock_ctx = &priv->lock_ctx;
-	struct vm_area_struct *vma;
-
-	if (lock_ctx->mmap_locked)
-		return vma_next(&priv->iter);
-
-	unlock_ctx_vma(lock_ctx);
-	vma = lock_next_vma(lock_ctx->mm, &priv->iter, last_pos);
-	if (!IS_ERR_OR_NULL(vma))
-		lock_ctx->locked_vma = vma;
-
-	return vma;
-}
-
-static inline bool fallback_to_mmap_lock(struct proc_maps_private *priv,
-					 loff_t pos)
-{
-	struct proc_maps_locking_ctx *lock_ctx = &priv->lock_ctx;
-
-	if (lock_ctx->mmap_locked)
-		return false;
-
-	rcu_read_unlock();
-	mmap_read_lock(lock_ctx->mm);
-	/* Reinitialize the iterator after taking mmap_lock */
-	vma_iter_set(&priv->iter, pos);
-	lock_ctx->mmap_locked = true;
-
-	return true;
-}
-
-#else /* CONFIG_PER_VMA_LOCK */
-
-static inline bool lock_vma_range(struct seq_file *m,
-				  struct proc_maps_locking_ctx *lock_ctx)
-{
-	return mmap_read_lock_killable(lock_ctx->mm) == 0;
-}
-
-static inline void unlock_vma_range(struct proc_maps_locking_ctx *lock_ctx)
-{
-	mmap_read_unlock(lock_ctx->mm);
-}
-
-static struct vm_area_struct *get_next_vma(struct proc_maps_private *priv,
-					   loff_t last_pos)
-{
-	return vma_next(&priv->iter);
-}
-
-static inline bool fallback_to_mmap_lock(struct proc_maps_private *priv,
-					 loff_t pos)
-{
-	return false;
-}
-
-#endif /* CONFIG_PER_VMA_LOCK */
-
-static struct vm_area_struct *proc_get_vma(struct seq_file *m, loff_t *ppos)
-{
-	struct proc_maps_private *priv = m->private;
-	struct vm_area_struct *vma;
-
-retry:
-	vma = get_next_vma(priv, *ppos);
-	/* EINTR of EAGAIN is possible */
-	if (IS_ERR(vma)) {
-		if (PTR_ERR(vma) == -EAGAIN && fallback_to_mmap_lock(priv, *ppos))
-			goto retry;
-
-		return vma;
-	}
-
-	/* Store previous position to be able to restart if needed */
-	priv->last_pos = *ppos;
 	if (vma) {
-		/*
-		 * Track the end of the reported vma to ensure position changes
-		 * even if previous vma was merged with the next vma and we
-		 * found the extended vma with the same vm_start.
-		 */
-		*ppos = vma->vm_end;
+		*ppos = vma->vm_start;
 	} else {
-		*ppos = SENTINEL_VMA_GATE;
-		vma = get_gate_vma(priv->lock_ctx.mm);
+		*ppos = -2UL;
+		vma = get_gate_vma(priv->mm);
 	}
 
 	return vma;
@@ -275,66 +145,58 @@ retry:
 static void *m_start(struct seq_file *m, loff_t *ppos)
 {
 	struct proc_maps_private *priv = m->private;
-	struct proc_maps_locking_ctx *lock_ctx;
-	loff_t last_addr = *ppos;
+	unsigned long last_addr = *ppos;
 	struct mm_struct *mm;
 
 	/* See m_next(). Zero at the start or after lseek. */
-	if (last_addr == SENTINEL_VMA_END)
+	if (last_addr == -1UL)
 		return NULL;
 
 	priv->task = get_proc_task(priv->inode);
 	if (!priv->task)
 		return ERR_PTR(-ESRCH);
 
-	lock_ctx = &priv->lock_ctx;
-	mm = lock_ctx->mm;
+	mm = priv->mm;
 	if (!mm || !mmget_not_zero(mm)) {
 		put_task_struct(priv->task);
 		priv->task = NULL;
 		return NULL;
 	}
 
-	if (!lock_vma_range(m, lock_ctx)) {
+	if (mmap_read_lock_killable(mm)) {
 		mmput(mm);
 		put_task_struct(priv->task);
 		priv->task = NULL;
 		return ERR_PTR(-EINTR);
 	}
 
-	/*
-	 * Reset current position if last_addr was set before
-	 * and it's not a sentinel.
-	 */
-	if (last_addr > 0)
-		*ppos = last_addr = priv->last_pos;
-	vma_iter_init(&priv->iter, mm, (unsigned long)last_addr);
+	vma_iter_init(&priv->iter, mm, last_addr);
 	hold_task_mempolicy(priv);
-	if (last_addr == SENTINEL_VMA_GATE)
+	if (last_addr == -2UL)
 		return get_gate_vma(mm);
 
-	return proc_get_vma(m, ppos);
+	return proc_get_vma(priv, ppos);
 }
 
 static void *m_next(struct seq_file *m, void *v, loff_t *ppos)
 {
-	if (*ppos == SENTINEL_VMA_GATE) {
-		*ppos = SENTINEL_VMA_END;
+	if (*ppos == -2UL) {
+		*ppos = -1UL;
 		return NULL;
 	}
-	return proc_get_vma(m, ppos);
+	return proc_get_vma(m->private, ppos);
 }
 
 static void m_stop(struct seq_file *m, void *v)
 {
 	struct proc_maps_private *priv = m->private;
-	struct mm_struct *mm = priv->lock_ctx.mm;
+	struct mm_struct *mm = priv->mm;
 
 	if (!priv->task)
 		return;
 
 	release_task_mempolicy(priv);
-	unlock_vma_range(&priv->lock_ctx);
+	mmap_read_unlock(mm);
 	mmput(mm);
 	put_task_struct(priv->task);
 	priv->task = NULL;
@@ -349,9 +211,9 @@ static int proc_maps_open(struct inode *inode, struct file *file,
 		return -ENOMEM;
 
 	priv->inode = inode;
-	priv->lock_ctx.mm = proc_mem_open(inode, PTRACE_MODE_READ);
-	if (IS_ERR(priv->lock_ctx.mm)) {
-		int err = PTR_ERR(priv->lock_ctx.mm);
+	priv->mm = proc_mem_open(inode, PTRACE_MODE_READ);
+	if (IS_ERR(priv->mm)) {
+		int err = PTR_ERR(priv->mm);
 
 		seq_release_private(inode, file);
 		return err;
@@ -365,8 +227,8 @@ static int proc_map_release(struct inode *inode, struct file *file)
 	struct seq_file *seq = file->private_data;
 	struct proc_maps_private *priv = seq->private;
 
-	if (priv->lock_ctx.mm)
-		mmdrop(priv->lock_ctx.mm);
+	if (priv->mm)
+		mmdrop(priv->mm);
 
 	return seq_release_private(inode, file);
 }
@@ -442,7 +304,7 @@ static void get_vma_name(struct vm_area_struct *vma,
 static void show_vma_header_prefix(struct seq_file *m,
 				   unsigned long start, unsigned long end,
 				   vm_flags_t flags, unsigned long long pgoff,
-				   dev_t dev, u64 ino)
+				   dev_t dev, unsigned long ino)
 {
 	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
 	seq_put_hex_ll(m, NULL, start, 8);
@@ -465,7 +327,7 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 	const struct path *path;
 	const char *name_fmt, *name;
 	vm_flags_t flags = vma->vm_flags;
-	u64 ino = 0;
+	unsigned long ino = 0;
 	unsigned long long pgoff = 0;
 	unsigned long start, end;
 	dev_t dev = 0;
@@ -527,90 +389,28 @@ static int pid_maps_open(struct inode *inode, struct file *file)
 		PROCMAP_QUERY_VMA_FLAGS				\
 )
 
-#ifdef CONFIG_PER_VMA_LOCK
-
-static int query_vma_setup(struct proc_maps_locking_ctx *lock_ctx)
+static int query_vma_setup(struct mm_struct *mm)
 {
-	reset_lock_ctx(lock_ctx);
-
-	return 0;
+	return mmap_read_lock_killable(mm);
 }
 
-static void query_vma_teardown(struct proc_maps_locking_ctx *lock_ctx)
+static void query_vma_teardown(struct mm_struct *mm, struct vm_area_struct *vma)
 {
-	if (lock_ctx->mmap_locked) {
-		mmap_read_unlock(lock_ctx->mm);
-		lock_ctx->mmap_locked = false;
-	} else {
-		unlock_ctx_vma(lock_ctx);
-	}
+	mmap_read_unlock(mm);
 }
 
-static struct vm_area_struct *query_vma_find_by_addr(struct proc_maps_locking_ctx *lock_ctx,
-						     unsigned long addr)
+static struct vm_area_struct *query_vma_find_by_addr(struct mm_struct *mm, unsigned long addr)
 {
-	struct mm_struct *mm = lock_ctx->mm;
-	struct vm_area_struct *vma;
-	struct vma_iterator vmi;
-
-	if (lock_ctx->mmap_locked)
-		return find_vma(mm, addr);
-
-	/* Unlock previously locked VMA and find the next one under RCU */
-	unlock_ctx_vma(lock_ctx);
-	rcu_read_lock();
-	vma_iter_init(&vmi, mm, addr);
-	vma = lock_next_vma(mm, &vmi, addr);
-	rcu_read_unlock();
-
-	if (!vma)
-		return NULL;
-
-	if (!IS_ERR(vma)) {
-		lock_ctx->locked_vma = vma;
-		return vma;
-	}
-
-	if (PTR_ERR(vma) == -EAGAIN) {
-		/* Fallback to mmap_lock on vma->vm_refcnt overflow */
-		mmap_read_lock(mm);
-		vma = find_vma(mm, addr);
-		lock_ctx->mmap_locked = true;
-	}
-
-	return vma;
+	return find_vma(mm, addr);
 }
 
-#else /* CONFIG_PER_VMA_LOCK */
-
-static int query_vma_setup(struct proc_maps_locking_ctx *lock_ctx)
-{
-	return mmap_read_lock_killable(lock_ctx->mm);
-}
-
-static void query_vma_teardown(struct proc_maps_locking_ctx *lock_ctx)
-{
-	mmap_read_unlock(lock_ctx->mm);
-}
-
-static struct vm_area_struct *query_vma_find_by_addr(struct proc_maps_locking_ctx *lock_ctx,
-						     unsigned long addr)
-{
-	return find_vma(lock_ctx->mm, addr);
-}
-
-#endif  /* CONFIG_PER_VMA_LOCK */
-
-static struct vm_area_struct *query_matching_vma(struct proc_maps_locking_ctx *lock_ctx,
+static struct vm_area_struct *query_matching_vma(struct mm_struct *mm,
 						 unsigned long addr, u32 flags)
 {
 	struct vm_area_struct *vma;
 
 next_vma:
-	vma = query_vma_find_by_addr(lock_ctx, addr);
-	if (IS_ERR(vma))
-		return vma;
-
+	vma = query_vma_find_by_addr(mm, addr);
 	if (!vma)
 		goto no_vma;
 
@@ -651,11 +451,11 @@ no_vma:
 	return ERR_PTR(-ENOENT);
 }
 
-static int do_procmap_query(struct mm_struct *mm, void __user *uarg)
+static int do_procmap_query(struct proc_maps_private *priv, void __user *uarg)
 {
-	struct proc_maps_locking_ctx lock_ctx = { .mm = mm };
 	struct procmap_query karg;
 	struct vm_area_struct *vma;
+	struct mm_struct *mm;
 	struct file *vm_file = NULL;
 	const char *name = NULL;
 	char build_id_buf[BUILD_ID_SIZE_MAX], *name_buf = NULL;
@@ -683,16 +483,17 @@ static int do_procmap_query(struct mm_struct *mm, void __user *uarg)
 	if (!!karg.build_id_size != !!karg.build_id_addr)
 		return -EINVAL;
 
+	mm = priv->mm;
 	if (!mm || !mmget_not_zero(mm))
 		return -ESRCH;
 
-	err = query_vma_setup(&lock_ctx);
+	err = query_vma_setup(mm);
 	if (err) {
 		mmput(mm);
 		return err;
 	}
 
-	vma = query_matching_vma(&lock_ctx, karg.query_addr, karg.query_flags);
+	vma = query_matching_vma(mm, karg.query_addr, karg.query_flags);
 	if (IS_ERR(vma)) {
 		err = PTR_ERR(vma);
 		vma = NULL;
@@ -765,7 +566,7 @@ static int do_procmap_query(struct mm_struct *mm, void __user *uarg)
 		vm_file = get_file(vma->vm_file);
 
 	/* unlock vma or mmap_lock, and put mm_struct before copying data to user */
-	query_vma_teardown(&lock_ctx);
+	query_vma_teardown(mm, vma);
 	mmput(mm);
 
 	if (karg.build_id_size) {
@@ -806,7 +607,7 @@ static int do_procmap_query(struct mm_struct *mm, void __user *uarg)
 	return 0;
 
 out:
-	query_vma_teardown(&lock_ctx);
+	query_vma_teardown(mm, vma);
 	mmput(mm);
 out_file:
 	if (vm_file)
@@ -822,8 +623,7 @@ static long procfs_procmap_ioctl(struct file *file, unsigned int cmd, unsigned l
 
 	switch (cmd) {
 	case PROCMAP_QUERY:
-		/* priv->lock_ctx.mm is set during file open operation */
-		return do_procmap_query(priv->lock_ctx.mm, (void __user *)arg);
+		return do_procmap_query(priv, (void __user *)arg);
 	default:
 		return -ENOIOCTLCMD;
 	}
@@ -920,8 +720,6 @@ static void smaps_account(struct mem_size_stats *mss, struct page *page,
 	struct folio *folio = page_folio(page);
 	int i, nr = compound ? compound_nr(page) : 1;
 	unsigned long size = nr * PAGE_SIZE;
-	bool exclusive;
-	int mapcount;
 
 	/*
 	 * First accumulate quantities that depend only on |size| and the type
@@ -962,29 +760,18 @@ static void smaps_account(struct mem_size_stats *mss, struct page *page,
 				      dirty, locked, present);
 		return;
 	}
-
-	if (IS_ENABLED(CONFIG_NO_PAGE_MAPCOUNT)) {
-		mapcount = folio_average_page_mapcount(folio);
-		exclusive = !folio_maybe_mapped_shared(folio);
-	}
-
 	/*
 	 * We obtain a snapshot of the mapcount. Without holding the folio lock
 	 * this snapshot can be slightly wrong as we cannot always read the
 	 * mapcount atomically.
 	 */
 	for (i = 0; i < nr; i++, page++) {
+		int mapcount = folio_precise_page_mapcount(folio, page);
 		unsigned long pss = PAGE_SIZE << PSS_SHIFT;
-
-		if (IS_ENABLED(CONFIG_PAGE_MAPCOUNT)) {
-			mapcount = folio_precise_page_mapcount(folio, page);
-			exclusive = mapcount < 2;
-		}
-
 		if (mapcount >= 2)
 			pss /= mapcount;
 		smaps_page_accumulate(mss, folio, PAGE_SIZE, pss,
-				dirty, locked, exclusive);
+				dirty, locked, mapcount < 2);
 	}
 }
 
@@ -1030,16 +817,14 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 		young = pte_young(ptent);
 		dirty = pte_dirty(ptent);
 		present = true;
-	} else if (pte_none(ptent)) {
-		smaps_pte_hole_lookup(addr, walk);
-	} else {
-		const softleaf_t entry = softleaf_from_pte(ptent);
+	} else if (is_swap_pte(ptent)) {
+		swp_entry_t swpent = pte_to_swp_entry(ptent);
 
-		if (softleaf_is_swap(entry)) {
+		if (!non_swap_entry(swpent)) {
 			int mapcount;
 
 			mss->swap += PAGE_SIZE;
-			mapcount = swp_swapcount(entry);
+			mapcount = swp_swapcount(swpent);
 			if (mapcount >= 2) {
 				u64 pss_delta = (u64)PAGE_SIZE << PSS_SHIFT;
 
@@ -1048,11 +833,14 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 			} else {
 				mss->swap_pss += (u64)PAGE_SIZE << PSS_SHIFT;
 			}
-		} else if (softleaf_has_pfn(entry)) {
-			if (softleaf_is_device_private(entry))
+		} else if (is_pfn_swap_entry(swpent)) {
+			if (is_device_private_entry(swpent))
 				present = true;
-			page = softleaf_to_page(entry);
+			page = pfn_swap_entry_to_page(swpent);
 		}
+	} else {
+		smaps_pte_hole_lookup(addr, walk);
+		return;
 	}
 
 	if (!page)
@@ -1072,16 +860,14 @@ static void smaps_pmd_entry(pmd_t *pmd, unsigned long addr,
 	bool present = false;
 	struct folio *folio;
 
-	if (pmd_none(*pmd))
-		return;
 	if (pmd_present(*pmd)) {
 		page = vm_normal_page_pmd(vma, addr, *pmd);
 		present = true;
-	} else if (unlikely(thp_migration_supported())) {
-		const softleaf_t entry = softleaf_from_pmd(*pmd);
+	} else if (unlikely(thp_migration_supported() && is_swap_pmd(*pmd))) {
+		swp_entry_t entry = pmd_to_swp_entry(*pmd);
 
-		if (softleaf_has_pfn(entry))
-			page = softleaf_to_page(entry);
+		if (is_pfn_swap_entry(entry))
+			page = pfn_swap_entry_to_page(entry);
 	}
 	if (IS_ERR_OR_NULL(page))
 		return;
@@ -1160,7 +946,6 @@ static void show_smap_vma_flags(struct seq_file *m, struct vm_area_struct *vma)
 		[ilog2(VM_MAYSHARE)]	= "ms",
 		[ilog2(VM_GROWSDOWN)]	= "gd",
 		[ilog2(VM_PFNMAP)]	= "pf",
-		[ilog2(VM_MAYBE_GUARD)]	= "gu",
 		[ilog2(VM_LOCKED)]	= "lo",
 		[ilog2(VM_IO)]		= "io",
 		[ilog2(VM_SEQ_READ)]	= "sr",
@@ -1196,17 +981,17 @@ static void show_smap_vma_flags(struct seq_file *m, struct vm_area_struct *vma)
 		[ilog2(VM_PKEY_BIT0)]	= "",
 		[ilog2(VM_PKEY_BIT1)]	= "",
 		[ilog2(VM_PKEY_BIT2)]	= "",
-#if CONFIG_ARCH_PKEY_BITS > 3
+#if VM_PKEY_BIT3
 		[ilog2(VM_PKEY_BIT3)]	= "",
 #endif
-#if CONFIG_ARCH_PKEY_BITS > 4
+#if VM_PKEY_BIT4
 		[ilog2(VM_PKEY_BIT4)]	= "",
 #endif
 #endif /* CONFIG_ARCH_HAS_PKEYS */
 #ifdef CONFIG_HAVE_ARCH_USERFAULTFD_MINOR
 		[ilog2(VM_UFFD_MINOR)]	= "ui",
 #endif /* CONFIG_HAVE_ARCH_USERFAULTFD_MINOR */
-#ifdef CONFIG_ARCH_HAS_USER_SHADOW_STACK
+#ifdef CONFIG_X86_USER_SHADOW_STACK
 		[ilog2(VM_SHADOW_STACK)] = "ss",
 #endif
 #if defined(CONFIG_64BIT) || defined(CONFIG_PPC32)
@@ -1245,16 +1030,16 @@ static int smaps_hugetlb_range(pte_t *pte, unsigned long hmask,
 	if (pte_present(ptent)) {
 		folio = page_folio(pte_page(ptent));
 		present = true;
-	} else {
-		const softleaf_t entry = softleaf_from_pte(ptent);
+	} else if (is_swap_pte(ptent)) {
+		swp_entry_t swpent = pte_to_swp_entry(ptent);
 
-		if (softleaf_has_pfn(entry))
-			folio = softleaf_to_folio(entry);
+		if (is_pfn_swap_entry(swpent))
+			folio = pfn_swap_entry_folio(swpent);
 	}
 
 	if (folio) {
 		/* We treat non-present entries as "maybe shared". */
-		if (!present || folio_maybe_mapped_shared(folio) ||
+		if (!present || folio_likely_mapped_shared(folio) ||
 		    hugetlb_pmd_shared(pte))
 			mss->shared_hugetlb += huge_page_size(hstate_vma(vma));
 		else
@@ -1384,8 +1169,8 @@ static int show_smap(struct seq_file *m, void *v)
 	__show_smap(m, &mss, false);
 
 	seq_printf(m, "THPeligible:    %8u\n",
-		   !!thp_vma_allowable_orders(vma, vma->vm_flags, TVA_SMAPS,
-					      THP_ORDERS_ALL));
+		   !!thp_vma_allowable_orders(vma, vma->vm_flags,
+			   TVA_SMAPS | TVA_ENFORCE_SYSFS, THP_ORDERS_ALL));
 
 	if (arch_pkeys_enabled())
 		seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
@@ -1398,7 +1183,7 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 {
 	struct proc_maps_private *priv = m->private;
 	struct mem_size_stats mss = {};
-	struct mm_struct *mm = priv->lock_ctx.mm;
+	struct mm_struct *mm = priv->mm;
 	struct vm_area_struct *vma;
 	unsigned long vma_start = 0, last_vma_end = 0;
 	int ret = 0;
@@ -1534,7 +1319,7 @@ static int smaps_rollup_open(struct inode *inode, struct file *file)
 	int ret;
 	struct proc_maps_private *priv;
 
-	priv = kzalloc_obj(*priv, GFP_KERNEL_ACCOUNT);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL_ACCOUNT);
 	if (!priv)
 		return -ENOMEM;
 
@@ -1543,9 +1328,9 @@ static int smaps_rollup_open(struct inode *inode, struct file *file)
 		goto out_free;
 
 	priv->inode = inode;
-	priv->lock_ctx.mm = proc_mem_open(inode, PTRACE_MODE_READ);
-	if (IS_ERR_OR_NULL(priv->lock_ctx.mm)) {
-		ret = priv->lock_ctx.mm ? PTR_ERR(priv->lock_ctx.mm) : -ESRCH;
+	priv->mm = proc_mem_open(inode, PTRACE_MODE_READ);
+	if (IS_ERR_OR_NULL(priv->mm)) {
+		ret = priv->mm ? PTR_ERR(priv->mm) : -ESRCH;
 
 		single_release(inode, file);
 		goto out_free;
@@ -1563,8 +1348,8 @@ static int smaps_rollup_release(struct inode *inode, struct file *file)
 	struct seq_file *seq = file->private_data;
 	struct proc_maps_private *priv = seq->private;
 
-	if (priv->lock_ctx.mm)
-		mmdrop(priv->lock_ctx.mm);
+	if (priv->mm)
+		mmdrop(priv->mm);
 
 	kfree(priv);
 	return single_release(inode, file);
@@ -1597,6 +1382,8 @@ struct clear_refs_private {
 	enum clear_refs_types type;
 };
 
+#ifdef CONFIG_MEM_SOFT_DIRTY
+
 static inline bool pte_is_pinned(struct vm_area_struct *vma, unsigned long addr, pte_t pte)
 {
 	struct folio *folio;
@@ -1605,7 +1392,7 @@ static inline bool pte_is_pinned(struct vm_area_struct *vma, unsigned long addr,
 		return false;
 	if (!is_cow_mapping(vma->vm_flags))
 		return false;
-	if (likely(!mm_flags_test(MMF_HAS_PINNED, vma->vm_mm)))
+	if (likely(!test_bit(MMF_HAS_PINNED, &vma->vm_mm->flags)))
 		return false;
 	folio = vm_normal_folio(vma, addr, pte);
 	if (!folio)
@@ -1616,8 +1403,6 @@ static inline bool pte_is_pinned(struct vm_area_struct *vma, unsigned long addr,
 static inline void clear_soft_dirty(struct vm_area_struct *vma,
 		unsigned long addr, pte_t *pte)
 {
-	if (!pgtable_supports_soft_dirty())
-		return;
 	/*
 	 * The soft-dirty tracker uses #PF-s to catch writes
 	 * to pages, so write-protect the pte as well. See the
@@ -1625,9 +1410,6 @@ static inline void clear_soft_dirty(struct vm_area_struct *vma,
 	 * of how soft-dirty works.
 	 */
 	pte_t ptent = ptep_get(pte);
-
-	if (pte_none(ptent))
-		return;
 
 	if (pte_present(ptent)) {
 		pte_t old_pte;
@@ -1638,20 +1420,23 @@ static inline void clear_soft_dirty(struct vm_area_struct *vma,
 		ptent = pte_wrprotect(old_pte);
 		ptent = pte_clear_soft_dirty(ptent);
 		ptep_modify_prot_commit(vma, addr, pte, old_pte, ptent);
-	} else {
+	} else if (is_swap_pte(ptent)) {
 		ptent = pte_swp_clear_soft_dirty(ptent);
 		set_pte_at(vma->vm_mm, addr, pte, ptent);
 	}
 }
+#else
+static inline void clear_soft_dirty(struct vm_area_struct *vma,
+		unsigned long addr, pte_t *pte)
+{
+}
+#endif
 
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
+#if defined(CONFIG_MEM_SOFT_DIRTY) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
 static inline void clear_soft_dirty_pmd(struct vm_area_struct *vma,
 		unsigned long addr, pmd_t *pmdp)
 {
 	pmd_t old, pmd = *pmdp;
-
-	if (!pgtable_supports_soft_dirty())
-		return;
 
 	if (pmd_present(pmd)) {
 		/* See comment in change_huge_pmd() */
@@ -1665,7 +1450,7 @@ static inline void clear_soft_dirty_pmd(struct vm_area_struct *vma,
 		pmd = pmd_clear_soft_dirty(pmd);
 
 		set_pmd_at(vma->vm_mm, addr, pmdp, pmd);
-	} else if (pmd_is_migration_entry(pmd)) {
+	} else if (is_migration_entry(pmd_to_swp_entry(pmd))) {
 		pmd = pmd_swp_clear_soft_dirty(pmd);
 		set_pmd_at(vma->vm_mm, addr, pmdp, pmd);
 	}
@@ -1864,7 +1649,6 @@ struct pagemapread {
 #define PM_SOFT_DIRTY		BIT_ULL(55)
 #define PM_MMAP_EXCLUSIVE	BIT_ULL(56)
 #define PM_UFFD_WP		BIT_ULL(57)
-#define PM_GUARD_REGION		BIT_ULL(58)
 #define PM_FILE			BIT_ULL(61)
 #define PM_SWAP			BIT_ULL(62)
 #define PM_PRESENT		BIT_ULL(63)
@@ -1882,13 +1666,6 @@ static int add_to_pagemap(pagemap_entry_t *pme, struct pagemapread *pm)
 	if (pm->pos >= pm->len)
 		return PM_END_OF_BUFFER;
 	return 0;
-}
-
-static bool __folio_page_mapped_exclusively(struct folio *folio, struct page *page)
-{
-	if (IS_ENABLED(CONFIG_PAGE_MAPCOUNT))
-		return folio_precise_page_mapcount(folio, page) == 1;
-	return !folio_maybe_mapped_shared(folio);
 }
 
 static int pagemap_pte_hole(unsigned long start, unsigned long end,
@@ -1938,9 +1715,6 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 	struct page *page = NULL;
 	struct folio *folio;
 
-	if (pte_none(pte))
-		goto out;
-
 	if (pte_present(pte)) {
 		if (pm->show_pfn)
 			frame = pte_pfn(pte);
@@ -1950,35 +1724,31 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 			flags |= PM_SOFT_DIRTY;
 		if (pte_uffd_wp(pte))
 			flags |= PM_UFFD_WP;
-	} else {
-		softleaf_t entry;
-
+	} else if (is_swap_pte(pte)) {
+		swp_entry_t entry;
 		if (pte_swp_soft_dirty(pte))
 			flags |= PM_SOFT_DIRTY;
 		if (pte_swp_uffd_wp(pte))
 			flags |= PM_UFFD_WP;
-		entry = softleaf_from_pte(pte);
+		entry = pte_to_swp_entry(pte);
 		if (pm->show_pfn) {
 			pgoff_t offset;
-
 			/*
 			 * For PFN swap offsets, keeping the offset field
 			 * to be PFN only to be compatible with old smaps.
 			 */
-			if (softleaf_has_pfn(entry))
-				offset = softleaf_to_pfn(entry);
+			if (is_pfn_swap_entry(entry))
+				offset = swp_offset_pfn(entry);
 			else
 				offset = swp_offset(entry);
 			frame = swp_type(entry) |
 			    (offset << MAX_SWAPFILES_SHIFT);
 		}
 		flags |= PM_SWAP;
-		if (softleaf_has_pfn(entry))
-			page = softleaf_to_page(entry);
-		if (softleaf_is_uffd_wp_marker(entry))
+		if (is_pfn_swap_entry(entry))
+			page = pfn_swap_entry_to_page(entry);
+		if (pte_marker_entry_uffd_wp(entry))
 			flags |= PM_UFFD_WP;
-		if (softleaf_is_guard_marker(entry))
-			flags |=  PM_GUARD_REGION;
 	}
 
 	if (page) {
@@ -1986,95 +1756,14 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 		if (!folio_test_anon(folio))
 			flags |= PM_FILE;
 		if ((flags & PM_PRESENT) &&
-		    __folio_page_mapped_exclusively(folio, page))
+		    folio_precise_page_mapcount(folio, page) == 1)
 			flags |= PM_MMAP_EXCLUSIVE;
 	}
-
-out:
 	if (vma->vm_flags & VM_SOFTDIRTY)
 		flags |= PM_SOFT_DIRTY;
 
 	return make_pme(frame, flags);
 }
-
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-static int pagemap_pmd_range_thp(pmd_t *pmdp, unsigned long addr,
-		unsigned long end, struct vm_area_struct *vma,
-		struct pagemapread *pm)
-{
-	unsigned int idx = (addr & ~PMD_MASK) >> PAGE_SHIFT;
-	u64 flags = 0, frame = 0;
-	pmd_t pmd = *pmdp;
-	struct page *page = NULL;
-	struct folio *folio = NULL;
-	int err = 0;
-
-	if (vma->vm_flags & VM_SOFTDIRTY)
-		flags |= PM_SOFT_DIRTY;
-
-	if (pmd_none(pmd))
-		goto populate_pagemap;
-
-	if (pmd_present(pmd)) {
-		page = pmd_page(pmd);
-
-		flags |= PM_PRESENT;
-		if (pmd_soft_dirty(pmd))
-			flags |= PM_SOFT_DIRTY;
-		if (pmd_uffd_wp(pmd))
-			flags |= PM_UFFD_WP;
-		if (pm->show_pfn)
-			frame = pmd_pfn(pmd) + idx;
-	} else if (thp_migration_supported()) {
-		const softleaf_t entry = softleaf_from_pmd(pmd);
-		unsigned long offset;
-
-		if (pm->show_pfn) {
-			if (softleaf_has_pfn(entry))
-				offset = softleaf_to_pfn(entry) + idx;
-			else
-				offset = swp_offset(entry) + idx;
-			frame = swp_type(entry) |
-				(offset << MAX_SWAPFILES_SHIFT);
-		}
-		flags |= PM_SWAP;
-		if (pmd_swp_soft_dirty(pmd))
-			flags |= PM_SOFT_DIRTY;
-		if (pmd_swp_uffd_wp(pmd))
-			flags |= PM_UFFD_WP;
-		VM_WARN_ON_ONCE(!pmd_is_migration_entry(pmd));
-		page = softleaf_to_page(entry);
-	}
-
-	if (page) {
-		folio = page_folio(page);
-		if (!folio_test_anon(folio))
-			flags |= PM_FILE;
-	}
-
-populate_pagemap:
-	for (; addr != end; addr += PAGE_SIZE, idx++) {
-		u64 cur_flags = flags;
-		pagemap_entry_t pme;
-
-		if (folio && (flags & PM_PRESENT) &&
-		    __folio_page_mapped_exclusively(folio, page))
-			cur_flags |= PM_MMAP_EXCLUSIVE;
-
-		pme = make_pme(frame, cur_flags);
-		err = add_to_pagemap(&pme, pm);
-		if (err)
-			break;
-		if (pm->show_pfn) {
-			if (flags & PM_PRESENT)
-				frame++;
-			else if (flags & PM_SWAP)
-				frame += (1 << MAX_SWAPFILES_SHIFT);
-		}
-	}
-	return err;
-}
-#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
 static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 			     struct mm_walk *walk)
@@ -2084,15 +1773,82 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 	spinlock_t *ptl;
 	pte_t *pte, *orig_pte;
 	int err = 0;
-
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+
 	ptl = pmd_trans_huge_lock(pmdp, vma);
 	if (ptl) {
-		err = pagemap_pmd_range_thp(pmdp, addr, end, vma, pm);
+		unsigned int idx = (addr & ~PMD_MASK) >> PAGE_SHIFT;
+		u64 flags = 0, frame = 0;
+		pmd_t pmd = *pmdp;
+		struct page *page = NULL;
+		struct folio *folio = NULL;
+
+		if (vma->vm_flags & VM_SOFTDIRTY)
+			flags |= PM_SOFT_DIRTY;
+
+		if (pmd_present(pmd)) {
+			page = pmd_page(pmd);
+
+			flags |= PM_PRESENT;
+			if (pmd_soft_dirty(pmd))
+				flags |= PM_SOFT_DIRTY;
+			if (pmd_uffd_wp(pmd))
+				flags |= PM_UFFD_WP;
+			if (pm->show_pfn)
+				frame = pmd_pfn(pmd) + idx;
+		}
+#ifdef CONFIG_ARCH_ENABLE_THP_MIGRATION
+		else if (is_swap_pmd(pmd)) {
+			swp_entry_t entry = pmd_to_swp_entry(pmd);
+			unsigned long offset;
+
+			if (pm->show_pfn) {
+				if (is_pfn_swap_entry(entry))
+					offset = swp_offset_pfn(entry) + idx;
+				else
+					offset = swp_offset(entry) + idx;
+				frame = swp_type(entry) |
+					(offset << MAX_SWAPFILES_SHIFT);
+			}
+			flags |= PM_SWAP;
+			if (pmd_swp_soft_dirty(pmd))
+				flags |= PM_SOFT_DIRTY;
+			if (pmd_swp_uffd_wp(pmd))
+				flags |= PM_UFFD_WP;
+			VM_BUG_ON(!is_pmd_migration_entry(pmd));
+			page = pfn_swap_entry_to_page(entry);
+		}
+#endif
+
+		if (page) {
+			folio = page_folio(page);
+			if (!folio_test_anon(folio))
+				flags |= PM_FILE;
+		}
+
+		for (; addr != end; addr += PAGE_SIZE, idx++) {
+			u64 cur_flags = flags;
+			pagemap_entry_t pme;
+
+			if (folio && (flags & PM_PRESENT) &&
+			    folio_precise_page_mapcount(folio, page + idx) == 1)
+				cur_flags |= PM_MMAP_EXCLUSIVE;
+
+			pme = make_pme(frame, cur_flags);
+			err = add_to_pagemap(&pme, pm);
+			if (err)
+				break;
+			if (pm->show_pfn) {
+				if (flags & PM_PRESENT)
+					frame++;
+				else if (flags & PM_SWAP)
+					frame += (1 << MAX_SWAPFILES_SHIFT);
+			}
+		}
 		spin_unlock(ptl);
 		return err;
 	}
-#endif
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
 	/*
 	 * We can assume that @vma always points to a valid one and @end never
@@ -2127,14 +1883,12 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
 	struct pagemapread *pm = walk->private;
 	struct vm_area_struct *vma = walk->vma;
 	u64 flags = 0, frame = 0;
-	spinlock_t *ptl;
 	int err = 0;
 	pte_t pte;
 
 	if (vma->vm_flags & VM_SOFTDIRTY)
 		flags |= PM_SOFT_DIRTY;
 
-	ptl = huge_pte_lock(hstate_vma(vma), walk->mm, ptep);
 	pte = huge_ptep_get(walk->mm, addr, ptep);
 	if (pte_present(pte)) {
 		struct folio *folio = page_folio(pte_page(pte));
@@ -2142,7 +1896,7 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
 		if (!folio_test_anon(folio))
 			flags |= PM_FILE;
 
-		if (!folio_maybe_mapped_shared(folio) &&
+		if (!folio_likely_mapped_shared(folio) &&
 		    !hugetlb_pmd_shared(ptep))
 			flags |= PM_MMAP_EXCLUSIVE;
 
@@ -2162,12 +1916,11 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
 
 		err = add_to_pagemap(&pme, pm);
 		if (err)
-			break;
+			return err;
 		if (pm->show_pfn && (flags & PM_PRESENT))
 			frame++;
 	}
 
-	spin_unlock(ptl);
 	cond_resched();
 
 	return err;
@@ -2195,8 +1948,7 @@ static const struct mm_walk_ops pagemap_ops = {
  * Bit  55    pte is soft-dirty (see Documentation/admin-guide/mm/soft-dirty.rst)
  * Bit  56    page exclusively mapped
  * Bit  57    pte is uffd-wp write-protected
- * Bit  58    pte is a guard region
- * Bits 59-60 zero
+ * Bits 58-60 zero
  * Bit  61    page is file-page or shared-anon
  * Bit  62    page swapped
  * Bit  63    page present
@@ -2328,8 +2080,7 @@ static int pagemap_release(struct inode *inode, struct file *file)
 #define PM_SCAN_CATEGORIES	(PAGE_IS_WPALLOWED | PAGE_IS_WRITTEN |	\
 				 PAGE_IS_FILE |	PAGE_IS_PRESENT |	\
 				 PAGE_IS_SWAPPED | PAGE_IS_PFNZERO |	\
-				 PAGE_IS_HUGE | PAGE_IS_SOFT_DIRTY |	\
-				 PAGE_IS_GUARD)
+				 PAGE_IS_HUGE | PAGE_IS_SOFT_DIRTY)
 #define PM_SCAN_FLAGS		(PM_SCAN_WP_MATCHING | PM_SCAN_CHECK_WPASYNC)
 
 struct pagemap_scan_private {
@@ -2344,16 +2095,12 @@ static unsigned long pagemap_page_category(struct pagemap_scan_private *p,
 					   struct vm_area_struct *vma,
 					   unsigned long addr, pte_t pte)
 {
-	unsigned long categories;
-
-	if (pte_none(pte))
-		return 0;
+	unsigned long categories = 0;
 
 	if (pte_present(pte)) {
 		struct page *page;
 
-		categories = PAGE_IS_PRESENT;
-
+		categories |= PAGE_IS_PRESENT;
 		if (!pte_uffd_wp(pte))
 			categories |= PAGE_IS_WRITTEN;
 
@@ -2367,22 +2114,19 @@ static unsigned long pagemap_page_category(struct pagemap_scan_private *p,
 			categories |= PAGE_IS_PFNZERO;
 		if (pte_soft_dirty(pte))
 			categories |= PAGE_IS_SOFT_DIRTY;
-	} else {
-		softleaf_t entry;
+	} else if (is_swap_pte(pte)) {
+		swp_entry_t swp;
 
-		categories = PAGE_IS_SWAPPED;
-
+		categories |= PAGE_IS_SWAPPED;
 		if (!pte_swp_uffd_wp_any(pte))
 			categories |= PAGE_IS_WRITTEN;
 
-		entry = softleaf_from_pte(pte);
-		if (softleaf_is_guard_marker(entry))
-			categories |= PAGE_IS_GUARD;
-		else if ((p->masks_of_interest & PAGE_IS_FILE) &&
-			 softleaf_has_pfn(entry) &&
-			 !folio_test_anon(softleaf_to_folio(entry)))
-			categories |= PAGE_IS_FILE;
-
+		if (p->masks_of_interest & PAGE_IS_FILE) {
+			swp = pte_to_swp_entry(pte);
+			if (is_pfn_swap_entry(swp) &&
+			    !folio_test_anon(pfn_swap_entry_folio(swp)))
+				categories |= PAGE_IS_FILE;
+		}
 		if (pte_swp_soft_dirty(pte))
 			categories |= PAGE_IS_SOFT_DIRTY;
 	}
@@ -2399,12 +2143,12 @@ static void make_uffd_wp_pte(struct vm_area_struct *vma,
 		old_pte = ptep_modify_prot_start(vma, addr, pte);
 		ptent = pte_mkuffd_wp(old_pte);
 		ptep_modify_prot_commit(vma, addr, pte, old_pte, ptent);
-	} else if (pte_none(ptent)) {
-		set_pte_at(vma->vm_mm, addr, pte,
-			   make_pte_marker(PTE_MARKER_UFFD_WP));
-	} else {
+	} else if (is_swap_pte(ptent)) {
 		ptent = pte_swp_mkuffd_wp(ptent);
 		set_pte_at(vma->vm_mm, addr, pte, ptent);
+	} else {
+		set_pte_at(vma->vm_mm, addr, pte,
+			   make_pte_marker(PTE_MARKER_UFFD_WP));
 	}
 }
 
@@ -2414,9 +2158,6 @@ static unsigned long pagemap_thp_category(struct pagemap_scan_private *p,
 					  unsigned long addr, pmd_t pmd)
 {
 	unsigned long categories = PAGE_IS_HUGE;
-
-	if (pmd_none(pmd))
-		return categories;
 
 	if (pmd_present(pmd)) {
 		struct page *page;
@@ -2435,7 +2176,9 @@ static unsigned long pagemap_thp_category(struct pagemap_scan_private *p,
 			categories |= PAGE_IS_PFNZERO;
 		if (pmd_soft_dirty(pmd))
 			categories |= PAGE_IS_SOFT_DIRTY;
-	} else {
+	} else if (is_swap_pmd(pmd)) {
+		swp_entry_t swp;
+
 		categories |= PAGE_IS_SWAPPED;
 		if (!pmd_swp_uffd_wp(pmd))
 			categories |= PAGE_IS_WRITTEN;
@@ -2443,10 +2186,9 @@ static unsigned long pagemap_thp_category(struct pagemap_scan_private *p,
 			categories |= PAGE_IS_SOFT_DIRTY;
 
 		if (p->masks_of_interest & PAGE_IS_FILE) {
-			const softleaf_t entry = softleaf_from_pmd(pmd);
-
-			if (softleaf_has_pfn(entry) &&
-			    !folio_test_anon(softleaf_to_folio(entry)))
+			swp = pmd_to_swp_entry(pmd);
+			if (is_pfn_swap_entry(swp) &&
+			    !folio_test_anon(pfn_swap_entry_folio(swp)))
 				categories |= PAGE_IS_FILE;
 		}
 	}
@@ -2463,7 +2205,7 @@ static void make_uffd_wp_pmd(struct vm_area_struct *vma,
 		old = pmdp_invalidate_ad(vma, addr, pmdp);
 		pmd = pmd_mkuffd_wp(old);
 		set_pmd_at(vma->vm_mm, addr, pmdp, pmd);
-	} else if (pmd_is_migration_entry(pmd)) {
+	} else if (is_migration_entry(pmd_to_swp_entry(pmd))) {
 		pmd = pmd_swp_mkuffd_wp(pmd);
 		set_pmd_at(vma->vm_mm, addr, pmdp, pmd);
 	}
@@ -2475,9 +2217,6 @@ static unsigned long pagemap_hugetlb_category(pte_t pte)
 {
 	unsigned long categories = PAGE_IS_HUGE;
 
-	if (pte_none(pte))
-		return categories;
-
 	/*
 	 * According to pagemap_hugetlb_range(), file-backed HugeTLB
 	 * page cannot be swapped. So PAGE_IS_FILE is not checked for
@@ -2485,7 +2224,6 @@ static unsigned long pagemap_hugetlb_category(pte_t pte)
 	 */
 	if (pte_present(pte)) {
 		categories |= PAGE_IS_PRESENT;
-
 		if (!huge_pte_uffd_wp(pte))
 			categories |= PAGE_IS_WRITTEN;
 		if (!PageAnon(pte_page(pte)))
@@ -2494,9 +2232,8 @@ static unsigned long pagemap_hugetlb_category(pte_t pte)
 			categories |= PAGE_IS_PFNZERO;
 		if (pte_soft_dirty(pte))
 			categories |= PAGE_IS_SOFT_DIRTY;
-	} else {
+	} else if (is_swap_pte(pte)) {
 		categories |= PAGE_IS_SWAPPED;
-
 		if (!pte_swp_uffd_wp_any(pte))
 			categories |= PAGE_IS_WRITTEN;
 		if (pte_swp_soft_dirty(pte))
@@ -2510,25 +2247,22 @@ static void make_uffd_wp_huge_pte(struct vm_area_struct *vma,
 				  unsigned long addr, pte_t *ptep,
 				  pte_t ptent)
 {
-	const unsigned long psize = huge_page_size(hstate_vma(vma));
-	softleaf_t entry;
+	unsigned long psize;
 
-	if (huge_pte_none(ptent)) {
-		set_huge_pte_at(vma->vm_mm, addr, ptep,
-				make_pte_marker(PTE_MARKER_UFFD_WP), psize);
-		return;
-	}
-
-	entry = softleaf_from_pte(ptent);
-	if (softleaf_is_hwpoison(entry) || softleaf_is_marker(entry))
+	if (is_hugetlb_entry_hwpoisoned(ptent) || is_pte_marker(ptent))
 		return;
 
-	if (softleaf_is_migration(entry))
+	psize = huge_page_size(hstate_vma(vma));
+
+	if (is_hugetlb_entry_migration(ptent))
 		set_huge_pte_at(vma->vm_mm, addr, ptep,
 				pte_swp_mkuffd_wp(ptent), psize);
-	else
+	else if (!huge_pte_none(ptent))
 		huge_ptep_modify_prot_commit(vma, addr, ptep, ptent,
 					     huge_pte_mkuffd_wp(ptent));
+	else
+		set_huge_pte_at(vma->vm_mm, addr, ptep,
+				make_pte_marker(PTE_MARKER_UFFD_WP), psize);
 }
 #endif /* CONFIG_HUGETLB_PAGE */
 
@@ -2741,18 +2475,21 @@ static int pagemap_scan_pmd_entry(pmd_t *pmd, unsigned long start,
 	spinlock_t *ptl;
 	int ret;
 
+	arch_enter_lazy_mmu_mode();
+
 	ret = pagemap_scan_thp_entry(pmd, start, end, walk);
-	if (ret != -ENOENT)
+	if (ret != -ENOENT) {
+		arch_leave_lazy_mmu_mode();
 		return ret;
+	}
 
 	ret = 0;
 	start_pte = pte = pte_offset_map_lock(vma->vm_mm, pmd, start, &ptl);
 	if (!pte) {
+		arch_leave_lazy_mmu_mode();
 		walk->action = ACTION_AGAIN;
 		return 0;
 	}
-
-	lazy_mmu_mode_enable();
 
 	if ((p->arg.flags & PM_SCAN_WP_MATCHING) && !p->vec_out) {
 		/* Fast path for performing exclusive WP */
@@ -2822,8 +2559,8 @@ flush_and_return:
 	if (flush_end)
 		flush_tlb_range(vma, start, addr);
 
-	lazy_mmu_mode_disable();
 	pte_unmap_unlock(start_pte, ptl);
+	arch_leave_lazy_mmu_mode();
 
 	cond_resched();
 	return ret;
@@ -2981,7 +2718,8 @@ static int pagemap_scan_init_bounce_buffer(struct pagemap_scan_private *p)
 
 	p->vec_buf_len = min_t(size_t, PAGEMAP_WALK_SIZE >> PAGE_SHIFT,
 			       p->arg.vec_len);
-	p->vec_buf = kmalloc_objs(*p->vec_buf, p->vec_buf_len);
+	p->vec_buf = kmalloc_array(p->vec_buf_len, sizeof(*p->vec_buf),
+				   GFP_KERNEL);
 	if (!p->vec_buf)
 		return -ENOMEM;
 
@@ -3137,12 +2875,7 @@ static void gather_stats(struct page *page, struct numa_maps *md, int pte_dirty,
 			unsigned long nr_pages)
 {
 	struct folio *folio = page_folio(page);
-	int count;
-
-	if (IS_ENABLED(CONFIG_PAGE_MAPCOUNT))
-		count = folio_precise_page_mapcount(folio, page);
-	else
-		count = folio_average_page_mapcount(folio);
+	int count = folio_precise_page_mapcount(folio, page);
 
 	md->pages += nr_pages;
 	if (pte_dirty || folio_test_dirty(folio))
@@ -3258,22 +2991,17 @@ static int gather_pte_stats(pmd_t *pmd, unsigned long addr,
 static int gather_hugetlb_stats(pte_t *pte, unsigned long hmask,
 		unsigned long addr, unsigned long end, struct mm_walk *walk)
 {
-	pte_t huge_pte;
+	pte_t huge_pte = huge_ptep_get(walk->mm, addr, pte);
 	struct numa_maps *md;
 	struct page *page;
-	spinlock_t *ptl;
 
-	ptl = huge_pte_lock(hstate_vma(walk->vma), walk->mm, pte);
-	huge_pte = huge_ptep_get(walk->mm, addr, pte);
 	if (!pte_present(huge_pte))
-		goto out;
+		return 0;
 
 	page = pte_page(huge_pte);
 
 	md = walk->private;
 	gather_stats(page, md, pte_dirty(huge_pte), 1);
-out:
-	spin_unlock(ptl);
 	return 0;
 }
 

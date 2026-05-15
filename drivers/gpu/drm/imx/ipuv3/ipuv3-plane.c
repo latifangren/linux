@@ -14,7 +14,6 @@
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_managed.h>
-#include <drm/drm_print.h>
 
 #include <video/imx-ipu-v3.h>
 
@@ -308,7 +307,7 @@ static void ipu_plane_state_reset(struct drm_plane *plane)
 		plane->state = NULL;
 	}
 
-	ipu_state = kzalloc_obj(*ipu_state);
+	ipu_state = kzalloc(sizeof(*ipu_state), GFP_KERNEL);
 
 	if (ipu_state)
 		__drm_atomic_helper_plane_reset(plane, &ipu_state->base);
@@ -322,7 +321,7 @@ ipu_plane_duplicate_state(struct drm_plane *plane)
 	if (WARN_ON(!plane->state))
 		return NULL;
 
-	state = kmalloc_obj(*state);
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
 	if (state)
 		__drm_atomic_helper_plane_duplicate_state(plane, &state->base);
 
@@ -387,7 +386,8 @@ static int ipu_plane_atomic_check(struct drm_plane *plane,
 		return -EINVAL;
 
 	crtc_state =
-		drm_atomic_get_new_crtc_state(state, new_state->crtc);
+		drm_atomic_get_existing_crtc_state(state,
+						   new_state->crtc);
 	if (WARN_ON(!crtc_state))
 		return -EINVAL;
 
@@ -890,7 +890,7 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 {
 	struct ipu_plane *ipu_plane;
 	const uint64_t *modifiers = ipu_format_modifiers;
-	unsigned int primary_zpos = 1;
+	unsigned int zpos = (type == DRM_PLANE_TYPE_PRIMARY) ? 0 : 1;
 	unsigned int format_count;
 	const uint32_t *formats;
 	int ret;
@@ -915,7 +915,7 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 					       type, NULL);
 	if (IS_ERR(ipu_plane)) {
 		DRM_ERROR("failed to allocate and initialize %s plane\n",
-			  (type == DRM_PLANE_TYPE_PRIMARY) ? "primary" : "overlay");
+			  zpos ? "overlay" : "primary");
 		return ipu_plane;
 	}
 
@@ -923,16 +923,17 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 	ipu_plane->dma = dma;
 	ipu_plane->dp_flow = dp;
 
-	if (type == DRM_PLANE_TYPE_PRIMARY) {
+	if (type == DRM_PLANE_TYPE_PRIMARY)
 		drm_plane_helper_add(&ipu_plane->base, &ipu_primary_plane_helper_funcs);
-		ret = drm_plane_create_zpos_immutable_property(&ipu_plane->base,
-							       primary_zpos);
-	} else {
+	else
 		drm_plane_helper_add(&ipu_plane->base, &ipu_plane_helper_funcs);
-		ret = drm_plane_create_zpos_property(&ipu_plane->base,
-						     primary_zpos + 1, 0,
-						     primary_zpos + 1);
-	}
+
+	if (dp == IPU_DP_FLOW_SYNC_BG || dp == IPU_DP_FLOW_SYNC_FG)
+		ret = drm_plane_create_zpos_property(&ipu_plane->base, zpos, 0,
+						     1);
+	else
+		ret = drm_plane_create_zpos_immutable_property(&ipu_plane->base,
+							       0);
 	if (ret)
 		return ERR_PTR(ret);
 
@@ -948,7 +949,7 @@ struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,
 	ret = ipu_plane_get_resources(dev, ipu_plane);
 	if (ret) {
 		DRM_ERROR("failed to get %s plane resources: %pe\n",
-			  (type == DRM_PLANE_TYPE_PRIMARY) ? "primary" : "overlay", &ret);
+			  zpos ? "overlay" : "primary", &ret);
 		return ERR_PTR(ret);
 	}
 

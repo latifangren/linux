@@ -18,7 +18,9 @@
 
 #include "internal.h"
 
+#define ACPI_MEMORY_DEVICE_CLASS		"memory"
 #define ACPI_MEMORY_DEVICE_HID			"PNP0C80"
+#define ACPI_MEMORY_DEVICE_NAME			"Hotplug Mem Device"
 
 static const struct acpi_device_id memory_device_ids[] = {
 	{ACPI_MEMORY_DEVICE_HID, 0},
@@ -78,7 +80,7 @@ acpi_memory_get_resource(struct acpi_resource *resource, void *context)
 		}
 	}
 
-	new = kzalloc_obj(struct acpi_memory_info);
+	new = kzalloc(sizeof(struct acpi_memory_info), GFP_KERNEL);
 	if (!new)
 		return AE_ERROR;
 
@@ -288,13 +290,15 @@ static int acpi_memory_device_add(struct acpi_device *device,
 	if (!device)
 		return -EINVAL;
 
-	mem_device = kzalloc_obj(struct acpi_memory_device);
+	mem_device = kzalloc(sizeof(struct acpi_memory_device), GFP_KERNEL);
 	if (!mem_device)
 		return -ENOMEM;
 
 	INIT_LIST_HEAD(&mem_device->res_list);
 	mem_device->device = device;
 	mem_device->mgid = -1;
+	sprintf(acpi_device_name(device), "%s", ACPI_MEMORY_DEVICE_NAME);
+	sprintf(acpi_device_class(device), "%s", ACPI_MEMORY_DEVICE_CLASS);
 	device->driver_data = mem_device;
 
 	/* Get the range from the _CRS */

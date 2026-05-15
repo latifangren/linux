@@ -28,15 +28,15 @@
 
 ::
 
-    tools/docs/checktransupdate.py --help
+    ./scripts/checktransupdate.py --help
 
 具体用法请参考参数解析器的输出
 
 示例
 
--  ``tools/docs/checktransupdate.py -l zh_CN``
+-  ``./scripts/checktransupdate.py -l zh_CN``
    这将打印 zh_CN 语言中需要更新的所有文件。
--  ``tools/docs/checktransupdate.py Documentation/translations/zh_CN/dev-tools/testing-overview.rst``
+-  ``./scripts/checktransupdate.py Documentation/translations/zh_CN/dev-tools/testing-overview.rst``
    这将只打印指定文件的状态。
 
 然后输出类似如下的内容：

@@ -78,4 +78,4 @@ module_auxiliary_driver(meson_reset_aux_driver);
 MODULE_DESCRIPTION("Amlogic Meson Reset Auxiliary driver");
 MODULE_AUTHOR("Jerome Brunet <jbrunet@baylibre.com>");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_IMPORT_NS("MESON_RESET");
+MODULE_IMPORT_NS(MESON_RESET);

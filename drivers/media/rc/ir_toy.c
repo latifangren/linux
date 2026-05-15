@@ -418,7 +418,7 @@ static int irtoy_probe(struct usb_interface *intf,
 		return -ENODEV;
 	}
 
-	irtoy = kzalloc_obj(*irtoy);
+	irtoy = kzalloc(sizeof(*irtoy), GFP_KERNEL);
 	if (!irtoy)
 		return -ENOMEM;
 
@@ -536,7 +536,6 @@ static void irtoy_disconnect(struct usb_interface *intf)
 	usb_free_urb(ir->urb_out);
 	usb_kill_urb(ir->urb_in);
 	usb_free_urb(ir->urb_in);
-	rc_free_device(ir->rc);
 	kfree(ir->in);
 	kfree(ir->out);
 	kfree(ir);

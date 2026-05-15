@@ -29,38 +29,6 @@ refactorings already and are an expert in the specific area
 Subsystem-wide refactorings
 ===========================
 
-Open-code drm_simple_encoder_init()
------------------------------------
-
-The helper drm_simple_encoder_init() was supposed to simplify encoder
-initialization. Instead it only added an intermediate layer between atomic
-modesetting and the DRM driver.
-
-The task here is to remove drm_simple_encoder_init(). Search for a driver
-that calls drm_simple_encoder_init() and inline the helper. The driver will
-also need its own instance of drm_encoder_funcs.
-
-Contact: Thomas Zimmermann, respective driver maintainer
-
-Level: Easy
-
-Replace struct drm_simple_display_pipe with regular atomic helpers
-------------------------------------------------------------------
-
-The data type struct drm_simple_display_pipe and its helpers were supposed
-to simplify driver development. Instead they only added an intermediate layer
-between atomic modesetting and the DRM driver.
-
-There are still drivers that use drm_simple_display_pipe. The task here is to
-convert them to use regular atomic helpers. Search for a driver that calls
-drm_simple_display_pipe_init() and inline all helpers from drm_simple_kms_helper.c
-into the driver, such that no simple-KMS interfaces are required. Please also
-rename all inlined fucntions according to driver conventions.
-
-Contact: Thomas Zimmermann, respective driver maintainer
-
-Level: Easy
-
 Remove custom dumb_map_offset implementations
 ---------------------------------------------
 
@@ -204,6 +172,31 @@ interfaces to fix these issues:
 Contact: Simona Vetter
 
 Level: Intermediate
+
+Get rid of dev->struct_mutex from GEM drivers
+---------------------------------------------
+
+``dev->struct_mutex`` is the Big DRM Lock from legacy days and infested
+everything. Nowadays in modern drivers the only bit where it's mandatory is
+serializing GEM buffer object destruction. Which unfortunately means drivers
+have to keep track of that lock and either call ``unreference`` or
+``unreference_locked`` depending upon context.
+
+Core GEM doesn't have a need for ``struct_mutex`` any more since kernel 4.8,
+and there's a GEM object ``free`` callback for any drivers which are
+entirely ``struct_mutex`` free.
+
+For drivers that need ``struct_mutex`` it should be replaced with a driver-
+private lock. The tricky part is the BO free functions, since those can't
+reliably take that lock any more. Instead state needs to be protected with
+suitable subordinate locks or some cleanup work pushed to a worker thread. For
+performance-critical drivers it might also be better to go with a more
+fine-grained per-buffer object and per-context lockings scheme. Currently only
+the ``msm`` and `i915` drivers use ``struct_mutex``.
+
+Contact: Simona Vetter, respective driver maintainers
+
+Level: Advanced
 
 Move Buffer Object Locking to dma_resv_lock()
 ---------------------------------------------
@@ -448,15 +441,14 @@ Contact: Thomas Zimmermann <tzimmermann@suse.de>
 
 Level: Intermediate
 
-Request memory regions in all fbdev drivers
---------------------------------------------
+Request memory regions in all drivers
+-------------------------------------
 
-Old/ancient fbdev drivers do not request their memory properly.
-Go through these drivers and add code to request the memory regions
-that the driver uses. This requires adding calls to request_mem_region(),
+Go through all drivers and add code to request the memory regions that the
+driver uses. This requires adding calls to request_mem_region(),
 pci_request_region() or similar functions. Use helpers for managed cleanup
-where possible. Problematic areas include hardware that has exclusive ranges
-like VGA. VGA16fb does not request the range as it is expected.
+where possible.
+
 Drivers are pretty bad at doing this and there used to be conflicts among
 DRM and fbdev drivers. Still, it's the correct thing to do.
 
@@ -504,55 +496,24 @@ Contact: Douglas Anderson <dianders@chromium.org>
 
 Level: Intermediate
 
-Transition away from using deprecated MIPI DSI functions
---------------------------------------------------------
+Transition away from using mipi_dsi_*_write_seq()
+-------------------------------------------------
 
-There are many functions defined in ``drm_mipi_dsi.c`` which have been
-deprecated. Each deprecated function was deprecated in favor of its `multi`
-variant (e.g. `mipi_dsi_generic_write()` and `mipi_dsi_generic_write_multi()`).
-The `multi` variant of a function includes improved error handling and logic
-which makes it more convenient to make several calls in a row, as most MIPI
-drivers do.
+The macros mipi_dsi_generic_write_seq() and mipi_dsi_dcs_write_seq() are
+non-intuitive because, if there are errors, they return out of the *caller's*
+function. We should move all callers to use mipi_dsi_generic_write_seq_multi()
+and mipi_dsi_dcs_write_seq_multi() macros instead.
 
-Drivers should be updated to use undeprecated functions. Once all usages of the
-deprecated MIPI DSI functions have been removed, their definitions may be
-removed from ``drm_mipi_dsi.c``.
+Once all callers are transitioned, the macros and the functions that they call,
+mipi_dsi_generic_write_chatty() and mipi_dsi_dcs_write_buffer_chatty(), can
+probably be removed. Alternatively, if people feel like the _multi() variants
+are overkill for some use cases, we could keep the mipi_dsi_*_write_seq()
+variants but change them not to return out of the caller.
 
 Contact: Douglas Anderson <dianders@chromium.org>
 
 Level: Starter
 
-Remove devm_drm_put_bridge()
-----------------------------
-
-Due to how the panel bridge handles the drm_bridge object lifetime, special
-care must be taken to dispose of the drm_bridge object when the
-panel_bridge is removed. This is currently managed using
-devm_drm_put_bridge(), but that is an unsafe, temporary workaround. To fix
-that, the DRM panel lifetime needs to be reworked. After the rework is
-done, remove devm_drm_put_bridge() and the TODO in
-drm_panel_bridge_remove().
-
-Contact: Maxime Ripard <mripard@kernel.org>,
-         Luca Ceresoli <luca.ceresoli@bootlin.com>
-
-Level: Intermediate
-
-Convert users of of_drm_find_bridge() to of_drm_find_and_get_bridge()
----------------------------------------------------------------------
-
-Taking a struct drm_bridge pointer requires getting a reference and putting
-it after disposing of the pointer. Most functions returning a struct
-drm_bridge pointer already call drm_bridge_get() to increment the refcount
-and their users have been updated to call drm_bridge_put() when
-appropriate. of_drm_find_bridge() does not get a reference and it has been
-deprecated in favor of of_drm_find_and_get_bridge() which does, but some
-users still need to be converted.
-
-Contact: Maxime Ripard <mripard@kernel.org>,
-         Luca Ceresoli <luca.ceresoli@bootlin.com>
-
-Level: Intermediate
 
 Core refactorings
 =================
@@ -909,67 +870,6 @@ be found in :ref:`damage_tracking_properties`.
 Contact: Javier Martinez Canillas <javierm@redhat.com>
 
 Level: Advanced
-
-Querying errors from drm_syncobj
-================================
-
-The drm_syncobj container can be used by driver independent code to signal
-complection of submission.
-
-One minor feature still missing is a generic DRM IOCTL to query the error
-status of binary and timeline drm_syncobj.
-
-This should probably be improved by implementing the necessary kernel interface
-and adding support for that in the userspace stack.
-
-Contact: Christian König
-
-Level: Starter
-
-DRM GPU Scheduler
-=================
-
-Provide a universal successor for drm_sched_resubmit_jobs()
------------------------------------------------------------
-
-drm_sched_resubmit_jobs() is deprecated. Main reason being that it leads to
-reinitializing dma_fences. See that function's docu for details. The better
-approach for valid resubmissions by amdgpu and Xe is (apparently) to figure out
-which job (and, through association: which entity) caused the hang. Then, the
-job's buffer data, together with all other jobs' buffer data currently in the
-same hardware ring, must be invalidated. This can for example be done by
-overwriting it. amdgpu currently determines which jobs are in the ring and need
-to be overwritten by keeping copies of the job. Xe obtains that information by
-directly accessing drm_sched's pending_list.
-
-Tasks:
-
-1. implement scheduler functionality through which the driver can obtain the
-   information which *broken* jobs are currently in the hardware ring.
-2. Such infrastructure would then typically be used in
-   drm_sched_backend_ops.timedout_job(). Document that.
-3. Port a driver as first user.
-4. Document the new alternative in the docu of deprecated
-   drm_sched_resubmit_jobs().
-
-Contact: Christian König <christian.koenig@amd.com>
-         Philipp Stanner <phasta@kernel.org>
-
-Level: Advanced
-
-Add locking for runqueues
--------------------------
-
-There is an old FIXME by Sima in include/drm/gpu_scheduler.h. It details that
-struct drm_sched_rq is read at many places without any locks, not even with a
-READ_ONCE. At XDC 2025 no one could really tell why that is the case, whether
-locks are needed and whether they could be added. (But for real, that should
-probably be locked!). Check whether it's possible to add locks everywhere, and
-do so if yes.
-
-Contact: Philipp Stanner <phasta@kernel.org>
-
-Level: Intermediate
 
 Outside DRM
 ===========

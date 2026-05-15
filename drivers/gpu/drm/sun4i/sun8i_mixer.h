@@ -23,6 +23,7 @@
 
 #define SUN50I_MIXER_GLOBAL_SIZE		0x8
 #define SUN50I_MIXER_GLOBAL_CLK			0xc
+#define SUN50I_MIXER_GLOBAL_DBUFF		0x10
 
 #define SUN8I_MIXER_GLOBAL_CTL_RT_EN		BIT(0)
 
@@ -38,9 +39,6 @@
 #define DE3_BLD_BASE				0x0800
 #define DE3_CH_BASE				0x1000
 #define DE3_CH_SIZE				0x0800
-
-#define DE33_CH_BASE				0x1000
-#define DE33_CH_SIZE				0x20000
 
 #define SUN8I_MIXER_BLEND_PIPE_CTL(base)	((base) + 0)
 #define SUN8I_MIXER_BLEND_ATTR_FCOLOR(base, x)	((base) + 0x4 + 0x10 * (x))
@@ -158,51 +156,36 @@ enum {
 };
 
 enum sun8i_mixer_type {
-	SUN8I_MIXER_DE2,
-	SUN8I_MIXER_DE3,
-	SUN8I_MIXER_DE33,
+	sun8i_mixer_de2,
+	sun8i_mixer_de3,
+	sun8i_mixer_de33,
 };
 
 /**
- * struct sun8i_layer_cfg - layer configuration
- * @vi_scaler_num: Number of VI scalers. Used on DE2 and DE3.
+ * struct sun8i_mixer_cfg - mixer HW configuration
+ * @vi_num: number of VI channels
+ * @ui_num: number of UI channels
  * @scaler_mask: bitmask which tells which channel supports scaling
  *	First, scaler supports for VI channels is defined and after that, scaler
  *	support for UI channels. For example, if mixer has 2 VI channels without
  *	scaler and 2 UI channels with scaler, bitmask would be 0xC.
  * @ccsc: select set of CCSC base addresses from the enumeration above.
- * @de_type: sun8i_mixer_type enum representing the display engine generation.
- * @scaline_yuv: size of a scanline for VI scaler for YUV formats.
- * @de2_fcc_alpha: use FCC for missing DE2 VI alpha capability
- *	Most DE2 cores has FCC. If number of VI planes is one, enable this.
- */
-struct sun8i_layer_cfg {
-	unsigned int	vi_scaler_num;
-	int		scaler_mask;
-	int		ccsc;
-	unsigned int	de_type;
-	unsigned int	scanline_yuv;
-	unsigned int	de2_fcc_alpha : 1;
-};
-
-/**
- * struct sun8i_mixer_cfg - mixer HW configuration
- * @lay_cfg: layer configuration
- * @vi_num: number of VI channels
- * @ui_num: number of UI channels
- * @de_type: sun8i_mixer_type enum representing the display engine generation.
  * @mod_rate: module clock rate that needs to be set in order to have
  *	a functional block.
- * @map: channel map for DE variants processing YUV separately (DE33)
+ * @is_de3: true, if this is next gen display engine 3.0, false otherwise.
+ * @has_formatter: true, if mixer has formatter core, for 10-bit and YUV handling
+ * @scaline_yuv: size of a scanline for VI scaler for YUV formats.
  */
-
 struct sun8i_mixer_cfg {
-	struct sun8i_layer_cfg	lay_cfg;
-	int			vi_num;
-	int			ui_num;
-	unsigned int		de_type;
-	unsigned long		mod_rate;
-	unsigned int		map[6];
+	int		vi_num;
+	int		ui_num;
+	int		scaler_mask;
+	int		ccsc;
+	unsigned long	mod_rate;
+	unsigned int	de_type;
+	unsigned int    has_formatter : 1;
+	unsigned int	scanline_yuv;
+	unsigned int	map[6];
 };
 
 struct sun8i_mixer {
@@ -225,13 +208,11 @@ enum {
 };
 
 struct sun8i_layer {
-	struct drm_plane		plane;
-	int				type;
-	int				index;
-	int				channel;
-	int				overlay;
-	struct regmap			*regs;
-	const struct sun8i_layer_cfg	*cfg;
+	struct drm_plane	plane;
+	struct sun8i_mixer	*mixer;
+	int			type;
+	int			channel;
+	int			overlay;
 };
 
 static inline struct sun8i_layer *
@@ -249,25 +230,25 @@ engine_to_sun8i_mixer(struct sunxi_engine *engine)
 static inline u32
 sun8i_blender_base(struct sun8i_mixer *mixer)
 {
-	return mixer->cfg->de_type == SUN8I_MIXER_DE3 ? DE3_BLD_BASE : DE2_BLD_BASE;
+	return mixer->cfg->de_type == sun8i_mixer_de3 ? DE3_BLD_BASE : DE2_BLD_BASE;
 }
 
 static inline struct regmap *
 sun8i_blender_regmap(struct sun8i_mixer *mixer)
 {
-	return mixer->cfg->de_type == SUN8I_MIXER_DE33 ?
+	return mixer->cfg->de_type == sun8i_mixer_de33 ?
 		mixer->disp_regs : mixer->engine.regs;
 }
 
 static inline u32
-sun8i_channel_base(struct sun8i_layer *layer)
+sun8i_channel_base(struct sun8i_mixer *mixer, int channel)
 {
-	if (layer->cfg->de_type == SUN8I_MIXER_DE33)
-		return DE33_CH_BASE + layer->channel * DE33_CH_SIZE;
-	else if (layer->cfg->de_type == SUN8I_MIXER_DE3)
-		return DE3_CH_BASE + layer->channel * DE3_CH_SIZE;
+	if (mixer->cfg->de_type == sun8i_mixer_de33)
+		return mixer->cfg->map[channel] * 0x20000 + DE2_CH_SIZE;
+	else if (mixer->cfg->de_type == sun8i_mixer_de3)
+		return DE3_CH_BASE + channel * DE3_CH_SIZE;
 	else
-		return DE2_CH_BASE + layer->channel * DE2_CH_SIZE;
+		return DE2_CH_BASE + channel * DE2_CH_SIZE;
 }
 
 int sun8i_mixer_drm_format_to_hw(u32 format, u32 *hw_format);

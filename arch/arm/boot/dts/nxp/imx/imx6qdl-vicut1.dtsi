@@ -429,6 +429,7 @@
 };
 
 &usbh1 {
+	pinctrl-names = "default";
 	phy_type = "utmi";
 	dr_mode = "host";
 	disable-over-current;

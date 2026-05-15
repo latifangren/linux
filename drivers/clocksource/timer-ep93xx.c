@@ -141,7 +141,7 @@ static int __init ep93xx_timer_of_init(struct device_node *np)
 	struct ep93xx_tcu *tcu;
 	int ret;
 
-	tcu = kzalloc_obj(*tcu);
+	tcu = kzalloc(sizeof(*tcu), GFP_KERNEL);
 	if (!tcu)
 		return -ENOMEM;
 

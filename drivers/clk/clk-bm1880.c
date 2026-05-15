@@ -608,8 +608,8 @@ static unsigned long bm1880_clk_div_recalc_rate(struct clk_hw *hw,
 	return rate;
 }
 
-static int bm1880_clk_div_determine_rate(struct clk_hw *hw,
-					 struct clk_rate_request *req)
+static long bm1880_clk_div_round_rate(struct clk_hw *hw, unsigned long rate,
+				      unsigned long *prate)
 {
 	struct bm1880_div_hw_clock *div_hw = to_bm1880_div_clk(hw);
 	struct bm1880_div_clock *div = &div_hw->div;
@@ -621,11 +621,13 @@ static int bm1880_clk_div_determine_rate(struct clk_hw *hw,
 		val = readl(reg_addr) >> div->shift;
 		val &= clk_div_mask(div->width);
 
-		return divider_ro_determine_rate(hw, req, div->table,
-						 div->width, div->flags, val);
+		return divider_ro_round_rate(hw, rate, prate, div->table,
+					     div->width, div->flags,
+					     val);
 	}
 
-	return divider_determine_rate(hw, req, div->table, div->width, div->flags);
+	return divider_round_rate(hw, rate, prate, div->table,
+				  div->width, div->flags);
 }
 
 static int bm1880_clk_div_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -663,7 +665,7 @@ static int bm1880_clk_div_set_rate(struct clk_hw *hw, unsigned long rate,
 
 static const struct clk_ops bm1880_clk_div_ops = {
 	.recalc_rate = bm1880_clk_div_recalc_rate,
-	.determine_rate = bm1880_clk_div_determine_rate,
+	.round_rate = bm1880_clk_div_round_rate,
 	.set_rate = bm1880_clk_div_set_rate,
 };
 
@@ -764,7 +766,7 @@ static struct clk_hw *bm1880_clk_register_composite(struct bm1880_composite_cloc
 	int ret;
 
 	if (clks->mux_shift >= 0) {
-		mux = kzalloc_obj(*mux);
+		mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 		if (!mux)
 			return ERR_PTR(-ENOMEM);
 
@@ -784,7 +786,7 @@ static struct clk_hw *bm1880_clk_register_composite(struct bm1880_composite_cloc
 	}
 
 	if (clks->gate_shift >= 0) {
-		gate = kzalloc_obj(*gate);
+		gate = kzalloc(sizeof(*gate), GFP_KERNEL);
 		if (!gate) {
 			ret = -ENOMEM;
 			goto err_out;
@@ -799,7 +801,7 @@ static struct clk_hw *bm1880_clk_register_composite(struct bm1880_composite_cloc
 	}
 
 	if (clks->div_shift >= 0) {
-		div_hws = kzalloc_obj(*div_hws);
+		div_hws = kzalloc(sizeof(*div_hws), GFP_KERNEL);
 		if (!div_hws) {
 			ret = -ENOMEM;
 			goto err_out;

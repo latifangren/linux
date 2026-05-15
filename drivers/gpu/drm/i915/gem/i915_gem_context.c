@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
 /*
+ * SPDX-License-Identifier: MIT
+ *
  * Copyright © 2011-2012 Intel Corporation
  */
 
@@ -68,7 +69,6 @@
 #include <linux/nospec.h>
 
 #include <drm/drm_cache.h>
-#include <drm/drm_print.h>
 #include <drm/drm_syncobj.h>
 
 #include "gt/gen6_ppgtt.h"
@@ -238,7 +238,7 @@ static int proto_context_set_persistence(struct drm_i915_private *i915,
 		 *
 		 * However, if we cannot reset an engine by itself, we cannot
 		 * cleanup a hanging persistent context without causing
-		 * collateral damage, and we should not pretend we can by
+		 * colateral damage, and we should not pretend we can by
 		 * exposing the interface.
 		 */
 		if (!intel_has_reset_engine(to_gt(i915)))
@@ -285,7 +285,7 @@ proto_context_create(struct drm_i915_file_private *fpriv,
 {
 	struct i915_gem_proto_context *pc, *err;
 
-	pc = kzalloc_obj(*pc);
+	pc = kzalloc(sizeof(*pc), GFP_KERNEL);
 	if (!pc)
 		return ERR_PTR(-ENOMEM);
 
@@ -442,7 +442,7 @@ set_proto_ctx_engines_balance(struct i915_user_extension __user *base,
 	if (num_siblings == 0)
 		return 0;
 
-	siblings = kmalloc_objs(*siblings, num_siblings);
+	siblings = kmalloc_array(num_siblings, sizeof(*siblings), GFP_KERNEL);
 	if (!siblings)
 		return -ENOMEM;
 
@@ -644,7 +644,9 @@ set_proto_ctx_engines_parallel_submit(struct i915_user_extension __user *base,
 		return -EINVAL;
 	}
 
-	siblings = kmalloc_objs(*siblings, num_siblings * width);
+	siblings = kmalloc_array(num_siblings * width,
+				 sizeof(*siblings),
+				 GFP_KERNEL);
 	if (!siblings)
 		return -ENOMEM;
 
@@ -759,7 +761,7 @@ static int set_proto_ctx_engines(struct drm_i915_file_private *fpriv,
 	if (set.num_engines > I915_EXEC_RING_MASK + 1)
 		return -EINVAL;
 
-	set.engines = kmalloc_objs(*set.engines, set.num_engines);
+	set.engines = kmalloc_array(set.num_engines, sizeof(*set.engines), GFP_KERNEL);
 	if (!set.engines)
 		return -ENOMEM;
 
@@ -1103,7 +1105,7 @@ static struct i915_gem_engines *alloc_engines(unsigned int count)
 {
 	struct i915_gem_engines *e;
 
-	e = kzalloc_flex(*e, engines, count);
+	e = kzalloc(struct_size(e, engines, count), GFP_KERNEL);
 	if (!e)
 		return NULL;
 
@@ -1587,7 +1589,7 @@ static int __context_set_persistence(struct i915_gem_context *ctx, bool state)
 		 *
 		 * However, if we cannot reset an engine by itself, we cannot
 		 * cleanup a hanging persistent context without causing
-		 * collateral damage, and we should not pretend we can by
+		 * colateral damage, and we should not pretend we can by
 		 * exposing the interface.
 		 */
 		if (!intel_has_reset_engine(to_gt(ctx->i915)))
@@ -1609,7 +1611,7 @@ i915_gem_create_context(struct drm_i915_private *i915,
 	int err;
 	int i;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return ERR_PTR(-ENOMEM);
 
@@ -2157,10 +2159,16 @@ static int set_context_image(struct i915_gem_context *ctx,
 		goto out_ce;
 	}
 
-	state = memdup_user(u64_to_user_ptr(user.image), ce->engine->context_size);
-	if (IS_ERR(state)) {
-		ret = PTR_ERR(state);
+	state = kmalloc(ce->engine->context_size, GFP_KERNEL);
+	if (!state) {
+		ret = -ENOMEM;
 		goto out_ce;
+	}
+
+	if (copy_from_user(state, u64_to_user_ptr(user.image),
+			   ce->engine->context_size)) {
+		ret = -EFAULT;
+		goto out_state;
 	}
 
 	shmem_state = shmem_create_from_data(ce->engine->name,
@@ -2320,7 +2328,7 @@ finalize_create_context_locked(struct drm_i915_file_private *file_priv,
 
 	/*
 	 * One for the xarray and one for the caller.  We need to grab
-	 * the reference *prior* to making the ctx visible to userspace
+	 * the reference *prior* to making the ctx visble to userspace
 	 * in gem_context_register(), as at any point after that
 	 * userspace can try to race us with another thread destroying
 	 * the context under our feet.

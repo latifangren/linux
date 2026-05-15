@@ -59,7 +59,6 @@ struct binder_features {
 	bool oneway_spam_detection;
 	bool extended_error;
 	bool freeze_notification;
-	bool transaction_report;
 };
 
 static const struct constant_table binderfs_param_stats[] = {
@@ -77,7 +76,6 @@ static struct binder_features binder_features = {
 	.oneway_spam_detection = true,
 	.extended_error = true,
 	.freeze_notification = true,
-	.transaction_report = true,
 };
 
 static inline struct binderfs_info *BINDERFS_SB(const struct super_block *sb)
@@ -119,6 +117,7 @@ static int binderfs_binder_device_create(struct inode *ref_inode,
 	struct dentry *dentry, *root;
 	struct binder_device *device;
 	char *name = NULL;
+	size_t name_len;
 	struct inode *inode = NULL;
 	struct super_block *sb = ref_inode->i_sb;
 	struct binderfs_info *info = sb->s_fs_info;
@@ -145,7 +144,7 @@ static int binderfs_binder_device_create(struct inode *ref_inode,
 	mutex_unlock(&binderfs_minors_mutex);
 
 	ret = -ENOMEM;
-	device = kzalloc_obj(*device);
+	device = kzalloc(sizeof(*device), GFP_KERNEL);
 	if (!device)
 		goto err;
 
@@ -162,7 +161,9 @@ static int binderfs_binder_device_create(struct inode *ref_inode,
 	inode->i_gid = info->root_gid;
 
 	req->name[BINDERFS_MAX_NAME] = '\0'; /* NUL-terminate */
-	name = kstrdup(req->name, GFP_KERNEL);
+	name_len = strlen(req->name);
+	/* Make sure to include terminating NUL byte */
+	name = kmemdup(req->name, name_len + 1, GFP_KERNEL);
 	if (!name)
 		goto err;
 
@@ -183,17 +184,28 @@ static int binderfs_binder_device_create(struct inode *ref_inode,
 	}
 
 	root = sb->s_root;
-	dentry = simple_start_creating(root, name);
+	inode_lock(d_inode(root));
+
+	/* look it up */
+	dentry = lookup_one_len(name, root, name_len);
 	if (IS_ERR(dentry)) {
+		inode_unlock(d_inode(root));
 		ret = PTR_ERR(dentry);
 		goto err;
 	}
-	inode->i_private = device;
-	d_make_persistent(dentry, inode);
-	fsnotify_create(root->d_inode, dentry);
-	simple_done_creating(dentry);
 
-	binder_add_device(device);
+	if (d_really_is_positive(dentry)) {
+		/* already exists */
+		dput(dentry);
+		inode_unlock(d_inode(root));
+		ret = -EEXIST;
+		goto err;
+	}
+
+	inode->i_private = device;
+	d_instantiate(dentry, inode);
+	fsnotify_create(root->d_inode, dentry);
+	inode_unlock(d_inode(root));
 
 	return 0;
 
@@ -211,9 +223,6 @@ err:
 
 /**
  * binder_ctl_ioctl - handle binder device node allocation requests
- * @file: The file pointer for the binder-control device node.
- * @cmd: The ioctl command.
- * @arg: The ioctl argument.
  *
  * The request handler for the binder-control device. All requests operate on
  * the binderfs mount the binder-control device resides in:
@@ -263,7 +272,6 @@ static void binderfs_evict_inode(struct inode *inode)
 	mutex_unlock(&binderfs_minors_mutex);
 
 	if (refcount_dec_and_test(&device->ref)) {
-		binder_remove_device(device);
 		kfree(device->context.name);
 		kfree(device);
 	}
@@ -396,9 +404,15 @@ static int binderfs_binder_ctl_create(struct super_block *sb)
 	bool use_reserve = true;
 #endif
 
-	device = kzalloc_obj(*device);
+	device = kzalloc(sizeof(*device), GFP_KERNEL);
 	if (!device)
 		return -ENOMEM;
+
+	/* If we have already created a binder-control node, return. */
+	if (info->control_dentry) {
+		ret = 0;
+		goto out;
+	}
 
 	ret = -ENOMEM;
 	inode = new_inode(sb);
@@ -435,8 +449,7 @@ static int binderfs_binder_ctl_create(struct super_block *sb)
 
 	inode->i_private = device;
 	info->control_dentry = dentry;
-	d_make_persistent(dentry, inode);
-	dput(dentry);
+	d_add(dentry, inode);
 
 	return 0;
 
@@ -466,6 +479,39 @@ static struct inode *binderfs_make_inode(struct super_block *sb, int mode)
 	return ret;
 }
 
+static struct dentry *binderfs_create_dentry(struct dentry *parent,
+					     const char *name)
+{
+	struct dentry *dentry;
+
+	dentry = lookup_one_len(name, parent, strlen(name));
+	if (IS_ERR(dentry))
+		return dentry;
+
+	/* Return error if the file/dir already exists. */
+	if (d_really_is_positive(dentry)) {
+		dput(dentry);
+		return ERR_PTR(-EEXIST);
+	}
+
+	return dentry;
+}
+
+void binderfs_remove_file(struct dentry *dentry)
+{
+	struct inode *parent_inode;
+
+	parent_inode = d_inode(dentry->d_parent);
+	inode_lock(parent_inode);
+	if (simple_positive(dentry)) {
+		dget(dentry);
+		simple_unlink(parent_inode, dentry);
+		d_delete(dentry);
+		dput(dentry);
+	}
+	inode_unlock(parent_inode);
+}
+
 struct dentry *binderfs_create_file(struct dentry *parent, const char *name,
 				    const struct file_operations *fops,
 				    void *data)
@@ -475,24 +521,28 @@ struct dentry *binderfs_create_file(struct dentry *parent, const char *name,
 	struct super_block *sb;
 
 	parent_inode = d_inode(parent);
+	inode_lock(parent_inode);
 
-	dentry = simple_start_creating(parent, name);
+	dentry = binderfs_create_dentry(parent, name);
 	if (IS_ERR(dentry))
-		return dentry;
+		goto out;
 
 	sb = parent_inode->i_sb;
 	new_inode = binderfs_make_inode(sb, S_IFREG | 0444);
 	if (!new_inode) {
-		simple_done_creating(dentry);
-		return ERR_PTR(-ENOMEM);
+		dput(dentry);
+		dentry = ERR_PTR(-ENOMEM);
+		goto out;
 	}
 
 	new_inode->i_fop = fops;
 	new_inode->i_private = data;
-	d_make_persistent(dentry, new_inode);
+	d_instantiate(dentry, new_inode);
 	fsnotify_create(parent_inode, dentry);
-	simple_done_creating(dentry);
-	return dentry; // borrowed
+
+out:
+	inode_unlock(parent_inode);
+	return dentry;
 }
 
 static struct dentry *binderfs_create_dir(struct dentry *parent,
@@ -503,26 +553,30 @@ static struct dentry *binderfs_create_dir(struct dentry *parent,
 	struct super_block *sb;
 
 	parent_inode = d_inode(parent);
+	inode_lock(parent_inode);
 
-	dentry = simple_start_creating(parent, name);
+	dentry = binderfs_create_dentry(parent, name);
 	if (IS_ERR(dentry))
-		return dentry;
+		goto out;
 
 	sb = parent_inode->i_sb;
 	new_inode = binderfs_make_inode(sb, S_IFDIR | 0755);
 	if (!new_inode) {
-		simple_done_creating(dentry);
-		return ERR_PTR(-ENOMEM);
+		dput(dentry);
+		dentry = ERR_PTR(-ENOMEM);
+		goto out;
 	}
 
 	new_inode->i_fop = &simple_dir_operations;
 	new_inode->i_op = &simple_dir_inode_operations;
 
 	set_nlink(new_inode, 2);
-	d_make_persistent(dentry, new_inode);
+	d_instantiate(dentry, new_inode);
 	inc_nlink(parent_inode);
 	fsnotify_mkdir(parent_inode, dentry);
-	simple_done_creating(dentry);
+
+out:
+	inode_unlock(parent_inode);
 	return dentry;
 }
 
@@ -559,12 +613,6 @@ static int init_binder_features(struct super_block *sb)
 	dentry = binderfs_create_file(dir, "freeze_notification",
 				      &binder_features_fops,
 				      &binder_features.freeze_notification);
-	if (IS_ERR(dentry))
-		return PTR_ERR(dentry);
-
-	dentry = binderfs_create_file(dir, "transaction_report",
-				      &binder_features_fops,
-				      &binder_features.transaction_report);
 	if (IS_ERR(dentry))
 		return PTR_ERR(dentry);
 
@@ -638,7 +686,7 @@ static int binderfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_op = &binderfs_super_ops;
 	sb->s_time_gran = 1;
 
-	sb->s_fs_info = kzalloc_obj(struct binderfs_info);
+	sb->s_fs_info = kzalloc(sizeof(struct binderfs_info), GFP_KERNEL);
 	if (!sb->s_fs_info)
 		return -ENOMEM;
 	info = sb->s_fs_info;
@@ -717,7 +765,7 @@ static int binderfs_init_fs_context(struct fs_context *fc)
 {
 	struct binderfs_mount_opts *ctx;
 
-	ctx = kzalloc_obj(struct binderfs_mount_opts);
+	ctx = kzalloc(sizeof(struct binderfs_mount_opts), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -738,7 +786,7 @@ static void binderfs_kill_super(struct super_block *sb)
 	 * During inode eviction struct binderfs_info is needed.
 	 * So first wipe the super_block then free struct binderfs_info.
 	 */
-	kill_anon_super(sb);
+	kill_litter_super(sb);
 
 	if (info && info->ipc_ns)
 		put_ipc_ns(info->ipc_ns);

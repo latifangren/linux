@@ -68,7 +68,7 @@ static int rockchip_pll_determine_rate(struct clk_hw *hw,
 	const struct rockchip_pll_rate_table *rate_table = pll->rate_table;
 	int i;
 
-	/* Assuming rate_table is in descending order */
+	/* Assumming rate_table is in descending order */
 	for (i = 0; i < pll->rate_count; i++) {
 		if (req->rate >= rate_table[i].rate) {
 			req->rate = rate_table[i].rate;
@@ -1076,7 +1076,7 @@ struct clk *rockchip_clk_register_pll(struct rockchip_clk_provider *ctx,
 	/* name the actual pll */
 	snprintf(pll_name, sizeof(pll_name), "pll_%s", name);
 
-	pll = kzalloc_obj(*pll);
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
 	if (!pll)
 		return ERR_PTR(-ENOMEM);
 

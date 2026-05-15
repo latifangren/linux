@@ -5,16 +5,16 @@
  * Author: Lee Jones <lee.jones@linaro.org> for ST-Ericsson.
  */
 
-#include <linux/err.h>
-#include <linux/glob.h>
-#include <linux/idr.h>
+#include <linux/sysfs.h>
 #include <linux/init.h>
 #include <linux/of.h>
-#include <linux/slab.h>
-#include <linux/spinlock.h>
 #include <linux/stat.h>
-#include <linux/sysfs.h>
+#include <linux/slab.h>
+#include <linux/idr.h>
+#include <linux/spinlock.h>
 #include <linux/sys_soc.h>
+#include <linux/err.h>
+#include <linux/glob.h>
 
 static DEFINE_IDA(soc_ida);
 
@@ -111,14 +111,17 @@ static void soc_release(struct device *dev)
 	kfree(soc_dev);
 }
 
-int soc_attr_read_machine(struct soc_device_attribute *soc_dev_attr)
+static void soc_device_get_machine(struct soc_device_attribute *soc_dev_attr)
 {
-	if (soc_dev_attr->machine)
-		return -EBUSY;
+	struct device_node *np;
 
-	return of_machine_read_model(&soc_dev_attr->machine);
+	if (soc_dev_attr->machine)
+		return;
+
+	np = of_find_node_by_path("/");
+	of_property_read_string(np, "model", &soc_dev_attr->machine);
+	of_node_put(np);
 }
-EXPORT_SYMBOL_GPL(soc_attr_read_machine);
 
 static struct soc_device_attribute *early_soc_dev_attr;
 
@@ -128,7 +131,7 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 	const struct attribute_group **soc_attr_groups;
 	int ret;
 
-	soc_attr_read_machine(soc_dev_attr);
+	soc_device_get_machine(soc_dev_attr);
 
 	if (!soc_bus_registered) {
 		if (early_soc_dev_attr)
@@ -137,13 +140,13 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 		return NULL;
 	}
 
-	soc_dev = kzalloc_obj(*soc_dev);
+	soc_dev = kzalloc(sizeof(*soc_dev), GFP_KERNEL);
 	if (!soc_dev) {
 		ret = -ENOMEM;
 		goto out1;
 	}
 
-	soc_attr_groups = kzalloc_objs(*soc_attr_groups, 3);
+	soc_attr_groups = kcalloc(3, sizeof(*soc_attr_groups), GFP_KERNEL);
 	if (!soc_attr_groups) {
 		ret = -ENOMEM;
 		goto out2;

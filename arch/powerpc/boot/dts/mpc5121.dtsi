@@ -112,7 +112,7 @@
 		};
 
 		/* Watchdog timer */
-		watchdog@900 {
+		wdt@900 {
 			compatible = "fsl,mpc5121-wdt";
 			reg = <0x900 0x100>;
 		};

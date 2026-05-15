@@ -193,7 +193,7 @@ static struct thermal_debugfs *thermal_debugfs_add_id(struct dentry *d, int id)
 	struct thermal_debugfs *thermal_dbg;
 	char ids[IDSLENGTH];
 
-	thermal_dbg = kzalloc_obj(*thermal_dbg);
+	thermal_dbg = kzalloc(sizeof(*thermal_dbg), GFP_KERNEL);
 	if (!thermal_dbg)
 		return NULL;
 
@@ -226,7 +226,7 @@ thermal_debugfs_cdev_record_alloc(struct thermal_debugfs *thermal_dbg,
 {
 	struct cdev_record *cdev_record;
 
-	cdev_record = kzalloc_obj(*cdev_record);
+	cdev_record = kzalloc(sizeof(*cdev_record), GFP_KERNEL);
 	if (!cdev_record)
 		return NULL;
 
@@ -319,7 +319,7 @@ static int cdev_tt_seq_show(struct seq_file *s, void *v)
 	int i = *(loff_t *)v;
 
 	if (!i)
-		seq_puts(s, "Transition\tOccurrences\n");
+		seq_puts(s, "Transition\tOccurences\n");
 
 	list_for_each_entry(entry, &transitions[i], node) {
 		/*
@@ -516,19 +516,6 @@ void thermal_debug_cdev_add(struct thermal_cooling_device *cdev, int state)
 	cdev->debugfs = thermal_dbg;
 }
 
-static struct thermal_debugfs *thermal_debug_cdev_clear(struct thermal_cooling_device *cdev)
-{
-	struct thermal_debugfs *thermal_dbg;
-
-	guard(cooling_dev)(cdev);
-
-	thermal_dbg = cdev->debugfs;
-	if (thermal_dbg)
-		cdev->debugfs = NULL;
-
-	return thermal_dbg;
-}
-
 /**
  * thermal_debug_cdev_remove - Remove a cooling device debugfs entry
  *
@@ -540,9 +527,17 @@ void thermal_debug_cdev_remove(struct thermal_cooling_device *cdev)
 {
 	struct thermal_debugfs *thermal_dbg;
 
-	thermal_dbg = thermal_debug_cdev_clear(cdev);
-	if (!thermal_dbg)
+	mutex_lock(&cdev->lock);
+
+	thermal_dbg = cdev->debugfs;
+	if (!thermal_dbg) {
+		mutex_unlock(&cdev->lock);
 		return;
+	}
+
+	cdev->debugfs = NULL;
+
+	mutex_unlock(&cdev->lock);
 
 	mutex_lock(&thermal_dbg->lock);
 
@@ -559,7 +554,7 @@ static struct tz_episode *thermal_debugfs_tz_event_alloc(struct thermal_zone_dev
 	struct tz_episode *tze;
 	int i;
 
-	tze = kzalloc_flex(*tze, trip_stats, tz->num_trips);
+	tze = kzalloc(struct_size(tze, trip_stats, tz->num_trips), GFP_KERNEL);
 	if (!tze)
 		return NULL;
 
@@ -807,7 +802,7 @@ static int tze_seq_show(struct seq_file *s, void *v)
 	seq_printf(s, ",-Mitigation at %llums, duration%c%llums, max. temp=%dm°C\n",
 		   ktime_to_ms(tze->timestamp), c, duration_ms, tze->max_temp);
 
-	seq_puts(s, "| trip |     type | temp(m°C) | hyst(m°C) | duration(ms) |  avg(m°C) |  min(m°C) |\n");
+	seq_printf(s, "| trip |     type | temp(m°C) | hyst(m°C) | duration(ms) |  avg(m°C) |  min(m°C) |\n");
 
 	for_each_trip_desc(tz, td) {
 		const struct thermal_trip *trip = &td->trip;
@@ -876,7 +871,7 @@ void thermal_debug_tz_add(struct thermal_zone_device *tz)
 
 	tz_dbg->tz = tz;
 
-	tz_dbg->trips_crossed = kzalloc_objs(int, tz->num_trips);
+	tz_dbg->trips_crossed = kzalloc(sizeof(int) * tz->num_trips, GFP_KERNEL);
 	if (!tz_dbg->trips_crossed) {
 		thermal_debugfs_remove_id(thermal_dbg);
 		return;
@@ -890,19 +885,6 @@ void thermal_debug_tz_add(struct thermal_zone_device *tz)
 	tz->debugfs = thermal_dbg;
 }
 
-static struct thermal_debugfs *thermal_debug_tz_clear(struct thermal_zone_device *tz)
-{
-	struct thermal_debugfs *thermal_dbg;
-
-	guard(thermal_zone)(tz);
-
-	thermal_dbg = tz->debugfs;
-	if (thermal_dbg)
-		tz->debugfs = NULL;
-
-	return thermal_dbg;
-}
-
 void thermal_debug_tz_remove(struct thermal_zone_device *tz)
 {
 	struct thermal_debugfs *thermal_dbg;
@@ -910,9 +892,17 @@ void thermal_debug_tz_remove(struct thermal_zone_device *tz)
 	struct tz_debugfs *tz_dbg;
 	int *trips_crossed;
 
-	thermal_dbg = thermal_debug_tz_clear(tz);
-	if (!thermal_dbg)
+	mutex_lock(&tz->lock);
+
+	thermal_dbg = tz->debugfs;
+	if (!thermal_dbg) {
+		mutex_unlock(&tz->lock);
 		return;
+	}
+
+	tz->debugfs = NULL;
+
+	mutex_unlock(&tz->lock);
 
 	tz_dbg = &thermal_dbg->tz_dbg;
 

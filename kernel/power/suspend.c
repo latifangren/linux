@@ -30,7 +30,6 @@
 #include <trace/events/power.h>
 #include <linux/compiler.h>
 #include <linux/moduleparam.h>
-#include <linux/fs.h>
 
 #include "power.h"
 
@@ -92,22 +91,14 @@ static void s2idle_enter(void)
 {
 	trace_suspend_resume(TPS("machine_suspend"), PM_SUSPEND_TO_IDLE, true);
 
-	/*
-	 * The correctness of the code below depends on the number of online
-	 * CPUs being stable, but CPUs cannot be taken offline or put online
-	 * while it is running.
-	 *
-	 * The s2idle_lock must be acquired before the pending wakeup check to
-	 * prevent pm_system_wakeup() from running as a whole between that check
-	 * and the subsequent s2idle_state update in which case a wakeup event
-	 * would get lost.
-	 */
 	raw_spin_lock_irq(&s2idle_lock);
 	if (pm_wakeup_pending())
 		goto out;
 
 	s2idle_state = S2IDLE_STATE_ENTER;
 	raw_spin_unlock_irq(&s2idle_lock);
+
+	cpus_read_lock();
 
 	/* Push all the CPUs into the idle loop. */
 	wake_up_all_idle_cpus();
@@ -120,6 +111,8 @@ static void s2idle_enter(void)
 	 * consistent system state.
 	 */
 	wake_up_all_idle_cpus();
+
+	cpus_read_unlock();
 
 	raw_spin_lock_irq(&s2idle_lock);
 
@@ -344,17 +337,10 @@ MODULE_PARM_DESC(pm_test_delay,
 static int suspend_test(int level)
 {
 #ifdef CONFIG_PM_DEBUG
-	int i;
-
 	if (pm_test_level == level) {
 		pr_info("suspend debug: Waiting for %d second(s).\n",
 				pm_test_delay);
-		for (i = 0; i < pm_test_delay && !pm_wakeup_pending(); i++) {
-			if (level > TEST_CORE)
-				msleep(1000);
-			else
-				mdelay(1000);
-		}
+		mdelay(pm_test_delay * 1000);
 		return 1;
 	}
 #endif /* !CONFIG_PM_DEBUG */
@@ -382,7 +368,6 @@ static int suspend_prepare(suspend_state_t state)
 	if (error)
 		goto Restore;
 
-	filesystems_freeze(filesystem_freeze_enabled);
 	trace_suspend_resume(TPS("freeze_processes"), 0, true);
 	error = suspend_freeze_processes();
 	trace_suspend_resume(TPS("freeze_processes"), 0, false);
@@ -390,7 +375,6 @@ static int suspend_prepare(suspend_state_t state)
 		return 0;
 
 	dpm_save_failed_step(SUSPEND_FREEZE);
-	filesystems_thaw();
 	pm_notifier_call_chain(PM_POST_SUSPEND);
  Restore:
 	pm_restore_console();
@@ -518,7 +502,7 @@ int suspend_devices_and_enter(suspend_state_t state)
 	if (error)
 		goto Close;
 
-	console_suspend_all();
+	suspend_console();
 	suspend_test_start();
 	error = dpm_suspend_start(PMSG_SUSPEND);
 	if (error) {
@@ -537,9 +521,9 @@ int suspend_devices_and_enter(suspend_state_t state)
 	suspend_test_start();
 	dpm_resume_end(PMSG_RESUME);
 	suspend_test_finish("resume devices");
-	trace_suspend_resume(TPS("console_resume_all"), state, true);
-	console_resume_all();
-	trace_suspend_resume(TPS("console_resume_all"), state, false);
+	trace_suspend_resume(TPS("resume_console"), state, true);
+	resume_console();
+	trace_suspend_resume(TPS("resume_console"), state, false);
 
  Close:
 	platform_resume_end(state);
@@ -560,7 +544,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 static void suspend_finish(void)
 {
 	suspend_thaw_processes();
-	filesystems_thaw();
 	pm_notifier_call_chain(PM_POST_SUSPEND);
 	pm_restore_console();
 }
@@ -596,11 +579,7 @@ static int enter_state(suspend_state_t state)
 
 	if (sync_on_suspend_enabled) {
 		trace_suspend_resume(TPS("sync_filesystems"), 0, true);
-
-		error = pm_sleep_fs_sync();
-		if (error)
-			goto Unlock;
-
+		ksys_sync_helper();
 		trace_suspend_resume(TPS("sync_filesystems"), 0, false);
 	}
 
@@ -615,7 +594,9 @@ static int enter_state(suspend_state_t state)
 
 	trace_suspend_resume(TPS("suspend_enter"), state, false);
 	pm_pr_dbg("Suspending system (%s)\n", mem_sleep_labels[state]);
+	pm_restrict_gfp_mask();
 	error = suspend_devices_and_enter(state);
+	pm_restore_gfp_mask();
 
  Finish:
 	events_check_enabled = false;

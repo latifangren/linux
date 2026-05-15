@@ -4,7 +4,7 @@
  *
  * Copyright (C) 2005 T. Adachi <tadachi@tadachi-net.com>
  *
- * Copyright (C) 2005 Hans Verkuil <hverkuil@kernel.org>
+ * Copyright (C) 2005 Hans Verkuil <hverkuil@xs4all.nl>
  * - Cleanup
  */
 

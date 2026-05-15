@@ -33,7 +33,7 @@
 
 #include <linux/compiler.h>
 
-#include "kselftest.h"
+#include "../kselftest.h"
 #include "rseq.h"
 
 /*
@@ -56,7 +56,6 @@ ptrdiff_t rseq_offset;
  * unsuccessful.
  */
 unsigned int rseq_size = -1U;
-static unsigned int rseq_alloc_size;
 
 /* Flags used during rseq registration.  */
 unsigned int rseq_flags;
@@ -72,20 +71,9 @@ static int rseq_ownership;
 /* Original struct rseq allocation size is 32 bytes. */
 #define ORIG_RSEQ_ALLOC_SIZE		32
 
-/*
- * Use a union to ensure we allocate a TLS area of 1024 bytes to accomodate an
- * rseq registration that is larger than the current rseq ABI.
- */
-union rseq_tls {
-	struct rseq_abi abi;
-	char dummy[RSEQ_THREAD_AREA_ALLOC_SIZE];
-};
-
 static
-__thread union rseq_tls __rseq __attribute__((tls_model("initial-exec"))) = {
-	.abi = {
-		.cpu_id = RSEQ_ABI_CPU_ID_UNINITIALIZED,
-	},
+__thread struct rseq_abi __rseq_abi __attribute__((tls_model("initial-exec"), aligned(RSEQ_THREAD_AREA_ALLOC_SIZE))) = {
+	.cpu_id = RSEQ_ABI_CPU_ID_UNINITIALIZED,
 };
 
 static int sys_rseq(struct rseq_abi *rseq_abi, uint32_t rseq_len,
@@ -99,7 +87,7 @@ static int sys_getcpu(unsigned *cpu, unsigned *node)
 	return syscall(__NR_getcpu, cpu, node, NULL);
 }
 
-bool rseq_available(void)
+int rseq_available(void)
 {
 	int rc;
 
@@ -108,12 +96,23 @@ bool rseq_available(void)
 		abort();
 	switch (errno) {
 	case ENOSYS:
-		return false;
+		return 0;
 	case EINVAL:
-		return true;
+		return 1;
 	default:
 		abort();
 	}
+}
+
+/* The rseq areas need to be at least 32 bytes. */
+static
+unsigned int get_rseq_min_alloc_size(void)
+{
+	unsigned int alloc_size = rseq_size;
+
+	if (alloc_size < ORIG_RSEQ_ALLOC_SIZE)
+		alloc_size = ORIG_RSEQ_ALLOC_SIZE;
+	return alloc_size;
 }
 
 /*
@@ -121,12 +120,13 @@ bool rseq_available(void)
  *
  * Depending on the value returned by getauxval(AT_RSEQ_FEATURE_SIZE):
  *
- *   0: Return ORIG_RSEQ_FEATURE_SIZE (20)
+ * 0:   Return ORIG_RSEQ_FEATURE_SIZE (20)
  * > 0: Return the value from getauxval(AT_RSEQ_FEATURE_SIZE).
  *
  * It should never return a value below ORIG_RSEQ_FEATURE_SIZE.
  */
-static unsigned int get_rseq_kernel_feature_size(void)
+static
+unsigned int get_rseq_kernel_feature_size(void)
 {
 	unsigned long auxv_rseq_feature_size, auxv_rseq_align;
 
@@ -141,24 +141,15 @@ static unsigned int get_rseq_kernel_feature_size(void)
 		return ORIG_RSEQ_FEATURE_SIZE;
 }
 
-int __rseq_register_current_thread(bool nolibc, bool legacy)
+int rseq_register_current_thread(void)
 {
-	unsigned int size;
 	int rc;
 
 	if (!rseq_ownership) {
 		/* Treat libc's ownership as a successful registration. */
-		return nolibc ? -EBUSY : 0;
+		return 0;
 	}
-
-	/* The minimal allocation size is 32, which is the legacy allocation size */
-	size = get_rseq_kernel_feature_size();
-	if (legacy || size < ORIG_RSEQ_ALLOC_SIZE)
-		rseq_alloc_size = ORIG_RSEQ_ALLOC_SIZE;
-	else
-		rseq_alloc_size = size;
-
-	rc = sys_rseq(&__rseq.abi, rseq_alloc_size, 0, RSEQ_SIG);
+	rc = sys_rseq(&__rseq_abi, get_rseq_min_alloc_size(), 0, RSEQ_SIG);
 	if (rc) {
 		/*
 		 * After at least one thread has registered successfully
@@ -177,8 +168,9 @@ int __rseq_register_current_thread(bool nolibc, bool legacy)
 	 * The first thread to register sets the rseq_size to mimic the libc
 	 * behavior.
 	 */
-	if (RSEQ_READ_ONCE(rseq_size) == 0)
-		RSEQ_WRITE_ONCE(rseq_size, size);
+	if (RSEQ_READ_ONCE(rseq_size) == 0) {
+		RSEQ_WRITE_ONCE(rseq_size, get_rseq_kernel_feature_size());
+	}
 
 	return 0;
 }
@@ -191,7 +183,7 @@ int rseq_unregister_current_thread(void)
 		/* Treat libc's ownership as a successful unregistration. */
 		return 0;
 	}
-	rc = sys_rseq(&__rseq.abi, rseq_alloc_size, RSEQ_ABI_FLAG_UNREGISTER, RSEQ_SIG);
+	rc = sys_rseq(&__rseq_abi, get_rseq_min_alloc_size(), RSEQ_ABI_FLAG_UNREGISTER, RSEQ_SIG);
 	if (rc)
 		return -1;
 	return 0;
@@ -257,7 +249,7 @@ void rseq_init(void)
 	rseq_ownership = 1;
 
 	/* Calculate the offset of the rseq area from the thread pointer. */
-	rseq_offset = (void *)&__rseq.abi - rseq_thread_pointer();
+	rseq_offset = (void *)&__rseq_abi - rseq_thread_pointer();
 
 	/* rseq flags are deprecated, always set to 0. */
 	rseq_flags = 0;

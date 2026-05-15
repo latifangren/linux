@@ -47,7 +47,7 @@ static void __init armada_8k_get_sharing_cpus(struct clk *cur_clk,
 {
 	int cpu;
 
-	for_each_present_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		struct device *cpu_dev;
 		struct clk *clk;
 
@@ -143,7 +143,7 @@ static int __init armada_8k_cpufreq_init(void)
 	of_node_put(node);
 
 	nb_cpus = num_possible_cpus();
-	freq_tables = kzalloc_objs(*freq_tables, nb_cpus);
+	freq_tables = kcalloc(nb_cpus, sizeof(*freq_tables), GFP_KERNEL);
 	if (!freq_tables)
 		return -ENOMEM;
 	cpumask_copy(&cpus, cpu_possible_mask);

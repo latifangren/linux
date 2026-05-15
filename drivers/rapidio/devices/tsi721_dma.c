@@ -739,7 +739,8 @@ static int tsi721_alloc_chan_resources(struct dma_chan *dchan)
 	}
 
 	/* Allocate queue of transaction descriptors */
-	desc = kzalloc_objs(struct tsi721_tx_desc, dma_txqueue_sz, GFP_ATOMIC);
+	desc = kcalloc(dma_txqueue_sz, sizeof(struct tsi721_tx_desc),
+			GFP_ATOMIC);
 	if (!desc) {
 		tsi721_bdma_ch_free(bdma_chan);
 		return -ENOMEM;

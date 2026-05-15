@@ -6,7 +6,6 @@
  * DSOs and symbol information, sort them and produce a diff.
  */
 #include "builtin.h"
-#include "perf.h"
 
 #include "util/debug.h"
 #include "util/event.h"
@@ -113,7 +112,7 @@ enum {
 	COMPUTE_STREAM,	/* After COMPUTE_MAX to avoid use current compute arrays */
 };
 
-static const char *compute_names[COMPUTE_MAX] = {
+const char *compute_names[COMPUTE_MAX] = {
 	[COMPUTE_DELTA] = "delta",
 	[COMPUTE_DELTA_ABS] = "delta-abs",
 	[COMPUTE_RATIO] = "ratio",
@@ -178,9 +177,10 @@ static struct header_column {
 	}
 };
 
-static int setup_compute_opt_wdiff(const char *opt)
+static int setup_compute_opt_wdiff(char *opt)
 {
-	const char *w1_str = opt, *w2_str;
+	char *w1_str = opt;
+	char *w2_str;
 
 	int ret = -EINVAL;
 
@@ -191,7 +191,8 @@ static int setup_compute_opt_wdiff(const char *opt)
 	if (!w2_str)
 		goto out;
 
-	if (!*++w2_str)
+	*w2_str++ = 0x0;
+	if (!*w2_str)
 		goto out;
 
 	compute_wdiff_w1 = strtol(w1_str, NULL, 10);
@@ -212,7 +213,7 @@ static int setup_compute_opt_wdiff(const char *opt)
 	return ret;
 }
 
-static int setup_compute_opt(const char *opt)
+static int setup_compute_opt(char *opt)
 {
 	if (compute == COMPUTE_WEIGHTED_DIFF)
 		return setup_compute_opt_wdiff(opt);
@@ -232,7 +233,7 @@ static int setup_compute(const struct option *opt, const char *str,
 	char *cstr = (char *) str;
 	char buf[50];
 	unsigned i;
-	const char *option;
+	char *option;
 
 	if (!str) {
 		*cp = COMPUTE_DELTA;
@@ -382,7 +383,7 @@ static void block_hist_free(void *he)
 	free(bh);
 }
 
-static struct hist_entry_ops block_hist_ops = {
+struct hist_entry_ops block_hist_ops = {
 	.new    = block_hist_zalloc,
 	.free   = block_hist_free,
 };
@@ -468,13 +469,13 @@ out:
 
 static struct perf_diff pdiff;
 
-static struct evsel *evsel_match(struct evsel *evsel, struct evlist *evlist)
+static struct evsel *evsel_match(struct evsel *evsel,
+				      struct evlist *evlist)
 {
 	struct evsel *e;
 
 	evlist__for_each_entry(evlist, e) {
-		if ((evsel->core.attr.type == e->core.attr.type) &&
-		    (evsel->core.attr.config == e->core.attr.config))
+		if (evsel__match2(evsel, e))
 			return e;
 	}
 
@@ -1018,12 +1019,12 @@ static int process_base_stream(struct data__file *data_base,
 			continue;
 
 		es_base = evsel_streams__entry(data_base->evlist_streams,
-					       evsel_base);
+					       evsel_base->core.idx);
 		if (!es_base)
 			return -1;
 
 		es_pair = evsel_streams__entry(data_pair->evlist_streams,
-					       evsel_pair);
+					       evsel_pair->core.idx);
 		if (!es_pair)
 			return -1;
 
@@ -1280,7 +1281,8 @@ static const struct option options[] = {
 	OPT_STRING_NOEMPTY('t', "field-separator", &symbol_conf.field_sep, "separator",
 		   "separator for columns, no spaces will be added between "
 		   "columns '.' is reserved."),
-	OPT_CALLBACK(0, "symfs", NULL, "directory[,layout]", SYMFS_HELP,
+	OPT_CALLBACK(0, "symfs", NULL, "directory",
+		     "Look for files with symbols relative to this directory",
 		     symbol__config_symfs),
 	OPT_UINTEGER('o', "order", &sort_compute, "Specify compute sorting."),
 	OPT_CALLBACK(0, "percentage", NULL, "relative|absolute",
@@ -1352,7 +1354,7 @@ static int cycles_printf(struct hist_entry *he, struct hist_entry *pair,
 	/*
 	 * Avoid printing the warning "addr2line_init failed for ..."
 	 */
-	symbol_conf.addr2line_disable_warn = true;
+	symbol_conf.disable_add2line_warn = true;
 
 	bi = block_he->block_info;
 
@@ -1891,7 +1893,7 @@ static int data_init(int argc, const char **argv)
 		return -EINVAL;
 	}
 
-	data__files = calloc(data__files_cnt, sizeof(*data__files));
+	data__files = zalloc(sizeof(*data__files) * data__files_cnt);
 	if (!data__files)
 		return -ENOMEM;
 
@@ -1986,7 +1988,7 @@ int cmd_diff(int argc, const char **argv)
 
 	if (compute == COMPUTE_STREAM) {
 		symbol_conf.show_branchflag_count = true;
-		symbol_conf.addr2line_disable_warn = true;
+		symbol_conf.disable_add2line_warn = true;
 		callchain_param.mode = CHAIN_FLAT;
 		callchain_param.key = CCKEY_SRCLINE;
 		callchain_param.branch_callstack = 1;
@@ -2000,7 +2002,7 @@ int cmd_diff(int argc, const char **argv)
 		sort__mode = SORT_MODE__DIFF;
 	}
 
-	if (setup_sorting(/*evlist=*/NULL, perf_session__env(data__files[0].session)) < 0)
+	if (setup_sorting(NULL) < 0)
 		usage_with_options(diff_usage, options);
 
 	setup_pager();

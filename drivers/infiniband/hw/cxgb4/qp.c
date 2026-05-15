@@ -223,14 +223,17 @@ static int create_qp(struct c4iw_rdev *rdev, struct t4_wq *wq,
 	}
 
 	if (!user) {
-		wq->sq.sw_sq = kzalloc_objs(*wq->sq.sw_sq, wq->sq.size);
+		wq->sq.sw_sq = kcalloc(wq->sq.size, sizeof(*wq->sq.sw_sq),
+				       GFP_KERNEL);
 		if (!wq->sq.sw_sq) {
 			ret = -ENOMEM;
 			goto free_rq_qid;//FIXME
 		}
 
 		if (need_rq) {
-			wq->rq.sw_rq = kzalloc_objs(*wq->rq.sw_rq, wq->rq.size);
+			wq->rq.sw_rq = kcalloc(wq->rq.size,
+					       sizeof(*wq->rq.sw_rq),
+					       GFP_KERNEL);
 			if (!wq->rq.sw_rq) {
 				ret = -ENOMEM;
 				goto free_sw_sq;
@@ -2218,25 +2221,26 @@ int c4iw_create_qp(struct ib_qp *qp, struct ib_qp_init_attr *attrs,
 		goto err_destroy_qp;
 
 	if (udata && ucontext) {
-		sq_key_mm = kmalloc_obj(*sq_key_mm);
+		sq_key_mm = kmalloc(sizeof(*sq_key_mm), GFP_KERNEL);
 		if (!sq_key_mm) {
 			ret = -ENOMEM;
 			goto err_remove_handle;
 		}
 		if (!attrs->srq) {
-			rq_key_mm = kmalloc_obj(*rq_key_mm);
+			rq_key_mm = kmalloc(sizeof(*rq_key_mm), GFP_KERNEL);
 			if (!rq_key_mm) {
 				ret = -ENOMEM;
 				goto err_free_sq_key;
 			}
 		}
-		sq_db_key_mm = kmalloc_obj(*sq_db_key_mm);
+		sq_db_key_mm = kmalloc(sizeof(*sq_db_key_mm), GFP_KERNEL);
 		if (!sq_db_key_mm) {
 			ret = -ENOMEM;
 			goto err_free_rq_key;
 		}
 		if (!attrs->srq) {
-			rq_db_key_mm = kmalloc_obj(*rq_db_key_mm);
+			rq_db_key_mm =
+				kmalloc(sizeof(*rq_db_key_mm), GFP_KERNEL);
 			if (!rq_db_key_mm) {
 				ret = -ENOMEM;
 				goto err_free_sq_db_key;
@@ -2244,7 +2248,8 @@ int c4iw_create_qp(struct ib_qp *qp, struct ib_qp_init_attr *attrs,
 		}
 		memset(&uresp, 0, sizeof(uresp));
 		if (t4_sq_onchip(&qhp->wq.sq)) {
-			ma_sync_key_mm = kmalloc_obj(*ma_sync_key_mm);
+			ma_sync_key_mm = kmalloc(sizeof(*ma_sync_key_mm),
+						 GFP_KERNEL);
 			if (!ma_sync_key_mm) {
 				ret = -ENOMEM;
 				goto err_free_rq_db_key;
@@ -2547,11 +2552,13 @@ static int alloc_srq_queue(struct c4iw_srq *srq, struct c4iw_dev_ucontext *uctx,
 		goto err;
 
 	if (!user) {
-		wq->sw_rq = kzalloc_objs(*wq->sw_rq, wq->size);
+		wq->sw_rq = kcalloc(wq->size, sizeof(*wq->sw_rq),
+				    GFP_KERNEL);
 		if (!wq->sw_rq)
 			goto err_put_qpid;
-		wq->pending_wrs = kzalloc_objs(*srq->wq.pending_wrs,
-					       srq->wq.size);
+		wq->pending_wrs = kcalloc(srq->wq.size,
+					  sizeof(*srq->wq.pending_wrs),
+					  GFP_KERNEL);
 		if (!wq->pending_wrs)
 			goto err_free_sw_rq;
 	}
@@ -2754,12 +2761,12 @@ int c4iw_create_srq(struct ib_srq *ib_srq, struct ib_srq_init_attr *attrs,
 		srq->flags = T4_SRQ_LIMIT_SUPPORT;
 
 	if (udata) {
-		srq_key_mm = kmalloc_obj(*srq_key_mm);
+		srq_key_mm = kmalloc(sizeof(*srq_key_mm), GFP_KERNEL);
 		if (!srq_key_mm) {
 			ret = -ENOMEM;
 			goto err_free_queue;
 		}
-		srq_db_key_mm = kmalloc_obj(*srq_db_key_mm);
+		srq_db_key_mm = kmalloc(sizeof(*srq_db_key_mm), GFP_KERNEL);
 		if (!srq_db_key_mm) {
 			ret = -ENOMEM;
 			goto err_free_srq_key_mm;

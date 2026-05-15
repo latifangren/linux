@@ -28,12 +28,13 @@
 #include "dccg.h"
 #include "clk_mgr_internal.h"
 #include "dc_state_priv.h"
-#include "link_service.h"
+#include "link.h"
 
 #include "dce100/dce_clk_mgr.h"
 #include "dce110/dce110_clk_mgr.h"
 #include "dce112/dce112_clk_mgr.h"
 #include "dce120/dce120_clk_mgr.h"
+#include "dce60/dce60_clk_mgr.h"
 #include "dcn10/rv1_clk_mgr.h"
 #include "dcn10/rv2_clk_mgr.h"
 #include "dcn20/dcn20_clk_mgr.h"
@@ -48,7 +49,6 @@
 #include "dcn32/dcn32_clk_mgr.h"
 #include "dcn35/dcn35_clk_mgr.h"
 #include "dcn401/dcn401_clk_mgr.h"
-#include "dcn42/dcn42_clk_mgr.h"
 
 int clk_mgr_helper_get_active_display_cnt(
 		struct dc *dc,
@@ -67,7 +67,7 @@ int clk_mgr_helper_get_active_display_cnt(
 		if (dc_state_get_stream_subvp_type(context, stream) == SUBVP_PHANTOM)
 			continue;
 
-		if (!stream->dpms_off || dc->is_switch_in_progress_dest || (stream_status && stream_status->plane_count))
+		if (!stream->dpms_off || (stream_status && stream_status->plane_count))
 			display_count++;
 	}
 
@@ -78,7 +78,6 @@ int clk_mgr_helper_get_active_plane_cnt(
 		struct dc *dc,
 		struct dc_state *context)
 {
-	(void)dc;
 	int i, total_plane_count;
 
 	total_plane_count = 0;
@@ -98,7 +97,7 @@ void clk_mgr_exit_optimized_pwr_state(const struct dc *dc, struct clk_mgr *clk_m
 {
 	struct dc_link *edp_links[MAX_NUM_EDP];
 	struct dc_link *edp_link = NULL;
-	unsigned int edp_num;
+	int edp_num;
 	unsigned int panel_inst;
 
 	dc_get_edp_links(dc, edp_links, &edp_num);
@@ -124,7 +123,7 @@ void clk_mgr_optimize_pwr_state(const struct dc *dc, struct clk_mgr *clk_mgr)
 {
 	struct dc_link *edp_links[MAX_NUM_EDP];
 	struct dc_link *edp_link = NULL;
-	unsigned int edp_num;
+	int edp_num;
 	unsigned int panel_inst;
 
 	dc_get_edp_links(dc, edp_links, &edp_num);
@@ -150,10 +149,21 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	struct hw_asic_id asic_id = ctx->asic_id;
 
 	switch (asic_id.chip_family) {
-	case FAMILY_SI:
+#if defined(CONFIG_DRM_AMD_DC_SI)
+	case FAMILY_SI: {
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
+
+		if (clk_mgr == NULL) {
+			BREAK_TO_DEBUGGER();
+			return NULL;
+		}
+		dce60_clk_mgr_construct(ctx, clk_mgr);
+		return &clk_mgr->base;
+	}
+#endif
 	case FAMILY_CI:
 	case FAMILY_KV: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -163,7 +173,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		return &clk_mgr->base;
 	}
 	case FAMILY_CZ: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -173,7 +183,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		return &clk_mgr->base;
 	}
 	case FAMILY_VI: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -197,7 +207,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		return &clk_mgr->base;
 	}
 	case FAMILY_AI: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -211,7 +221,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 #if defined(CONFIG_DRM_AMD_DC_FP)
 	case FAMILY_RV: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -239,7 +249,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		return &clk_mgr->base;
 	}
 	case FAMILY_NV: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -266,7 +276,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 	case FAMILY_VGH:
 		if (ASICREV_IS_VANGOGH(asic_id.hw_internal_rev)) {
-			struct clk_mgr_vgh *clk_mgr = kzalloc_obj(*clk_mgr);
+			struct clk_mgr_vgh *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 			if (clk_mgr == NULL) {
 				BREAK_TO_DEBUGGER();
@@ -278,7 +288,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		break;
 
 	case FAMILY_YELLOW_CARP: {
-		struct clk_mgr_dcn31 *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_dcn31 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -290,7 +300,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 		break;
 	case AMDGPU_FAMILY_GC_10_3_6: {
-		struct clk_mgr_dcn315 *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_dcn315 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -302,7 +312,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 		break;
 	case AMDGPU_FAMILY_GC_10_3_7: {
-		struct clk_mgr_dcn316 *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_dcn316 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -314,7 +324,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 		break;
 	case AMDGPU_FAMILY_GC_11_0_0: {
-		struct clk_mgr_internal *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_internal *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -325,7 +335,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	}
 
 	case AMDGPU_FAMILY_GC_11_0_1: {
-		struct clk_mgr_dcn314 *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_dcn314 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -338,7 +348,7 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 	break;
 
 	case AMDGPU_FAMILY_GC_11_5_0: {
-		struct clk_mgr_dcn35 *clk_mgr = kzalloc_obj(*clk_mgr);
+		struct clk_mgr_dcn35 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
 
 		if (clk_mgr == NULL) {
 			BREAK_TO_DEBUGGER();
@@ -362,18 +372,6 @@ struct clk_mgr *dc_clk_mgr_create(struct dc_context *ctx, struct pp_smu_funcs *p
 		}
 
 		return &clk_mgr->base;
-	}
-	break;
-	case AMDGPU_FAMILY_GC_11_5_4: {
-		struct clk_mgr_dcn42 *clk_mgr = kzalloc(sizeof(*clk_mgr), GFP_KERNEL);
-
-		if (clk_mgr == NULL) {
-			BREAK_TO_DEBUGGER();
-			return NULL;
-		}
-
-		dcn42_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
-		return &clk_mgr->base.base;
 	}
 	break;
 #endif	/* CONFIG_DRM_AMD_DC_FP */
@@ -432,9 +430,6 @@ void dc_destroy_clk_mgr(struct clk_mgr *clk_mgr_base)
 		break;
 	case AMDGPU_FAMILY_GC_12_0_0:
 		dcn401_clk_mgr_destroy(clk_mgr);
-		break;
-	case AMDGPU_FAMILY_GC_11_5_4:
-		dcn42_clk_mgr_destroy(clk_mgr);
 		break;
 
 	default:

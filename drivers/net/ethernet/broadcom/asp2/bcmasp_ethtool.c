@@ -76,14 +76,14 @@ static int bcmasp_get_sset_count(struct net_device *dev, int string_set)
 static void bcmasp_get_strings(struct net_device *dev, u32 stringset,
 			       u8 *data)
 {
-	const char *str;
 	unsigned int i;
 
 	switch (stringset) {
 	case ETH_SS_STATS:
 		for (i = 0; i < BCMASP_STATS_LEN; i++) {
-			str = bcmasp_gstrings_stats[i].stat_string;
-			ethtool_puts(&data, str);
+			memcpy(data + i * ETH_GSTRING_LEN,
+			       bcmasp_gstrings_stats[i].stat_string,
+			       ETH_GSTRING_LEN);
 		}
 		break;
 	default:
@@ -163,30 +163,11 @@ static void bcmasp_set_msglevel(struct net_device *dev, u32 level)
 static void bcmasp_get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 {
 	struct bcmasp_intf *intf = netdev_priv(dev);
-	struct bcmasp_priv *priv = intf->parent;
-	struct device *kdev = &priv->pdev->dev;
-	u32 phy_wolopts = 0;
 
-	if (dev->phydev) {
-		phy_ethtool_get_wol(dev->phydev, wol);
-		phy_wolopts = wol->wolopts;
-	}
-
-	/* MAC is not wake-up capable, return what the PHY does */
-	if (!device_can_wakeup(kdev))
-		return;
-
-	/* Overlay MAC capabilities with that of the PHY queried before */
-	wol->supported |= BCMASP_SUPPORTED_WAKE;
-	wol->wolopts |= intf->wolopts;
-
-	/* Return the PHY configured magic password */
-	if (phy_wolopts & WAKE_MAGICSECURE)
-		return;
-
+	wol->supported = BCMASP_SUPPORTED_WAKE;
+	wol->wolopts = intf->wolopts;
 	memset(wol->sopass, 0, sizeof(wol->sopass));
 
-	/* Otherwise the MAC one */
 	if (wol->wolopts & WAKE_MAGICSECURE)
 		memcpy(wol->sopass, intf->sopass, sizeof(intf->sopass));
 }
@@ -196,20 +177,9 @@ static int bcmasp_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 	struct bcmasp_intf *intf = netdev_priv(dev);
 	struct bcmasp_priv *priv = intf->parent;
 	struct device *kdev = &priv->pdev->dev;
-	int ret = 0;
-
-	/* Try Wake-on-LAN from the PHY first */
-	if (dev->phydev) {
-		ret = phy_ethtool_set_wol(dev->phydev, wol);
-		if (ret != -EOPNOTSUPP && wol->wolopts)
-			return ret;
-	}
 
 	if (!device_can_wakeup(kdev))
 		return -EOPNOTSUPP;
-
-	if (wol->wolopts & ~BCMASP_SUPPORTED_WAKE)
-		return -EINVAL;
 
 	/* Interface Specific */
 	intf->wolopts = wol->wolopts;
@@ -459,6 +429,4 @@ const struct ethtool_ops bcmasp_ethtool_ops = {
 	.get_strings		= bcmasp_get_strings,
 	.get_ethtool_stats	= bcmasp_get_ethtool_stats,
 	.get_sset_count		= bcmasp_get_sset_count,
-	.get_ts_info		= ethtool_op_get_ts_info,
-	.nway_reset		= phy_ethtool_nway_reset,
 };

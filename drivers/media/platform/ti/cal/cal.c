@@ -481,9 +481,8 @@ int cal_ctx_prepare(struct cal_ctx *ctx)
 		ctx->vc = 0;
 		ctx->datatype = CAL_CSI2_CTX_DT_ANY;
 	} else if (!ret) {
-		ctx_dbg(2, ctx, "Framedesc: stream %u, len %u, vc %u, dt %#x\n",
-			entry.stream, entry.length, entry.bus.csi2.vc,
-			entry.bus.csi2.dt);
+		ctx_dbg(2, ctx, "Framedesc: len %u, vc %u, dt %#x\n",
+			entry.length, entry.bus.csi2.vc, entry.bus.csi2.dt);
 
 		ctx->vc = entry.bus.csi2.vc;
 		ctx->datatype = entry.bus.csi2.dt;
@@ -491,7 +490,7 @@ int cal_ctx_prepare(struct cal_ctx *ctx)
 		return ret;
 	}
 
-	ctx->use_pix_proc = ctx->vb_vidq.type == V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	ctx->use_pix_proc = !ctx->fmtinfo->meta;
 
 	if (ctx->use_pix_proc) {
 		ret = cal_reserve_pix_proc(ctx->cal);
@@ -799,6 +798,7 @@ static int cal_async_notifier_bound(struct v4l2_async_notifier *notifier,
 		return 0;
 	}
 
+	phy->source = subdev;
 	phy_dbg(1, phy, "Using source %s for capture\n", subdev->name);
 
 	pad = media_entity_get_fwnode_pad(&subdev->entity,
@@ -819,9 +819,6 @@ static int cal_async_notifier_bound(struct v4l2_async_notifier *notifier,
 			subdev->name);
 		return ret;
 	}
-
-	phy->source = subdev;
-	phy->source_pad = pad;
 
 	return 0;
 }
@@ -1012,11 +1009,12 @@ static struct cal_ctx *cal_ctx_create(struct cal_dev *cal, int inst)
 	struct cal_ctx *ctx;
 	int ret;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return NULL;
 
 	ctx->cal = cal;
+	ctx->phy = cal->phy[inst];
 	ctx->dma_ctx = inst;
 	ctx->csi2_ctx = inst;
 	ctx->cport = inst;
@@ -1107,7 +1105,8 @@ static int cal_init_camerarx_regmap(struct cal_dev *cal)
 		return 0;
 	}
 
-	dev_warn(cal->dev, "failed to get ti,camerrx-control: %pe\n", syscon);
+	dev_warn(cal->dev, "failed to get ti,camerrx-control: %ld\n",
+		 PTR_ERR(syscon));
 
 	/*
 	 * Backward DTS compatibility. If syscon entry is not present then
@@ -1227,37 +1226,18 @@ static int cal_probe(struct platform_device *pdev)
 	}
 
 	/* Create contexts. */
-	if (!cal_mc_api) {
-		for (i = 0; i < cal->data->num_csi2_phy; ++i) {
-			struct cal_ctx *ctx;
+	for (i = 0; i < cal->data->num_csi2_phy; ++i) {
+		if (!cal->phy[i]->source_node)
+			continue;
 
-			if (!cal->phy[i]->source_node)
-				continue;
-
-			ctx = cal_ctx_create(cal, i);
-			if (!ctx) {
-				cal_err(cal, "Failed to create context %u\n", cal->num_contexts);
-				ret = -ENODEV;
-				goto error_context;
-			}
-
-			ctx->phy = cal->phy[i];
-
-			cal->ctx[cal->num_contexts++] = ctx;
+		cal->ctx[cal->num_contexts] = cal_ctx_create(cal, i);
+		if (!cal->ctx[cal->num_contexts]) {
+			cal_err(cal, "Failed to create context %u\n", cal->num_contexts);
+			ret = -ENODEV;
+			goto error_context;
 		}
-	} else {
-		for (i = 0; i < ARRAY_SIZE(cal->ctx); ++i) {
-			struct cal_ctx *ctx;
 
-			ctx = cal_ctx_create(cal, i);
-			if (!ctx) {
-				cal_err(cal, "Failed to create context %u\n", i);
-				ret = -ENODEV;
-				goto error_context;
-			}
-
-			cal->ctx[cal->num_contexts++] = ctx;
-		}
+		cal->num_contexts++;
 	}
 
 	/* Register the media device. */

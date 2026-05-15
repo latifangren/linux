@@ -56,19 +56,18 @@ general.
    :maxdepth: 1
 
    devlink-dpipe
-   devlink-eswitch-attr
-   devlink-flash
    devlink-health
    devlink-info
-   devlink-linecard
+   devlink-flash
    devlink-params
    devlink-port
    devlink-region
-   devlink-reload
    devlink-resource
+   devlink-reload
    devlink-selftests
    devlink-trap
-   devlink-shared
+   devlink-linecard
+   devlink-eswitch-attr
 
 Driver-specific documentation
 -----------------------------
@@ -79,27 +78,22 @@ parameters, info versions, and other features it supports.
 .. toctree::
    :maxdepth: 1
 
-   am65-nuss-cpsw-switch
    bnxt
    etas_es58x
    hns3
    i40e
-   ice
    ionic
-   iosm
-   ixgbe
-   kvaser_pciefd
-   kvaser_usb
+   ice
    mlx4
    mlx5
    mlxsw
    mv88e6xxx
    netdevsim
    nfp
-   octeontx2
-   prestera
    qed
-   sfc
-   stmmac
    ti-cpsw-switch
-   zl3073x
+   am65-nuss-cpsw-switch
+   prestera
+   iosm
+   octeontx2
+   sfc

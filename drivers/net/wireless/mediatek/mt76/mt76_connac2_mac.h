@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: BSD-3-Clause-Clear */
+/* SPDX-License-Identifier: ISC */
 /* Copyright (C) 2022 MediaTek Inc. */
 
 #ifndef __MT76_CONNAC2_MAC_H

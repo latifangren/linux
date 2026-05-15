@@ -62,7 +62,7 @@ struct genl_info;
  * @small_ops: the small-struct operations supported by this family
  * @n_small_ops: number of small-struct operations supported by this family
  * @split_ops: the split do/dump form of operation definition
- * @n_split_ops: number of entries in @split_ops, note that with split do/dump
+ * @n_split_ops: number of entries in @split_ops, not that with split do/dump
  *	ops the number of entries is not the same as number of commands
  * @sock_priv_size: the size of per-socket private memory
  * @sock_priv_init: the per-socket private memory initializer
@@ -122,10 +122,10 @@ struct genl_family {
  * @family: generic netlink family
  * @nlhdr: netlink message header
  * @genlhdr: generic netlink message header
+ * @userhdr: user specific header
  * @attrs: netlink attributes
  * @_net: network namespace
- * @ctx: storage space for the use by the family
- * @user_ptr: user pointers (deprecated, use ctx instead)
+ * @user_ptr: user pointers
  * @extack: extended ACK report struct
  */
 struct genl_info {
@@ -134,12 +134,10 @@ struct genl_info {
 	const struct genl_family *family;
 	const struct nlmsghdr *	nlhdr;
 	struct genlmsghdr *	genlhdr;
+	void *			userhdr;
 	struct nlattr **	attrs;
 	possible_net_t		_net;
-	union {
-		u8		ctx[NETLINK_CTX_SIZE];
-		void *		user_ptr[2];
-	};
+	void *			user_ptr[2];
 	struct netlink_ext_ack *extack;
 };
 
@@ -151,11 +149,6 @@ static inline struct net *genl_info_net(const struct genl_info *info)
 static inline void genl_info_net_set(struct genl_info *info, struct net *net)
 {
 	write_pnet(&info->_net, net);
-}
-
-static inline void *genl_info_userhdr(const struct genl_info *info)
-{
-	return (u8 *)info->genlhdr + GENL_HDRLEN;
 }
 
 #define GENL_SET_ERR_MSG(info, msg) NL_SET_ERR_MSG((info)->extack, msg)
@@ -354,7 +347,7 @@ __genlmsg_iput(struct sk_buff *skb, const struct genl_info *info, int flags)
  * such requests) or a struct initialized by genl_info_init_ntf()
  * when constructing notifications.
  *
- * Returns: pointer to new genetlink header.
+ * Returns pointer to new genetlink header.
  */
 static inline void *
 genlmsg_iput(struct sk_buff *skb, const struct genl_info *info)
@@ -366,7 +359,7 @@ genlmsg_iput(struct sk_buff *skb, const struct genl_info *info)
  * genlmsg_nlhdr - Obtain netlink header from user specified header
  * @user_hdr: user header as returned from genlmsg_put()
  *
- * Returns: pointer to netlink header.
+ * Returns pointer to netlink header.
  */
 static inline struct nlmsghdr *genlmsg_nlhdr(void *user_hdr)
 {
@@ -435,7 +428,7 @@ static inline void genl_dump_check_consistent(struct netlink_callback *cb,
  * @flags: netlink message flags
  * @cmd: generic netlink command
  *
- * Returns: pointer to user specific header
+ * Returns pointer to user specific header
  */
 static inline void *genlmsg_put_reply(struct sk_buff *skb,
 				      struct genl_info *info,
@@ -489,10 +482,8 @@ genlmsg_multicast_netns_filtered(const struct genl_family *family,
 				 netlink_filter_fn filter,
 				 void *filter_data)
 {
-	if (WARN_ON_ONCE(group >= family->n_mcgrps)) {
-		nlmsg_free(skb);
+	if (WARN_ON_ONCE(group >= family->n_mcgrps))
 		return -EINVAL;
-	}
 	group = family->mcgrp_offset + group;
 	return nlmsg_multicast_filtered(net->genl_sock, skb, portid, group,
 					flags, filter, filter_data);

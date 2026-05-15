@@ -1236,7 +1236,7 @@ static int vidioc_g_fbuf(struct file *file, void *fh,
 	return 0;
 }
 
-static int vidioc_enum_output(struct file *file, void *priv,
+static int vidioc_enum_output(struct file *file, void *priv_fh,
 			      struct v4l2_output *out)
 {
 	if (out->index)
@@ -1246,13 +1246,13 @@ static int vidioc_enum_output(struct file *file, void *priv,
 	return 0;
 }
 
-static int vidioc_g_output(struct file *file, void *priv, unsigned int *i)
+static int vidioc_g_output(struct file *file, void *priv_fh, unsigned int *i)
 {
 	*i = 0;
 	return 0;
 }
 
-static int vidioc_s_output(struct file *file, void *priv, unsigned int i)
+static int vidioc_s_output(struct file *file, void *priv_fh, unsigned int i)
 {
 	return i ? -EINVAL : 0;
 }
@@ -1300,6 +1300,8 @@ static const struct vb2_ops omap_vout_vb2_ops = {
 	.buf_prepare		= omap_vout_vb2_prepare,
 	.start_streaming	= omap_vout_vb2_start_streaming,
 	.stop_streaming		= omap_vout_vb2_stop_streaming,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
 };
 
 /* Init functions used during driver initialization */
@@ -1452,7 +1454,7 @@ static int __init omap_vout_create_video_devices(struct platform_device *pdev)
 
 	for (k = 0; k < pdev->num_resources; k++) {
 
-		vout = kzalloc_obj(struct omap_vout_device);
+		vout = kzalloc(sizeof(struct omap_vout_device), GFP_KERNEL);
 		if (!vout) {
 			dev_err(&pdev->dev, ": could not allocate memory\n");
 			return -ENOMEM;
@@ -1611,7 +1613,7 @@ static int __init omap_vout_probe(struct platform_device *pdev)
 		goto err_dss_init;
 	}
 
-	vid_dev = kzalloc_obj(struct omap2video_device);
+	vid_dev = kzalloc(sizeof(struct omap2video_device), GFP_KERNEL);
 	if (vid_dev == NULL) {
 		ret = -ENOMEM;
 		goto err_dss_init;

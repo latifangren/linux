@@ -23,7 +23,7 @@
 #define UPLL_DIV		2
 #define PLL_MUL_MAX		(FIELD_GET(PMC_PLL_CTRL1_MUL_MSK, UINT_MAX) + 1)
 
-#define PLL_MAX_ID		9
+#define PLL_MAX_ID		7
 
 struct sam9x60_pll_core {
 	struct regmap *regmap;
@@ -103,8 +103,11 @@ static int sam9x60_frac_pll_set(struct sam9x60_pll_core *core)
 	    (cmul == frac->mul && cfrac == frac->frac))
 		goto unlock;
 
-	/* Load recommended value for PMC_PLL_ACR */
-	val = core->characteristics->acr;
+	/* Recommended value for PMC_PLL_ACR */
+	if (core->characteristics->upll)
+		val = AT91_PMC_PLL_ACR_DEFAULT_UPLL;
+	else
+		val = AT91_PMC_PLL_ACR_DEFAULT_PLLA;
 	regmap_write(regmap, AT91_PMC_PLL_ACR, val);
 
 	regmap_write(regmap, AT91_PMC_PLL_CTRL1,
@@ -227,16 +230,12 @@ static long sam9x60_frac_pll_compute_mul_frac(struct sam9x60_pll_core *core,
 	return tmprate;
 }
 
-static int sam9x60_frac_pll_determine_rate(struct clk_hw *hw,
-					   struct clk_rate_request *req)
+static long sam9x60_frac_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+					unsigned long *parent_rate)
 {
 	struct sam9x60_pll_core *core = to_sam9x60_pll_core(hw);
 
-	req->rate = sam9x60_frac_pll_compute_mul_frac(core, req->rate,
-						      req->best_parent_rate,
-						      false);
-
-	return 0;
+	return sam9x60_frac_pll_compute_mul_frac(core, rate, *parent_rate, false);
 }
 
 static int sam9x60_frac_pll_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -322,7 +321,7 @@ static const struct clk_ops sam9x60_frac_pll_ops = {
 	.unprepare = sam9x60_frac_pll_unprepare,
 	.is_prepared = sam9x60_frac_pll_is_prepared,
 	.recalc_rate = sam9x60_frac_pll_recalc_rate,
-	.determine_rate = sam9x60_frac_pll_determine_rate,
+	.round_rate = sam9x60_frac_pll_round_rate,
 	.set_rate = sam9x60_frac_pll_set_rate,
 	.save_context = sam9x60_frac_pll_save_context,
 	.restore_context = sam9x60_frac_pll_restore_context,
@@ -333,7 +332,7 @@ static const struct clk_ops sam9x60_frac_pll_ops_chg = {
 	.unprepare = sam9x60_frac_pll_unprepare,
 	.is_prepared = sam9x60_frac_pll_is_prepared,
 	.recalc_rate = sam9x60_frac_pll_recalc_rate,
-	.determine_rate = sam9x60_frac_pll_determine_rate,
+	.round_rate = sam9x60_frac_pll_round_rate,
 	.set_rate = sam9x60_frac_pll_set_rate_chg,
 	.save_context = sam9x60_frac_pll_save_context,
 	.restore_context = sam9x60_frac_pll_restore_context,
@@ -491,15 +490,12 @@ static long sam9x60_div_pll_compute_div(struct sam9x60_pll_core *core,
 	return best_rate;
 }
 
-static int sam9x60_div_pll_determine_rate(struct clk_hw *hw,
-					  struct clk_rate_request *req)
+static long sam9x60_div_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+				       unsigned long *parent_rate)
 {
 	struct sam9x60_pll_core *core = to_sam9x60_pll_core(hw);
 
-	req->rate = sam9x60_div_pll_compute_div(core, &req->best_parent_rate,
-						req->rate);
-
-	return 0;
+	return sam9x60_div_pll_compute_div(core, parent_rate, rate);
 }
 
 static int sam9x60_div_pll_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -608,7 +604,7 @@ static const struct clk_ops sam9x60_div_pll_ops = {
 	.unprepare = sam9x60_div_pll_unprepare,
 	.is_prepared = sam9x60_div_pll_is_prepared,
 	.recalc_rate = sam9x60_div_pll_recalc_rate,
-	.determine_rate = sam9x60_div_pll_determine_rate,
+	.round_rate = sam9x60_div_pll_round_rate,
 	.set_rate = sam9x60_div_pll_set_rate,
 	.save_context = sam9x60_div_pll_save_context,
 	.restore_context = sam9x60_div_pll_restore_context,
@@ -619,7 +615,7 @@ static const struct clk_ops sam9x60_div_pll_ops_chg = {
 	.unprepare = sam9x60_div_pll_unprepare,
 	.is_prepared = sam9x60_div_pll_is_prepared,
 	.recalc_rate = sam9x60_div_pll_recalc_rate,
-	.determine_rate = sam9x60_div_pll_determine_rate,
+	.round_rate = sam9x60_div_pll_round_rate,
 	.set_rate = sam9x60_div_pll_set_rate_chg,
 	.save_context = sam9x60_div_pll_save_context,
 	.restore_context = sam9x60_div_pll_restore_context,
@@ -630,7 +626,7 @@ static const struct clk_ops sam9x60_fixed_div_pll_ops = {
 	.unprepare = sam9x60_div_pll_unprepare,
 	.is_prepared = sam9x60_div_pll_is_prepared,
 	.recalc_rate = sam9x60_fixed_div_pll_recalc_rate,
-	.determine_rate = sam9x60_div_pll_determine_rate,
+	.round_rate = sam9x60_div_pll_round_rate,
 	.save_context = sam9x60_div_pll_save_context,
 	.restore_context = sam9x60_div_pll_restore_context,
 };
@@ -652,7 +648,7 @@ sam9x60_clk_register_frac_pll(struct regmap *regmap, spinlock_t *lock,
 	if (id > PLL_MAX_ID || !lock || !parent_hw)
 		return ERR_PTR(-EINVAL);
 
-	frac = kzalloc_obj(*frac);
+	frac = kzalloc(sizeof(*frac), GFP_KERNEL);
 	if (!frac)
 		return ERR_PTR(-ENOMEM);
 
@@ -744,7 +740,7 @@ sam9x60_clk_register_div_pll(struct regmap *regmap, spinlock_t *lock,
 	if (safe_div >= PLL_DIV_MAX)
 		safe_div = PLL_DIV_MAX - 1;
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div)
 		return ERR_PTR(-ENOMEM);
 

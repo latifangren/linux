@@ -84,20 +84,8 @@ struct gntab_unmap_queue_data
 };
 
 int gnttab_init(void);
-#ifdef CONFIG_HIBERNATE_CALLBACKS
 int gnttab_suspend(void);
 int gnttab_resume(void);
-#else
-static inline int gnttab_suspend(void)
-{
-	return 0;
-}
-
-static inline int gnttab_resume(void)
-{
-	return 0;
-}
-#endif
 
 int gnttab_grant_foreign_access(domid_t domid, unsigned long frame,
 				int readonly);
@@ -176,7 +164,7 @@ gnttab_set_map_op(struct gnttab_map_grant_ref *map, phys_addr_t addr,
 {
 	if (flags & GNTMAP_contains_pte)
 		map->host_addr = addr;
-	else if (!xen_pv_domain())
+	else if (xen_feature(XENFEAT_auto_translated_physmap))
 		map->host_addr = __pa(addr);
 	else
 		map->host_addr = addr;
@@ -193,7 +181,7 @@ gnttab_set_unmap_op(struct gnttab_unmap_grant_ref *unmap, phys_addr_t addr,
 {
 	if (flags & GNTMAP_contains_pte)
 		unmap->host_addr = addr;
-	else if (!xen_pv_domain())
+	else if (xen_feature(XENFEAT_auto_translated_physmap))
 		unmap->host_addr = __pa(addr);
 	else
 		unmap->host_addr = addr;

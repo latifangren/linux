@@ -31,9 +31,8 @@
 #define DRM_MODE_BLEND_COVERAGE		1
 #define DRM_MODE_BLEND_PIXEL_NONE	2
 
-struct drm_atomic_state;
-struct drm_crtc;
 struct drm_device;
+struct drm_atomic_state;
 struct drm_plane;
 
 static inline bool drm_rotation_90_or_270(unsigned int rotation)
@@ -59,5 +58,4 @@ int drm_atomic_normalize_zpos(struct drm_device *dev,
 			      struct drm_atomic_state *state);
 int drm_plane_create_blend_mode_property(struct drm_plane *plane,
 					 unsigned int supported_modes);
-void drm_crtc_attach_background_color_property(struct drm_crtc *crtc);
 #endif

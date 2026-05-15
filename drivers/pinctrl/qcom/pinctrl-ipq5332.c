@@ -32,6 +32,7 @@
 		.io_reg = 0x4 + REG_SIZE * id,		\
 		.intr_cfg_reg = 0x8 + REG_SIZE * id,		\
 		.intr_status_reg = 0xc + REG_SIZE * id,	\
+		.intr_target_reg = 0x8 + REG_SIZE * id,	\
 		.mux_bit = 2,			\
 		.pull_bit = 0,			\
 		.drv_bit = 6,			\
@@ -691,7 +692,7 @@ static const struct pinfunction ipq5332_functions[] = {
 	MSM_PIN_FUNCTION(dbg_out),
 	MSM_PIN_FUNCTION(gcc_plltest),
 	MSM_PIN_FUNCTION(gcc_tlmm),
-	MSM_GPIO_PIN_FUNCTION(gpio),
+	MSM_PIN_FUNCTION(gpio),
 	MSM_PIN_FUNCTION(lock_det),
 	MSM_PIN_FUNCTION(mac0),
 	MSM_PIN_FUNCTION(mac1),
@@ -833,6 +834,7 @@ static struct platform_driver ipq5332_pinctrl_driver = {
 		.of_match_table = ipq5332_pinctrl_of_match,
 	},
 	.probe = ipq5332_pinctrl_probe,
+	.remove_new = msm_pinctrl_remove,
 };
 
 static int __init ipq5332_pinctrl_init(void)

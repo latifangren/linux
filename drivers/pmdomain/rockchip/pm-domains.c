@@ -612,7 +612,6 @@ static int rockchip_do_pmu_set_power_domain(struct rockchip_pm_domain *pd,
 			return ret;
 	}
 
-
 	ret = readx_poll_timeout_atomic(rockchip_pmu_domain_is_on, pd, is_on,
 					is_on == on, 0, 10000);
 	if (ret) {
@@ -620,6 +619,7 @@ static int rockchip_do_pmu_set_power_domain(struct rockchip_pm_domain *pd,
 			genpd->name, on ? "on" : "off", is_on);
 		return ret;
 	}
+
 
 	/* Inform firmware to keep this pd on or off */
 	if (arm_smccc_1_1_get_conduit() != SMCCC_CONDUIT_NONE)
@@ -705,9 +705,10 @@ static int rockchip_pd_power_on(struct generic_pm_domain *domain)
 	int ret;
 
 	ret = rockchip_pd_regulator_enable(pd);
-	if (ret)
-		return dev_err_probe(pd->pmu->dev, ret,
-				     "Failed to enable supply: %d\n", ret);
+	if (ret) {
+		dev_err(pd->pmu->dev, "Failed to enable supply: %d\n", ret);
+		return ret;
+	}
 
 	ret = rockchip_pd_power(pd, true);
 	if (ret)
@@ -1310,7 +1311,7 @@ static const struct rockchip_domain_info rk3576_pm_domains[] = {
 static const struct rockchip_domain_info rk3588_pm_domains[] = {
 	[RK3588_PD_GPU]		= DOMAIN_RK3588("gpu",     0x0, BIT(0),  0,       0x0, 0,       BIT(1),  0x0, BIT(0),  BIT(0),  false, true),
 	[RK3588_PD_NPU]		= DOMAIN_RK3588("npu",     0x0, BIT(1),  BIT(1),  0x0, 0,       0,       0x0, 0,       0,       false, true),
-	[RK3588_PD_VCODEC]	= DOMAIN_RK3588("vcodec",  0x0, BIT(2),  BIT(2),  0x0, 0,       0,       0x0, 0,       0,       false, true),
+	[RK3588_PD_VCODEC]	= DOMAIN_RK3588("vcodec",  0x0, BIT(2),  BIT(2),  0x0, 0,       0,       0x0, 0,       0,       false, false),
 	[RK3588_PD_NPUTOP]	= DOMAIN_RK3588("nputop",  0x0, BIT(3),  0,       0x0, BIT(11), BIT(2),  0x0, BIT(1),  BIT(1),  false, false),
 	[RK3588_PD_NPU1]	= DOMAIN_RK3588("npu1",    0x0, BIT(4),  0,       0x0, BIT(12), BIT(3),  0x0, BIT(2),  BIT(2),  false, false),
 	[RK3588_PD_NPU2]	= DOMAIN_RK3588("npu2",    0x0, BIT(5),  0,       0x0, BIT(13), BIT(4),  0x0, BIT(3),  BIT(3),  false, false),

@@ -5,7 +5,6 @@
  */
 
 #include "fsm.h"
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
@@ -23,7 +22,7 @@ init_fsm(char *name, const char **state_names, const char **event_names, int nr_
 	fsm_function_t *m;
 	fsm *f;
 
-	this = kzalloc_obj(fsm_instance, order);
+	this = kzalloc(sizeof(fsm_instance), order);
 	if (this == NULL) {
 		printk(KERN_WARNING
 			"fsm(%s): init_fsm: Couldn't alloc instance\n", name);
@@ -32,7 +31,7 @@ init_fsm(char *name, const char **state_names, const char **event_names, int nr_
 	strscpy(this->name, name, sizeof(this->name));
 	init_waitqueue_head(&this->wait_q);
 
-	f = kzalloc_obj(fsm, order);
+	f = kzalloc(sizeof(fsm), order);
 	if (f == NULL) {
 		printk(KERN_WARNING
 			"fsm(%s): init_fsm: Couldn't alloc fsm\n", name);
@@ -45,7 +44,7 @@ init_fsm(char *name, const char **state_names, const char **event_names, int nr_
 	f->state_names = state_names;
 	this->f = f;
 
-	m = kzalloc_objs(fsm_function_t, nr_states * nr_events, order);
+	m = kcalloc(nr_states*nr_events, sizeof(fsm_function_t), order);
 	if (m == NULL) {
 		printk(KERN_WARNING
 			"fsm(%s): init_fsm: Couldn't alloc jumptable\n", name);
@@ -133,7 +132,7 @@ fsm_getstate_str(fsm_instance *fi)
 static void
 fsm_expire_timer(struct timer_list *t)
 {
-	fsm_timer *this = timer_container_of(this, t, tl);
+	fsm_timer *this = from_timer(this, t, tl);
 #if FSM_TIMER_DEBUG
 	printk(KERN_DEBUG "fsm(%s): Timer %p expired\n",
 	       this->fi->name, this);
@@ -159,7 +158,7 @@ fsm_deltimer(fsm_timer *this)
 	printk(KERN_DEBUG "fsm(%s): Delete timer %p\n", this->fi->name,
 		this);
 #endif
-	timer_delete(&this->tl);
+	del_timer(&this->tl);
 }
 
 int
@@ -189,7 +188,7 @@ fsm_modtimer(fsm_timer *this, int millisec, int event, void *arg)
 		this->fi->name, this, millisec);
 #endif
 
-	timer_delete(&this->tl);
+	del_timer(&this->tl);
 	timer_setup(&this->tl, fsm_expire_timer, 0);
 	this->expire_event = event;
 	this->event_arg = arg;

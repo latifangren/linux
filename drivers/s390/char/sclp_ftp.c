@@ -7,7 +7,8 @@
  *
  */
 
-#define pr_fmt(fmt) "hmcdrv: " fmt
+#define KMSG_COMPONENT "hmcdrv"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -92,7 +93,7 @@ static int sclp_ftp_et7(const struct hmcdrv_ftp_cmdspec *ftp)
 	ssize_t len;
 	int rc;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	sccb = (void *) get_zeroed_page(GFP_KERNEL | GFP_DMA);
 	if (!req || !sccb) {
 		rc = -ENOMEM;

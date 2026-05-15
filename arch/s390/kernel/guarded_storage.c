@@ -4,7 +4,6 @@
  * Author(s): Martin Schwidefsky <schwidefsky@de.ibm.com>
  */
 
-#include <linux/cpufeature.h>
 #include <linux/kernel.h>
 #include <linux/syscalls.h>
 #include <linux/signal.h>
@@ -24,7 +23,7 @@ static int gs_enable(void)
 	struct gs_cb *gs_cb;
 
 	if (!current->thread.gs_cb) {
-		gs_cb = kzalloc_obj(*gs_cb);
+		gs_cb = kzalloc(sizeof(*gs_cb), GFP_KERNEL);
 		if (!gs_cb)
 			return -ENOMEM;
 		gs_cb->gsd = 25;
@@ -55,7 +54,7 @@ static int gs_set_bc_cb(struct gs_cb __user *u_gs_cb)
 
 	gs_cb = current->thread.gs_bc_cb;
 	if (!gs_cb) {
-		gs_cb = kzalloc_obj(*gs_cb);
+		gs_cb = kzalloc(sizeof(*gs_cb), GFP_KERNEL);
 		if (!gs_cb)
 			return -ENOMEM;
 		current->thread.gs_bc_cb = gs_cb;
@@ -110,7 +109,7 @@ static int gs_broadcast(void)
 SYSCALL_DEFINE2(s390_guarded_storage, int, command,
 		struct gs_cb __user *, gs_cb)
 {
-	if (!cpu_has_gs())
+	if (!MACHINE_HAS_GS)
 		return -EOPNOTSUPP;
 	switch (command) {
 	case GS_ENABLE:

@@ -16,7 +16,6 @@
 #include <linux/platform_device.h>
 #include <linux/cs5535.h>
 #include <linux/slab.h>
-#include <asm/msr.h>
 
 #define DRV_NAME "cs5535-mfgpt"
 
@@ -187,7 +186,7 @@ struct cs5535_mfgpt_timer *cs5535_mfgpt_alloc_timer(int timer_nr, int domain)
 	if (timer_nr < 0)
 		goto done;
 
-	timer = kmalloc_obj(*timer);
+	timer = kmalloc(sizeof(*timer), GFP_KERNEL);
 	if (!timer) {
 		/* aw hell */
 		spin_lock_irqsave(&mfgpt->lock, flags);

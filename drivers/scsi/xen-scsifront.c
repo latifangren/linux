@@ -494,8 +494,8 @@ static int map_data_for_request(struct vscsifrnt_info *info,
 			return -E2BIG;
 		}
 		seg_grants = vscsiif_grants_sg(data_grants);
-		shadow->sg = kzalloc_objs(struct scsiif_request_segment,
-					  data_grants, GFP_ATOMIC);
+		shadow->sg = kcalloc(data_grants,
+			sizeof(struct scsiif_request_segment), GFP_ATOMIC);
 		if (!shadow->sg)
 			return -ENOMEM;
 	}
@@ -603,8 +603,8 @@ static void scsifront_return(struct vscsifrnt_info *info)
 	wake_up(&info->wq_pause);
 }
 
-static enum scsi_qc_status scsifront_queuecommand(struct Scsi_Host *shost,
-						  struct scsi_cmnd *sc)
+static int scsifront_queuecommand(struct Scsi_Host *shost,
+				  struct scsi_cmnd *sc)
 {
 	struct vscsifrnt_info *info = shost_priv(shost);
 	struct vscsifrnt_shadow *shadow = scsi_cmd_priv(sc);
@@ -669,7 +669,7 @@ static int scsifront_action_handler(struct scsi_cmnd *sc, uint8_t act)
 	if (info->host_active == STATE_ERROR)
 		return FAILED;
 
-	shadow = kzalloc_obj(*shadow, GFP_NOIO);
+	shadow = kzalloc(sizeof(*shadow), GFP_NOIO);
 	if (!shadow)
 		return FAILED;
 
@@ -735,8 +735,7 @@ static int scsifront_dev_reset_handler(struct scsi_cmnd *sc)
 	return scsifront_action_handler(sc, VSCSIIF_ACT_SCSI_RESET);
 }
 
-static int scsifront_sdev_configure(struct scsi_device *sdev,
-				    struct queue_limits *lim)
+static int scsifront_sdev_configure(struct scsi_device *sdev)
 {
 	struct vscsifrnt_info *info = shost_priv(sdev->host);
 	int err;
@@ -777,8 +776,8 @@ static const struct scsi_host_template scsifront_sht = {
 	.queuecommand		= scsifront_queuecommand,
 	.eh_abort_handler	= scsifront_eh_abort_handler,
 	.eh_device_reset_handler = scsifront_dev_reset_handler,
-	.sdev_configure		= scsifront_sdev_configure,
-	.sdev_destroy		= scsifront_sdev_destroy,
+	.slave_configure	= scsifront_sdev_configure,
+	.slave_destroy		= scsifront_sdev_destroy,
 	.cmd_per_lun		= VSCSIIF_DEFAULT_CMD_PER_LUN,
 	.can_queue		= VSCSIIF_MAX_REQS,
 	.this_id		= -1,
@@ -1075,8 +1074,8 @@ static void scsifront_do_lun_hotplug(struct vscsifrnt_info *info, int op)
 			continue;
 
 		/*
-		 * Front device state path, used in sdev_configure called
-		 * on successfull scsi_add_device, and in sdev_destroy called
+		 * Front device state path, used in slave_configure called
+		 * on successfull scsi_add_device, and in slave_destroy called
 		 * on remove of a device.
 		 */
 		snprintf(info->dev_state_path, sizeof(info->dev_state_path),
@@ -1175,7 +1174,7 @@ static void scsifront_backend_changed(struct xenbus_device *dev,
 			return;
 		}
 
-		if (xenbus_read_driver_state(dev, dev->nodename) ==
+		if (xenbus_read_driver_state(dev->nodename) ==
 		    XenbusStateInitialised)
 			scsifront_do_lun_hotplug(info, VSCSIFRONT_OP_ADD_LUN);
 

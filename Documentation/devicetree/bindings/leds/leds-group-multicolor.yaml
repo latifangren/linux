@@ -17,7 +17,10 @@ properties:
   compatible:
     const: leds-group-multicolor
 
-  leds: true
+  leds:
+    description:
+      An aray of monochromatic leds
+    $ref: /schemas/types.yaml#/definitions/phandle-array
 
 required:
   - leds

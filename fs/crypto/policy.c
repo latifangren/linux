@@ -10,13 +10,11 @@
  * Modified by Eric Biggers, 2019 for v2 policy support.
  */
 
-#include <linux/export.h>
 #include <linux/fs_context.h>
-#include <linux/mount.h>
 #include <linux/random.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
-
+#include <linux/mount.h>
 #include "fscrypt_private.h"
 
 /**
@@ -727,7 +725,7 @@ const union fscrypt_policy *fscrypt_policy_to_inherit(struct inode *dir)
 		err = fscrypt_require_key(dir);
 		if (err)
 			return ERR_PTR(err);
-		return &fscrypt_get_inode_info_raw(dir)->ci_policy;
+		return &dir->i_crypt_info->ci_policy;
 	}
 
 	return fscrypt_get_dummy_policy(dir->i_sb);
@@ -746,7 +744,7 @@ const union fscrypt_policy *fscrypt_policy_to_inherit(struct inode *dir)
  */
 int fscrypt_context_for_new_inode(void *ctx, struct inode *inode)
 {
-	struct fscrypt_inode_info *ci = fscrypt_get_inode_info_raw(inode);
+	struct fscrypt_inode_info *ci = inode->i_crypt_info;
 
 	BUILD_BUG_ON(sizeof(union fscrypt_context) !=
 			FSCRYPT_SET_CONTEXT_MAX_SIZE);
@@ -771,7 +769,7 @@ EXPORT_SYMBOL_GPL(fscrypt_context_for_new_inode);
  */
 int fscrypt_set_context(struct inode *inode, void *fs_data)
 {
-	struct fscrypt_inode_info *ci;
+	struct fscrypt_inode_info *ci = inode->i_crypt_info;
 	union fscrypt_context ctx;
 	int ctxsize;
 
@@ -783,7 +781,6 @@ int fscrypt_set_context(struct inode *inode, void *fs_data)
 	 * This may be the first time the inode number is available, so do any
 	 * delayed key setup that requires the inode number.
 	 */
-	ci = fscrypt_get_inode_info_raw(inode);
 	if (ci->ci_policy.version == FSCRYPT_POLICY_V2 &&
 	    (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32))
 		fscrypt_hash_inode_number(ci, ci->ci_master_key);
@@ -813,7 +810,7 @@ int fscrypt_parse_test_dummy_encryption(const struct fs_parameter *param,
 	if (param->type == fs_value_is_string && *param->string)
 		arg = param->string;
 
-	policy = kzalloc_obj(*policy);
+	policy = kzalloc(sizeof(*policy), GFP_KERNEL);
 	if (!policy)
 		return -ENOMEM;
 
@@ -827,8 +824,10 @@ int fscrypt_parse_test_dummy_encryption(const struct fs_parameter *param,
 		policy->version = FSCRYPT_POLICY_V2;
 		policy->v2.contents_encryption_mode = FSCRYPT_MODE_AES_256_XTS;
 		policy->v2.filenames_encryption_mode = FSCRYPT_MODE_AES_256_CTS;
-		fscrypt_get_test_dummy_key_identifier(
+		err = fscrypt_get_test_dummy_key_identifier(
 				policy->v2.master_key_identifier);
+		if (err)
+			goto out;
 	} else {
 		err = -EINVAL;
 		goto out;

@@ -2,7 +2,7 @@
 /*
  * RainShadow Tech HDMI CEC driver
  *
- * Copyright 2016 Hans Verkuil <hverkuil@kernel.org>
+ * Copyright 2016 Hans Verkuil <hverkuil@xs4all.nl
  */
 
 /*
@@ -19,7 +19,6 @@
 #include <linux/completion.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
-#include <linux/hex.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -32,7 +31,7 @@
 
 #include <media/cec.h>
 
-MODULE_AUTHOR("Hans Verkuil <hverkuil@kernel.org>");
+MODULE_AUTHOR("Hans Verkuil <hverkuil@xs4all.nl>");
 MODULE_DESCRIPTION("RainShadow Tech HDMI CEC driver");
 MODULE_LICENSE("GPL");
 
@@ -313,7 +312,7 @@ static int rain_connect(struct serio *serio, struct serio_driver *drv)
 	struct cec_log_addrs log_addrs = {};
 	u16 pa = CEC_PHYS_ADDR_INVALID;
 
-	rain = kzalloc_obj(*rain);
+	rain = kzalloc(sizeof(*rain), GFP_KERNEL);
 
 	if (!rain)
 		return -ENOMEM;

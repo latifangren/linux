@@ -51,14 +51,12 @@ static __always_inline void arch_exit_to_user_mode(void)
 
 #define arch_exit_to_user_mode arch_exit_to_user_mode
 
-static __always_inline bool arch_in_rcu_eqs(void)
+static inline void arch_exit_to_user_mode_prepare(struct pt_regs *regs,
+						  unsigned long ti_work)
 {
-	if (IS_ENABLED(CONFIG_KVM))
-		return current->flags & PF_VCPU;
-
-	return false;
+	choose_random_kstack_offset(get_tod_clock_fast());
 }
 
-#define arch_in_rcu_eqs arch_in_rcu_eqs
+#define arch_exit_to_user_mode_prepare arch_exit_to_user_mode_prepare
 
 #endif

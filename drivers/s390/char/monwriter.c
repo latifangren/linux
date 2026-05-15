@@ -7,7 +7,8 @@
  * Author(s): Melissa Howland <Melissa.Howland@us.ibm.com>
  */
 
-#define pr_fmt(fmt) "monwriter: " fmt
+#define KMSG_COMPONENT "monwriter"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -22,7 +23,6 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
-#include <asm/machine.h>
 #include <asm/ebcdic.h>
 #include <asm/appldata.h>
 #include <asm/monwriter.h>
@@ -58,8 +58,8 @@ static int monwrite_diag(struct monwrite_hdr *myhdr, char *buffer, int fcn)
 	struct appldata_product_id *id;
 	int rc;
 
-	id = kmalloc_obj(*id);
-	parm_list = kmalloc_obj(*parm_list);
+	id = kmalloc(sizeof(*id), GFP_KERNEL);
+	parm_list = kmalloc(sizeof(*parm_list), GFP_KERNEL);
 	rc = -ENOMEM;
 	if (!id || !parm_list)
 		goto out;
@@ -126,7 +126,7 @@ static int monwrite_new_hdr(struct mon_private *monpriv)
 	} else if (monhdr->mon_function != MONWRITE_STOP_INTERVAL) {
 		if (mon_buf_count >= mon_max_bufs)
 			return -ENOSPC;
-		monbuf = kzalloc_obj(struct mon_buf);
+		monbuf = kzalloc(sizeof(struct mon_buf), GFP_KERNEL);
 		if (!monbuf)
 			return -ENOMEM;
 		monbuf->data = kzalloc(monhdr->datalen,
@@ -188,7 +188,7 @@ static int monwrite_open(struct inode *inode, struct file *filp)
 {
 	struct mon_private *monpriv;
 
-	monpriv = kzalloc_obj(struct mon_private);
+	monpriv = kzalloc(sizeof(struct mon_private), GFP_KERNEL);
 	if (!monpriv)
 		return -ENOMEM;
 	INIT_LIST_HEAD(&monpriv->list);
@@ -293,7 +293,7 @@ static struct miscdevice mon_dev = {
 
 static int __init mon_init(void)
 {
-	if (!machine_is_vm())
+	if (!MACHINE_IS_VM)
 		return -ENODEV;
 	/*
 	 * misc_register() has to be the last action in module_init(), because

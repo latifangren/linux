@@ -105,11 +105,16 @@ static int parse_nl_config(struct genl_info *info,
 		xp->ip.locator_match.v64 = (__force __be64)nla_get_u64(
 			info->attrs[ILA_ATTR_LOCATOR_MATCH]);
 
-	xp->ip.csum_mode = nla_get_u8_default(info->attrs[ILA_ATTR_CSUM_MODE],
-					      ILA_CSUM_NO_ACTION);
+	if (info->attrs[ILA_ATTR_CSUM_MODE])
+		xp->ip.csum_mode = nla_get_u8(info->attrs[ILA_ATTR_CSUM_MODE]);
+	else
+		xp->ip.csum_mode = ILA_CSUM_NO_ACTION;
 
-	xp->ip.ident_type = nla_get_u8_default(info->attrs[ILA_ATTR_IDENT_TYPE],
-					       ILA_ATYPE_USE_FORMAT);
+	if (info->attrs[ILA_ATTR_IDENT_TYPE])
+		xp->ip.ident_type = nla_get_u8(
+				info->attrs[ILA_ATTR_IDENT_TYPE]);
+	else
+		xp->ip.ident_type = ILA_ATYPE_USE_FORMAT;
 
 	if (info->attrs[ILA_ATTR_IFINDEX])
 		xp->ifindex = nla_get_s32(info->attrs[ILA_ATTR_IFINDEX]);
@@ -220,7 +225,7 @@ static int ila_add_mapping(struct net *net, struct ila_xlat_params *xp)
 			return err;
 	}
 
-	ila = kzalloc_obj(*ila);
+	ila = kzalloc(sizeof(*ila), GFP_KERNEL);
 	if (!ila)
 		return -ENOMEM;
 
@@ -509,7 +514,7 @@ int ila_xlat_nl_dump_start(struct netlink_callback *cb)
 	struct ila_net *ilan = net_generic(net, ila_net_id);
 	struct ila_dump_iter *iter;
 
-	iter = kmalloc_obj(*iter);
+	iter = kmalloc(sizeof(*iter), GFP_KERNEL);
 	if (!iter)
 		return -ENOMEM;
 

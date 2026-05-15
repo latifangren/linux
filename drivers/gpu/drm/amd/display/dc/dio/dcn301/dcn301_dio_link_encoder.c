@@ -73,8 +73,6 @@ static const struct link_encoder_funcs dcn301_link_enc_funcs = {
 	.get_dig_mode = dcn10_get_dig_mode,
 	.is_in_alt_mode = dcn20_link_encoder_is_in_alt_mode,
 	.get_max_link_cap = dcn20_link_encoder_get_max_link_cap,
-	.get_hpd_state = dcn10_get_hpd_state,
-	.program_hpd_filter = dcn10_program_hpd_filter,
 };
 
 void dcn301_link_encoder_construct(
@@ -96,7 +94,6 @@ void dcn301_link_encoder_construct(
 	enc10->base.ctx = init_data->ctx;
 	enc10->base.id = init_data->encoder;
 
-	enc10->base.hpd_gpio = init_data->hpd_gpio;
 	enc10->base.hpd_source = init_data->hpd_source;
 	enc10->base.connector = init_data->connector;
 

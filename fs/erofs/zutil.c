@@ -79,7 +79,7 @@ int z_erofs_gbuf_growsize(unsigned int nrpages)
 
 	for (i = 0; i < z_erofs_gbuf_count; ++i) {
 		gbuf = &z_erofs_gbufpool[i];
-		tmp_pages = kzalloc_objs(*tmp_pages, nrpages);
+		tmp_pages = kcalloc(nrpages, sizeof(*tmp_pages), GFP_KERNEL);
 		if (!tmp_pages)
 			goto out;
 
@@ -87,8 +87,8 @@ int z_erofs_gbuf_growsize(unsigned int nrpages)
 			tmp_pages[j] = gbuf->pages[j];
 		do {
 			last = j;
-			j = alloc_pages_bulk(GFP_KERNEL, nrpages,
-					     tmp_pages);
+			j = alloc_pages_bulk_array(GFP_KERNEL, nrpages,
+						   tmp_pages);
 			if (last == j)
 				goto out;
 		} while (j != nrpages);
@@ -131,14 +131,15 @@ int __init z_erofs_gbuf_init(void)
 	/* The last (special) global buffer is the reserved buffer */
 	total += !!z_erofs_rsv_nrpages;
 
-	z_erofs_gbufpool = kzalloc_objs(*z_erofs_gbufpool, total);
+	z_erofs_gbufpool = kcalloc(total, sizeof(*z_erofs_gbufpool),
+				   GFP_KERNEL);
 	if (!z_erofs_gbufpool)
 		return -ENOMEM;
 
 	if (z_erofs_rsv_nrpages) {
 		z_erofs_rsvbuf = &z_erofs_gbufpool[total - 1];
-		z_erofs_rsvbuf->pages = kzalloc_objs(*z_erofs_rsvbuf->pages,
-						     z_erofs_rsv_nrpages);
+		z_erofs_rsvbuf->pages = kcalloc(z_erofs_rsv_nrpages,
+				sizeof(*z_erofs_rsvbuf->pages), GFP_KERNEL);
 		if (!z_erofs_rsvbuf->pages) {
 			z_erofs_rsvbuf = NULL;
 			z_erofs_rsv_nrpages = 0;
@@ -242,7 +243,7 @@ void erofs_shrinker_unregister(struct super_block *sb)
 static unsigned long erofs_shrink_count(struct shrinker *shrink,
 					struct shrink_control *sc)
 {
-	return atomic_long_read(&erofs_global_shrink_cnt) ?: SHRINK_EMPTY;
+	return atomic_long_read(&erofs_global_shrink_cnt);
 }
 
 static unsigned long erofs_shrink_scan(struct shrinker *shrink,

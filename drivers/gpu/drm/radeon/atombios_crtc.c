@@ -1133,7 +1133,7 @@ static void atombios_crtc_set_pll(struct drm_crtc *crtc, struct drm_display_mode
 
 static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 				 struct drm_framebuffer *fb,
-				 int x, int y)
+				 int x, int y, int atomic)
 {
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
@@ -1150,23 +1150,33 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 	bool bypass_lut = false;
 
 	/* no fb bound */
-	if (!crtc->primary->fb) {
+	if (!atomic && !crtc->primary->fb) {
 		DRM_DEBUG_KMS("No FB bound\n");
 		return 0;
 	}
 
-	target_fb = crtc->primary->fb;
+	if (atomic)
+		target_fb = fb;
+	else
+		target_fb = crtc->primary->fb;
 
+	/* If atomic, assume fb object is pinned & idle & fenced and
+	 * just update base pointers
+	 */
 	obj = target_fb->obj[0];
 	rbo = gem_to_radeon_bo(obj);
 	r = radeon_bo_reserve(rbo, false);
 	if (unlikely(r != 0))
 		return r;
 
-	r = radeon_bo_pin(rbo, RADEON_GEM_DOMAIN_VRAM, &fb_location);
-	if (unlikely(r != 0)) {
-		radeon_bo_unreserve(rbo);
-		return -EINVAL;
+	if (atomic)
+		fb_location = radeon_bo_gpu_offset(rbo);
+	else {
+		r = radeon_bo_pin(rbo, RADEON_GEM_DOMAIN_VRAM, &fb_location);
+		if (unlikely(r != 0)) {
+			radeon_bo_unreserve(rbo);
+			return -EINVAL;
+		}
 	}
 
 	radeon_bo_get_tiling_flags(rbo, &tiling_flags, NULL);
@@ -1427,7 +1437,7 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 	/* set pageflip to happen anywhere in vblank interval */
 	WREG32(EVERGREEN_MASTER_UPDATE_MODE + radeon_crtc->crtc_offset, 0);
 
-	if (fb && fb != crtc->primary->fb) {
+	if (!atomic && fb && fb != crtc->primary->fb) {
 		rbo = gem_to_radeon_bo(fb->obj[0]);
 		r = radeon_bo_reserve(rbo, false);
 		if (unlikely(r != 0))
@@ -1444,7 +1454,7 @@ static int dce4_crtc_do_set_base(struct drm_crtc *crtc,
 
 static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 				  struct drm_framebuffer *fb,
-				  int x, int y)
+				  int x, int y, int atomic)
 {
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
@@ -1460,12 +1470,15 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	bool bypass_lut = false;
 
 	/* no fb bound */
-	if (!crtc->primary->fb) {
+	if (!atomic && !crtc->primary->fb) {
 		DRM_DEBUG_KMS("No FB bound\n");
 		return 0;
 	}
 
-	target_fb = crtc->primary->fb;
+	if (atomic)
+		target_fb = fb;
+	else
+		target_fb = crtc->primary->fb;
 
 	obj = target_fb->obj[0];
 	rbo = gem_to_radeon_bo(obj);
@@ -1473,10 +1486,17 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	if (unlikely(r != 0))
 		return r;
 
-	r = radeon_bo_pin(rbo, RADEON_GEM_DOMAIN_VRAM, &fb_location);
-	if (unlikely(r != 0)) {
-		radeon_bo_unreserve(rbo);
-		return -EINVAL;
+	/* If atomic, assume fb object is pinned & idle & fenced and
+	 * just update base pointers
+	 */
+	if (atomic)
+		fb_location = radeon_bo_gpu_offset(rbo);
+	else {
+		r = radeon_bo_pin(rbo, RADEON_GEM_DOMAIN_VRAM, &fb_location);
+		if (unlikely(r != 0)) {
+			radeon_bo_unreserve(rbo);
+			return -EINVAL;
+		}
 	}
 	radeon_bo_get_tiling_flags(rbo, &tiling_flags, NULL);
 	radeon_bo_unreserve(rbo);
@@ -1625,7 +1645,7 @@ static int avivo_crtc_do_set_base(struct drm_crtc *crtc,
 	/* set pageflip to happen only at start of vblank interval (front porch) */
 	WREG32(AVIVO_D1MODE_MASTER_UPDATE_MODE + radeon_crtc->crtc_offset, 3);
 
-	if (fb && fb != crtc->primary->fb) {
+	if (!atomic && fb && fb != crtc->primary->fb) {
 		rbo = gem_to_radeon_bo(fb->obj[0]);
 		r = radeon_bo_reserve(rbo, false);
 		if (unlikely(r != 0))
@@ -1647,11 +1667,26 @@ int atombios_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 	struct radeon_device *rdev = dev->dev_private;
 
 	if (ASIC_IS_DCE4(rdev))
-		return dce4_crtc_do_set_base(crtc, old_fb, x, y);
+		return dce4_crtc_do_set_base(crtc, old_fb, x, y, 0);
 	else if (ASIC_IS_AVIVO(rdev))
-		return avivo_crtc_do_set_base(crtc, old_fb, x, y);
+		return avivo_crtc_do_set_base(crtc, old_fb, x, y, 0);
 	else
-		return radeon_crtc_do_set_base(crtc, old_fb, x, y);
+		return radeon_crtc_do_set_base(crtc, old_fb, x, y, 0);
+}
+
+int atombios_crtc_set_base_atomic(struct drm_crtc *crtc,
+				  struct drm_framebuffer *fb,
+				  int x, int y, enum mode_set_atomic state)
+{
+	struct drm_device *dev = crtc->dev;
+	struct radeon_device *rdev = dev->dev_private;
+
+	if (ASIC_IS_DCE4(rdev))
+		return dce4_crtc_do_set_base(crtc, fb, x, y, 1);
+	else if (ASIC_IS_AVIVO(rdev))
+		return avivo_crtc_do_set_base(crtc, fb, x, y, 1);
+	else
+		return radeon_crtc_do_set_base(crtc, fb, x, y, 1);
 }
 
 /* properly set additional regs when using atombios */
@@ -2180,6 +2215,7 @@ static const struct drm_crtc_helper_funcs atombios_helper_funcs = {
 	.mode_fixup = atombios_crtc_mode_fixup,
 	.mode_set = atombios_crtc_mode_set,
 	.mode_set_base = atombios_crtc_set_base,
+	.mode_set_base_atomic = atombios_crtc_set_base_atomic,
 	.prepare = atombios_crtc_prepare,
 	.commit = atombios_crtc_commit,
 	.disable = atombios_crtc_disable,

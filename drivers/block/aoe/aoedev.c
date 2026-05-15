@@ -149,7 +149,7 @@ dummy_timer(struct timer_list *t)
 {
 	struct aoedev *d;
 
-	d = timer_container_of(d, t, timer);
+	d = from_timer(d, t, timer);
 	if (d->flags & DEVFL_TKILL)
 		return;
 	d->timer.expires = jiffies + HZ;
@@ -237,11 +237,10 @@ aoedev_downdev(struct aoedev *d)
 	/* fast fail all pending I/O */
 	if (d->blkq) {
 		/* UP is cleared, freeze+quiesce to insure all are errored */
-		unsigned int memflags = blk_mq_freeze_queue(d->blkq);
-
+		blk_mq_freeze_queue(d->blkq);
 		blk_mq_quiesce_queue(d->blkq);
 		blk_mq_unquiesce_queue(d->blkq);
-		blk_mq_unfreeze_queue(d->blkq, memflags);
+		blk_mq_unfreeze_queue(d->blkq);
 	}
 
 	if (d->gd)
@@ -285,7 +284,7 @@ freedev(struct aoedev *d)
 	if (!freeing)
 		return;
 
-	timer_delete_sync(&d->timer);
+	del_timer_sync(&d->timer);
 	if (d->gd) {
 		aoedisk_rm_debugfs(d);
 		del_gendisk(d->gd);
@@ -471,10 +470,10 @@ aoedev_by_aoeaddr(ulong maj, int min, int do_alloc)
 		}
 	if (d || !do_alloc || minor_get(&sysminor, maj, min) < 0)
 		goto out;
-	d = kzalloc_objs(*d, 1, GFP_ATOMIC);
+	d = kcalloc(1, sizeof *d, GFP_ATOMIC);
 	if (!d)
 		goto out;
-	d->targets = kzalloc_objs(*d->targets, NTARGETS, GFP_ATOMIC);
+	d->targets = kcalloc(NTARGETS, sizeof(*d->targets), GFP_ATOMIC);
 	if (!d->targets) {
 		kfree(d);
 		d = NULL;

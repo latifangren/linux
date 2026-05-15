@@ -12,7 +12,6 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/err.h>
-#include <linux/hex.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <target/iscsi/iscsi_target_core.h>
@@ -152,7 +151,7 @@ static struct iscsi_chap *chap_server_open(
 		return NULL;
 	}
 
-	conn->auth_protocol = kzalloc_obj(struct iscsi_chap);
+	conn->auth_protocol = kzalloc(sizeof(struct iscsi_chap), GFP_KERNEL);
 	if (!conn->auth_protocol)
 		return NULL;
 

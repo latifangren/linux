@@ -174,12 +174,13 @@ static const struct fb_ops goldfish_fb_ops = {
 static int goldfish_fb_probe(struct platform_device *pdev)
 {
 	int ret;
+	struct resource *r;
 	struct goldfish_fb *fb;
 	size_t framesize;
 	u32 width, height;
 	dma_addr_t fbpaddr;
 
-	fb = kzalloc_obj(*fb);
+	fb = kzalloc(sizeof(*fb), GFP_KERNEL);
 	if (fb == NULL) {
 		ret = -ENOMEM;
 		goto err_fb_alloc_failed;
@@ -188,9 +189,14 @@ static int goldfish_fb_probe(struct platform_device *pdev)
 	init_waitqueue_head(&fb->wait);
 	platform_set_drvdata(pdev, fb);
 
-	fb->reg_base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(fb->reg_base)) {
-		ret = PTR_ERR(fb->reg_base);
+	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (r == NULL) {
+		ret = -ENODEV;
+		goto err_no_io_base;
+	}
+	fb->reg_base = ioremap(r->start, PAGE_SIZE);
+	if (fb->reg_base == NULL) {
+		ret = -ENOMEM;
 		goto err_no_io_base;
 	}
 
@@ -267,6 +273,7 @@ err_fb_set_var_failed:
 				fb->fb.fix.smem_start);
 err_alloc_screen_base_failed:
 err_no_irq:
+	iounmap(fb->reg_base);
 err_no_io_base:
 	kfree(fb);
 err_fb_alloc_failed:
@@ -284,6 +291,7 @@ static void goldfish_fb_remove(struct platform_device *pdev)
 
 	dma_free_coherent(&pdev->dev, framesize, (void *)fb->fb.screen_base,
 						fb->fb.fix.smem_start);
+	iounmap(fb->reg_base);
 	kfree(fb);
 }
 

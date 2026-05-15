@@ -78,7 +78,6 @@ struct sdio_driver {
 
 	int (*probe)(struct sdio_func *, const struct sdio_device_id *);
 	void (*remove)(struct sdio_func *);
-	void (*shutdown)(struct sdio_func *);
 
 	struct device_driver drv;
 };

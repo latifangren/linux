@@ -6,7 +6,8 @@
  * Author(s): Sebastian Ott <sebott@linux.vnet.ibm.com>
  */
 
-#define pr_fmt(fmt) "scm_block: " fmt
+#define KMSG_COMPONENT "scm_block"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -43,7 +44,7 @@ static int scm_probe(struct scm_device *scmdev)
 	if (scmdev->attrs.oper_state != OP_STATE_GOOD)
 		return -EINVAL;
 
-	bdev = kzalloc_obj(*bdev);
+	bdev = kzalloc(sizeof(*bdev), GFP_KERNEL);
 	if (!bdev)
 		return -ENOMEM;
 

@@ -445,6 +445,7 @@ static u8 omap_w1_triplet(void *_hdq, u8 bdir)
 out:
 	mutex_unlock(&hdq_data->hdq_mutex);
 rtn:
+	pm_runtime_mark_last_busy(hdq_data->dev);
 	pm_runtime_put_autosuspend(hdq_data->dev);
 
 	return ret;
@@ -465,6 +466,7 @@ static u8 omap_w1_reset_bus(void *_hdq)
 
 	omap_hdq_break(hdq_data);
 
+	pm_runtime_mark_last_busy(hdq_data->dev);
 	pm_runtime_put_autosuspend(hdq_data->dev);
 
 	return 0;
@@ -488,6 +490,7 @@ static u8 omap_w1_read_byte(void *_hdq)
 	if (ret)
 		val = -1;
 
+	pm_runtime_mark_last_busy(hdq_data->dev);
 	pm_runtime_put_autosuspend(hdq_data->dev);
 
 	return val;
@@ -522,6 +525,7 @@ static void omap_w1_write_byte(void *_hdq, u8 byte)
 	}
 
 out_err:
+	pm_runtime_mark_last_busy(hdq_data->dev);
 	pm_runtime_put_autosuspend(hdq_data->dev);
 }
 
@@ -621,6 +625,7 @@ static int omap_hdq_probe(struct platform_device *pdev)
 
 	omap_hdq_break(hdq_data);
 
+	pm_runtime_mark_last_busy(&pdev->dev);
 	pm_runtime_put_autosuspend(&pdev->dev);
 
 	omap_w1_master.data = hdq_data;
@@ -667,7 +672,7 @@ MODULE_DEVICE_TABLE(of, omap_hdq_dt_ids);
 
 static struct platform_driver omap_hdq_driver = {
 	.probe = omap_hdq_probe,
-	.remove = omap_hdq_remove,
+	.remove_new = omap_hdq_remove,
 	.driver = {
 		.name =	"omap_hdq",
 		.of_match_table = omap_hdq_dt_ids,

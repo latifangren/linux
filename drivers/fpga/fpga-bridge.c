@@ -290,7 +290,7 @@ static ssize_t name_show(struct device *dev,
 {
 	struct fpga_bridge *bridge = to_fpga_bridge(dev);
 
-	return sysfs_emit(buf, "%s\n", bridge->name);
+	return sprintf(buf, "%s\n", bridge->name);
 }
 
 static ssize_t state_show(struct device *dev,
@@ -346,7 +346,7 @@ __fpga_bridge_register(struct device *parent, const char *name,
 		return ERR_PTR(-EINVAL);
 	}
 
-	bridge = kzalloc_obj(*bridge);
+	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
 	if (!bridge)
 		return ERR_PTR(-ENOMEM);
 

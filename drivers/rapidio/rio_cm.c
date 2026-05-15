@@ -198,6 +198,12 @@ struct cm_peer {
 	struct rio_dev *rdev;
 };
 
+struct rio_cm_work {
+	struct work_struct work;
+	struct cm_dev *cm;
+	void *data;
+};
+
 struct conn_req {
 	struct list_head node;
 	u32 destid;	/* requester destID */
@@ -389,7 +395,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 		return -EINVAL;
 	}
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req) {
 		riocm_put_channel(ch);
 		return -ENOMEM;
@@ -702,7 +708,7 @@ static int riocm_queue_req(struct cm_dev *cm, struct rio_dev *rdev,
 	unsigned long flags;
 	struct tx_req *treq;
 
-	treq = kzalloc_obj(*treq);
+	treq = kzalloc(sizeof(*treq), GFP_KERNEL);
 	if (treq == NULL)
 		return -ENOMEM;
 
@@ -965,7 +971,7 @@ static int riocm_ch_connect(u16 loc_ch, struct cm_dev *cm,
 	 * Send connect request to the remote RapidIO device
 	 */
 
-	hdr = kzalloc_obj(*hdr);
+	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
 	if (hdr == NULL) {
 		ret = -ENOMEM;
 		goto conn_done;
@@ -1022,7 +1028,7 @@ static int riocm_send_ack(struct rio_channel *ch)
 	struct rio_ch_chan_hdr *hdr;
 	int ret;
 
-	hdr = kzalloc_obj(*hdr);
+	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
 	if (hdr == NULL)
 		return -ENOMEM;
 
@@ -1283,7 +1289,7 @@ static struct rio_channel *riocm_ch_alloc(u16 ch_num)
 	int start, end;
 	struct rio_channel *ch;
 
-	ch = kzalloc_obj(*ch);
+	ch = kzalloc(sizeof(*ch), GFP_KERNEL);
 	if (!ch)
 		return ERR_PTR(-ENOMEM);
 
@@ -1396,7 +1402,7 @@ static int riocm_send_close(struct rio_channel *ch)
 	 * Send CH_CLOSE notification to the remote RapidIO device
 	 */
 
-	hdr = kzalloc_obj(*hdr);
+	hdr = kzalloc(sizeof(*hdr), GFP_KERNEL);
 	if (hdr == NULL)
 		return -ENOMEM;
 
@@ -1952,7 +1958,7 @@ static int riocm_add_dev(struct device *dev, struct subsys_interface *sif)
 
 	riocm_debug(RDEV, "(%s)", rio_name(rdev));
 
-	peer = kmalloc_obj(*peer);
+	peer = kmalloc(sizeof(*peer), GFP_KERNEL);
 	if (!peer)
 		return -ENOMEM;
 
@@ -2099,7 +2105,7 @@ static int riocm_add_mport(struct device *dev)
 
 	riocm_debug(MPORT, "add mport %s", mport->name);
 
-	cm = kzalloc_obj(*cm);
+	cm = kzalloc(sizeof(*cm), GFP_KERNEL);
 	if (!cm)
 		return -ENOMEM;
 

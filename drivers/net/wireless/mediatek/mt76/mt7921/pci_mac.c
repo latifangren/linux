@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: ISC
 /* Copyright (C) 2021 MediaTek Inc. */
 
 #include "mt7921.h"
@@ -71,9 +71,9 @@ int mt7921e_mac_reset(struct mt792x_dev *dev)
 	mt76_txq_schedule_all(&dev->mphy);
 
 	mt76_worker_disable(&dev->mt76.tx_worker);
-	mt76_for_each_q_rx(&dev->mt76, i) {
-		napi_disable(&dev->mt76.napi[i]);
-	}
+	napi_disable(&dev->mt76.napi[MT_RXQ_MAIN]);
+	napi_disable(&dev->mt76.napi[MT_RXQ_MCU]);
+	napi_disable(&dev->mt76.napi[MT_RXQ_MCU_WA]);
 	napi_disable(&dev->mt76.tx_napi);
 
 	mt76_connac2_tx_token_put(&dev->mt76);
@@ -81,12 +81,9 @@ int mt7921e_mac_reset(struct mt792x_dev *dev)
 
 	mt792x_wpdma_reset(dev, true);
 
-	mt76_for_each_q_rx(&dev->mt76, i) {
-		napi_enable(&dev->mt76.napi[i]);
-	}
-
 	local_bh_disable();
 	mt76_for_each_q_rx(&dev->mt76, i) {
+		napi_enable(&dev->mt76.napi[i]);
 		napi_schedule(&dev->mt76.napi[i]);
 	}
 	local_bh_enable();
@@ -118,8 +115,8 @@ int mt7921e_mac_reset(struct mt792x_dev *dev)
 	err = __mt7921_start(&dev->phy);
 out:
 
-	napi_enable(&dev->mt76.tx_napi);
 	local_bh_disable();
+	napi_enable(&dev->mt76.tx_napi);
 	napi_schedule(&dev->mt76.tx_napi);
 	local_bh_enable();
 

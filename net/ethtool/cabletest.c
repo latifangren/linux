@@ -2,10 +2,8 @@
 
 #include <linux/phy.h>
 #include <linux/ethtool_netlink.h>
-#include <net/netdev_lock.h>
-
-#include "common.h"
 #include "netlink.h"
+#include "common.h"
 
 /* 802.3 standard allows 100 meters for BaseT cables. However longer
  * cables might work, depending on the quality of the cables and the
@@ -74,24 +72,23 @@ int ethnl_act_cable_test(struct sk_buff *skb, struct genl_info *info)
 	dev = req_info.dev;
 
 	rtnl_lock();
-	netdev_lock_ops(dev);
 	phydev = ethnl_req_get_phydev(&req_info, tb,
 				      ETHTOOL_A_CABLE_TEST_HEADER,
 				      info->extack);
 	if (IS_ERR_OR_NULL(phydev)) {
 		ret = -EOPNOTSUPP;
-		goto out_unlock;
+		goto out_rtnl;
 	}
 
 	ops = ethtool_phy_ops;
 	if (!ops || !ops->start_cable_test) {
 		ret = -EOPNOTSUPP;
-		goto out_unlock;
+		goto out_rtnl;
 	}
 
 	ret = ethnl_ops_begin(dev);
 	if (ret < 0)
-		goto out_unlock;
+		goto out_rtnl;
 
 	ret = ops->start_cable_test(phydev, info->extack);
 
@@ -100,8 +97,7 @@ int ethnl_act_cable_test(struct sk_buff *skb, struct genl_info *info)
 	if (!ret)
 		ethnl_cable_test_started(phydev, ETHTOOL_MSG_CABLE_TEST_NTF);
 
-out_unlock:
-	netdev_unlock_ops(dev);
+out_rtnl:
 	rtnl_unlock();
 	ethnl_parse_header_dev_put(&req_info);
 	return ret;
@@ -343,24 +339,23 @@ int ethnl_act_cable_test_tdr(struct sk_buff *skb, struct genl_info *info)
 		goto out_dev_put;
 
 	rtnl_lock();
-	netdev_lock_ops(dev);
 	phydev = ethnl_req_get_phydev(&req_info, tb,
 				      ETHTOOL_A_CABLE_TEST_TDR_HEADER,
 				      info->extack);
 	if (IS_ERR_OR_NULL(phydev)) {
 		ret = -EOPNOTSUPP;
-		goto out_unlock;
+		goto out_rtnl;
 	}
 
 	ops = ethtool_phy_ops;
 	if (!ops || !ops->start_cable_test_tdr) {
 		ret = -EOPNOTSUPP;
-		goto out_unlock;
+		goto out_rtnl;
 	}
 
 	ret = ethnl_ops_begin(dev);
 	if (ret < 0)
-		goto out_unlock;
+		goto out_rtnl;
 
 	ret = ops->start_cable_test_tdr(phydev, info->extack, &cfg);
 
@@ -370,8 +365,7 @@ int ethnl_act_cable_test_tdr(struct sk_buff *skb, struct genl_info *info)
 		ethnl_cable_test_started(phydev,
 					 ETHTOOL_MSG_CABLE_TEST_TDR_NTF);
 
-out_unlock:
-	netdev_unlock_ops(dev);
+out_rtnl:
 	rtnl_unlock();
 out_dev_put:
 	ethnl_parse_header_dev_put(&req_info);

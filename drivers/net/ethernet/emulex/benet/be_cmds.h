@@ -1134,14 +1134,14 @@ struct be_cmd_resp_get_fw_version {
 	u8 fw_on_flash_version_string[FW_VER_LEN];
 } __packed;
 
-/******************** Set Flow Control *******************/
+/******************** Set Flow Contrl *******************/
 struct be_cmd_req_set_flow_control {
 	struct be_cmd_req_hdr hdr;
 	u16 tx_flow_control;
 	u16 rx_flow_control;
 } __packed;
 
-/******************** Get Flow Control *******************/
+/******************** Get Flow Contrl *******************/
 struct be_cmd_req_get_flow_control {
 	struct be_cmd_req_hdr hdr;
 	u32 rsvd;
@@ -1415,7 +1415,7 @@ struct flash_section_entry {
 } __packed;
 
 struct flash_section_info {
-	u8 cookie[32] __nonstring;
+	u8 cookie[32];
 	struct flash_section_hdr fsec_hdr;
 	struct flash_section_entry fsec_entry[32];
 } __packed;
@@ -2069,7 +2069,7 @@ struct be_cmd_resp_get_stats_v2 {
 	struct be_hw_stats_v2 hw_stats;
 };
 
-/************** get fat capabilities *******************/
+/************** get fat capabilites *******************/
 #define MAX_MODULES 27
 #define MAX_MODES 4
 #define MODE_UART 0

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (c) 2021 Facebook */
 #define _GNU_SOURCE
-#include <linux/compiler.h>
+#include <pthread.h>
+#include <sched.h>
 #include <test_progs.h>
 #include "testing_helpers.h"
 #include "test_perf_link.skel.h"
@@ -11,14 +12,23 @@
 
 static void burn_cpu(void)
 {
-	int i;
+	volatile int j = 0;
+	cpu_set_t cpu_set;
+	int i, err;
+
+	/* generate some branches on cpu 0 */
+	CPU_ZERO(&cpu_set);
+	CPU_SET(0, &cpu_set);
+	err = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
+	ASSERT_OK(err, "set_thread_affinity");
 
 	/* spin the loop for a while (random high number) */
 	for (i = 0; i < 1000000; ++i)
-		barrier();
+		++j;
 }
 
-void test_perf_link(void)
+/* TODO: often fails in concurrent mode */
+void serial_test_perf_link(void)
 {
 	struct test_perf_link *skel = NULL;
 	struct perf_event_attr attr;
@@ -35,7 +45,7 @@ void test_perf_link(void)
 	attr.config = PERF_COUNT_SW_CPU_CLOCK;
 	attr.freq = 1;
 	attr.sample_freq = 1000;
-	pfd = syscall(__NR_perf_event_open, &attr, 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
+	pfd = syscall(__NR_perf_event_open, &attr, -1, 0, -1, PERF_FLAG_FD_CLOEXEC);
 	if (!ASSERT_GE(pfd, 0, "perf_fd"))
 		goto cleanup;
 

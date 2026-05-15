@@ -3,16 +3,12 @@
  * Copyright 2024 NXP
  */
 
-#include <linux/debugfs.h>
-#include <linux/device/devres.h>
 #include <linux/firmware/imx/sm.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/scmi_protocol.h>
 #include <linux/scmi_imx_protocol.h>
-#include <linux/seq_file.h>
-#include <linux/sizes.h>
 
 static const struct scmi_imx_misc_proto_ops *imx_misc_ctrl_ops;
 static struct scmi_protocol_handle *ph;
@@ -48,38 +44,10 @@ static int scmi_imx_misc_ctrl_notifier(struct notifier_block *nb,
 	return 0;
 }
 
-static int syslog_show(struct seq_file *file, void *priv)
-{
-	/* 4KB is large enough for syslog */
-	void *syslog __free(kfree) = kmalloc(SZ_4K, GFP_KERNEL);
-	/* syslog API use num words, not num bytes */
-	u16 size = SZ_4K / 4;
-	int ret;
-
-	if (!ph)
-		return -ENODEV;
-
-	ret = imx_misc_ctrl_ops->misc_syslog(ph, &size, syslog);
-	if (ret)
-		return ret;
-
-	seq_hex_dump(file, " ", DUMP_PREFIX_NONE, 16, sizeof(u32), syslog, size * 4, false);
-	seq_putc(file, '\n');
-
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(syslog);
-
-static void scmi_imx_misc_put(void *p)
-{
-	debugfs_remove((struct dentry *)p);
-}
-
 static int scmi_imx_misc_ctrl_probe(struct scmi_device *sdev)
 {
 	const struct scmi_handle *handle = sdev->handle;
 	struct device_node *np = sdev->dev.of_node;
-	struct dentry *scmi_imx_dentry;
 	u32 src_id, flags;
 	int ret, i, num;
 
@@ -130,10 +98,7 @@ static int scmi_imx_misc_ctrl_probe(struct scmi_device *sdev)
 		}
 	}
 
-	scmi_imx_dentry = debugfs_create_dir("scmi_imx", NULL);
-	debugfs_create_file("syslog", 0444, scmi_imx_dentry, &sdev->dev, &syslog_fops);
-
-	return devm_add_action_or_reset(&sdev->dev, scmi_imx_misc_put, scmi_imx_dentry);
+	return 0;
 }
 
 static const struct scmi_device_id scmi_id_table[] = {

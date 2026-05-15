@@ -48,7 +48,6 @@ MODULE_PARM_DESC(mixer, MIXER_HELP);
 #ifndef MODULE
 static int set_dsp(char *name, int *add)
 {
-	*add = 0;
 	dsp = name;
 	return 0;
 }
@@ -57,7 +56,6 @@ __uml_setup("dsp=", set_dsp, "dsp=<dsp device>\n" DSP_HELP);
 
 static int set_mixer(char *name, int *add)
 {
-	*add = 0;
 	mixer = name;
 	return 0;
 }
@@ -186,7 +184,7 @@ static int hostaudio_open(struct inode *inode, struct file *file)
 	kernel_param_unlock(THIS_MODULE);
 #endif
 
-	state = kmalloc_obj(struct hostaudio_state);
+	state = kmalloc(sizeof(struct hostaudio_state), GFP_KERNEL);
 	if (state == NULL)
 		return -ENOMEM;
 
@@ -247,7 +245,7 @@ static int hostmixer_open_mixdev(struct inode *inode, struct file *file)
 	printk(KERN_DEBUG "hostmixer: open called (host: %s)\n", mixer);
 #endif
 
-	state = kmalloc_obj(struct hostmixer_state);
+	state = kmalloc(sizeof(struct hostmixer_state), GFP_KERNEL);
 	if (state == NULL)
 		return -ENOMEM;
 

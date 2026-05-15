@@ -32,7 +32,8 @@
  *
  */
 
-#define pr_fmt(fmt) "IPVS: " fmt
+#define KMSG_COMPONENT "IPVS"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/ip.h>
 #include <linux/module.h>
@@ -107,7 +108,7 @@ static void ip_vs_dest_set_insert(struct ip_vs_dest_set *set,
 		}
 	}
 
-	e = kmalloc_obj(*e, GFP_ATOMIC);
+	e = kmalloc(sizeof(*e), GFP_ATOMIC);
 	if (e == NULL)
 		return;
 
@@ -363,7 +364,7 @@ ip_vs_lblcr_new(struct ip_vs_lblcr_table *tbl, const union nf_inet_addr *daddr,
 
 	en = ip_vs_lblcr_get(af, tbl, daddr);
 	if (!en) {
-		en = kmalloc_obj(*en, GFP_ATOMIC);
+		en = kmalloc(sizeof(*en), GFP_ATOMIC);
 		if (!en)
 			return NULL;
 
@@ -455,8 +456,7 @@ static inline void ip_vs_lblcr_full_check(struct ip_vs_service *svc)
  */
 static void ip_vs_lblcr_check_expire(struct timer_list *t)
 {
-	struct ip_vs_lblcr_table *tbl = timer_container_of(tbl, t,
-							   periodic_timer);
+	struct ip_vs_lblcr_table *tbl = from_timer(tbl, t, periodic_timer);
 	struct ip_vs_service *svc = tbl->svc;
 	unsigned long now = jiffies;
 	int goal;
@@ -510,7 +510,7 @@ static int ip_vs_lblcr_init_svc(struct ip_vs_service *svc)
 	/*
 	 *    Allocate the ip_vs_lblcr_table for this service
 	 */
-	tbl = kmalloc_obj(*tbl);
+	tbl = kmalloc(sizeof(*tbl), GFP_KERNEL);
 	if (tbl == NULL)
 		return -ENOMEM;
 

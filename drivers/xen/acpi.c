@@ -89,11 +89,11 @@ int xen_acpi_get_gsi_info(struct pci_dev *dev,
 						  int *trigger_out,
 						  int *polarity_out)
 {
-	u32 gsi;
+	int gsi;
 	u8 pin;
 	struct acpi_prt_entry *entry;
 	int trigger = ACPI_LEVEL_SENSITIVE;
-	int ret, polarity = acpi_irq_model == ACPI_IRQ_MODEL_GIC ?
+	int polarity = acpi_irq_model == ACPI_IRQ_MODEL_GIC ?
 				      ACPI_ACTIVE_HIGH : ACPI_ACTIVE_LOW;
 
 	if (!dev || !gsi_out || !trigger_out || !polarity_out)
@@ -105,18 +105,17 @@ int xen_acpi_get_gsi_info(struct pci_dev *dev,
 
 	entry = acpi_pci_irq_lookup(dev, pin);
 	if (entry) {
-		ret = 0;
 		if (entry->link)
-			ret = acpi_pci_link_allocate_irq(entry->link,
+			gsi = acpi_pci_link_allocate_irq(entry->link,
 							 entry->index,
 							 &trigger, &polarity,
-							 NULL, &gsi);
+							 NULL);
 		else
 			gsi = entry->index;
 	} else
-		ret = -ENODEV;
+		gsi = -1;
 
-	if (ret < 0)
+	if (gsi < 0)
 		return -EINVAL;
 
 	*gsi_out = gsi;

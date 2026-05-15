@@ -1393,12 +1393,12 @@ int pccard_validate_cis(struct pcmcia_socket *s, unsigned int *info)
 	destroy_cis_cache(s);
 	mutex_unlock(&s->ops_mutex);
 
-	tuple = kmalloc_obj(*tuple);
+	tuple = kmalloc(sizeof(*tuple), GFP_KERNEL);
 	if (tuple == NULL) {
 		dev_warn(&s->dev, "no memory to validate CIS\n");
 		return -ENOMEM;
 	}
-	p = kmalloc_obj(*p);
+	p = kmalloc(sizeof(*p), GFP_KERNEL);
 	if (p == NULL) {
 		kfree(tuple);
 		dev_warn(&s->dev, "no memory to validate CIS\n");
@@ -1480,11 +1480,11 @@ static ssize_t pccard_extract_cis(struct pcmcia_socket *s, char *buf,
 	u_char *tuplebuffer;
 	u_char *tempbuffer;
 
-	tuplebuffer = kmalloc_objs(u_char, 256);
+	tuplebuffer = kmalloc_array(256, sizeof(u_char), GFP_KERNEL);
 	if (!tuplebuffer)
 		return -ENOMEM;
 
-	tempbuffer = kmalloc_objs(u_char, 258);
+	tempbuffer = kmalloc_array(258, sizeof(u_char), GFP_KERNEL);
 	if (!tempbuffer) {
 		ret = -ENOMEM;
 		goto free_tuple;
@@ -1540,7 +1540,7 @@ static ssize_t pccard_extract_cis(struct pcmcia_socket *s, char *buf,
 
 
 static ssize_t pccard_show_cis(struct file *filp, struct kobject *kobj,
-			       const struct bin_attribute *bin_attr,
+			       struct bin_attribute *bin_attr,
 			       char *buf, loff_t off, size_t count)
 {
 	unsigned int size = 0x200;
@@ -1571,7 +1571,7 @@ static ssize_t pccard_show_cis(struct file *filp, struct kobject *kobj,
 
 
 static ssize_t pccard_store_cis(struct file *filp, struct kobject *kobj,
-				const struct bin_attribute *bin_attr,
+				struct bin_attribute *bin_attr,
 				char *buf, loff_t off, size_t count)
 {
 	struct pcmcia_socket *s;

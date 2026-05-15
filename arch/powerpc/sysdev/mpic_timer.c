@@ -464,7 +464,7 @@ static void __init timer_group_init(struct device_node *np)
 	unsigned int i = 0;
 	int ret;
 
-	priv = kzalloc_obj(struct timer_group_priv);
+	priv = kzalloc(sizeof(struct timer_group_priv), GFP_KERNEL);
 	if (!priv) {
 		pr_err("%pOF: cannot allocate memory for group.\n", np);
 		return;
@@ -519,7 +519,7 @@ out:
 	kfree(priv);
 }
 
-static void mpic_timer_resume(void *data)
+static void mpic_timer_resume(void)
 {
 	struct timer_group_priv *priv;
 
@@ -535,12 +535,8 @@ static const struct of_device_id mpic_timer_ids[] = {
 	{},
 };
 
-static const struct syscore_ops mpic_timer_syscore_ops = {
+static struct syscore_ops mpic_timer_syscore_ops = {
 	.resume = mpic_timer_resume,
-};
-
-static struct syscore mpic_timer_syscore = {
-	.ops = &mpic_timer_syscore_ops,
 };
 
 static int __init mpic_timer_init(void)
@@ -550,7 +546,7 @@ static int __init mpic_timer_init(void)
 	for_each_matching_node(np, mpic_timer_ids)
 		timer_group_init(np);
 
-	register_syscore(&mpic_timer_syscore);
+	register_syscore_ops(&mpic_timer_syscore_ops);
 
 	if (list_empty(&timer_group_list))
 		return -ENODEV;

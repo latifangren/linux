@@ -53,7 +53,7 @@ static int ioa_add_path(struct path_selector *ps, struct dm_path *path,
 		return -EINVAL;
 	}
 
-	pi = kzalloc_obj(*pi);
+	pi = kzalloc(sizeof(*pi), GFP_KERNEL);
 	if (!pi) {
 		*error = "io-affinity ps: Error allocating path context";
 		return -ENOMEM;
@@ -112,11 +112,12 @@ static int ioa_create(struct path_selector *ps, unsigned int argc, char **argv)
 {
 	struct selector *s;
 
-	s = kmalloc_obj(*s);
+	s = kmalloc(sizeof(*s), GFP_KERNEL);
 	if (!s)
 		return -ENOMEM;
 
-	s->path_map = kzalloc_objs(struct path_info *, nr_cpu_ids);
+	s->path_map = kzalloc(nr_cpu_ids * sizeof(struct path_info *),
+			      GFP_KERNEL);
 	if (!s->path_map)
 		goto free_selector;
 
@@ -259,7 +260,10 @@ static int __init dm_ioa_init(void)
 
 static void __exit dm_ioa_exit(void)
 {
-	dm_unregister_path_selector(&ioa_ps);
+	int ret = dm_unregister_path_selector(&ioa_ps);
+
+	if (ret < 0)
+		DMERR("unregister failed %d", ret);
 }
 
 module_init(dm_ioa_init);

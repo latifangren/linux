@@ -12,7 +12,6 @@
 #include <linux/acpi.h>
 #include <linux/input.h>
 #include <linux/pci_ids.h>
-#include <linux/platform_device.h>
 #include <linux/leds.h>
 
 struct hswc_params {
@@ -109,10 +108,9 @@ static void led_state_set(struct led_classdev *led, enum led_brightness value)
 	queue_work(data->wq, &data->led_work);
 }
 
-static void asus_wireless_notify(acpi_handle handle, u32 event, void *context)
+static void asus_wireless_notify(struct acpi_device *adev, u32 event)
 {
-	struct asus_wireless_data *data = context;
-	struct acpi_device *adev = data->adev;
+	struct asus_wireless_data *data = acpi_driver_data(adev);
 
 	dev_dbg(&adev->dev, "event=%#x\n", event);
 	if (event != 0x88) {
@@ -125,22 +123,19 @@ static void asus_wireless_notify(acpi_handle handle, u32 event, void *context)
 	input_sync(data->idev);
 }
 
-static int asus_wireless_probe(struct platform_device *pdev)
+static int asus_wireless_add(struct acpi_device *adev)
 {
-	struct acpi_device *adev = ACPI_COMPANION(&pdev->dev);
 	struct asus_wireless_data *data;
 	const struct acpi_device_id *id;
 	int err;
 
-	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+	data = devm_kzalloc(&adev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
-
-	platform_set_drvdata(pdev, data);
-
+	adev->driver_data = data;
 	data->adev = adev;
 
-	data->idev = devm_input_allocate_device(&pdev->dev);
+	data->idev = devm_input_allocate_device(&adev->dev);
 	if (!data->idev)
 		return -ENOMEM;
 	data->idev->name = "Asus Wireless Radio Control";
@@ -169,44 +164,34 @@ static int asus_wireless_probe(struct platform_device *pdev)
 	data->led.flags = LED_CORE_SUSPENDRESUME;
 	data->led.max_brightness = 1;
 	data->led.default_trigger = "rfkill-none";
-	err = devm_led_classdev_register(&pdev->dev, &data->led);
+	err = devm_led_classdev_register(&adev->dev, &data->led);
 	if (err)
-		goto err;
+		destroy_workqueue(data->wq);
 
-	err = acpi_dev_install_notify_handler(adev, ACPI_DEVICE_NOTIFY,
-					      asus_wireless_notify, data);
-	if (err) {
-		devm_led_classdev_unregister(&pdev->dev, &data->led);
-		goto err;
-	}
-	return 0;
-
-err:
-	destroy_workqueue(data->wq);
 	return err;
 }
 
-static void asus_wireless_remove(struct platform_device *pdev)
+static void asus_wireless_remove(struct acpi_device *adev)
 {
-	struct asus_wireless_data *data = platform_get_drvdata(pdev);
+	struct asus_wireless_data *data = acpi_driver_data(adev);
 
-	acpi_dev_remove_notify_handler(data->adev, ACPI_DEVICE_NOTIFY,
-				       asus_wireless_notify);
 	if (data->wq) {
-		devm_led_classdev_unregister(&pdev->dev, &data->led);
+		devm_led_classdev_unregister(&adev->dev, &data->led);
 		destroy_workqueue(data->wq);
 	}
 }
 
-static struct platform_driver asus_wireless_driver = {
-	.probe = asus_wireless_probe,
-	.remove = asus_wireless_remove,
-	.driver = {
-		.name = "Asus Wireless Radio Control Driver",
-		.acpi_match_table = device_ids,
+static struct acpi_driver asus_wireless_driver = {
+	.name = "Asus Wireless Radio Control Driver",
+	.class = "hotkey",
+	.ids = device_ids,
+	.ops = {
+		.add = asus_wireless_add,
+		.remove = asus_wireless_remove,
+		.notify = asus_wireless_notify,
 	},
 };
-module_platform_driver(asus_wireless_driver);
+module_acpi_driver(asus_wireless_driver);
 
 MODULE_DESCRIPTION("Asus Wireless Radio Control Driver");
 MODULE_AUTHOR("João Paulo Rechi Vita <jprvita@gmail.com>");

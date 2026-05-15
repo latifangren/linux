@@ -163,6 +163,7 @@ config CPU_FREQ_GOV_ONDEMAND
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"
+	depends on CPU_FREQ
 	select CPU_FREQ_GOV_COMMON
 	help
 	  'conservative' - this driver is rather similar to the 'ondemand'
@@ -187,7 +188,7 @@ config CPU_FREQ_GOV_CONSERVATIVE
 
 config CPU_FREQ_GOV_SCHEDUTIL
 	bool "'schedutil' cpufreq policy governor"
-	depends on SMP
+	depends on CPU_FREQ && SMP
 	select CPU_FREQ_GOV_ATTR_SET
 	select IRQ_WORK
 	help
@@ -213,32 +214,6 @@ config CPUFREQ_DT
 	  This adds a generic DT based cpufreq driver for frequency management.
 	  It supports both uniprocessor (UP) and symmetric multiprocessor (SMP)
 	  systems.
-
-	  If in doubt, say N.
-
-config CPUFREQ_DT_RUST
-	tristate "Rust based Generic DT based cpufreq driver"
-	depends on HAVE_CLK && OF && RUST
-	select CPUFREQ_DT_PLATDEV
-	select PM_OPP
-	help
-	  This adds a Rust based generic DT based cpufreq driver for frequency
-	  management.  It supports both uniprocessor (UP) and symmetric
-	  multiprocessor (SMP) systems.
-
-	  If in doubt, say N.
-
-config CPUFREQ_VIRT
-	tristate "Virtual cpufreq driver"
-	depends on GENERIC_ARCH_TOPOLOGY
-	help
-	  This adds a virtualized cpufreq driver for guest kernels that
-	  read/writes to a MMIO region for a virtualized cpufreq device to
-	  communicate with the host. It sends performance requests to the host
-	  which gets used as a hint to schedule vCPU threads and select CPU
-	  frequency. If a VM does not support a virtualized FIE such as AMUs,
-	  it updates the frequency scaling factor by polling host CPU frequency
-	  to enable accurate Per-Entity Load Tracking for tasks running in the guest.
 
 	  If in doubt, say N.
 
@@ -364,6 +339,6 @@ config ACPI_CPPC_CPUFREQ_FIE
 
 	  If in doubt, say N.
 
-endif # CPU_FREQ
+endif
 
 endmenu

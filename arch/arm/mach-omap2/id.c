@@ -17,7 +17,6 @@
 #include <linux/io.h>
 #include <linux/random.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 
 #ifdef CONFIG_SOC_BUS
 #include <linux/sys_soc.h>
@@ -251,7 +250,7 @@ static void __init omap3_cpuinfo(void)
 		cpu_name = "OMAP3503";
 	}
 
-	strscpy(soc_name, cpu_name);
+	scnprintf(soc_name, sizeof(soc_name), "%s", cpu_name);
 
 	/* Print verbose information */
 	n += scnprintf(buf, sizeof(buf) - n, "%s %s (", soc_name, soc_rev);
@@ -788,7 +787,7 @@ void __init omap_soc_device_init(void)
 	struct soc_device *soc_dev;
 	struct soc_device_attribute *soc_dev_attr;
 
-	soc_dev_attr = kzalloc_obj(*soc_dev_attr);
+	soc_dev_attr = kzalloc(sizeof(*soc_dev_attr), GFP_KERNEL);
 	if (!soc_dev_attr)
 		return;
 

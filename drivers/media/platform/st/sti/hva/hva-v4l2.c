@@ -36,10 +36,7 @@
 #define to_type_str(type) (type == V4L2_BUF_TYPE_VIDEO_OUTPUT ? \
 			   "frame" : "stream")
 
-static inline struct hva_ctx *file_to_ctx(struct file *filp)
-{
-	return container_of(file_to_v4l2_fh(filp), struct hva_ctx, fh);
-}
+#define fh_to_ctx(f)    (container_of(f, struct hva_ctx, fh))
 
 /* registry of available encoders */
 static const struct hva_enc *hva_encoders[] = {
@@ -257,7 +254,7 @@ static void hva_dbg_summary(struct hva_ctx *ctx)
 static int hva_querycap(struct file *file, void *priv,
 			struct v4l2_capability *cap)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_dev *hva = ctx_to_hdev(ctx);
 
 	strscpy(cap->driver, HVA_NAME, sizeof(cap->driver));
@@ -271,7 +268,7 @@ static int hva_querycap(struct file *file, void *priv,
 static int hva_enum_fmt_stream(struct file *file, void *priv,
 			       struct v4l2_fmtdesc *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_dev *hva = ctx_to_hdev(ctx);
 
 	if (unlikely(f->index >= hva->nb_of_streamformats))
@@ -285,7 +282,7 @@ static int hva_enum_fmt_stream(struct file *file, void *priv,
 static int hva_enum_fmt_frame(struct file *file, void *priv,
 			      struct v4l2_fmtdesc *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_dev *hva = ctx_to_hdev(ctx);
 
 	if (unlikely(f->index >= hva->nb_of_pixelformats))
@@ -298,7 +295,7 @@ static int hva_enum_fmt_frame(struct file *file, void *priv,
 
 static int hva_g_fmt_stream(struct file *file, void *fh, struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_streaminfo *streaminfo = &ctx->streaminfo;
 
 	f->fmt.pix.width = streaminfo->width;
@@ -317,7 +314,7 @@ static int hva_g_fmt_stream(struct file *file, void *fh, struct v4l2_format *f)
 
 static int hva_g_fmt_frame(struct file *file, void *fh, struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_frameinfo *frameinfo = &ctx->frameinfo;
 
 	f->fmt.pix.width = frameinfo->width;
@@ -338,7 +335,7 @@ static int hva_g_fmt_frame(struct file *file, void *fh, struct v4l2_format *f)
 static int hva_try_fmt_stream(struct file *file, void *priv,
 			      struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct device *dev = ctx_to_dev(ctx);
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	u32 streamformat = pix->pixelformat;
@@ -402,7 +399,7 @@ static int hva_try_fmt_stream(struct file *file, void *priv,
 static int hva_try_fmt_frame(struct file *file, void *priv,
 			     struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct device *dev = ctx_to_dev(ctx);
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	u32 pixelformat = pix->pixelformat;
@@ -452,7 +449,7 @@ static int hva_try_fmt_frame(struct file *file, void *priv,
 
 static int hva_s_fmt_stream(struct file *file, void *fh, struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct device *dev = ctx_to_dev(ctx);
 	struct vb2_queue *vq;
 	int ret;
@@ -482,7 +479,7 @@ static int hva_s_fmt_stream(struct file *file, void *fh, struct v4l2_format *f)
 
 static int hva_s_fmt_frame(struct file *file, void *fh, struct v4l2_format *f)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct device *dev = ctx_to_dev(ctx);
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 	struct vb2_queue *vq;
@@ -520,7 +517,7 @@ static int hva_s_fmt_frame(struct file *file, void *fh, struct v4l2_format *f)
 
 static int hva_g_parm(struct file *file, void *fh, struct v4l2_streamparm *sp)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct v4l2_fract *time_per_frame = &ctx->ctrls.time_per_frame;
 
 	if (sp->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
@@ -536,7 +533,7 @@ static int hva_g_parm(struct file *file, void *fh, struct v4l2_streamparm *sp)
 
 static int hva_s_parm(struct file *file, void *fh, struct v4l2_streamparm *sp)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct v4l2_fract *time_per_frame = &ctx->ctrls.time_per_frame;
 
 	if (sp->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
@@ -556,7 +553,7 @@ static int hva_s_parm(struct file *file, void *fh, struct v4l2_streamparm *sp)
 
 static int hva_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct device *dev = ctx_to_dev(ctx);
 
 	if (buf->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) {
@@ -1117,6 +1114,8 @@ static const struct vb2_ops hva_qops = {
 	.buf_queue		= hva_buf_queue,
 	.start_streaming	= hva_start_streaming,
 	.stop_streaming		= hva_stop_streaming,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
 };
 
 /*
@@ -1165,7 +1164,7 @@ static int hva_open(struct file *file)
 	struct hva_ctx *ctx;
 	int ret;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx) {
 		ret = -ENOMEM;
 		goto out;
@@ -1174,7 +1173,8 @@ static int hva_open(struct file *file)
 
 	INIT_WORK(&ctx->run_work, hva_run_work);
 	v4l2_fh_init(&ctx->fh, video_devdata(file));
-	v4l2_fh_add(&ctx->fh, file);
+	file->private_data = &ctx->fh;
+	v4l2_fh_add(&ctx->fh);
 
 	ret = hva_ctrls_setup(ctx);
 	if (ret) {
@@ -1218,7 +1218,7 @@ static int hva_open(struct file *file)
 err_ctrls:
 	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
 err_fh:
-	v4l2_fh_del(&ctx->fh, file);
+	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
 	kfree(ctx);
 out:
@@ -1227,7 +1227,7 @@ out:
 
 static int hva_release(struct file *file)
 {
-	struct hva_ctx *ctx = file_to_ctx(file);
+	struct hva_ctx *ctx = fh_to_ctx(file->private_data);
 	struct hva_dev *hva = ctx_to_hdev(ctx);
 	struct device *dev = ctx_to_dev(ctx);
 	const struct hva_enc *enc = ctx->enc;
@@ -1249,7 +1249,7 @@ static int hva_release(struct file *file)
 
 	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
 
-	v4l2_fh_del(&ctx->fh, file);
+	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
 
 #ifdef CONFIG_VIDEO_STI_HVA_DEBUGFS

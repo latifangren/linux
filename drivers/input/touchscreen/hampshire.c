@@ -109,7 +109,7 @@ static int hampshire_connect(struct serio *serio, struct serio_driver *drv)
 	struct input_dev *input_dev;
 	int err;
 
-	phampshire = kzalloc_obj(*phampshire);
+	phampshire = kzalloc(sizeof(*phampshire), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!phampshire || !input_dev) {
 		err = -ENOMEM;
@@ -118,8 +118,8 @@ static int hampshire_connect(struct serio *serio, struct serio_driver *drv)
 
 	phampshire->serio = serio;
 	phampshire->dev = input_dev;
-	scnprintf(phampshire->phys, sizeof(phampshire->phys),
-		  "%s/input0", serio->phys);
+	snprintf(phampshire->phys, sizeof(phampshire->phys),
+		 "%s/input0", serio->phys);
 
 	input_dev->name = "Hampshire Serial TouchScreen";
 	input_dev->phys = phampshire->phys;

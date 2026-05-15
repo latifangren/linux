@@ -109,7 +109,7 @@ static int drop_verity_items(struct btrfs_inode *inode, u8 key_type)
 {
 	struct btrfs_trans_handle *trans;
 	struct btrfs_root *root = inode->root;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_key key;
 	int count = 0;
 	int ret;
@@ -121,8 +121,10 @@ static int drop_verity_items(struct btrfs_inode *inode, u8 key_type)
 	while (1) {
 		/* 1 for the item being dropped */
 		trans = btrfs_start_transaction(root, 1);
-		if (IS_ERR(trans))
-			return PTR_ERR(trans);
+		if (IS_ERR(trans)) {
+			ret = PTR_ERR(trans);
+			goto out;
+		}
 
 		/*
 		 * Walk backwards through all the items until we find one that
@@ -141,7 +143,7 @@ static int drop_verity_items(struct btrfs_inode *inode, u8 key_type)
 			path->slots[0]--;
 		} else if (ret < 0) {
 			btrfs_end_transaction(trans);
-			return ret;
+			goto out;
 		}
 
 		btrfs_item_key_to_cpu(path->nodes[0], &key, path->slots[0]);
@@ -159,14 +161,17 @@ static int drop_verity_items(struct btrfs_inode *inode, u8 key_type)
 		ret = btrfs_del_items(trans, root, path, path->slots[0], 1);
 		if (ret) {
 			btrfs_end_transaction(trans);
-			return ret;
+			goto out;
 		}
 		count++;
 		btrfs_release_path(path);
 		btrfs_end_transaction(trans);
 	}
+	ret = count;
 	btrfs_end_transaction(trans);
-	return count;
+out:
+	btrfs_free_path(path);
+	return ret;
 }
 
 /*
@@ -212,7 +217,7 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 			   const char *src, u64 len)
 {
 	struct btrfs_trans_handle *trans;
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_root *root = inode->root;
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
@@ -228,8 +233,10 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 	while (len > 0) {
 		/* 1 for the new item being inserted */
 		trans = btrfs_start_transaction(root, 1);
-		if (IS_ERR(trans))
-			return PTR_ERR(trans);
+		if (IS_ERR(trans)) {
+			ret = PTR_ERR(trans);
+			break;
+		}
 
 		key.objectid = btrfs_ino(inode);
 		key.type = key_type;
@@ -260,6 +267,7 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		btrfs_end_transaction(trans);
 	}
 
+	btrfs_free_path(path);
 	return ret;
 }
 
@@ -288,7 +296,7 @@ static int write_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 			  char *dest, u64 len, struct folio *dest_folio)
 {
-	BTRFS_PATH_AUTO_FREE(path);
+	struct btrfs_path *path;
 	struct btrfs_root *root = inode->root;
 	struct extent_buffer *leaf;
 	struct btrfs_key key;
@@ -396,6 +404,7 @@ static int read_key_bytes(struct btrfs_inode *inode, u8 key_type, u64 offset,
 		}
 	}
 out:
+	btrfs_free_path(path);
 	if (!ret)
 		ret = copied;
 	return ret;
@@ -476,14 +485,14 @@ static int rollback_verity(struct btrfs_inode *inode)
 		goto out;
 	}
 	inode->ro_flags &= ~BTRFS_INODE_RO_VERITY;
-	btrfs_sync_inode_flags_to_i_flags(inode);
+	btrfs_sync_inode_flags_to_i_flags(&inode->vfs_inode);
 	ret = btrfs_update_inode(trans, inode);
-	if (unlikely(ret)) {
+	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto out;
 	}
 	ret = del_orphan(trans, inode);
-	if (unlikely(ret)) {
+	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto out;
 	}
@@ -525,23 +534,25 @@ static int finish_verity(struct btrfs_inode *inode, const void *desc,
 	ret = write_key_bytes(inode, BTRFS_VERITY_DESC_ITEM_KEY, 0,
 			      (const char *)&item, sizeof(item));
 	if (ret)
-		return ret;
+		goto out;
 
 	/* Write out the descriptor itself */
 	ret = write_key_bytes(inode, BTRFS_VERITY_DESC_ITEM_KEY, 1,
 			      desc, desc_size);
 	if (ret)
-		return ret;
+		goto out;
 
 	/*
 	 * 1 for updating the inode flag
 	 * 1 for deleting the orphan
 	 */
 	trans = btrfs_start_transaction(root, 2);
-	if (IS_ERR(trans))
-		return PTR_ERR(trans);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		goto out;
+	}
 	inode->ro_flags |= BTRFS_INODE_RO_VERITY;
-	btrfs_sync_inode_flags_to_i_flags(inode);
+	btrfs_sync_inode_flags_to_i_flags(&inode->vfs_inode);
 	ret = btrfs_update_inode(trans, inode);
 	if (ret)
 		goto end_trans;
@@ -552,6 +563,7 @@ static int finish_verity(struct btrfs_inode *inode, const void *desc,
 	btrfs_set_fs_compat_ro(root->fs_info, VERITY);
 end_trans:
 	btrfs_end_transaction(trans);
+out:
 	return ret;
 
 }
@@ -574,9 +586,6 @@ static int btrfs_begin_enable_verity(struct file *filp)
 	int ret;
 
 	btrfs_assert_inode_locked(inode);
-
-	if (IS_ENCRYPTED(&inode->vfs_inode))
-		return -EOPNOTSUPP;
 
 	if (test_bit(BTRFS_INODE_VERITY_IN_PROGRESS, &inode->runtime_flags))
 		return -EBUSY;
@@ -667,11 +676,11 @@ int btrfs_get_verity_descriptor(struct inode *inode, void *buf, size_t buf_size)
 	if (ret < 0)
 		return ret;
 
-	if (unlikely(item.reserved[0] != 0 || item.reserved[1] != 0))
+	if (item.reserved[0] != 0 || item.reserved[1] != 0)
 		return -EUCLEAN;
 
 	true_size = btrfs_stack_verity_descriptor_size(&item);
-	if (unlikely(true_size > INT_MAX))
+	if (true_size > INT_MAX)
 		return -EUCLEAN;
 
 	if (buf_size == 0)
@@ -694,6 +703,7 @@ int btrfs_get_verity_descriptor(struct inode *inode, void *buf, size_t buf_size)
  *
  * @inode:         inode to read a merkle tree page for
  * @index:         page index relative to the start of the merkle tree
+ * @num_ra_pages:  number of pages to readahead. Optional, we ignore it
  *
  * The Merkle tree is stored in the filesystem btree, but its pages are cached
  * with a logical position past EOF in the inode's mapping.
@@ -701,7 +711,8 @@ int btrfs_get_verity_descriptor(struct inode *inode, void *buf, size_t buf_size)
  * Returns the page we read, or an ERR_PTR on error.
  */
 static struct page *btrfs_read_merkle_tree_page(struct inode *inode,
-						pgoff_t index)
+						pgoff_t index,
+						unsigned long num_ra_pages)
 {
 	struct folio *folio;
 	u64 off = (u64)index << PAGE_SHIFT;
@@ -731,7 +742,7 @@ again:
 	}
 
 	folio = filemap_alloc_folio(mapping_gfp_constraint(inode->i_mapping, ~__GFP_FS),
-				    0, NULL);
+				    0);
 	if (!folio)
 		return ERR_PTR(-ENOMEM);
 
@@ -769,17 +780,16 @@ out:
 /*
  * fsverity op that writes a Merkle tree block into the btree.
  *
- * @file:	file to write a Merkle tree block for
+ * @inode:	inode to write a Merkle tree block for
  * @buf:	Merkle tree block to write
  * @pos:	the position of the block in the Merkle tree (in bytes)
  * @size:	the Merkle tree block size (in bytes)
  *
  * Returns 0 on success or negative error code on failure
  */
-static int btrfs_write_merkle_tree_block(struct file *file, const void *buf,
+static int btrfs_write_merkle_tree_block(struct inode *inode, const void *buf,
 					 u64 pos, unsigned int size)
 {
-	struct inode *inode = file_inode(file);
 	loff_t merkle_pos = merkle_file_pos(inode);
 
 	if (merkle_pos < 0)

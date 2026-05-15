@@ -71,10 +71,12 @@
  *
  * __cfi_foo:
  *   endbr64
- *   subl 0x12345678, %eax
- *   jne.32,pn foo+3
+ *   subl 0x12345678, %r10d
+ *   jz   foo
+ *   ud2
+ *   nop
  * foo:
- *   nopl -42(%rax)		# was endbr64
+ *   osp nop3			# was endbr64
  *   ... code here ...
  *   ret
  *
@@ -84,9 +86,9 @@
  * indirect caller:
  *   lea foo(%rip), %r11
  *   ...
- *   movl $0x12345678, %eax
- *   lea  -0x10(%r11), %r11
- *   nop5
+ *   movl $0x12345678, %r10d
+ *   subl $16, %r11
+ *   nop4
  *   call *%r11
  *
  */
@@ -99,35 +101,23 @@ enum cfi_mode {
 
 extern enum cfi_mode cfi_mode;
 
-#ifdef CONFIG_FINEIBT_BHI
-extern bool cfi_bhi;
-#else
-#define cfi_bhi (0)
-#endif
-
-typedef u8 bhi_thunk[32];
-extern bhi_thunk __bhi_args[];
-extern bhi_thunk __bhi_args_end[];
-
 struct pt_regs;
 
-#ifdef CONFIG_CALL_PADDING
-#define CFI_OFFSET (CONFIG_FUNCTION_PADDING_CFI+5)
-#else
-#define CFI_OFFSET 5
-#endif
-
-#ifdef CONFIG_CFI
+#ifdef CONFIG_CFI_CLANG
 enum bug_trap_type handle_cfi_failure(struct pt_regs *regs);
 #define __bpfcall
+extern u32 cfi_bpf_hash;
+extern u32 cfi_bpf_subprog_hash;
 
 static inline int cfi_get_offset(void)
 {
 	switch (cfi_mode) {
 	case CFI_FINEIBT:
-		return /* fineibt_prefix_size */ 16;
+		return 16;
 	case CFI_KCFI:
-		return CFI_OFFSET;
+		if (IS_ENABLED(CONFIG_CALL_PADDING))
+			return 16;
+		return 5;
 	default:
 		return 0;
 	}
@@ -135,9 +125,6 @@ static inline int cfi_get_offset(void)
 #define cfi_get_offset cfi_get_offset
 
 extern u32 cfi_get_func_hash(void *func);
-#define cfi_get_func_hash cfi_get_func_hash
-
-extern int cfi_get_func_arity(void *func);
 
 #ifdef CONFIG_FINEIBT
 extern bool decode_fineibt_insn(struct pt_regs *regs, unsigned long *target, u32 *type);
@@ -155,11 +142,13 @@ static inline enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
 {
 	return BUG_TRAP_TYPE_NONE;
 }
-static inline int cfi_get_func_arity(void *func)
+#define cfi_bpf_hash 0U
+#define cfi_bpf_subprog_hash 0U
+static inline u32 cfi_get_func_hash(void *func)
 {
 	return 0;
 }
-#endif /* CONFIG_CFI */
+#endif /* CONFIG_CFI_CLANG */
 
 #if HAS_KERNEL_IBT == 1
 #define CFI_NOSEAL(x)	asm(IBT_NOSEAL(__stringify(x)))

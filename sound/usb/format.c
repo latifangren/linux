@@ -34,7 +34,6 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 {
 	int sample_width, sample_bytes;
 	u64 pcm_formats = 0;
-	u64 dsd_formats = 0;
 
 	switch (fp->protocol) {
 	case UAC_VERSION_1:
@@ -86,7 +85,6 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 	}
 
 	fp->fmt_bits = sample_width;
-	fp->fmt_sz = sample_bytes;
 
 	if ((pcm_formats == 0) &&
 	    (format == 0 || format == BIT(UAC_FORMAT_TYPE_I_UNDEFINED))) {
@@ -155,9 +153,7 @@ static u64 parse_audio_format_i_type(struct snd_usb_audio *chip,
 			 fp->iface, fp->altsetting, format);
 	}
 
-	dsd_formats |= snd_usb_interface_dsd_format_quirks(chip, fp, sample_bytes);
-	if (dsd_formats && !fp->dsd_dop)
-		pcm_formats = dsd_formats;
+	pcm_formats |= snd_usb_interface_dsd_format_quirks(chip, fp, sample_bytes);
 
 	return pcm_formats;
 }
@@ -348,10 +344,11 @@ static bool focusrite_valid_sample_rate(struct snd_usb_audio *chip,
 	unsigned int max_rate;
 	bool val_alt;
 
-	alts = snd_usb_get_host_interface(chip, fp->iface, fp->altsetting);
-	if (!alts)
+	iface = usb_ifnum_to_if(chip->dev, fp->iface);
+	if (!iface)
 		return true;
 
+	alts = &iface->altsetting[fp->altset_idx];
 	fmt = snd_usb_find_csint_desc(alts->extra, alts->extralen,
 				      NULL, UAC_FORMAT_TYPE);
 	if (!fmt)
@@ -398,8 +395,7 @@ static bool focusrite_valid_sample_rate(struct snd_usb_audio *chip,
 	 * in the format descriptor. Use Focusrite convention:
 	 * alt 1 = 48kHz, alt 2 = 96kHz, alt 3 = 192kHz.
 	 */
-	iface = usb_ifnum_to_if(chip->dev, fp->iface);
-	if (!iface || iface->num_altsetting <= 2)
+	if (iface->num_altsetting <= 2)
 		return true;
 
 	switch (fp->altsetting) {
@@ -451,14 +447,6 @@ static int parse_uac2_sample_rate_range(struct snd_usb_audio *chip,
 			if (chip->usb_id == USB_ID(0x194f, 0x010c) &&
 			    !s1810c_valid_sample_rate(fp, rate))
 				goto skip_rate;
-			/* Filter out invalid rates on Presonus Studio 1824c */
-			if (chip->usb_id == USB_ID(0x194f, 0x010d) &&
-			    !s1810c_valid_sample_rate(fp, rate))
-				goto skip_rate;
-			/* Filter out invalid rates on Presonus Studio 1824 */
-			if (chip->usb_id == USB_ID(0x194f, 0x0107) &&
-			    !s1810c_valid_sample_rate(fp, rate))
-				goto skip_rate;
 
 			/* Filter out invalid rates on Focusrite devices */
 			if (USB_ID_VENDOR(chip->usb_id) == 0x1235 &&
@@ -470,7 +458,7 @@ static int parse_uac2_sample_rate_range(struct snd_usb_audio *chip,
 			nr_rates++;
 			if (nr_rates >= MAX_NR_RATES) {
 				usb_audio_err(chip, "invalid uac2 rates\n");
-				return nr_rates;
+				break;
 			}
 
 skip_rate:

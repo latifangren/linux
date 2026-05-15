@@ -20,7 +20,7 @@
 #define ARM64_IMAGE_FLAG_PAGE_SIZE_64K		3
 #define ARM64_IMAGE_FLAG_PHYS_BASE		1
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #define arm64_image_flag_field(flags, field) \
 				(((flags) >> field##_SHIFT) & field##_MASK)
@@ -54,6 +54,6 @@ struct arm64_image_header {
 	__le32 res5;
 };
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* __ASM_IMAGE_H */

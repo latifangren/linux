@@ -37,8 +37,8 @@ struct serdev_device_ops {
  * @nr:		Device number on serdev bus.
  * @ctrl:	serdev controller managing this device.
  * @ops:	Device operations.
- * @write_comp:	Completion used by serdev_device_write() internally
- * @write_lock:	Lock to serialize access when writing data
+ * @write_comp	Completion used by serdev_device_write() internally
+ * @write_lock	Lock to serialize access when writing data
  */
 struct serdev_device {
 	struct device dev;
@@ -49,7 +49,10 @@ struct serdev_device {
 	struct mutex write_lock;
 };
 
-#define to_serdev_device(d) container_of_const(d, struct serdev_device, dev)
+static inline struct serdev_device *to_serdev_device(struct device *d)
+{
+	return container_of(d, struct serdev_device, dev);
+}
 
 /**
  * struct serdev_device_driver - serdev slave device driver
@@ -57,16 +60,17 @@ struct serdev_device {
  *		structure.
  * @probe:	binds this driver to a serdev device.
  * @remove:	unbinds this driver from the serdev device.
- * @shutdown:	shut down this serdev device.
  */
 struct serdev_device_driver {
 	struct device_driver driver;
 	int	(*probe)(struct serdev_device *);
 	void	(*remove)(struct serdev_device *);
-	void	(*shutdown)(struct serdev_device *);
 };
 
-#define to_serdev_device_driver(d) container_of_const(d, struct serdev_device_driver, driver)
+static inline struct serdev_device_driver *to_serdev_device_driver(struct device_driver *d)
+{
+	return container_of(d, struct serdev_device_driver, driver);
+}
 
 enum serdev_parity {
 	SERDEV_PARITY_NONE,
@@ -80,6 +84,7 @@ enum serdev_parity {
 struct serdev_controller_ops {
 	ssize_t (*write_buf)(struct serdev_controller *, const u8 *, size_t);
 	void (*write_flush)(struct serdev_controller *);
+	int (*write_room)(struct serdev_controller *);
 	int (*open)(struct serdev_controller *);
 	void (*close)(struct serdev_controller *);
 	void (*set_flow_control)(struct serdev_controller *, bool);
@@ -107,7 +112,10 @@ struct serdev_controller {
 	const struct serdev_controller_ops *ops;
 };
 
-#define to_serdev_controller(d) container_of_const(d, struct serdev_controller, dev)
+static inline struct serdev_controller *to_serdev_controller(struct device *d)
+{
+	return container_of(d, struct serdev_controller, dev);
+}
 
 static inline void *serdev_device_get_drvdata(const struct serdev_device *serdev)
 {
@@ -121,7 +129,7 @@ static inline void serdev_device_set_drvdata(struct serdev_device *serdev, void 
 
 /**
  * serdev_device_put() - decrement serdev device refcount
- * @serdev:	serdev device.
+ * @serdev	serdev device.
  */
 static inline void serdev_device_put(struct serdev_device *serdev)
 {
@@ -149,7 +157,7 @@ static inline void serdev_controller_set_drvdata(struct serdev_controller *ctrl,
 
 /**
  * serdev_controller_put() - decrement controller refcount
- * @ctrl:	serdev controller.
+ * @ctrl	serdev controller.
  */
 static inline void serdev_controller_put(struct serdev_controller *ctrl)
 {
@@ -204,6 +212,7 @@ int serdev_device_break_ctl(struct serdev_device *serdev, int break_state);
 void serdev_device_write_wakeup(struct serdev_device *);
 ssize_t serdev_device_write(struct serdev_device *, const u8 *, size_t, long);
 void serdev_device_write_flush(struct serdev_device *);
+int serdev_device_write_room(struct serdev_device *);
 
 /*
  * serdev device driver functions
@@ -264,6 +273,10 @@ static inline ssize_t serdev_device_write(struct serdev_device *sdev,
 	return -ENODEV;
 }
 static inline void serdev_device_write_flush(struct serdev_device *sdev) {}
+static inline int serdev_device_write_room(struct serdev_device *sdev)
+{
+	return 0;
+}
 
 #define serdev_device_driver_register(x)
 #define serdev_device_driver_unregister(x)
@@ -334,14 +347,5 @@ static inline bool serdev_acpi_get_uart_resource(struct acpi_resource *ares,
 	return false;
 }
 #endif /* CONFIG_ACPI */
-
-#ifdef CONFIG_OF
-struct serdev_controller *of_find_serdev_controller_by_node(struct device_node *node);
-#else
-static inline struct serdev_controller *of_find_serdev_controller_by_node(struct device_node *node)
-{
-	return NULL;
-}
-#endif /* CONFIG_OF */
 
 #endif /*_LINUX_SERDEV_H */

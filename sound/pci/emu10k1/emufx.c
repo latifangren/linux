@@ -12,7 +12,6 @@
 #include <linux/capability.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
@@ -440,11 +439,13 @@ int snd_emu10k1_fx8010_register_irq_handler(struct snd_emu10k1 *emu,
 					    void *private_data,
 					    struct snd_emu10k1_fx8010_irq *irq)
 {
+	unsigned long flags;
+	
 	irq->handler = handler;
 	irq->gpr_running = gpr_running;
 	irq->private_data = private_data;
 	irq->next = NULL;
-	guard(spinlock_irqsave)(&emu->fx8010.irq_lock);
+	spin_lock_irqsave(&emu->fx8010.irq_lock, flags);
 	if (emu->fx8010.irq_handlers == NULL) {
 		emu->fx8010.irq_handlers = irq;
 		emu->dsp_interrupt = snd_emu10k1_fx8010_interrupt;
@@ -453,6 +454,7 @@ int snd_emu10k1_fx8010_register_irq_handler(struct snd_emu10k1 *emu,
 		irq->next = emu->fx8010.irq_handlers;
 		emu->fx8010.irq_handlers = irq;
 	}
+	spin_unlock_irqrestore(&emu->fx8010.irq_lock, flags);
 	return 0;
 }
 
@@ -460,8 +462,9 @@ int snd_emu10k1_fx8010_unregister_irq_handler(struct snd_emu10k1 *emu,
 					      struct snd_emu10k1_fx8010_irq *irq)
 {
 	struct snd_emu10k1_fx8010_irq *tmp;
+	unsigned long flags;
 	
-	guard(spinlock_irqsave)(&emu->fx8010.irq_lock);
+	spin_lock_irqsave(&emu->fx8010.irq_lock, flags);
 	tmp = emu->fx8010.irq_handlers;
 	if (tmp == irq) {
 		emu->fx8010.irq_handlers = tmp->next;
@@ -475,6 +478,7 @@ int snd_emu10k1_fx8010_unregister_irq_handler(struct snd_emu10k1 *emu,
 		if (tmp)
 			tmp->next = tmp->next->next;
 	}
+	spin_unlock_irqrestore(&emu->fx8010.irq_lock, flags);
 	return 0;
 }
 
@@ -776,7 +780,7 @@ static int snd_emu10k1_verify_controls(struct snd_emu10k1 *emu,
 		if (snd_emu10k1_look_for_ctl(emu, &id) == NULL)
 			return -ENOENT;
 	}
-	gctl = kmalloc_obj(*gctl);
+	gctl = kmalloc(sizeof(*gctl), GFP_KERNEL);
 	if (! gctl)
 		return -ENOMEM;
 	err = 0;
@@ -864,9 +868,9 @@ static int snd_emu10k1_add_controls(struct snd_emu10k1 *emu,
 	struct snd_ctl_elem_value *val;
 	int err = 0;
 
-	val = kmalloc_obj(*val);
-	gctl = kmalloc_obj(*gctl);
-	nctl = kmalloc_obj(*nctl);
+	val = kmalloc(sizeof(*val), GFP_KERNEL);
+	gctl = kmalloc(sizeof(*gctl), GFP_KERNEL);
+	nctl = kmalloc(sizeof(*nctl), GFP_KERNEL);
 	if (!val || !gctl || !nctl) {
 		err = -ENOMEM;
 		goto __error;
@@ -914,7 +918,7 @@ static int snd_emu10k1_add_controls(struct snd_emu10k1 *emu,
 		nctl->max = gctl->max;
 		nctl->translation = gctl->translation;
 		if (ctl == NULL) {
-			ctl = kmalloc_obj(*ctl);
+			ctl = kmalloc(sizeof(*ctl), GFP_KERNEL);
 			if (ctl == NULL) {
 				err = -ENOMEM;
 				kfree(knew.tlv.p);
@@ -980,7 +984,7 @@ static int snd_emu10k1_list_controls(struct snd_emu10k1 *emu,
 	struct snd_emu10k1_fx8010_ctl *ctl;
 	struct snd_ctl_elem_id *id;
 
-	gctl = kmalloc_obj(*gctl);
+	gctl = kmalloc(sizeof(*gctl), GFP_KERNEL);
 	if (! gctl)
 		return -ENOMEM;
 
@@ -1021,12 +1025,12 @@ static int snd_emu10k1_icode_poke(struct snd_emu10k1 *emu,
 				  struct snd_emu10k1_fx8010_code *icode,
 				  bool in_kernel)
 {
-	int err;
+	int err = 0;
 
-	guard(mutex)(&emu->fx8010.lock);
+	mutex_lock(&emu->fx8010.lock);
 	err = snd_emu10k1_verify_controls(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	strscpy(emu->fx8010.name, icode->name, sizeof(emu->fx8010.name));
 	/* stop FX processor - this may be dangerous, but it's better to miss
 	   some samples than generate wrong ones - [jk] */
@@ -1037,25 +1041,27 @@ static int snd_emu10k1_icode_poke(struct snd_emu10k1 *emu,
 	/* ok, do the main job */
 	err = snd_emu10k1_del_controls(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	err = snd_emu10k1_gpr_poke(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	err = snd_emu10k1_tram_poke(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	err = snd_emu10k1_code_poke(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	err = snd_emu10k1_add_controls(emu, icode, in_kernel);
 	if (err < 0)
-		return err;
+		goto __error;
 	/* start FX processor when the DSP code is updated */
 	if (emu->audigy)
 		snd_emu10k1_ptr_write(emu, A_DBG, 0, emu->fx8010.dbg);
 	else
 		snd_emu10k1_ptr_write(emu, DBG, 0, emu->fx8010.dbg);
-	return 0;
+      __error:
+	mutex_unlock(&emu->fx8010.lock);
+	return err;
 }
 
 static int snd_emu10k1_icode_peek(struct snd_emu10k1 *emu,
@@ -1063,7 +1069,7 @@ static int snd_emu10k1_icode_peek(struct snd_emu10k1 *emu,
 {
 	int err;
 
-	guard(mutex)(&emu->fx8010.lock);
+	mutex_lock(&emu->fx8010.lock);
 	strscpy(icode->name, emu->fx8010.name, sizeof(icode->name));
 	/* ok, do the main job */
 	err = snd_emu10k1_gpr_peek(emu, icode);
@@ -1073,6 +1079,7 @@ static int snd_emu10k1_icode_peek(struct snd_emu10k1 *emu,
 		err = snd_emu10k1_code_peek(emu, icode);
 	if (err >= 0)
 		err = snd_emu10k1_list_controls(emu, icode);
+	mutex_unlock(&emu->fx8010.lock);
 	return err;
 }
 
@@ -1080,6 +1087,7 @@ static int snd_emu10k1_ipcm_poke(struct snd_emu10k1 *emu,
 				 struct snd_emu10k1_fx8010_pcm_rec *ipcm)
 {
 	unsigned int i;
+	int err = 0;
 	struct snd_emu10k1_fx8010_pcm *pcm;
 
 	if (ipcm->substream >= EMU10K1_FX8010_PCM_COUNT)
@@ -1089,16 +1097,20 @@ static int snd_emu10k1_ipcm_poke(struct snd_emu10k1 *emu,
 	if (ipcm->channels > 32)
 		return -EINVAL;
 	pcm = &emu->fx8010.pcm[ipcm->substream];
-	guard(mutex)(&emu->fx8010.lock);
-	guard(spinlock_irq)(&emu->reg_lock);
-	if (pcm->opened)
-		return -EBUSY;
+	mutex_lock(&emu->fx8010.lock);
+	spin_lock_irq(&emu->reg_lock);
+	if (pcm->opened) {
+		err = -EBUSY;
+		goto __error;
+	}
 	if (ipcm->channels == 0) {	/* remove */
 		pcm->valid = 0;
 	} else {
 		/* FIXME: we need to add universal code to the PCM transfer routine */
-		if (ipcm->channels != 2)
-			return -EINVAL;
+		if (ipcm->channels != 2) {
+			err = -EINVAL;
+			goto __error;
+		}
 		pcm->valid = 1;
 		pcm->opened = 0;
 		pcm->channels = ipcm->channels;
@@ -1113,13 +1125,17 @@ static int snd_emu10k1_ipcm_poke(struct snd_emu10k1 *emu,
 		for (i = 0; i < pcm->channels; i++)
 			pcm->etram[i] = ipcm->etram[i];
 	}
-	return 0;
+      __error:
+	spin_unlock_irq(&emu->reg_lock);
+	mutex_unlock(&emu->fx8010.lock);
+	return err;
 }
 
 static int snd_emu10k1_ipcm_peek(struct snd_emu10k1 *emu,
 				 struct snd_emu10k1_fx8010_pcm_rec *ipcm)
 {
 	unsigned int i;
+	int err = 0;
 	struct snd_emu10k1_fx8010_pcm *pcm;
 
 	if (ipcm->substream >= EMU10K1_FX8010_PCM_COUNT)
@@ -1127,8 +1143,8 @@ static int snd_emu10k1_ipcm_peek(struct snd_emu10k1 *emu,
 	ipcm->substream = array_index_nospec(ipcm->substream,
 					     EMU10K1_FX8010_PCM_COUNT);
 	pcm = &emu->fx8010.pcm[ipcm->substream];
-	guard(mutex)(&emu->fx8010.lock);
-	guard(spinlock_irq)(&emu->reg_lock);
+	mutex_lock(&emu->fx8010.lock);
+	spin_lock_irq(&emu->reg_lock);
 	ipcm->channels = pcm->channels;
 	ipcm->tram_start = pcm->tram_start;
 	ipcm->buffer_size = pcm->buffer_size;
@@ -1142,7 +1158,9 @@ static int snd_emu10k1_ipcm_peek(struct snd_emu10k1 *emu,
 		ipcm->etram[i] = pcm->etram[i];
 	ipcm->res1 = ipcm->res2 = 0;
 	ipcm->pad = 0;
-	return 0;
+	spin_unlock_irq(&emu->reg_lock);
+	mutex_unlock(&emu->fx8010.lock);
+	return err;
 }
 
 #define SND_EMU10K1_GPR_CONTROLS	44
@@ -1157,7 +1175,7 @@ snd_emu10k1_init_mono_control2(struct snd_emu10k1_fx8010_control_gpr *ctl,
 			       const char *name, int gpr, int defval, int defval_hr)
 {
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, name);
+	strcpy(ctl->id.name, name);
 	ctl->vcount = ctl->count = 1;
 	if (high_res_gpr_volume) {
 		ctl->min = -1;
@@ -1181,7 +1199,7 @@ snd_emu10k1_init_stereo_control2(struct snd_emu10k1_fx8010_control_gpr *ctl,
 				 const char *name, int gpr, int defval, int defval_hr)
 {
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, name);
+	strcpy(ctl->id.name, name);
 	ctl->vcount = ctl->count = 2;
 	if (high_res_gpr_volume) {
 		ctl->min = -1;
@@ -1206,7 +1224,7 @@ snd_emu10k1_init_mono_onoff_control(struct snd_emu10k1_fx8010_control_gpr *ctl,
 				    const char *name, int gpr, int defval)
 {
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, name);
+	strcpy(ctl->id.name, name);
 	ctl->vcount = ctl->count = 1;
 	ctl->gpr[0] = gpr + 0; ctl->value[0] = defval;
 	ctl->min = 0;
@@ -1219,7 +1237,7 @@ snd_emu10k1_init_stereo_onoff_control(struct snd_emu10k1_fx8010_control_gpr *ctl
 				      const char *name, int gpr, int defval)
 {
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, name);
+	strcpy(ctl->id.name, name);
 	ctl->vcount = ctl->count = 2;
 	ctl->gpr[0] = gpr + 0; ctl->value[0] = defval;
 	ctl->gpr[1] = gpr + 1; ctl->value[1] = defval;
@@ -1282,14 +1300,16 @@ static int _snd_emu10k1_audigy_init_efx(struct snd_emu10k1 *emu)
 	u32 *gpr_map;
 
 	err = -ENOMEM;
-	icode = kzalloc_obj(*icode);
+	icode = kzalloc(sizeof(*icode), GFP_KERNEL);
 	if (!icode)
 		return err;
 
-	icode->gpr_map = kzalloc_objs(u_int32_t, 512 + 256 + 256 + 2 * 1024);
+	icode->gpr_map = kcalloc(512 + 256 + 256 + 2 * 1024,
+				 sizeof(u_int32_t), GFP_KERNEL);
 	if (!icode->gpr_map)
 		goto __err_gpr;
-	controls = kzalloc_objs(*controls, SND_EMU10K1_GPR_CONTROLS);
+	controls = kcalloc(SND_EMU10K1_GPR_CONTROLS,
+			   sizeof(*controls), GFP_KERNEL);
 	if (!controls)
 		goto __err_ctrls;
 
@@ -1305,7 +1325,7 @@ static int _snd_emu10k1_audigy_init_efx(struct snd_emu10k1 *emu)
 	/* clear TRAM data & address lines */
 	memset(icode->tram_valid, 0xff, 256 / 8);
 
-	strscpy(icode->name, "Audigy DSP code for ALSA");
+	strcpy(icode->name, "Audigy DSP code for ALSA");
 	ptr = 0;
 	nctl = 0;
 	gpr_map[bit_shifter16] = 0x00008000;
@@ -1543,7 +1563,7 @@ static int _snd_emu10k1_audigy_init_efx(struct snd_emu10k1 *emu)
 	 */
 	ctl = &controls[nctl + 0];
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, "Tone Control - Bass");
+	strcpy(ctl->id.name, "Tone Control - Bass");
 	ctl->vcount = 2;
 	ctl->count = 10;
 	ctl->min = 0;
@@ -1552,7 +1572,7 @@ static int _snd_emu10k1_audigy_init_efx(struct snd_emu10k1 *emu)
 	ctl->translation = EMU10K1_GPR_TRANSLATION_BASS;
 	ctl = &controls[nctl + 1];
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, "Tone Control - Treble");
+	strcpy(ctl->id.name, "Tone Control - Treble");
 	ctl->vcount = 2;
 	ctl->count = 10;
 	ctl->min = 0;
@@ -1798,20 +1818,22 @@ static int _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	u32 *gpr_map;
 
 	err = -ENOMEM;
-	icode = kzalloc_obj(*icode);
+	icode = kzalloc(sizeof(*icode), GFP_KERNEL);
 	if (!icode)
 		return err;
 
-	icode->gpr_map = kzalloc_objs(u_int32_t, 256 + 160 + 160 + 2 * 512);
+	icode->gpr_map = kcalloc(256 + 160 + 160 + 2 * 512,
+				 sizeof(u_int32_t), GFP_KERNEL);
 	if (!icode->gpr_map)
 		goto __err_gpr;
 
-	controls = kzalloc_objs(struct snd_emu10k1_fx8010_control_gpr,
-				SND_EMU10K1_GPR_CONTROLS);
+	controls = kcalloc(SND_EMU10K1_GPR_CONTROLS,
+			   sizeof(struct snd_emu10k1_fx8010_control_gpr),
+			   GFP_KERNEL);
 	if (!controls)
 		goto __err_ctrls;
 
-	ipcm = kzalloc_obj(*ipcm);
+	ipcm = kzalloc(sizeof(*ipcm), GFP_KERNEL);
 	if (!ipcm)
 		goto __err_ipcm;
 
@@ -1827,7 +1849,7 @@ static int _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	/* clear TRAM data & address lines */
 	memset(icode->tram_valid, 0xff, 160 / 8);
 
-	strscpy(icode->name, "SB Live! FX8010 code for ALSA v1.2 by Jaroslav Kysela");
+	strcpy(icode->name, "SB Live! FX8010 code for ALSA v1.2 by Jaroslav Kysela");
 	ptr = 0; i = 0;
 	/* we have 12 inputs */
 	playback = SND_EMU10K1_INPUTS;
@@ -2138,7 +2160,7 @@ static int _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	 */
 	ctl = &controls[i + 0];
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, "Tone Control - Bass");
+	strcpy(ctl->id.name, "Tone Control - Bass");
 	ctl->vcount = 2;
 	ctl->count = 10;
 	ctl->min = 0;
@@ -2148,7 +2170,7 @@ static int _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	ctl->translation = EMU10K1_GPR_TRANSLATION_BASS;
 	ctl = &controls[i + 1];
 	ctl->id.iface = (__force int)SNDRV_CTL_ELEM_IFACE_MIXER;
-	strscpy(ctl->id.name, "Tone Control - Treble");
+	strcpy(ctl->id.name, "Tone Control - Treble");
 	ctl->vcount = 2;
 	ctl->count = 10;
 	ctl->min = 0;
@@ -2392,9 +2414,9 @@ int snd_emu10k1_fx8010_tram_setup(struct snd_emu10k1 *emu, u32 size)
 	}
 	if ((emu->fx8010.etram_pages.bytes / 2) == size)
 		return 0;
-	scoped_guard(spinlock_irq, &emu->emu_lock) {
-		outl(HCFG_LOCKTANKCACHE_MASK | inl(emu->port + HCFG), emu->port + HCFG);
-	}
+	spin_lock_irq(&emu->emu_lock);
+	outl(HCFG_LOCKTANKCACHE_MASK | inl(emu->port + HCFG), emu->port + HCFG);
+	spin_unlock_irq(&emu->emu_lock);
 	snd_emu10k1_ptr_write(emu, TCB, 0, 0);
 	snd_emu10k1_ptr_write(emu, TCBS, 0, TCBS_BUFFSIZE_16K);
 	if (emu->fx8010.etram_pages.area != NULL) {
@@ -2410,9 +2432,9 @@ int snd_emu10k1_fx8010_tram_setup(struct snd_emu10k1 *emu, u32 size)
 		memset(emu->fx8010.etram_pages.area, 0, size * 2);
 		snd_emu10k1_ptr_write(emu, TCB, 0, emu->fx8010.etram_pages.addr);
 		snd_emu10k1_ptr_write(emu, TCBS, 0, size_reg);
-		scoped_guard(spinlock_irq, &emu->emu_lock) {
-			outl(inl(emu->port + HCFG) & ~HCFG_LOCKTANKCACHE_MASK, emu->port + HCFG);
-		}
+		spin_lock_irq(&emu->emu_lock);
+		outl(inl(emu->port + HCFG) & ~HCFG_LOCKTANKCACHE_MASK, emu->port + HCFG);
+		spin_unlock_irq(&emu->emu_lock);
 	}
 
 	return 0;
@@ -2524,9 +2546,9 @@ static int snd_emu10k1_fx8010_ioctl(struct snd_hwdep * hw, struct file *file, un
 			return -EPERM;
 		if (get_user(addr, (unsigned int __user *)argp))
 			return -EFAULT;
-		scoped_guard(mutex, &emu->fx8010.lock) {
-			res = snd_emu10k1_fx8010_tram_setup(emu, addr);
-		}
+		mutex_lock(&emu->fx8010.lock);
+		res = snd_emu10k1_fx8010_tram_setup(emu, addr);
+		mutex_unlock(&emu->fx8010.lock);
 		return res;
 	case SNDRV_EMU10K1_IOCTL_STOP:
 		if (!capable(CAP_SYS_ADMIN))
@@ -2601,7 +2623,7 @@ int snd_emu10k1_fx8010_new(struct snd_emu10k1 *emu, int device)
 	err = snd_hwdep_new(emu->card, "FX8010", device, &hw);
 	if (err < 0)
 		return err;
-	strscpy(hw->name, "EMU10K1 (FX8010)");
+	strcpy(hw->name, "EMU10K1 (FX8010)");
 	hw->iface = SNDRV_HWDEP_IFACE_EMU10K1;
 	hw->ops.open = snd_emu10k1_fx8010_open;
 	hw->ops.ioctl = snd_emu10k1_fx8010_ioctl;

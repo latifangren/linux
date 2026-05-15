@@ -123,7 +123,7 @@ static int tie_get(struct task_struct *target,
 	int ret;
 	struct pt_regs *regs = task_pt_regs(target);
 	struct thread_info *ti = task_thread_info(target);
-	elf_xtregs_t *newregs = kzalloc_obj(elf_xtregs_t);
+	elf_xtregs_t *newregs = kzalloc(sizeof(elf_xtregs_t), GFP_KERNEL);
 
 	if (!newregs)
 		return -ENOMEM;
@@ -156,7 +156,7 @@ static int tie_set(struct task_struct *target,
 	int ret;
 	struct pt_regs *regs = task_pt_regs(target);
 	struct thread_info *ti = task_thread_info(target);
-	elf_xtregs_t *newregs = kzalloc_obj(elf_xtregs_t);
+	elf_xtregs_t *newregs = kzalloc(sizeof(elf_xtregs_t), GFP_KERNEL);
 
 	if (!newregs)
 		return -ENOMEM;
@@ -193,7 +193,7 @@ enum xtensa_regset {
 
 static const struct user_regset xtensa_regsets[] = {
 	[REGSET_GPR] = {
-		USER_REGSET_NOTE_TYPE(PRSTATUS),
+		.core_note_type = NT_PRSTATUS,
 		.n = sizeof(struct user_pt_regs) / sizeof(u32),
 		.size = sizeof(u32),
 		.align = sizeof(u32),
@@ -201,7 +201,7 @@ static const struct user_regset xtensa_regsets[] = {
 		.set = gpr_set,
 	},
 	[REGSET_TIE] = {
-		USER_REGSET_NOTE_TYPE(PRFPREG),
+		.core_note_type = NT_PRFPREG,
 		.n = sizeof(elf_xtregs_t) / sizeof(u32),
 		.size = sizeof(u32),
 		.align = sizeof(u32),

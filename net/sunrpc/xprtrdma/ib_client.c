@@ -108,7 +108,7 @@ static int rpcrdma_add_one(struct ib_device *device)
 {
 	struct rpcrdma_device *rd;
 
-	rd = kzalloc_obj(*rd);
+	rd = kzalloc(sizeof(*rd), GFP_KERNEL);
 	if (!rd)
 		return -ENOMEM;
 

@@ -11,6 +11,7 @@
 #include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/err.h>
+#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/kernel.h>
 #include <linux/module.h>

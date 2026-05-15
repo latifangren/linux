@@ -6,20 +6,17 @@
 
 int main(int argc, char **argv)
 {
-	int rc, pid, status, test_inherit = 0, xtheadvector = 0;
+	int rc, pid, status, test_inherit = 0;
 	long ctrl, ctrl_c;
 	char *exec_argv[2], *exec_envp[2];
 
-	if (argc > 1 && strcmp(argv[1], "x"))
+	if (argc > 1)
 		test_inherit = 1;
 
-	if (argc > 2 && strcmp(argv[2], "x"))
-		xtheadvector = 1;
-
-	ctrl = prctl(PR_RISCV_V_GET_CONTROL, 0, 0, 0, 0);
-	if (ctrl == -1) {
+	ctrl = my_syscall1(__NR_prctl, PR_RISCV_V_GET_CONTROL);
+	if (ctrl < 0) {
 		puts("PR_RISCV_V_GET_CONTROL is not supported\n");
-		exit(-1);
+		return ctrl;
 	}
 
 	if (test_inherit) {
@@ -51,19 +48,16 @@ int main(int argc, char **argv)
 		}
 
 		if (!pid) {
-			rc = prctl(PR_RISCV_V_GET_CONTROL, 0, 0, 0, 0);
+			rc = my_syscall1(__NR_prctl, PR_RISCV_V_GET_CONTROL);
 			if (rc != ctrl) {
 				puts("child's vstate_ctrl not equal to parent's\n");
 				exit(-1);
 			}
-			if (xtheadvector)
-				asm volatile (".4byte	0x00007ed7");
-			else
-				asm volatile (".option push\n\t"
-					".option arch, +v\n\t"
-					"vsetvli x0, x0, e32, m8, ta, ma\n\t"
-					".option pop\n\t"
-					);
+			asm volatile (".option push\n\t"
+				      ".option arch, +v\n\t"
+				      "vsetvli x0, x0, e32, m8, ta, ma\n\t"
+				      ".option pop\n\t"
+				      );
 			exit(ctrl);
 		}
 	}

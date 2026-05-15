@@ -3,7 +3,6 @@
  *  Copyright (C) 2013 Boris BREZILLON <b.brezillon@overkiz.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/bitops.h>
 #include <linux/clk-provider.h>
 #include <linux/clkdev.h>
@@ -109,7 +108,7 @@ at91_clk_register_peripheral(struct regmap *regmap, const char *name,
 	if (!name || !(parent_name || parent_hw) || id > PERIPHERAL_ID_MAX)
 		return ERR_PTR(-EINVAL);
 
-	periph = kzalloc_obj(*periph);
+	periph = kzalloc(sizeof(*periph), GFP_KERNEL);
 	if (!periph)
 		return ERR_PTR(-ENOMEM);
 
@@ -336,57 +335,50 @@ end:
 	return 0;
 }
 
-static int clk_sam9x5_peripheral_no_parent_determine_rate(struct clk_hw *hw,
-							  struct clk_rate_request *req)
+static long clk_sam9x5_peripheral_round_rate(struct clk_hw *hw,
+					     unsigned long rate,
+					     unsigned long *parent_rate)
 {
 	int shift = 0;
 	unsigned long best_rate;
 	unsigned long best_diff;
-	unsigned long cur_rate = req->best_parent_rate;
+	unsigned long cur_rate = *parent_rate;
 	unsigned long cur_diff;
 	struct clk_sam9x5_peripheral *periph = to_clk_sam9x5_peripheral(hw);
 
-	if (periph->id < PERIPHERAL_ID_MIN || !periph->range.max) {
-		req->rate = req->best_parent_rate;
-
-		return 0;
-	}
+	if (periph->id < PERIPHERAL_ID_MIN || !periph->range.max)
+		return *parent_rate;
 
 	if (periph->range.max) {
 		for (; shift <= PERIPHERAL_MAX_SHIFT; shift++) {
-			cur_rate = req->best_parent_rate >> shift;
+			cur_rate = *parent_rate >> shift;
 			if (cur_rate <= periph->range.max)
 				break;
 		}
 	}
 
-	if (req->rate >= cur_rate) {
-		req->rate = cur_rate;
+	if (rate >= cur_rate)
+		return cur_rate;
 
-		return 0;
-	}
-
-	best_diff = cur_rate - req->rate;
+	best_diff = cur_rate - rate;
 	best_rate = cur_rate;
 	for (; shift <= PERIPHERAL_MAX_SHIFT; shift++) {
-		cur_rate = req->best_parent_rate >> shift;
-		if (cur_rate < req->rate)
-			cur_diff = req->rate - cur_rate;
+		cur_rate = *parent_rate >> shift;
+		if (cur_rate < rate)
+			cur_diff = rate - cur_rate;
 		else
-			cur_diff = cur_rate - req->rate;
+			cur_diff = cur_rate - rate;
 
 		if (cur_diff < best_diff) {
 			best_diff = cur_diff;
 			best_rate = cur_rate;
 		}
 
-		if (!best_diff || cur_rate < req->rate)
+		if (!best_diff || cur_rate < rate)
 			break;
 	}
 
-	req->rate = best_rate;
-
-	return 0;
+	return best_rate;
 }
 
 static int clk_sam9x5_peripheral_set_rate(struct clk_hw *hw,
@@ -438,7 +430,7 @@ static const struct clk_ops sam9x5_peripheral_ops = {
 	.disable = clk_sam9x5_peripheral_disable,
 	.is_enabled = clk_sam9x5_peripheral_is_enabled,
 	.recalc_rate = clk_sam9x5_peripheral_recalc_rate,
-	.determine_rate = clk_sam9x5_peripheral_no_parent_determine_rate,
+	.round_rate = clk_sam9x5_peripheral_round_rate,
 	.set_rate = clk_sam9x5_peripheral_set_rate,
 	.save_context = clk_sam9x5_peripheral_save_context,
 	.restore_context = clk_sam9x5_peripheral_restore_context,
@@ -471,7 +463,7 @@ at91_clk_register_sam9x5_peripheral(struct regmap *regmap, spinlock_t *lock,
 	if (!name || !(parent_name || parent_hw))
 		return ERR_PTR(-EINVAL);
 
-	periph = kzalloc_obj(*periph);
+	periph = kzalloc(sizeof(*periph), GFP_KERNEL);
 	if (!periph)
 		return ERR_PTR(-ENOMEM);
 

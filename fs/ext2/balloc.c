@@ -201,7 +201,7 @@ static void group_adjust_blocks(struct super_block *sb, int group_no,
  * windows(start, end). Otherwise, it will only print out the "bad" windows,
  * those windows that overlap with their immediate neighbors.
  */
-#ifdef EXT2FS_DEBUG
+#if 1
 static void __rsv_window_dump(struct rb_root *root, int verbose,
 			      const char *fn)
 {
@@ -248,7 +248,7 @@ restart:
 	__rsv_window_dump((root), (verbose), __func__)
 #else
 #define rsv_window_dump(root, verbose) do {} while (0)
-#endif /* EXT2FS_DEBUG */
+#endif
 
 /**
  * goal_in_my_reservation()
@@ -419,7 +419,7 @@ void ext2_init_block_alloc_info(struct inode *inode)
 	struct ext2_block_alloc_info *block_i;
 	struct super_block *sb = inode->i_sb;
 
-	block_i = kmalloc_obj(*block_i);
+	block_i = kmalloc(sizeof(*block_i), GFP_KERNEL);
 	if (block_i) {
 		struct ext2_reserve_window_node *rsv = &block_i->rsv_window_node;
 

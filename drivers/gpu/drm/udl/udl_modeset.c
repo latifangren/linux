@@ -21,7 +21,6 @@
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
 
@@ -206,7 +205,6 @@ static int udl_handle_damage(struct drm_framebuffer *fb,
 			     const struct drm_rect *clip)
 {
 	struct drm_device *dev = fb->dev;
-	struct udl_device *udl = to_udl(dev);
 	void *vaddr = map->vaddr; /* TODO: Use mapping abstraction properly */
 	int i, ret;
 	char *cmd;
@@ -218,7 +216,7 @@ static int udl_handle_damage(struct drm_framebuffer *fb,
 		return ret;
 	log_bpp = ret;
 
-	urb = udl_get_urb(udl);
+	urb = udl_get_urb(dev);
 	if (!urb)
 		return -ENOMEM;
 	cmd = urb->transfer_buffer;
@@ -228,7 +226,7 @@ static int udl_handle_damage(struct drm_framebuffer *fb,
 		const int byte_offset = line_offset + (clip->x1 << log_bpp);
 		const int dev_byte_offset = (fb->width * i + clip->x1) << log_bpp;
 		const int byte_width = drm_rect_width(clip) << log_bpp;
-		ret = udl_render_hline(udl, log_bpp, &urb, (char *)vaddr,
+		ret = udl_render_hline(dev, log_bpp, &urb, (char *)vaddr,
 				       &cmd, byte_offset, dev_byte_offset,
 				       byte_width);
 		if (ret)
@@ -241,7 +239,7 @@ static int udl_handle_damage(struct drm_framebuffer *fb,
 		if (cmd < (char *)urb->transfer_buffer + urb->transfer_buffer_length)
 			*cmd++ = UDL_MSG_BULK;
 		len = cmd - (char *)urb->transfer_buffer;
-		ret = udl_submit_urb(udl, urb, len);
+		ret = udl_submit_urb(dev, urb, len);
 	} else {
 		udl_urb_completion(urb);
 	}
@@ -332,7 +330,6 @@ static const struct drm_plane_funcs udl_primary_plane_funcs = {
 static void udl_crtc_helper_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
 	struct drm_device *dev = crtc->dev;
-	struct udl_device *udl = to_udl(dev);
 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
 	struct drm_display_mode *mode = &crtc_state->mode;
 	struct urb *urb;
@@ -342,11 +339,9 @@ static void udl_crtc_helper_atomic_enable(struct drm_crtc *crtc, struct drm_atom
 	if (!drm_dev_enter(dev, &idx))
 		return;
 
-	urb = udl_get_urb(udl);
-	if (!urb) {
-		drm_err_ratelimited(dev, "get urb failed when enabling crtc\n");
+	urb = udl_get_urb(dev);
+	if (!urb)
 		goto out;
-	}
 
 	buf = (char *)urb->transfer_buffer;
 	buf = udl_vidreg_lock(buf);
@@ -360,7 +355,7 @@ static void udl_crtc_helper_atomic_enable(struct drm_crtc *crtc, struct drm_atom
 	buf = udl_vidreg_unlock(buf);
 	buf = udl_dummy_render(buf);
 
-	udl_submit_urb(udl, urb, buf - (char *)urb->transfer_buffer);
+	udl_submit_urb(dev, urb, buf - (char *)urb->transfer_buffer);
 
 out:
 	drm_dev_exit(idx);
@@ -369,7 +364,6 @@ out:
 static void udl_crtc_helper_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
 	struct drm_device *dev = crtc->dev;
-	struct udl_device *udl = to_udl(dev);
 	struct urb *urb;
 	char *buf;
 	int idx;
@@ -377,7 +371,7 @@ static void udl_crtc_helper_atomic_disable(struct drm_crtc *crtc, struct drm_ato
 	if (!drm_dev_enter(dev, &idx))
 		return;
 
-	urb = udl_get_urb(udl);
+	urb = udl_get_urb(dev);
 	if (!urb)
 		goto out;
 
@@ -387,7 +381,7 @@ static void udl_crtc_helper_atomic_disable(struct drm_crtc *crtc, struct drm_ato
 	buf = udl_vidreg_unlock(buf);
 	buf = udl_dummy_render(buf);
 
-	udl_submit_urb(udl, urb, buf - (char *)urb->transfer_buffer);
+	udl_submit_urb(dev, urb, buf - (char *)urb->transfer_buffer);
 
 out:
 	drm_dev_exit(idx);
@@ -482,9 +476,9 @@ static const struct drm_mode_config_funcs udl_mode_config_funcs = {
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
-int udl_modeset_init(struct udl_device *udl)
+int udl_modeset_init(struct drm_device *dev)
 {
-	struct drm_device *dev = &udl->drm;
+	struct udl_device *udl = to_udl(dev);
 	struct drm_plane *primary_plane;
 	struct drm_crtc *crtc;
 	struct drm_encoder *encoder;
@@ -541,7 +535,6 @@ int udl_modeset_init(struct udl_device *udl)
 		return ret;
 
 	drm_mode_config_reset(dev);
-	drmm_kms_helper_poll_init(dev);
 
 	return 0;
 }

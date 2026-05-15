@@ -2,9 +2,8 @@
 
 #include <linux/ethtool_netlink.h>
 #include <linux/bitmap.h>
-
-#include "bitset.h"
 #include "netlink.h"
+#include "bitset.h"
 
 /* Some bitmaps are internally represented as an array of unsigned long, some
  * as an array of u32 (some even as single u32 for now). To avoid the need of
@@ -92,7 +91,7 @@ static bool ethnl_bitmap32_not_zero(const u32 *map, unsigned int start,
 	u32 mask;
 
 	if (end <= start)
-		return false;
+		return true;
 
 	if (start % 32) {
 		mask = ethnl_upper_bits(start);
@@ -105,11 +104,11 @@ static bool ethnl_bitmap32_not_zero(const u32 *map, unsigned int start,
 		start_word++;
 	}
 
-	if (memchr_inv(map + start_word, '\0',
-		       (end_word - start_word) * sizeof(u32)))
+	if (!memchr_inv(map + start_word, '\0',
+			(end_word - start_word) * sizeof(u32)))
 		return true;
 	if (end % 32 == 0)
-		return false;
+		return true;
 	return map[end_word] & ethnl_lower_bits(end);
 }
 

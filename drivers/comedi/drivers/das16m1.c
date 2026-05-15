@@ -511,8 +511,7 @@ static int das16m1_attach(struct comedi_device *dev,
 	if (!devpriv)
 		return -ENOMEM;
 
-	ret = comedi_check_request_region(dev, it->options[0], 0x10,
-					  0, 0x3ff, 16);
+	ret = comedi_request_region(dev, it->options[0], 0x10);
 	if (ret)
 		return ret;
 	/* Request an additional region for the 8255 and 3rd 8254 */

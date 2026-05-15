@@ -306,13 +306,11 @@ static struct iommu_domain *msm_iommu_domain_alloc_paging(struct device *dev)
 {
 	struct msm_priv *priv;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		goto fail_nomem;
 
 	INIT_LIST_HEAD(&priv->list_attached);
-
-	priv->domain.pgsize_bitmap = MSM_IOMMU_PGSIZES;
 
 	priv->domain.geometry.aperture_start = 0;
 	priv->domain.geometry.aperture_end   = (1ULL << 32) - 1;
@@ -341,7 +339,7 @@ static int msm_iommu_domain_config(struct msm_priv *priv)
 	spin_lock_init(&priv->pgtlock);
 
 	priv->cfg = (struct io_pgtable_cfg) {
-		.pgsize_bitmap = priv->domain.pgsize_bitmap,
+		.pgsize_bitmap = msm_iommu_ops.pgsize_bitmap,
 		.ias = 32,
 		.oas = 32,
 		.tlb = &msm_iommu_flush_ops,
@@ -353,6 +351,8 @@ static int msm_iommu_domain_config(struct msm_priv *priv)
 		dev_err(priv->dev, "Failed to allocate pgtable\n");
 		return -EINVAL;
 	}
+
+	msm_iommu_ops.pgsize_bitmap = priv->cfg.pgsize_bitmap;
 
 	return 0;
 }
@@ -391,8 +391,7 @@ static struct iommu_device *msm_iommu_probe_device(struct device *dev)
 	return &iommu->iommu;
 }
 
-static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev,
-				struct iommu_domain *old)
+static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 {
 	int ret = 0;
 	unsigned long flags;
@@ -442,19 +441,19 @@ fail:
 }
 
 static int msm_iommu_identity_attach(struct iommu_domain *identity_domain,
-				     struct device *dev,
-				     struct iommu_domain *old)
+				     struct device *dev)
 {
+	struct iommu_domain *domain = iommu_get_domain_for_dev(dev);
 	struct msm_priv *priv;
 	unsigned long flags;
 	struct msm_iommu_dev *iommu;
 	struct msm_iommu_ctx_dev *master;
 	int ret = 0;
 
-	if (old == identity_domain || !old)
+	if (domain == identity_domain || !domain)
 		return 0;
 
-	priv = to_msm_priv(old);
+	priv = to_msm_priv(domain);
 	free_io_pgtable_ops(priv->iop);
 
 	spin_lock_irqsave(&msm_iommu_lock, flags);
@@ -605,7 +604,7 @@ static int insert_iommu_master(struct device *dev,
 	int sid;
 
 	if (list_empty(&(*iommu)->ctx_list)) {
-		master = kzalloc_obj(*master, GFP_ATOMIC);
+		master = kzalloc(sizeof(*master), GFP_ATOMIC);
 		if (!master) {
 			dev_err(dev, "Failed to allocate iommu_master\n");
 			return -ENOMEM;
@@ -693,6 +692,7 @@ static struct iommu_ops msm_iommu_ops = {
 	.domain_alloc_paging = msm_iommu_domain_alloc_paging,
 	.probe_device = msm_iommu_probe_device,
 	.device_group = generic_device_group,
+	.pgsize_bitmap = MSM_IOMMU_PGSIZES,
 	.of_xlate = qcom_iommu_of_xlate,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= msm_iommu_attach_dev,
@@ -725,32 +725,47 @@ static int msm_iommu_probe(struct platform_device *pdev)
 	iommu->dev = &pdev->dev;
 	INIT_LIST_HEAD(&iommu->ctx_list);
 
-	iommu->pclk = devm_clk_get_prepared(iommu->dev, "smmu_pclk");
+	iommu->pclk = devm_clk_get(iommu->dev, "smmu_pclk");
 	if (IS_ERR(iommu->pclk))
 		return dev_err_probe(iommu->dev, PTR_ERR(iommu->pclk),
 				     "could not get smmu_pclk\n");
 
-	iommu->clk = devm_clk_get_prepared(iommu->dev, "iommu_clk");
-	if (IS_ERR(iommu->clk))
+	ret = clk_prepare(iommu->pclk);
+	if (ret)
+		return dev_err_probe(iommu->dev, ret,
+				     "could not prepare smmu_pclk\n");
+
+	iommu->clk = devm_clk_get(iommu->dev, "iommu_clk");
+	if (IS_ERR(iommu->clk)) {
+		clk_unprepare(iommu->pclk);
 		return dev_err_probe(iommu->dev, PTR_ERR(iommu->clk),
 				     "could not get iommu_clk\n");
+	}
+
+	ret = clk_prepare(iommu->clk);
+	if (ret) {
+		clk_unprepare(iommu->pclk);
+		return dev_err_probe(iommu->dev, ret, "could not prepare iommu_clk\n");
+	}
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	iommu->base = devm_ioremap_resource(iommu->dev, r);
 	if (IS_ERR(iommu->base)) {
 		ret = dev_err_probe(iommu->dev, PTR_ERR(iommu->base), "could not get iommu base\n");
-		return ret;
+		goto fail;
 	}
 	ioaddr = r->start;
 
 	iommu->irq = platform_get_irq(pdev, 0);
-	if (iommu->irq < 0)
-		return -ENODEV;
+	if (iommu->irq < 0) {
+		ret = -ENODEV;
+		goto fail;
+	}
 
 	ret = of_property_read_u32(iommu->dev->of_node, "qcom,ncb", &val);
 	if (ret) {
 		dev_err(iommu->dev, "could not get ncb\n");
-		return ret;
+		goto fail;
 	}
 	iommu->ncb = val;
 
@@ -765,7 +780,8 @@ static int msm_iommu_probe(struct platform_device *pdev)
 
 	if (!par) {
 		pr_err("Invalid PAR value detected\n");
-		return -ENODEV;
+		ret = -ENODEV;
+		goto fail;
 	}
 
 	ret = devm_request_threaded_irq(iommu->dev, iommu->irq, NULL,
@@ -775,7 +791,7 @@ static int msm_iommu_probe(struct platform_device *pdev)
 					iommu);
 	if (ret) {
 		pr_err("Request IRQ %d failed with ret=%d\n", iommu->irq, ret);
-		return ret;
+		goto fail;
 	}
 
 	list_add(&iommu->dev_node, &qcom_iommu_devices);
@@ -784,18 +800,22 @@ static int msm_iommu_probe(struct platform_device *pdev)
 				     "msm-smmu.%pa", &ioaddr);
 	if (ret) {
 		pr_err("Could not add msm-smmu at %pa to sysfs\n", &ioaddr);
-		return ret;
+		goto fail;
 	}
 
 	ret = iommu_device_register(&iommu->iommu, &msm_iommu_ops, &pdev->dev);
 	if (ret) {
 		pr_err("Could not register msm-smmu at %pa\n", &ioaddr);
-		return ret;
+		goto fail;
 	}
 
 	pr_info("device mapped at %p, irq %d with %d ctx banks\n",
 		iommu->base, iommu->irq, iommu->ncb);
 
+	return ret;
+fail:
+	clk_unprepare(iommu->clk);
+	clk_unprepare(iommu->pclk);
 	return ret;
 }
 
@@ -804,11 +824,20 @@ static const struct of_device_id msm_iommu_dt_match[] = {
 	{}
 };
 
+static void msm_iommu_remove(struct platform_device *pdev)
+{
+	struct msm_iommu_dev *iommu = platform_get_drvdata(pdev);
+
+	clk_unprepare(iommu->clk);
+	clk_unprepare(iommu->pclk);
+}
+
 static struct platform_driver msm_iommu_driver = {
 	.driver = {
 		.name	= "msm_iommu",
 		.of_match_table = msm_iommu_dt_match,
 	},
 	.probe		= msm_iommu_probe,
+	.remove_new	= msm_iommu_remove,
 };
 builtin_platform_driver(msm_iommu_driver);

@@ -220,31 +220,24 @@ static ssize_t usb_power_delivery_revision_show(struct device *dev,
 						char *buf);
 static DEVICE_ATTR_RO(usb_power_delivery_revision);
 
-static const char * const usb_modes[] = {
-	[USB_MODE_NONE] = "none",
-	[USB_MODE_USB2] = "usb2",
-	[USB_MODE_USB3] = "usb3",
-	[USB_MODE_USB4] = "usb4"
-};
-
 /* ------------------------------------------------------------------------- */
 /* Alternate Modes */
 
-static int altmode_match(struct device *dev, const void *data)
+static int altmode_match(struct device *dev, void *data)
 {
 	struct typec_altmode *adev = to_typec_altmode(dev);
-	const struct typec_device_id *id = data;
+	struct typec_device_id *id = data;
 
-	if (!is_typec_port_altmode(dev))
+	if (!is_typec_altmode(dev))
 		return 0;
 
-	return (adev->svid == id->svid);
+	return ((adev->svid == id->svid) && (adev->mode == id->mode));
 }
 
 static void typec_altmode_set_partner(struct altmode *altmode)
 {
 	struct typec_altmode *adev = &altmode->adev;
-	struct typec_device_id id = { adev->svid };
+	struct typec_device_id id = { adev->svid, adev->mode, };
 	struct typec_port *port = typec_altmode2port(adev);
 	struct altmode *partner;
 	struct device *dev;
@@ -445,88 +438,11 @@ svid_show(struct device *dev, struct device_attribute *attr, char *buf)
 }
 static DEVICE_ATTR_RO(svid);
 
-static int increment_duplicated_priority(struct device *dev, void *data)
-{
-	if (is_typec_port_altmode(dev)) {
-		struct typec_altmode **alt_target = (struct typec_altmode **)data;
-		struct typec_altmode *alt = to_typec_altmode(dev);
-
-		if (alt != *alt_target && alt->priority == (*alt_target)->priority) {
-			alt->priority++;
-			*alt_target = alt;
-			return 1;
-		}
-	}
-	return 0;
-}
-
-static int find_duplicated_priority(struct device *dev, void *data)
-{
-	if (is_typec_port_altmode(dev)) {
-		struct typec_altmode **alt_target = (struct typec_altmode **)data;
-		struct typec_altmode *alt = to_typec_altmode(dev);
-
-		if (alt != *alt_target && alt->priority == (*alt_target)->priority)
-			return 1;
-	}
-	return 0;
-}
-
-static int typec_mode_set_priority(struct typec_altmode *alt, const u8 priority)
-{
-	struct typec_port *port = to_typec_port(alt->dev.parent);
-	const u8 old_priority = alt->priority;
-	int res = 1;
-
-	alt->priority = priority;
-	while (res) {
-		res = device_for_each_child(&port->dev, &alt, find_duplicated_priority);
-		if (res) {
-			alt->priority++;
-			if (alt->priority == 0) {
-				alt->priority = old_priority;
-				return -EOVERFLOW;
-			}
-		}
-	}
-
-	res = 1;
-	alt->priority = priority;
-	while (res)
-		res = device_for_each_child(&port->dev, &alt,
-					    increment_duplicated_priority);
-
-	return 0;
-}
-
-static ssize_t priority_store(struct device *dev,
-			      struct device_attribute *attr,
-			      const char *buf, size_t size)
-{
-	u8 val;
-	int err = kstrtou8(buf, 10, &val);
-
-	if (!err)
-		err = typec_mode_set_priority(to_typec_altmode(dev), val);
-
-	if (!err)
-		return size;
-	return err;
-}
-
-static ssize_t priority_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
-{
-	return sysfs_emit(buf, "%u\n", to_typec_altmode(dev)->priority);
-}
-static DEVICE_ATTR_RW(priority);
-
 static struct attribute *typec_altmode_attrs[] = {
 	&dev_attr_active.attr,
 	&dev_attr_mode.attr,
 	&dev_attr_svid.attr,
 	&dev_attr_vdo.attr,
-	&dev_attr_priority.attr,
 	NULL
 };
 
@@ -534,17 +450,10 @@ static umode_t typec_altmode_attr_is_visible(struct kobject *kobj,
 					     struct attribute *attr, int n)
 {
 	struct typec_altmode *adev = to_typec_altmode(kobj_to_dev(kobj));
-	struct typec_port *port = typec_altmode2port(adev);
 
-	if (attr == &dev_attr_active.attr) {
-		if (!is_typec_port(adev->dev.parent)) {
-			if (!port->mode_control || !adev->ops || !adev->ops->activate)
-				return 0444;
-		}
-	} else if (attr == &dev_attr_priority.attr) {
-		if (!is_typec_port(adev->dev.parent) || !port->mode_control)
-			return 0;
-	}
+	if (attr == &dev_attr_active.attr)
+		if (!adev->ops || !adev->ops->activate)
+			return 0444;
 
 	return attr->mode;
 }
@@ -615,38 +524,22 @@ static void typec_altmode_release(struct device *dev)
 	kfree(alt);
 }
 
-const struct device_type typec_port_altmode_dev_type = {
-	.name = "typec_port_alternate_mode",
+const struct device_type typec_altmode_dev_type = {
+	.name = "typec_alternate_mode",
 	.groups = typec_altmode_groups,
 	.release = typec_altmode_release,
 };
-EXPORT_SYMBOL_GPL(typec_port_altmode_dev_type);
-
-const struct device_type typec_plug_altmode_dev_type = {
-	.name = "typec_plug_alternate_mode",
-	.groups = typec_altmode_groups,
-	.release = typec_altmode_release,
-};
-EXPORT_SYMBOL_GPL(typec_plug_altmode_dev_type);
-
-const struct device_type typec_partner_altmode_dev_type = {
-	.name = "typec_partner_alternate_mode",
-	.groups = typec_altmode_groups,
-	.release = typec_altmode_release,
-};
-EXPORT_SYMBOL_GPL(typec_partner_altmode_dev_type);
 
 static struct typec_altmode *
 typec_register_altmode(struct device *parent,
-		       const struct typec_altmode_desc *desc,
-		       const struct device_type *type)
+		       const struct typec_altmode_desc *desc)
 {
 	unsigned int id = altmode_id_get(parent);
 	bool is_port = is_typec_port(parent);
 	struct altmode *alt;
 	int ret;
 
-	alt = kzalloc_obj(*alt);
+	alt = kzalloc(sizeof(*alt), GFP_KERNEL);
 	if (!alt) {
 		altmode_id_remove(parent, id);
 		return ERR_PTR(-ENOMEM);
@@ -655,7 +548,6 @@ typec_register_altmode(struct device *parent,
 	alt->adev.svid = desc->svid;
 	alt->adev.mode = desc->mode;
 	alt->adev.vdo = desc->vdo;
-	alt->adev.mode_selection = desc->mode_selection;
 	alt->roles = desc->roles;
 	alt->id = id;
 
@@ -665,7 +557,7 @@ typec_register_altmode(struct device *parent,
 
 	if (is_port) {
 		alt->attrs[3] = &dev_attr_supported_roles.attr;
-		alt->adev.active = !desc->inactive; /* Enabled by default */
+		alt->adev.active = true; /* Enabled by default */
 	}
 
 	sprintf(alt->group_name, "mode%d", desc->mode);
@@ -675,7 +567,7 @@ typec_register_altmode(struct device *parent,
 
 	alt->adev.dev.parent = parent;
 	alt->adev.dev.groups = alt->groups;
-	alt->adev.dev.type = type;
+	alt->adev.dev.type = &typec_altmode_dev_type;
 	dev_set_name(&alt->adev.dev, "%s.%u", dev_name(parent), id);
 
 	get_device(alt->adev.dev.parent);
@@ -684,7 +576,13 @@ typec_register_altmode(struct device *parent,
 	if (!is_port)
 		typec_altmode_set_partner(alt);
 
-	alt->adev.dev.bus = &typec_bus;
+	/* The partners are bind to drivers */
+	if (is_typec_partner(parent))
+		alt->adev.dev.bus = &typec_bus;
+
+	/* Plug alt modes need a class to generate udev events. */
+	if (is_typec_plug(parent))
+		alt->adev.dev.class = &typec_class;
 
 	ret = device_register(&alt->adev.dev);
 	if (ret) {
@@ -716,75 +614,6 @@ EXPORT_SYMBOL_GPL(typec_unregister_altmode);
 
 /* ------------------------------------------------------------------------- */
 /* Type-C Partners */
-
-/**
- * typec_partner_set_usb_mode - Assign active USB Mode for the partner
- * @partner: USB Type-C partner
- * @mode: USB Mode (USB2, USB3 or USB4)
- *
- * The port drivers can use this function to assign the active USB Mode to
- * @partner. The USB Mode can change for example due to Data Reset.
- */
-void typec_partner_set_usb_mode(struct typec_partner *partner, enum usb_mode mode)
-{
-	if (!partner || partner->usb_mode == mode)
-		return;
-
-	partner->usb_capability |= BIT(mode - 1);
-	partner->usb_mode = mode;
-	sysfs_notify(&partner->dev.kobj, NULL, "usb_mode");
-}
-EXPORT_SYMBOL_GPL(typec_partner_set_usb_mode);
-
-static ssize_t
-usb_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct typec_partner *partner = to_typec_partner(dev);
-	int len = 0;
-	int i;
-
-	for (i = USB_MODE_USB2; i < USB_MODE_USB4 + 1; i++) {
-		if (!(BIT(i - 1) & partner->usb_capability))
-			continue;
-
-		if (i == partner->usb_mode)
-			len += sysfs_emit_at(buf, len, "[%s] ", usb_modes[i]);
-		else
-			len += sysfs_emit_at(buf, len, "%s ", usb_modes[i]);
-	}
-
-	sysfs_emit_at(buf, len - 1, "\n");
-
-	return len;
-}
-
-static ssize_t usb_mode_store(struct device *dev, struct device_attribute *attr,
-			      const char *buf, size_t size)
-{
-	struct typec_partner *partner = to_typec_partner(dev);
-	struct typec_port *port = to_typec_port(dev->parent);
-	int mode;
-	int ret;
-
-	if (!port->ops || !port->ops->enter_usb_mode)
-		return -EOPNOTSUPP;
-
-	mode = sysfs_match_string(usb_modes, buf);
-	if (mode < 0)
-		return mode;
-
-	if (mode == partner->usb_mode)
-		return size;
-
-	ret = port->ops->enter_usb_mode(port, mode);
-	if (ret)
-		return ret;
-
-	typec_partner_set_usb_mode(partner, mode);
-
-	return size;
-}
-static DEVICE_ATTR_RW(usb_mode);
 
 static ssize_t accessory_mode_show(struct device *dev,
 				   struct device_attribute *attr,
@@ -832,7 +661,6 @@ static struct attribute *typec_partner_attrs[] = {
 	&dev_attr_supports_usb_power_delivery.attr,
 	&dev_attr_number_of_alternate_modes.attr,
 	&dev_attr_type.attr,
-	&dev_attr_usb_mode.attr,
 	&dev_attr_usb_power_delivery_revision.attr,
 	NULL
 };
@@ -840,14 +668,6 @@ static struct attribute *typec_partner_attrs[] = {
 static umode_t typec_partner_attr_is_visible(struct kobject *kobj, struct attribute *attr, int n)
 {
 	struct typec_partner *partner = to_typec_partner(kobj_to_dev(kobj));
-	struct typec_port *port = to_typec_port(partner->dev.parent);
-
-	if (attr == &dev_attr_usb_mode.attr) {
-		if (!partner->usb_capability)
-			return 0;
-		if (!port->ops || !port->ops->enter_usb_mode)
-			return 0444;
-	}
 
 	if (attr == &dev_attr_number_of_alternate_modes.attr) {
 		if (partner->num_altmodes < 0)
@@ -921,33 +741,10 @@ static void typec_partner_unlink_device(struct typec_partner *partner, struct de
  */
 int typec_partner_set_identity(struct typec_partner *partner)
 {
-	u8 usb_capability = partner->usb_capability;
-	struct device *dev = &partner->dev;
-	struct usb_pd_identity *id;
-
-	id = get_pd_identity(dev);
-	if (!id)
+	if (!partner->identity)
 		return -EINVAL;
 
-	if (to_typec_port(dev->parent)->data_role == TYPEC_HOST)  {
-		u32 devcap = PD_VDO_UFP_DEVCAP(id->vdo[0]);
-
-		if (devcap & (DEV_USB2_CAPABLE | DEV_USB2_BILLBOARD))
-			usb_capability |= USB_CAPABILITY_USB2;
-		if (devcap & DEV_USB3_CAPABLE)
-			usb_capability |= USB_CAPABILITY_USB3;
-		if (devcap & DEV_USB4_CAPABLE)
-			usb_capability |= USB_CAPABILITY_USB4;
-	} else {
-		usb_capability = PD_VDO_DFP_HOSTCAP(id->vdo[0]);
-	}
-
-	if (partner->usb_capability != usb_capability) {
-		partner->usb_capability = usb_capability;
-		sysfs_notify(&dev->kobj, NULL, "usb_mode");
-	}
-
-	typec_report_identity(dev);
+	typec_report_identity(&partner->dev);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(typec_partner_set_identity);
@@ -1057,7 +854,7 @@ struct typec_altmode *
 typec_partner_register_altmode(struct typec_partner *partner,
 			       const struct typec_altmode_desc *desc)
 {
-	return typec_register_altmode(&partner->dev, desc, &typec_partner_altmode_dev_type);
+	return typec_register_altmode(&partner->dev, desc);
 }
 EXPORT_SYMBOL_GPL(typec_partner_register_altmode);
 
@@ -1109,7 +906,7 @@ struct typec_partner *typec_register_partner(struct typec_port *port,
 	struct typec_partner *partner;
 	int ret;
 
-	partner = kzalloc_obj(*partner);
+	partner = kzalloc(sizeof(*partner), GFP_KERNEL);
 	if (!partner)
 		return ERR_PTR(-ENOMEM);
 
@@ -1117,7 +914,6 @@ struct typec_partner *typec_register_partner(struct typec_port *port,
 	partner->usb_pd = desc->usb_pd;
 	partner->accessory = desc->accessory;
 	partner->num_altmodes = -1;
-	partner->usb_capability = desc->usb_capability;
 	partner->pd_revision = desc->pd_revision;
 	partner->svdm_version = port->cap->svdm_version;
 	partner->attach = desc->attach;
@@ -1136,15 +932,6 @@ struct typec_partner *typec_register_partner(struct typec_port *port,
 	partner->dev.parent = &port->dev;
 	partner->dev.type = &typec_partner_dev_type;
 	dev_set_name(&partner->dev, "%s-partner", dev_name(&port->dev));
-
-	if (port->usb2_dev) {
-		partner->usb_capability |= USB_CAPABILITY_USB2;
-		partner->usb_mode = USB_MODE_USB2;
-	}
-	if (port->usb3_dev) {
-		partner->usb_capability |= USB_CAPABILITY_USB2 | USB_CAPABILITY_USB3;
-		partner->usb_mode = USB_MODE_USB3;
-	}
 
 	mutex_lock(&port->partner_link_lock);
 	ret = device_register(&partner->dev);
@@ -1287,7 +1074,7 @@ struct typec_altmode *
 typec_plug_register_altmode(struct typec_plug *plug,
 			    const struct typec_altmode_desc *desc)
 {
-	return typec_register_altmode(&plug->dev, desc, &typec_plug_altmode_dev_type);
+	return typec_register_altmode(&plug->dev, desc);
 }
 EXPORT_SYMBOL_GPL(typec_plug_register_altmode);
 
@@ -1309,7 +1096,7 @@ struct typec_plug *typec_register_plug(struct typec_cable *cable,
 	char name[8];
 	int ret;
 
-	plug = kzalloc_obj(*plug);
+	plug = kzalloc(sizeof(*plug), GFP_KERNEL);
 	if (!plug)
 		return ERR_PTR(-ENOMEM);
 
@@ -1387,6 +1174,11 @@ const struct device_type typec_cable_dev_type = {
 	.release = typec_cable_release,
 };
 
+static int cable_match(struct device *dev, void *data)
+{
+	return is_typec_cable(dev);
+}
+
 /**
  * typec_cable_get - Get a reference to the USB Type-C cable
  * @port: The USB Type-C Port the cable is connected to
@@ -1398,8 +1190,7 @@ struct typec_cable *typec_cable_get(struct typec_port *port)
 {
 	struct device *dev;
 
-	dev = device_find_child(&port->dev, &typec_cable_dev_type,
-				device_match_type);
+	dev = device_find_child(&port->dev, NULL, cable_match);
 	if (!dev)
 		return NULL;
 
@@ -1462,7 +1253,7 @@ struct typec_cable *typec_register_cable(struct typec_port *port,
 	struct typec_cable *cable;
 	int ret;
 
-	cable = kzalloc_obj(*cable);
+	cable = kzalloc(sizeof(*cable), GFP_KERNEL);
 	if (!cable)
 		return ERR_PTR(-ENOMEM);
 
@@ -1510,67 +1301,6 @@ EXPORT_SYMBOL_GPL(typec_unregister_cable);
 
 /* ------------------------------------------------------------------------- */
 /* USB Type-C ports */
-
-/**
- * typec_port_set_usb_mode - Set the operational USB mode for the port
- * @port: USB Type-C port
- * @mode: USB Mode (USB2, USB3 or USB4)
- *
- * @mode will be used with the next Enter_USB message. Existing connections are
- * not affected.
- */
-void typec_port_set_usb_mode(struct typec_port *port, enum usb_mode mode)
-{
-	port->usb_mode = mode;
-}
-EXPORT_SYMBOL_GPL(typec_port_set_usb_mode);
-
-static ssize_t
-usb_capability_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct typec_port *port = to_typec_port(dev);
-	int len = 0;
-	int i;
-
-	for (i = USB_MODE_USB2; i < USB_MODE_USB4 + 1; i++) {
-		if (!(BIT(i - 1) & port->cap->usb_capability))
-			continue;
-
-		if (i == port->usb_mode)
-			len += sysfs_emit_at(buf, len, "[%s] ", usb_modes[i]);
-		else
-			len += sysfs_emit_at(buf, len, "%s ", usb_modes[i]);
-	}
-
-	sysfs_emit_at(buf, len - 1, "\n");
-
-	return len;
-}
-
-static ssize_t
-usb_capability_store(struct device *dev, struct device_attribute *attr,
-		     const char *buf, size_t size)
-{
-	struct typec_port *port = to_typec_port(dev);
-	int ret = 0;
-	int mode;
-
-	if (!port->ops || !port->ops->default_usb_mode_set)
-		return -EOPNOTSUPP;
-
-	mode = sysfs_match_string(usb_modes, buf);
-	if (mode < 0)
-		return mode;
-
-	ret = port->ops->default_usb_mode_set(port, mode);
-	if (ret)
-		return ret;
-
-	port->usb_mode = mode;
-
-	return size;
-}
-static DEVICE_ATTR_RW(usb_capability);
 
 /**
  * typec_port_set_usb_power_delivery - Assign USB PD for port.
@@ -2040,7 +1770,6 @@ static struct attribute *typec_attrs[] = {
 	&dev_attr_vconn_source.attr,
 	&dev_attr_port_type.attr,
 	&dev_attr_orientation.attr,
-	&dev_attr_usb_capability.attr,
 	NULL,
 };
 
@@ -2074,11 +1803,6 @@ static umode_t typec_attr_is_visible(struct kobject *kobj,
 		if (port->cap->orientation_aware)
 			return 0444;
 		return 0;
-	} else if (attr == &dev_attr_usb_capability.attr) {
-		if (!port->cap->usb_capability)
-			return 0;
-		if (!port->ops || !port->ops->default_usb_mode_set)
-			return 0444;
 	}
 
 	return attr->mode;
@@ -2129,12 +1853,16 @@ const struct device_type typec_port_dev_type = {
 /* --------------------------------------- */
 /* Driver callbacks to report role updates */
 
+static int partner_match(struct device *dev, void *data)
+{
+	return is_typec_partner(dev);
+}
+
 static struct typec_partner *typec_get_partner(struct typec_port *port)
 {
 	struct device *dev;
 
-	dev = device_find_child(&port->dev, &typec_partner_dev_type,
-				device_match_type);
+	dev = device_find_child(&port->dev, NULL, partner_match);
 	if (!dev)
 		return NULL;
 
@@ -2146,20 +1874,15 @@ static void typec_partner_attach(struct typec_connector *con, struct device *dev
 	struct typec_port *port = container_of(con, struct typec_port, con);
 	struct typec_partner *partner;
 	struct usb_device *udev = to_usb_device(dev);
-	enum usb_mode usb_mode;
 
 	mutex_lock(&port->partner_link_lock);
-	if (udev->speed < USB_SPEED_SUPER) {
-		usb_mode = USB_MODE_USB2;
+	if (udev->speed < USB_SPEED_SUPER)
 		port->usb2_dev = dev;
-	} else {
-		usb_mode = USB_MODE_USB3;
+	else
 		port->usb3_dev = dev;
-	}
 
 	partner = typec_get_partner(port);
 	if (partner) {
-		typec_partner_set_usb_mode(partner, usb_mode);
 		typec_partner_link_device(partner, dev);
 		put_device(&partner->dev);
 	}
@@ -2213,19 +1936,6 @@ void typec_set_data_role(struct typec_port *port, enum typec_data_role role)
 	put_device(&partner->dev);
 }
 EXPORT_SYMBOL_GPL(typec_set_data_role);
-
-/**
- * typec_get_data_role - Get port data role
- * @port: The USB Type-C Port to query
- *
- * This routine is used by the altmode drivers to determine if the port is the
- * DFP before issuing Enter Mode
- */
-enum typec_data_role typec_get_data_role(struct typec_port *port)
-{
-	return port->data_role;
-}
-EXPORT_SYMBOL_GPL(typec_get_data_role);
 
 /**
  * typec_set_pwr_role - Report power role change
@@ -2286,9 +1996,7 @@ void typec_set_pwr_opmode(struct typec_port *port,
 	sysfs_notify(&port->dev.kobj, NULL, "power_operation_mode");
 	kobject_uevent(&port->dev.kobj, KOBJ_CHANGE);
 
-	partner_dev = device_find_child(&port->dev,
-					&typec_partner_dev_type,
-					device_match_type);
+	partner_dev = device_find_child(&port->dev, NULL, partner_match);
 	if (partner_dev) {
 		struct typec_partner *partner = to_typec_partner(partner_dev);
 
@@ -2452,9 +2160,7 @@ int typec_get_negotiated_svdm_version(struct typec_port *port)
 	enum usb_pd_svdm_ver svdm_version;
 	struct device *partner_dev;
 
-	partner_dev = device_find_child(&port->dev,
-					&typec_partner_dev_type,
-					device_match_type);
+	partner_dev = device_find_child(&port->dev, NULL, partner_match);
 	if (!partner_dev)
 		return -ENODEV;
 
@@ -2481,8 +2187,7 @@ int typec_get_cable_svdm_version(struct typec_port *port)
 	enum usb_pd_svdm_ver svdm_version;
 	struct device *cable_dev;
 
-	cable_dev = device_find_child(&port->dev, &typec_cable_dev_type,
-				      device_match_type);
+	cable_dev = device_find_child(&port->dev, NULL, cable_match);
 	if (!cable_dev)
 		return -ENODEV;
 
@@ -2576,7 +2281,6 @@ typec_port_register_altmode(struct typec_port *port,
 	struct typec_altmode *adev;
 	struct typec_mux *mux;
 	struct typec_retimer *retimer;
-	int ret;
 
 	mux = typec_mux_get(&port->dev);
 	if (IS_ERR(mux))
@@ -2588,19 +2292,13 @@ typec_port_register_altmode(struct typec_port *port,
 		return ERR_CAST(retimer);
 	}
 
-	adev = typec_register_altmode(&port->dev, desc, &typec_port_altmode_dev_type);
+	adev = typec_register_altmode(&port->dev, desc);
 	if (IS_ERR(adev)) {
 		typec_retimer_put(retimer);
 		typec_mux_put(mux);
 	} else {
 		to_altmode(adev)->mux = mux;
 		to_altmode(adev)->retimer = retimer;
-
-		ret = typec_mode_set_priority(adev, 0);
-		if (ret) {
-			typec_unregister_altmode(adev);
-			return ERR_PTR(ret);
-		}
 	}
 
 	return adev;
@@ -2699,7 +2397,7 @@ struct typec_port *typec_register_port(struct device *parent,
 	int ret;
 	int id;
 
-	port = kzalloc_obj(*port);
+	port = kzalloc(sizeof(*port), GFP_KERNEL);
 	if (!port)
 		return ERR_PTR(-ENOMEM);
 
@@ -2752,13 +2450,6 @@ struct typec_port *typec_register_port(struct device *parent,
 	port->con.attach = typec_partner_attach;
 	port->con.deattach = typec_partner_deattach;
 
-	if (cap->usb_capability & USB_CAPABILITY_USB4)
-		port->usb_mode = USB_MODE_USB4;
-	else if (cap->usb_capability & USB_CAPABILITY_USB3)
-		port->usb_mode = USB_MODE_USB3;
-	else if (cap->usb_capability & USB_CAPABILITY_USB2)
-		port->usb_mode = USB_MODE_USB2;
-
 	device_initialize(&port->dev);
 	port->dev.class = &typec_class;
 	port->dev.parent = parent;
@@ -2795,7 +2486,6 @@ struct typec_port *typec_register_port(struct device *parent,
 	}
 
 	port->pd = cap->pd;
-	port->mode_control = !cap->no_mode_control;
 
 	ret = device_add(&port->dev);
 	if (ret) {

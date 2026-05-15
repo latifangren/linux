@@ -60,7 +60,7 @@ struct ens160_data {
 	struct mutex mutex;
 	struct {
 		__le16 chans[2];
-		aligned_s64 timestamp;
+		s64 timestamp __aligned(8);
 	} scan __aligned(IIO_DMA_MINALIGN);
 	u8 fw_version[3];
 	__le16 buf;
@@ -100,35 +100,25 @@ static const struct iio_chan_spec ens160_channels[] = {
 	IIO_CHAN_SOFT_TIMESTAMP(2),
 };
 
-static int __ens160_read_raw(struct iio_dev *indio_dev,
-			     struct iio_chan_spec const *chan,
-			     int *val)
-{
-	struct ens160_data *data = iio_priv(indio_dev);
-	int ret;
-
-	guard(mutex)(&data->mutex);
-	ret = regmap_bulk_read(data->regmap, chan->address,
-			       &data->buf, sizeof(data->buf));
-	if (ret)
-		return ret;
-	*val = le16_to_cpu(data->buf);
-	return IIO_VAL_INT;
-}
-
 static int ens160_read_raw(struct iio_dev *indio_dev,
 			   struct iio_chan_spec const *chan,
 			   int *val, int *val2, long mask)
 {
+	struct ens160_data *data = iio_priv(indio_dev);
 	int ret;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
-		ret = __ens160_read_raw(indio_dev, chan, val);
-		iio_device_release_direct(indio_dev);
-		return ret;
+		iio_device_claim_direct_scoped(return -EBUSY, indio_dev) {
+			guard(mutex)(&data->mutex);
+			ret = regmap_bulk_read(data->regmap, chan->address,
+					       &data->buf, sizeof(data->buf));
+			if (ret)
+				return ret;
+			*val = le16_to_cpu(data->buf);
+			return IIO_VAL_INT;
+		}
+		unreachable();
 	case IIO_CHAN_INFO_SCALE:
 		switch (chan->channel2) {
 		case IIO_MOD_CO2:
@@ -267,8 +257,8 @@ static irqreturn_t ens160_trigger_handler(int irq, void *p)
 	if (ret)
 		goto err;
 
-	iio_push_to_buffers_with_ts(indio_dev, &data->scan, sizeof(data->scan),
-				    pf->timestamp);
+	iio_push_to_buffers_with_timestamp(indio_dev, &data->scan,
+					   pf->timestamp);
 err:
 	iio_trigger_notify_done(indio_dev->trig);
 
@@ -305,7 +295,8 @@ static int ens160_setup_trigger(struct iio_dev *indio_dev, int irq)
 	trig = devm_iio_trigger_alloc(dev, "%s-dev%d", indio_dev->name,
 				      iio_device_id(indio_dev));
 	if (!trig)
-		return -ENOMEM;
+		return dev_err_probe(dev, -ENOMEM,
+				     "failed to allocate trigger\n");
 
 	trig->ops = &ens160_trigger_ops;
 	iio_trigger_set_drvdata(trig, indio_dev);
@@ -316,9 +307,12 @@ static int ens160_setup_trigger(struct iio_dev *indio_dev, int irq)
 
 	indio_dev->trig = iio_trigger_get(trig);
 
-	ret = devm_request_irq(dev, irq, iio_trigger_generic_data_rdy_poll,
-			       IRQF_NO_THREAD, indio_dev->name,
-			       indio_dev->trig);
+	ret = devm_request_threaded_irq(dev, irq,
+					iio_trigger_generic_data_rdy_poll,
+					NULL,
+					IRQF_ONESHOT,
+					indio_dev->name,
+					indio_dev->trig);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to request irq\n");
 
@@ -366,7 +360,7 @@ int devm_ens160_core_probe(struct device *dev, struct regmap *regmap, int irq,
 
 	return devm_iio_device_register(dev, indio_dev);
 }
-EXPORT_SYMBOL_NS(devm_ens160_core_probe, "IIO_ENS160");
+EXPORT_SYMBOL_NS(devm_ens160_core_probe, IIO_ENS160);
 
 MODULE_AUTHOR("Gustavo Silva <gustavograzs@gmail.com>");
 MODULE_DESCRIPTION("ScioSense ENS160 driver");

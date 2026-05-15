@@ -24,48 +24,18 @@ const struct bpf_prog_ops bpf_extension_prog_ops = {
 #define TRAMPOLINE_HASH_BITS 10
 #define TRAMPOLINE_TABLE_SIZE (1 << TRAMPOLINE_HASH_BITS)
 
-static struct hlist_head trampoline_key_table[TRAMPOLINE_TABLE_SIZE];
-static struct hlist_head trampoline_ip_table[TRAMPOLINE_TABLE_SIZE];
+static struct hlist_head trampoline_table[TRAMPOLINE_TABLE_SIZE];
 
-/* serializes access to trampoline tables */
+/* serializes access to trampoline_table */
 static DEFINE_MUTEX(trampoline_mutex);
 
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS
 static int bpf_trampoline_update(struct bpf_trampoline *tr, bool lock_direct_mutex);
 
-#ifdef CONFIG_HAVE_SINGLE_FTRACE_DIRECT_OPS
-static struct bpf_trampoline *direct_ops_ip_lookup(struct ftrace_ops *ops, unsigned long ip)
+static int bpf_tramp_ftrace_ops_func(struct ftrace_ops *ops, enum ftrace_ops_cmd cmd)
 {
-	struct hlist_head *head_ip;
-	struct bpf_trampoline *tr;
-
-	mutex_lock(&trampoline_mutex);
-	head_ip = &trampoline_ip_table[hash_64(ip, TRAMPOLINE_HASH_BITS)];
-	hlist_for_each_entry(tr, head_ip, hlist_ip) {
-		if (tr->ip == ip)
-			goto out;
-	}
-	tr = NULL;
-out:
-	mutex_unlock(&trampoline_mutex);
-	return tr;
-}
-#else
-static struct bpf_trampoline *direct_ops_ip_lookup(struct ftrace_ops *ops, unsigned long ip)
-{
-	return ops->private;
-}
-#endif /* CONFIG_HAVE_SINGLE_FTRACE_DIRECT_OPS */
-
-static int bpf_tramp_ftrace_ops_func(struct ftrace_ops *ops, unsigned long ip,
-				     enum ftrace_ops_cmd cmd)
-{
-	struct bpf_trampoline *tr;
+	struct bpf_trampoline *tr = ops->private;
 	int ret = 0;
-
-	tr = direct_ops_ip_lookup(ops, ip);
-	if (!tr)
-		return -EINVAL;
 
 	if (cmd == FTRACE_OPS_CMD_ENABLE_SHARE_IPMODIFY_SELF) {
 		/* This is called inside register_ftrace_direct_multi(), so
@@ -139,17 +109,10 @@ bool bpf_prog_has_trampoline(const struct bpf_prog *prog)
 	enum bpf_attach_type eatype = prog->expected_attach_type;
 	enum bpf_prog_type ptype = prog->type;
 
-	switch (ptype) {
-	case BPF_PROG_TYPE_TRACING:
-		if (eatype == BPF_TRACE_FENTRY || eatype == BPF_TRACE_FEXIT ||
-		    eatype == BPF_MODIFY_RETURN || eatype == BPF_TRACE_FSESSION)
-			return true;
-		return false;
-	case BPF_PROG_TYPE_LSM:
-		return eatype == BPF_LSM_MAC;
-	default:
-		return false;
-	}
+	return (ptype == BPF_PROG_TYPE_TRACING &&
+		(eatype == BPF_TRACE_FENTRY || eatype == BPF_TRACE_FEXIT ||
+		 eatype == BPF_MODIFY_RETURN)) ||
+		(ptype == BPF_PROG_TYPE_LSM && eatype == BPF_LSM_MAC);
 }
 
 void bpf_image_ksym_init(void *data, unsigned int size, struct bpf_ksym *ksym)
@@ -172,192 +135,37 @@ void bpf_image_ksym_del(struct bpf_ksym *ksym)
 			   PAGE_SIZE, true, ksym->name);
 }
 
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS
-#ifdef CONFIG_HAVE_SINGLE_FTRACE_DIRECT_OPS
-/*
- * We have only single direct_ops which contains all the direct call
- * sites and is the only global ftrace_ops for all trampolines.
- *
- * We use 'update_ftrace_direct_*' api for attachment.
- */
-struct ftrace_ops direct_ops = {
-	.ops_func = bpf_tramp_ftrace_ops_func,
-};
-
-static int direct_ops_alloc(struct bpf_trampoline *tr)
-{
-	tr->fops = &direct_ops;
-	return 0;
-}
-
-static void direct_ops_free(struct bpf_trampoline *tr) { }
-
-static struct ftrace_hash *hash_from_ip(struct bpf_trampoline *tr, void *ptr)
-{
-	unsigned long ip, addr = (unsigned long) ptr;
-	struct ftrace_hash *hash;
-
-	ip = ftrace_location(tr->ip);
-	if (!ip)
-		return NULL;
-	hash = alloc_ftrace_hash(FTRACE_HASH_DEFAULT_BITS);
-	if (!hash)
-		return NULL;
-	if (bpf_trampoline_use_jmp(tr->flags))
-		addr = ftrace_jmp_set(addr);
-	if (!add_ftrace_hash_entry_direct(hash, ip, addr)) {
-		free_ftrace_hash(hash);
-		return NULL;
-	}
-	return hash;
-}
-
-static int direct_ops_add(struct bpf_trampoline *tr, void *addr)
-{
-	struct ftrace_hash *hash = hash_from_ip(tr, addr);
-	int err;
-
-	if (!hash)
-		return -ENOMEM;
-	err = update_ftrace_direct_add(tr->fops, hash);
-	free_ftrace_hash(hash);
-	return err;
-}
-
-static int direct_ops_del(struct bpf_trampoline *tr, void *addr)
-{
-	struct ftrace_hash *hash = hash_from_ip(tr, addr);
-	int err;
-
-	if (!hash)
-		return -ENOMEM;
-	err = update_ftrace_direct_del(tr->fops, hash);
-	free_ftrace_hash(hash);
-	return err;
-}
-
-static int direct_ops_mod(struct bpf_trampoline *tr, void *addr, bool lock_direct_mutex)
-{
-	struct ftrace_hash *hash = hash_from_ip(tr, addr);
-	int err;
-
-	if (!hash)
-		return -ENOMEM;
-	err = update_ftrace_direct_mod(tr->fops, hash, lock_direct_mutex);
-	free_ftrace_hash(hash);
-	return err;
-}
-#else
-/*
- * We allocate ftrace_ops object for each trampoline and it contains
- * call site specific for that trampoline.
- *
- * We use *_ftrace_direct api for attachment.
- */
-static int direct_ops_alloc(struct bpf_trampoline *tr)
-{
-	tr->fops = kzalloc_obj(struct ftrace_ops);
-	if (!tr->fops)
-		return -ENOMEM;
-	tr->fops->private = tr;
-	tr->fops->ops_func = bpf_tramp_ftrace_ops_func;
-	return 0;
-}
-
-static void direct_ops_free(struct bpf_trampoline *tr)
-{
-	if (!tr->fops)
-		return;
-	ftrace_free_filter(tr->fops);
-	kfree(tr->fops);
-}
-
-static int direct_ops_add(struct bpf_trampoline *tr, void *ptr)
-{
-	unsigned long addr = (unsigned long) ptr;
-	struct ftrace_ops *ops = tr->fops;
-	int ret;
-
-	if (bpf_trampoline_use_jmp(tr->flags))
-		addr = ftrace_jmp_set(addr);
-
-	ret = ftrace_set_filter_ip(ops, tr->ip, 0, 1);
-	if (ret)
-		return ret;
-	return register_ftrace_direct(ops, addr);
-}
-
-static int direct_ops_del(struct bpf_trampoline *tr, void *addr)
-{
-	return unregister_ftrace_direct(tr->fops, (long)addr, false);
-}
-
-static int direct_ops_mod(struct bpf_trampoline *tr, void *ptr, bool lock_direct_mutex)
-{
-	unsigned long addr = (unsigned long) ptr;
-	struct ftrace_ops *ops = tr->fops;
-
-	if (bpf_trampoline_use_jmp(tr->flags))
-		addr = ftrace_jmp_set(addr);
-	if (lock_direct_mutex)
-		return modify_ftrace_direct(ops, addr);
-	return modify_ftrace_direct_nolock(ops, addr);
-}
-#endif /* CONFIG_HAVE_SINGLE_FTRACE_DIRECT_OPS */
-#else
-static void direct_ops_free(struct bpf_trampoline *tr) { }
-
-static int direct_ops_alloc(struct bpf_trampoline *tr)
-{
-	return 0;
-}
-
-static int direct_ops_add(struct bpf_trampoline *tr, void *addr)
-{
-	return -ENODEV;
-}
-
-static int direct_ops_del(struct bpf_trampoline *tr, void *addr)
-{
-	return -ENODEV;
-}
-
-static int direct_ops_mod(struct bpf_trampoline *tr, void *ptr, bool lock_direct_mutex)
-{
-	return -ENODEV;
-}
-#endif /* CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS */
-
-static struct bpf_trampoline *bpf_trampoline_lookup(u64 key, unsigned long ip)
+static struct bpf_trampoline *bpf_trampoline_lookup(u64 key)
 {
 	struct bpf_trampoline *tr;
 	struct hlist_head *head;
 	int i;
 
 	mutex_lock(&trampoline_mutex);
-	head = &trampoline_key_table[hash_64(key, TRAMPOLINE_HASH_BITS)];
-	hlist_for_each_entry(tr, head, hlist_key) {
+	head = &trampoline_table[hash_64(key, TRAMPOLINE_HASH_BITS)];
+	hlist_for_each_entry(tr, head, hlist) {
 		if (tr->key == key) {
 			refcount_inc(&tr->refcnt);
 			goto out;
 		}
 	}
-	tr = kzalloc_obj(*tr);
+	tr = kzalloc(sizeof(*tr), GFP_KERNEL);
 	if (!tr)
 		goto out;
-	if (direct_ops_alloc(tr)) {
+#ifdef CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS
+	tr->fops = kzalloc(sizeof(struct ftrace_ops), GFP_KERNEL);
+	if (!tr->fops) {
 		kfree(tr);
 		tr = NULL;
 		goto out;
 	}
+	tr->fops->private = tr;
+	tr->fops->ops_func = bpf_tramp_ftrace_ops_func;
+#endif
 
 	tr->key = key;
-	tr->ip = ftrace_location(ip);
-	INIT_HLIST_NODE(&tr->hlist_key);
-	INIT_HLIST_NODE(&tr->hlist_ip);
-	hlist_add_head(&tr->hlist_key, head);
-	head = &trampoline_ip_table[hash_64(tr->ip, TRAMPOLINE_HASH_BITS)];
-	hlist_add_head(&tr->hlist_ip, head);
+	INIT_HLIST_NODE(&tr->hlist);
+	hlist_add_head(&tr->hlist, head);
 	refcount_set(&tr->refcnt, 1);
 	mutex_init(&tr->mutex);
 	for (i = 0; i < BPF_TRAMP_MAX; i++)
@@ -367,49 +175,32 @@ out:
 	return tr;
 }
 
-static int bpf_trampoline_update_fentry(struct bpf_trampoline *tr, u32 orig_flags,
-					void *old_addr, void *new_addr)
+static int unregister_fentry(struct bpf_trampoline *tr, void *old_addr)
 {
-	enum bpf_text_poke_type new_t = BPF_MOD_CALL, old_t = BPF_MOD_CALL;
 	void *ip = tr->func.addr;
-
-	if (!new_addr)
-		new_t = BPF_MOD_NOP;
-	else if (bpf_trampoline_use_jmp(tr->flags))
-		new_t = BPF_MOD_JUMP;
-
-	if (!old_addr)
-		old_t = BPF_MOD_NOP;
-	else if (bpf_trampoline_use_jmp(orig_flags))
-		old_t = BPF_MOD_JUMP;
-
-	return bpf_arch_text_poke(ip, old_t, new_t, old_addr, new_addr);
-}
-
-static int unregister_fentry(struct bpf_trampoline *tr, u32 orig_flags,
-			     void *old_addr)
-{
 	int ret;
 
 	if (tr->func.ftrace_managed)
-		ret = direct_ops_del(tr, old_addr);
+		ret = unregister_ftrace_direct(tr->fops, (long)old_addr, false);
 	else
-		ret = bpf_trampoline_update_fentry(tr, orig_flags, old_addr, NULL);
+		ret = bpf_arch_text_poke(ip, BPF_MOD_CALL, old_addr, NULL);
 
 	return ret;
 }
 
-static int modify_fentry(struct bpf_trampoline *tr, u32 orig_flags,
-			 void *old_addr, void *new_addr,
+static int modify_fentry(struct bpf_trampoline *tr, void *old_addr, void *new_addr,
 			 bool lock_direct_mutex)
 {
+	void *ip = tr->func.addr;
 	int ret;
 
 	if (tr->func.ftrace_managed) {
-		ret = direct_ops_mod(tr, new_addr, lock_direct_mutex);
+		if (lock_direct_mutex)
+			ret = modify_ftrace_direct(tr->fops, (long)new_addr);
+		else
+			ret = modify_ftrace_direct_nolock(tr->fops, (long)new_addr);
 	} else {
-		ret = bpf_trampoline_update_fentry(tr, orig_flags, old_addr,
-						   new_addr);
+		ret = bpf_arch_text_poke(ip, BPF_MOD_CALL, old_addr, new_addr);
 	}
 	return ret;
 }
@@ -429,9 +220,12 @@ static int register_fentry(struct bpf_trampoline *tr, void *new_addr)
 	}
 
 	if (tr->func.ftrace_managed) {
-		ret = direct_ops_add(tr, new_addr);
+		ret = ftrace_set_filter_ip(tr->fops, (unsigned long)ip, 0, 1);
+		if (ret)
+			return ret;
+		ret = register_ftrace_direct(tr->fops, (long)new_addr);
 	} else {
-		ret = bpf_trampoline_update_fentry(tr, 0, NULL, new_addr);
+		ret = bpf_arch_text_poke(ip, BPF_MOD_CALL, NULL, new_addr);
 	}
 
 	return ret;
@@ -446,7 +240,7 @@ bpf_trampoline_get_progs(const struct bpf_trampoline *tr, int *total, bool *ip_a
 	int kind;
 
 	*total = 0;
-	tlinks = kzalloc_objs(*tlinks, BPF_TRAMP_MAX);
+	tlinks = kcalloc(BPF_TRAMP_MAX, sizeof(*tlinks), GFP_KERNEL);
 	if (!tlinks)
 		return ERR_PTR(-ENOMEM);
 
@@ -542,9 +336,8 @@ static void bpf_tramp_image_put(struct bpf_tramp_image *im)
 	 * call_rcu_tasks() is not necessary.
 	 */
 	if (im->ip_after_call) {
-		int err = bpf_arch_text_poke(im->ip_after_call, BPF_MOD_NOP,
-					     BPF_MOD_JUMP, NULL,
-					     im->ip_epilogue);
+		int err = bpf_arch_text_poke(im->ip_after_call, BPF_MOD_JUMP,
+					     NULL, im->ip_epilogue);
 		WARN_ON(err);
 		if (IS_ENABLED(CONFIG_TASKS_RCU))
 			call_rcu_tasks(&im->rcu, __bpf_tramp_image_put_rcu_tasks);
@@ -569,7 +362,7 @@ static struct bpf_tramp_image *bpf_tramp_image_alloc(u64 key, int size)
 	void *image;
 	int err = -ENOMEM;
 
-	im = kzalloc_obj(*im);
+	im = kzalloc(sizeof(*im), GFP_KERNEL);
 	if (!im)
 		goto out;
 
@@ -617,7 +410,7 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr, bool lock_direct_mut
 		return PTR_ERR(tlinks);
 
 	if (total == 0) {
-		err = unregister_fentry(tr, orig_flags, tr->cur_image->image);
+		err = unregister_fentry(tr, tr->cur_image->image);
 		bpf_tramp_image_put(tr->cur_image);
 		tr->cur_image = NULL;
 		goto out;
@@ -641,20 +434,9 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr, bool lock_direct_mut
 
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_DIRECT_CALLS
 again:
-	if (tr->flags & BPF_TRAMP_F_CALL_ORIG) {
-		if (tr->flags & BPF_TRAMP_F_SHARE_IPMODIFY) {
-			/* The BPF_TRAMP_F_SKIP_FRAME can be cleared in the
-			 * first try, reset it in the second try.
-			 */
-			tr->flags |= BPF_TRAMP_F_ORIG_STACK | BPF_TRAMP_F_SKIP_FRAME;
-		} else if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_JMP)) {
-			/* Use "jmp" instead of "call" for the trampoline
-			 * in the origin call case, and we don't need to
-			 * skip the frame.
-			 */
-			tr->flags &= ~BPF_TRAMP_F_SKIP_FRAME;
-		}
-	}
+	if ((tr->flags & BPF_TRAMP_F_SHARE_IPMODIFY) &&
+	    (tr->flags & BPF_TRAMP_F_CALL_ORIG))
+		tr->flags |= BPF_TRAMP_F_ORIG_STACK;
 #endif
 
 	size = arch_bpf_trampoline_size(&tr->func.model, tr->flags,
@@ -688,8 +470,7 @@ again:
 	WARN_ON(tr->cur_image && total == 0);
 	if (tr->cur_image)
 		/* progs already running at this address */
-		err = modify_fentry(tr, orig_flags, tr->cur_image->image,
-				    im->image, lock_direct_mutex);
+		err = modify_fentry(tr, tr->cur_image->image, im->image, lock_direct_mutex);
 	else
 		/* first time registering */
 		err = register_fentry(tr, im->image);
@@ -731,8 +512,6 @@ static enum bpf_tramp_prog_type bpf_attach_type_to_tramp(struct bpf_prog *prog)
 		return BPF_TRAMP_MODIFY_RETURN;
 	case BPF_TRACE_FEXIT:
 		return BPF_TRAMP_FEXIT;
-	case BPF_TRACE_FSESSION:
-		return BPF_TRAMP_FSESSION;
 	case BPF_LSM_MAC:
 		if (!prog->aux->attach_func_proto->type)
 			/* The function returns void, we cannot modify its
@@ -768,10 +547,8 @@ static int __bpf_trampoline_link_prog(struct bpf_tramp_link *link,
 				      struct bpf_trampoline *tr,
 				      struct bpf_prog *tgt_prog)
 {
-	struct bpf_fsession_link *fslink = NULL;
 	enum bpf_tramp_prog_type kind;
 	struct bpf_tramp_link *link_exiting;
-	struct hlist_head *prog_list;
 	int err = 0;
 	int cnt = 0, i;
 
@@ -793,47 +570,27 @@ static int __bpf_trampoline_link_prog(struct bpf_tramp_link *link,
 		if (err)
 			return err;
 		tr->extension_prog = link->link.prog;
-		return bpf_arch_text_poke(tr->func.addr, BPF_MOD_NOP,
-					  BPF_MOD_JUMP, NULL,
+		return bpf_arch_text_poke(tr->func.addr, BPF_MOD_JUMP, NULL,
 					  link->link.prog->bpf_func);
-	}
-	if (kind == BPF_TRAMP_FSESSION) {
-		prog_list = &tr->progs_hlist[BPF_TRAMP_FENTRY];
-		cnt++;
-	} else {
-		prog_list = &tr->progs_hlist[kind];
 	}
 	if (cnt >= BPF_MAX_TRAMP_LINKS)
 		return -E2BIG;
 	if (!hlist_unhashed(&link->tramp_hlist))
 		/* prog already linked */
 		return -EBUSY;
-	hlist_for_each_entry(link_exiting, prog_list, tramp_hlist) {
+	hlist_for_each_entry(link_exiting, &tr->progs_hlist[kind], tramp_hlist) {
 		if (link_exiting->link.prog != link->link.prog)
 			continue;
 		/* prog already linked */
 		return -EBUSY;
 	}
 
-	hlist_add_head(&link->tramp_hlist, prog_list);
-	if (kind == BPF_TRAMP_FSESSION) {
-		tr->progs_cnt[BPF_TRAMP_FENTRY]++;
-		fslink = container_of(link, struct bpf_fsession_link, link.link);
-		hlist_add_head(&fslink->fexit.tramp_hlist, &tr->progs_hlist[BPF_TRAMP_FEXIT]);
-		tr->progs_cnt[BPF_TRAMP_FEXIT]++;
-	} else {
-		tr->progs_cnt[kind]++;
-	}
+	hlist_add_head(&link->tramp_hlist, &tr->progs_hlist[kind]);
+	tr->progs_cnt[kind]++;
 	err = bpf_trampoline_update(tr, true /* lock_direct_mutex */);
 	if (err) {
 		hlist_del_init(&link->tramp_hlist);
-		if (kind == BPF_TRAMP_FSESSION) {
-			tr->progs_cnt[BPF_TRAMP_FENTRY]--;
-			hlist_del_init(&fslink->fexit.tramp_hlist);
-			tr->progs_cnt[BPF_TRAMP_FEXIT]--;
-		} else {
-			tr->progs_cnt[kind]--;
-		}
+		tr->progs_cnt[kind]--;
 	}
 	return err;
 }
@@ -861,19 +618,11 @@ static int __bpf_trampoline_unlink_prog(struct bpf_tramp_link *link,
 	if (kind == BPF_TRAMP_REPLACE) {
 		WARN_ON_ONCE(!tr->extension_prog);
 		err = bpf_arch_text_poke(tr->func.addr, BPF_MOD_JUMP,
-					 BPF_MOD_NOP,
 					 tr->extension_prog->bpf_func, NULL);
 		tr->extension_prog = NULL;
 		guard(mutex)(&tgt_prog->aux->ext_mutex);
 		tgt_prog->aux->is_extended = false;
 		return err;
-	} else if (kind == BPF_TRAMP_FSESSION) {
-		struct bpf_fsession_link *fslink =
-			container_of(link, struct bpf_fsession_link, link.link);
-
-		hlist_del_init(&fslink->fexit.tramp_hlist);
-		tr->progs_cnt[BPF_TRAMP_FEXIT]--;
-		kind = BPF_TRAMP_FENTRY;
 	}
 	hlist_del_init(&link->tramp_hlist);
 	tr->progs_cnt[kind]--;
@@ -922,13 +671,12 @@ static const struct bpf_link_ops bpf_shim_tramp_link_lops = {
 
 static struct bpf_shim_tramp_link *cgroup_shim_alloc(const struct bpf_prog *prog,
 						     bpf_func_t bpf_func,
-						     int cgroup_atype,
-						     enum bpf_attach_type attach_type)
+						     int cgroup_atype)
 {
 	struct bpf_shim_tramp_link *shim_link = NULL;
 	struct bpf_prog *p;
 
-	shim_link = kzalloc_obj(*shim_link, GFP_USER);
+	shim_link = kzalloc(sizeof(*shim_link), GFP_USER);
 	if (!shim_link)
 		return NULL;
 
@@ -950,7 +698,7 @@ static struct bpf_shim_tramp_link *cgroup_shim_alloc(const struct bpf_prog *prog
 	p->expected_attach_type = BPF_LSM_MAC;
 	bpf_prog_inc(p);
 	bpf_link_init(&shim_link->link.link, BPF_LINK_TYPE_UNSPEC,
-		      &bpf_shim_tramp_link_lops, p, attach_type);
+		      &bpf_shim_tramp_link_lops, p);
 	bpf_cgroup_atype_get(p->aux->attach_btf_id, cgroup_atype);
 
 	return shim_link;
@@ -975,8 +723,7 @@ static struct bpf_shim_tramp_link *cgroup_shim_find(struct bpf_trampoline *tr,
 }
 
 int bpf_trampoline_link_cgroup_shim(struct bpf_prog *prog,
-				    int cgroup_atype,
-				    enum bpf_attach_type attach_type)
+				    int cgroup_atype)
 {
 	struct bpf_shim_tramp_link *shim_link = NULL;
 	struct bpf_attach_target_info tgt_info = {};
@@ -1011,7 +758,7 @@ int bpf_trampoline_link_cgroup_shim(struct bpf_prog *prog,
 
 	/* Allocate and install new shim. */
 
-	shim_link = cgroup_shim_alloc(prog, bpf_func, cgroup_atype, attach_type);
+	shim_link = cgroup_shim_alloc(prog, bpf_func, cgroup_atype);
 	if (!shim_link) {
 		err = -ENOMEM;
 		goto err;
@@ -1050,7 +797,7 @@ void bpf_trampoline_unlink_cgroup_shim(struct bpf_prog *prog)
 					 prog->aux->attach_btf_id);
 
 	bpf_lsm_find_cgroup_shim(prog, &bpf_func);
-	tr = bpf_trampoline_lookup(key, 0);
+	tr = bpf_trampoline_lookup(key);
 	if (WARN_ON_ONCE(!tr))
 		return;
 
@@ -1070,7 +817,7 @@ struct bpf_trampoline *bpf_trampoline_get(u64 key,
 {
 	struct bpf_trampoline *tr;
 
-	tr = bpf_trampoline_lookup(key, tgt_info->tgt_addr);
+	tr = bpf_trampoline_lookup(key);
 	if (!tr)
 		return NULL;
 
@@ -1106,9 +853,11 @@ void bpf_trampoline_put(struct bpf_trampoline *tr)
 	 * fexit progs. The fentry-only trampoline will be freed via
 	 * multiple rcu callbacks.
 	 */
-	hlist_del(&tr->hlist_key);
-	hlist_del(&tr->hlist_ip);
-	direct_ops_free(tr);
+	hlist_del(&tr->hlist);
+	if (tr->fops) {
+		ftrace_free_filter(tr->fops);
+		kfree(tr->fops);
+	}
 	kfree(tr);
 out:
 	mutex_unlock(&trampoline_mutex);
@@ -1143,45 +892,39 @@ static __always_inline u64 notrace bpf_prog_start_time(void)
 static u64 notrace __bpf_prog_enter_recur(struct bpf_prog *prog, struct bpf_tramp_run_ctx *run_ctx)
 	__acquires(RCU)
 {
-	rcu_read_lock_dont_migrate();
+	rcu_read_lock();
+	migrate_disable();
 
 	run_ctx->saved_run_ctx = bpf_set_run_ctx(&run_ctx->run_ctx);
 
-	if (unlikely(!bpf_prog_get_recursion_context(prog))) {
+	if (unlikely(this_cpu_inc_return(*(prog->active)) != 1)) {
 		bpf_prog_inc_misses_counter(prog);
-		if (prog->aux->recursion_detected)
-			prog->aux->recursion_detected(prog);
 		return 0;
 	}
 	return bpf_prog_start_time();
 }
 
-static void notrace __update_prog_stats(struct bpf_prog *prog, u64 start)
+static void notrace update_prog_stats(struct bpf_prog *prog,
+				      u64 start)
 {
 	struct bpf_prog_stats *stats;
-	unsigned long flags;
-	u64 duration;
 
-	/*
-	 * static_key could be enabled in __bpf_prog_enter* and disabled in
-	 * __bpf_prog_exit*. And vice versa. Check that 'start' is valid.
-	 */
-	if (start <= NO_START_TIME)
-		return;
+	if (static_branch_unlikely(&bpf_stats_enabled_key) &&
+	    /* static_key could be enabled in __bpf_prog_enter*
+	     * and disabled in __bpf_prog_exit*.
+	     * And vice versa.
+	     * Hence check that 'start' is valid.
+	     */
+	    start > NO_START_TIME) {
+		u64 duration = sched_clock() - start;
+		unsigned long flags;
 
-	duration = sched_clock() - start;
-	stats = this_cpu_ptr(prog->stats);
-	flags = u64_stats_update_begin_irqsave(&stats->syncp);
-	u64_stats_inc(&stats->cnt);
-	u64_stats_add(&stats->nsecs, duration);
-	u64_stats_update_end_irqrestore(&stats->syncp, flags);
-}
-
-static __always_inline void notrace update_prog_stats(struct bpf_prog *prog,
-						      u64 start)
-{
-	if (static_branch_unlikely(&bpf_stats_enabled_key))
-		__update_prog_stats(prog, start);
+		stats = this_cpu_ptr(prog->stats);
+		flags = u64_stats_update_begin_irqsave(&stats->syncp);
+		u64_stats_inc(&stats->cnt);
+		u64_stats_add(&stats->nsecs, duration);
+		u64_stats_update_end_irqrestore(&stats->syncp, flags);
+	}
 }
 
 static void notrace __bpf_prog_exit_recur(struct bpf_prog *prog, u64 start,
@@ -1191,8 +934,9 @@ static void notrace __bpf_prog_exit_recur(struct bpf_prog *prog, u64 start,
 	bpf_reset_run_ctx(run_ctx->saved_run_ctx);
 
 	update_prog_stats(prog, start);
-	bpf_prog_put_recursion_context(prog);
-	rcu_read_unlock_migrate();
+	this_cpu_dec(*(prog->active));
+	migrate_enable();
+	rcu_read_unlock();
 }
 
 static u64 notrace __bpf_prog_enter_lsm_cgroup(struct bpf_prog *prog,
@@ -1202,7 +946,8 @@ static u64 notrace __bpf_prog_enter_lsm_cgroup(struct bpf_prog *prog,
 	/* Runtime stats are exported via actual BPF_LSM_CGROUP
 	 * programs, not the shims.
 	 */
-	rcu_read_lock_dont_migrate();
+	rcu_read_lock();
+	migrate_disable();
 
 	run_ctx->saved_run_ctx = bpf_set_run_ctx(&run_ctx->run_ctx);
 
@@ -1215,7 +960,8 @@ static void notrace __bpf_prog_exit_lsm_cgroup(struct bpf_prog *prog, u64 start,
 {
 	bpf_reset_run_ctx(run_ctx->saved_run_ctx);
 
-	rcu_read_unlock_migrate();
+	migrate_enable();
+	rcu_read_unlock();
 }
 
 u64 notrace __bpf_prog_enter_sleepable_recur(struct bpf_prog *prog,
@@ -1227,10 +973,8 @@ u64 notrace __bpf_prog_enter_sleepable_recur(struct bpf_prog *prog,
 
 	run_ctx->saved_run_ctx = bpf_set_run_ctx(&run_ctx->run_ctx);
 
-	if (unlikely(!bpf_prog_get_recursion_context(prog))) {
+	if (unlikely(this_cpu_inc_return(*(prog->active)) != 1)) {
 		bpf_prog_inc_misses_counter(prog);
-		if (prog->aux->recursion_detected)
-			prog->aux->recursion_detected(prog);
 		return 0;
 	}
 	return bpf_prog_start_time();
@@ -1242,7 +986,7 @@ void notrace __bpf_prog_exit_sleepable_recur(struct bpf_prog *prog, u64 start,
 	bpf_reset_run_ctx(run_ctx->saved_run_ctx);
 
 	update_prog_stats(prog, start);
-	bpf_prog_put_recursion_context(prog);
+	this_cpu_dec(*(prog->active));
 	migrate_enable();
 	rcu_read_unlock_trace();
 }
@@ -1273,7 +1017,8 @@ static u64 notrace __bpf_prog_enter(struct bpf_prog *prog,
 				    struct bpf_tramp_run_ctx *run_ctx)
 	__acquires(RCU)
 {
-	rcu_read_lock_dont_migrate();
+	rcu_read_lock();
+	migrate_disable();
 
 	run_ctx->saved_run_ctx = bpf_set_run_ctx(&run_ctx->run_ctx);
 
@@ -1287,7 +1032,8 @@ static void notrace __bpf_prog_exit(struct bpf_prog *prog, u64 start,
 	bpf_reset_run_ctx(run_ctx->saved_run_ctx);
 
 	update_prog_stats(prog, start);
-	rcu_read_unlock_migrate();
+	migrate_enable();
+	rcu_read_unlock();
 }
 
 void notrace __bpf_tramp_enter(struct bpf_tramp_image *tr)
@@ -1377,9 +1123,7 @@ static int __init init_trampolines(void)
 	int i;
 
 	for (i = 0; i < TRAMPOLINE_TABLE_SIZE; i++)
-		INIT_HLIST_HEAD(&trampoline_key_table[i]);
-	for (i = 0; i < TRAMPOLINE_TABLE_SIZE; i++)
-		INIT_HLIST_HEAD(&trampoline_ip_table[i]);
+		INIT_HLIST_HEAD(&trampoline_table[i]);
 	return 0;
 }
 late_initcall(init_trampolines);

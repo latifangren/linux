@@ -246,10 +246,10 @@ amdgpu_connector_find_encoder(struct drm_connector *connector,
 	return NULL;
 }
 
-static const struct drm_edid *
+static struct edid *
 amdgpu_connector_get_hardcoded_edid(struct amdgpu_device *adev)
 {
-	return drm_edid_dup(adev->mode_info.bios_hardcoded_edid);
+	return drm_edid_duplicate(drm_edid_raw(adev->mode_info.bios_hardcoded_edid));
 }
 
 static void amdgpu_connector_get_edid(struct drm_connector *connector)
@@ -268,8 +268,8 @@ static void amdgpu_connector_get_edid(struct drm_connector *connector)
 	if ((amdgpu_connector_encoder_get_dp_bridge_encoder_id(connector) !=
 	     ENCODER_OBJECT_ID_NONE) &&
 	    amdgpu_connector->ddc_bus->has_aux) {
-		amdgpu_connector->edid = drm_edid_read_ddc(connector,
-							  &amdgpu_connector->ddc_bus->aux.ddc);
+		amdgpu_connector->edid = drm_get_edid(connector,
+						      &amdgpu_connector->ddc_bus->aux.ddc);
 	} else if ((connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort) ||
 		   (connector->connector_type == DRM_MODE_CONNECTOR_eDP)) {
 		struct amdgpu_connector_atom_dig *dig = amdgpu_connector->con_priv;
@@ -277,14 +277,14 @@ static void amdgpu_connector_get_edid(struct drm_connector *connector)
 		if ((dig->dp_sink_type == CONNECTOR_OBJECT_ID_DISPLAYPORT ||
 		     dig->dp_sink_type == CONNECTOR_OBJECT_ID_eDP) &&
 		    amdgpu_connector->ddc_bus->has_aux)
-			amdgpu_connector->edid = drm_edid_read_ddc(connector,
-								  &amdgpu_connector->ddc_bus->aux.ddc);
+			amdgpu_connector->edid = drm_get_edid(connector,
+							      &amdgpu_connector->ddc_bus->aux.ddc);
 		else if (amdgpu_connector->ddc_bus)
-			amdgpu_connector->edid = drm_edid_read_ddc(connector,
-								  &amdgpu_connector->ddc_bus->adapter);
+			amdgpu_connector->edid = drm_get_edid(connector,
+							      &amdgpu_connector->ddc_bus->adapter);
 	} else if (amdgpu_connector->ddc_bus) {
-		amdgpu_connector->edid = drm_edid_read_ddc(connector,
-							  &amdgpu_connector->ddc_bus->adapter);
+		amdgpu_connector->edid = drm_get_edid(connector,
+						      &amdgpu_connector->ddc_bus->adapter);
 	}
 
 	if (!amdgpu_connector->edid) {
@@ -292,9 +292,17 @@ static void amdgpu_connector_get_edid(struct drm_connector *connector)
 		if (((connector->connector_type == DRM_MODE_CONNECTOR_LVDS) ||
 		     (connector->connector_type == DRM_MODE_CONNECTOR_eDP))) {
 			amdgpu_connector->edid = amdgpu_connector_get_hardcoded_edid(adev);
-			drm_edid_connector_update(connector, amdgpu_connector->edid);
+			drm_connector_update_edid_property(connector, amdgpu_connector->edid);
 		}
 	}
+}
+
+static void amdgpu_connector_free_edid(struct drm_connector *connector)
+{
+	struct amdgpu_connector *amdgpu_connector = to_amdgpu_connector(connector);
+
+	kfree(amdgpu_connector->edid);
+	amdgpu_connector->edid = NULL;
 }
 
 static int amdgpu_connector_ddc_get_modes(struct drm_connector *connector)
@@ -303,11 +311,11 @@ static int amdgpu_connector_ddc_get_modes(struct drm_connector *connector)
 	int ret;
 
 	if (amdgpu_connector->edid) {
-		drm_edid_connector_update(connector, amdgpu_connector->edid);
-		ret = drm_edid_connector_add_modes(connector);
+		drm_connector_update_edid_property(connector, amdgpu_connector->edid);
+		ret = drm_add_edid_modes(connector, amdgpu_connector->edid);
 		return ret;
 	}
-	drm_edid_connector_update(connector, NULL);
+	drm_connector_update_edid_property(connector, NULL);
 	return 0;
 }
 
@@ -390,28 +398,30 @@ static void amdgpu_connector_add_common_modes(struct drm_encoder *encoder,
 	struct drm_display_mode *mode = NULL;
 	struct drm_display_mode *native_mode = &amdgpu_encoder->native_mode;
 	int i;
-	int n;
-	struct mode_size {
-		char name[DRM_DISPLAY_MODE_LEN];
+	static const struct mode_size {
 		int w;
 		int h;
-	} common_modes[] = {
-		{  "640x480",  640,  480},
-		{  "800x600",  800,  600},
-		{ "1024x768", 1024,  768},
-		{ "1280x720", 1280,  720},
-		{ "1280x800", 1280,  800},
-		{"1280x1024", 1280, 1024},
-		{ "1440x900", 1440,  900},
-		{"1680x1050", 1680, 1050},
-		{"1600x1200", 1600, 1200},
-		{"1920x1080", 1920, 1080},
-		{"1920x1200", 1920, 1200}
+	} common_modes[17] = {
+		{ 640,  480},
+		{ 720,  480},
+		{ 800,  600},
+		{ 848,  480},
+		{1024,  768},
+		{1152,  768},
+		{1280,  720},
+		{1280,  800},
+		{1280,  854},
+		{1280,  960},
+		{1280, 1024},
+		{1440,  900},
+		{1400, 1050},
+		{1680, 1050},
+		{1600, 1200},
+		{1920, 1080},
+		{1920, 1200}
 	};
 
-	n = ARRAY_SIZE(common_modes);
-
-	for (i = 0; i < n; i++) {
+	for (i = 0; i < 17; i++) {
 		if (amdgpu_encoder->devices & (ATOM_DEVICE_TV_SUPPORT)) {
 			if (common_modes[i].w > 1024 ||
 			    common_modes[i].h > 768)
@@ -424,11 +434,12 @@ static void amdgpu_connector_add_common_modes(struct drm_encoder *encoder,
 			     common_modes[i].h == native_mode->vdisplay))
 				continue;
 		}
+		if (common_modes[i].w < 320 || common_modes[i].h < 200)
+			continue;
 
 		mode = drm_cvt_mode(dev, common_modes[i].w, common_modes[i].h, 60, false, false, false);
 		if (!mode)
 			return;
-		strscpy(mode->name, common_modes[i].name, DRM_DISPLAY_MODE_LEN);
 
 		drm_mode_probed_add(connector, mode);
 	}
@@ -663,7 +674,7 @@ static int amdgpu_connector_lvds_get_modes(struct drm_connector *connector)
 }
 
 static enum drm_mode_status amdgpu_connector_lvds_mode_valid(struct drm_connector *connector,
-					     const struct drm_display_mode *mode)
+					     struct drm_display_mode *mode)
 {
 	struct drm_encoder *encoder = amdgpu_connector_best_single_encoder(connector);
 
@@ -726,8 +737,10 @@ amdgpu_connector_lvds_detect(struct drm_connector *connector, bool force)
 
 	amdgpu_connector_update_scratch_regs(connector, ret);
 
-	if (!drm_kms_helper_is_poll_worker())
+	if (!drm_kms_helper_is_poll_worker()) {
+		pm_runtime_mark_last_busy(connector->dev->dev);
 		pm_runtime_put_autosuspend(connector->dev->dev);
+	}
 
 	return ret;
 }
@@ -746,7 +759,7 @@ static void amdgpu_connector_destroy(struct drm_connector *connector)
 {
 	struct amdgpu_connector *amdgpu_connector = to_amdgpu_connector(connector);
 
-	drm_edid_free(amdgpu_connector->edid);
+	amdgpu_connector_free_edid(connector);
 	kfree(amdgpu_connector->con_priv);
 	drm_connector_unregister(connector);
 	drm_connector_cleanup(connector);
@@ -826,7 +839,7 @@ static int amdgpu_connector_vga_get_modes(struct drm_connector *connector)
 }
 
 static enum drm_mode_status amdgpu_connector_vga_mode_valid(struct drm_connector *connector,
-					    const struct drm_display_mode *mode)
+					    struct drm_display_mode *mode)
 {
 	struct drm_device *dev = connector->dev;
 	struct amdgpu_device *adev = drm_to_adev(dev);
@@ -865,25 +878,22 @@ amdgpu_connector_vga_detect(struct drm_connector *connector, bool force)
 		dret = amdgpu_display_ddc_probe(amdgpu_connector, false);
 	if (dret) {
 		amdgpu_connector->detected_by_load = false;
-		drm_edid_free(amdgpu_connector->edid);
-		amdgpu_connector->edid = NULL;
+		amdgpu_connector_free_edid(connector);
 		amdgpu_connector_get_edid(connector);
 
 		if (!amdgpu_connector->edid) {
-			drm_err(connector->dev,
-				"%s: probed a monitor but no|invalid EDID\n",
-				connector->name);
+			DRM_ERROR("%s: probed a monitor but no|invalid EDID\n",
+					connector->name);
 			ret = connector_status_connected;
 		} else {
 			amdgpu_connector->use_digital =
-				drm_edid_is_digital(amdgpu_connector->edid);
+				!!(amdgpu_connector->edid->input & DRM_EDID_INPUT_DIGITAL);
 
 			/* some oems have boards with separate digital and analog connectors
 			 * with a shared ddc line (often vga + hdmi)
 			 */
 			if (amdgpu_connector->use_digital && amdgpu_connector->shared_ddc) {
-				drm_edid_free(amdgpu_connector->edid);
-				amdgpu_connector->edid = NULL;
+				amdgpu_connector_free_edid(connector);
 				ret = connector_status_disconnected;
 			} else {
 				ret = connector_status_connected;
@@ -912,8 +922,10 @@ amdgpu_connector_vga_detect(struct drm_connector *connector, bool force)
 	amdgpu_connector_update_scratch_regs(connector, ret);
 
 out:
-	if (!drm_kms_helper_is_poll_worker())
+	if (!drm_kms_helper_is_poll_worker()) {
+		pm_runtime_mark_last_busy(connector->dev->dev);
 		pm_runtime_put_autosuspend(connector->dev->dev);
+	}
 
 	return ret;
 }
@@ -978,8 +990,7 @@ static void amdgpu_connector_shared_ddc(enum drm_connector_status *status,
 					/* hpd is our only option in this case */
 					if (!amdgpu_display_hpd_sense(adev,
 								      amdgpu_connector->hpd.hpd)) {
-						drm_edid_free(amdgpu_connector->edid);
-						amdgpu_connector->edid = NULL;
+						amdgpu_connector_free_edid(connector);
 						*status = connector_status_disconnected;
 					}
 				}
@@ -1048,25 +1059,23 @@ amdgpu_connector_dvi_detect(struct drm_connector *connector, bool force)
 	}
 	if (dret) {
 		amdgpu_connector->detected_by_load = false;
-		drm_edid_free(amdgpu_connector->edid);
-		amdgpu_connector->edid = NULL;
+		amdgpu_connector_free_edid(connector);
 		amdgpu_connector_get_edid(connector);
 
 		if (!amdgpu_connector->edid) {
-			drm_err(adev_to_drm(adev), "%s: probed a monitor but no|invalid EDID\n",
+			DRM_ERROR("%s: probed a monitor but no|invalid EDID\n",
 					connector->name);
 			ret = connector_status_connected;
 			broken_edid = true; /* defer use_digital to later */
 		} else {
 			amdgpu_connector->use_digital =
-				drm_edid_is_digital(amdgpu_connector->edid);
+				!!(amdgpu_connector->edid->input & DRM_EDID_INPUT_DIGITAL);
 
 			/* some oems have boards with separate digital and analog connectors
 			 * with a shared ddc line (often vga + hdmi)
 			 */
 			if ((!amdgpu_connector->use_digital) && amdgpu_connector->shared_ddc) {
-				drm_edid_free(amdgpu_connector->edid);
-				amdgpu_connector->edid = NULL;
+				amdgpu_connector_free_edid(connector);
 				ret = connector_status_disconnected;
 			} else {
 				ret = connector_status_connected;
@@ -1140,8 +1149,10 @@ out:
 	amdgpu_connector_update_scratch_regs(connector, ret);
 
 exit:
-	if (!drm_kms_helper_is_poll_worker())
+	if (!drm_kms_helper_is_poll_worker()) {
+		pm_runtime_mark_last_busy(connector->dev->dev);
 		pm_runtime_put_autosuspend(connector->dev->dev);
+	}
 
 	return ret;
 }
@@ -1211,7 +1222,7 @@ static int amdgpu_max_hdmi_pixel_clock(const struct amdgpu_device *adev)
  * Return: drm_mode_status indicating whether the mode is valid.
  */
 static enum drm_mode_status amdgpu_connector_dvi_mode_valid(struct drm_connector *connector,
-					    const struct drm_display_mode *mode)
+					    struct drm_display_mode *mode)
 {
 	struct drm_device *dev = connector->dev;
 	struct amdgpu_device *adev = drm_to_adev(dev);
@@ -1236,8 +1247,6 @@ static enum drm_mode_status amdgpu_connector_dvi_mode_valid(struct drm_connector
 		case CONNECTOR_OBJECT_ID_HDMI_TYPE_B:
 			max_digital_pixel_clock_khz = max_dvi_single_link_pixel_clock * 2;
 			break;
-		default:
-			return MODE_BAD;
 		}
 
 		/* When the display EDID claims that it's an HDMI display,
@@ -1416,8 +1425,7 @@ amdgpu_connector_dp_detect(struct drm_connector *connector, bool force)
 		goto out;
 	}
 
-	drm_edid_free(amdgpu_connector->edid);
-	amdgpu_connector->edid = NULL;
+	amdgpu_connector_free_edid(connector);
 
 	if ((connector->connector_type == DRM_MODE_CONNECTOR_eDP) ||
 	    (connector->connector_type == DRM_MODE_CONNECTOR_LVDS)) {
@@ -1481,8 +1489,10 @@ amdgpu_connector_dp_detect(struct drm_connector *connector, bool force)
 
 	amdgpu_connector_update_scratch_regs(connector, ret);
 out:
-	if (!drm_kms_helper_is_poll_worker())
+	if (!drm_kms_helper_is_poll_worker()) {
+		pm_runtime_mark_last_busy(connector->dev->dev);
 		pm_runtime_put_autosuspend(connector->dev->dev);
+	}
 
 	if (connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
 	    connector->connector_type == DRM_MODE_CONNECTOR_eDP)
@@ -1494,7 +1504,7 @@ out:
 }
 
 static enum drm_mode_status amdgpu_connector_dp_mode_valid(struct drm_connector *connector,
-					   const struct drm_display_mode *mode)
+					   struct drm_display_mode *mode)
 {
 	struct amdgpu_connector *amdgpu_connector = to_amdgpu_connector(connector);
 	struct amdgpu_connector_atom_dig *amdgpu_dig_connector = amdgpu_connector->con_priv;
@@ -1652,7 +1662,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 		}
 	}
 
-	amdgpu_connector = kzalloc_obj(struct amdgpu_connector);
+	amdgpu_connector = kzalloc(sizeof(struct amdgpu_connector), GFP_KERNEL);
 	if (!amdgpu_connector)
 		return;
 
@@ -1668,12 +1678,11 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 	if (router->ddc_valid || router->cd_valid) {
 		amdgpu_connector->router_bus = amdgpu_i2c_lookup(adev, &router->i2c_info);
 		if (!amdgpu_connector->router_bus)
-			drm_err(adev_to_drm(adev),
-				"Failed to assign router i2c bus! Check dmesg for i2c errors.\n");
+			DRM_ERROR("Failed to assign router i2c bus! Check dmesg for i2c errors.\n");
 	}
 
 	if (is_dp_bridge) {
-		amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+		amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 		if (!amdgpu_dig_connector)
 			goto failed;
 		amdgpu_connector->con_priv = amdgpu_dig_connector;
@@ -1683,8 +1692,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 				has_aux = true;
 				ddc = &amdgpu_connector->ddc_bus->adapter;
 			} else {
-				drm_err(adev_to_drm(adev),
-					"DP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+				DRM_ERROR("DP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 			}
 		}
 		switch (connector_type) {
@@ -1778,8 +1786,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			if (i2c_bus->valid) {
 				amdgpu_connector->ddc_bus = amdgpu_i2c_lookup(adev, i2c_bus);
 				if (!amdgpu_connector->ddc_bus)
-					drm_err(adev_to_drm(adev),
-						"VGA: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("VGA: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				else
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 			}
@@ -1804,8 +1811,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			if (i2c_bus->valid) {
 				amdgpu_connector->ddc_bus = amdgpu_i2c_lookup(adev, i2c_bus);
 				if (!amdgpu_connector->ddc_bus)
-					drm_err(adev_to_drm(adev),
-						"DVIA: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("DVIA: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				else
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 			}
@@ -1828,15 +1834,14 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			break;
 		case DRM_MODE_CONNECTOR_DVII:
 		case DRM_MODE_CONNECTOR_DVID:
-			amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+			amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 			if (!amdgpu_dig_connector)
 				goto failed;
 			amdgpu_connector->con_priv = amdgpu_dig_connector;
 			if (i2c_bus->valid) {
 				amdgpu_connector->ddc_bus = amdgpu_i2c_lookup(adev, i2c_bus);
 				if (!amdgpu_connector->ddc_bus)
-					drm_err(adev_to_drm(adev),
-						"DVI: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("DVI: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				else
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 			}
@@ -1885,15 +1890,14 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			break;
 		case DRM_MODE_CONNECTOR_HDMIA:
 		case DRM_MODE_CONNECTOR_HDMIB:
-			amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+			amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 			if (!amdgpu_dig_connector)
 				goto failed;
 			amdgpu_connector->con_priv = amdgpu_dig_connector;
 			if (i2c_bus->valid) {
 				amdgpu_connector->ddc_bus = amdgpu_i2c_lookup(adev, i2c_bus);
 				if (!amdgpu_connector->ddc_bus)
-					drm_err(adev_to_drm(adev),
-						"HDMI: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("HDMI: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				else
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 			}
@@ -1934,7 +1938,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 				connector->doublescan_allowed = false;
 			break;
 		case DRM_MODE_CONNECTOR_DisplayPort:
-			amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+			amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 			if (!amdgpu_dig_connector)
 				goto failed;
 			amdgpu_connector->con_priv = amdgpu_dig_connector;
@@ -1944,8 +1948,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 					has_aux = true;
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 				} else {
-					drm_err(adev_to_drm(adev),
-						"DP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("DP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				}
 			}
 			drm_connector_init_with_ddc(dev, &amdgpu_connector->base,
@@ -1983,7 +1986,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			connector->doublescan_allowed = false;
 			break;
 		case DRM_MODE_CONNECTOR_eDP:
-			amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+			amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 			if (!amdgpu_dig_connector)
 				goto failed;
 			amdgpu_connector->con_priv = amdgpu_dig_connector;
@@ -1993,8 +1996,7 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 					has_aux = true;
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 				} else {
-					drm_err(adev_to_drm(adev),
-						"eDP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("DP: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				}
 			}
 			drm_connector_init_with_ddc(dev, &amdgpu_connector->base,
@@ -2010,15 +2012,14 @@ amdgpu_connector_add(struct amdgpu_device *adev,
 			connector->doublescan_allowed = false;
 			break;
 		case DRM_MODE_CONNECTOR_LVDS:
-			amdgpu_dig_connector = kzalloc_obj(struct amdgpu_connector_atom_dig);
+			amdgpu_dig_connector = kzalloc(sizeof(struct amdgpu_connector_atom_dig), GFP_KERNEL);
 			if (!amdgpu_dig_connector)
 				goto failed;
 			amdgpu_connector->con_priv = amdgpu_dig_connector;
 			if (i2c_bus->valid) {
 				amdgpu_connector->ddc_bus = amdgpu_i2c_lookup(adev, i2c_bus);
 				if (!amdgpu_connector->ddc_bus)
-					drm_err(adev_to_drm(adev),
-						"LVDS: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
+					DRM_ERROR("LVDS: Failed to assign ddc bus! Check dmesg for i2c errors.\n");
 				else
 					ddc = &amdgpu_connector->ddc_bus->adapter;
 			}

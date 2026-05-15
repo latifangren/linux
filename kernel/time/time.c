@@ -365,16 +365,20 @@ SYSCALL_DEFINE1(adjtimex_time32, struct old_timex32 __user *, utp)
 }
 #endif
 
-#if HZ > MSEC_PER_SEC || (MSEC_PER_SEC % HZ)
 /**
  * jiffies_to_msecs - Convert jiffies to milliseconds
  * @j: jiffies value
+ *
+ * Avoid unnecessary multiplications/divisions in the
+ * two most common HZ cases.
  *
  * Return: milliseconds value
  */
 unsigned int jiffies_to_msecs(const unsigned long j)
 {
-#if HZ > MSEC_PER_SEC && !(HZ % MSEC_PER_SEC)
+#if HZ <= MSEC_PER_SEC && !(MSEC_PER_SEC % HZ)
+	return (MSEC_PER_SEC / HZ) * j;
+#elif HZ > MSEC_PER_SEC && !(HZ % MSEC_PER_SEC)
 	return (j + (HZ / MSEC_PER_SEC) - 1)/(HZ / MSEC_PER_SEC);
 #else
 # if BITS_PER_LONG == 32
@@ -386,9 +390,7 @@ unsigned int jiffies_to_msecs(const unsigned long j)
 #endif
 }
 EXPORT_SYMBOL(jiffies_to_msecs);
-#endif
 
-#if (USEC_PER_SEC % HZ)
 /**
  * jiffies_to_usecs - Convert jiffies to microseconds
  * @j: jiffies value
@@ -403,14 +405,17 @@ unsigned int jiffies_to_usecs(const unsigned long j)
 	 */
 	BUILD_BUG_ON(HZ > USEC_PER_SEC);
 
-#if BITS_PER_LONG == 32
-	return (HZ_TO_USEC_MUL32 * j) >> HZ_TO_USEC_SHR32;
+#if !(USEC_PER_SEC % HZ)
+	return (USEC_PER_SEC / HZ) * j;
 #else
+# if BITS_PER_LONG == 32
+	return (HZ_TO_USEC_MUL32 * j) >> HZ_TO_USEC_SHR32;
+# else
 	return (j * HZ_TO_USEC_NUM) / HZ_TO_USEC_DEN;
+# endif
 #endif
 }
 EXPORT_SYMBOL(jiffies_to_usecs);
-#endif
 
 /**
  * mktime64 - Converts date to seconds.
@@ -853,7 +858,6 @@ struct timespec64 timespec64_add_safe(const struct timespec64 lhs,
 
 	return res;
 }
-EXPORT_SYMBOL_GPL(timespec64_add_safe);
 
 /**
  * get_timespec64 - get user's time value into kernel space
@@ -862,7 +866,7 @@ EXPORT_SYMBOL_GPL(timespec64_add_safe);
  *
  * Handles compat or 32-bit modes.
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int get_timespec64(struct timespec64 *ts,
 		   const struct __kernel_timespec __user *uts)
@@ -893,7 +897,7 @@ EXPORT_SYMBOL_GPL(get_timespec64);
  * @ts: input &struct timespec64
  * @uts: user's &struct __kernel_timespec
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int put_timespec64(const struct timespec64 *ts,
 		   struct __kernel_timespec __user *uts)
@@ -940,7 +944,7 @@ static int __put_old_timespec32(const struct timespec64 *ts64,
  *
  * Handles X86_X32_ABI compatibility conversion.
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int get_old_timespec32(struct timespec64 *ts, const void __user *uts)
 {
@@ -959,7 +963,7 @@ EXPORT_SYMBOL_GPL(get_old_timespec32);
  *
  * Handles X86_X32_ABI compatibility conversion.
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int put_old_timespec32(const struct timespec64 *ts, void __user *uts)
 {
@@ -975,7 +979,7 @@ EXPORT_SYMBOL_GPL(put_old_timespec32);
  * @it: destination &struct itimerspec64
  * @uit: user's &struct __kernel_itimerspec
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int get_itimerspec64(struct itimerspec64 *it,
 			const struct __kernel_itimerspec __user *uit)
@@ -998,7 +1002,7 @@ EXPORT_SYMBOL_GPL(get_itimerspec64);
  * @it: input &struct itimerspec64
  * @uit: user's &struct __kernel_itimerspec
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int put_itimerspec64(const struct itimerspec64 *it,
 			struct __kernel_itimerspec __user *uit)
@@ -1020,7 +1024,7 @@ EXPORT_SYMBOL_GPL(put_itimerspec64);
  * @its: destination &struct itimerspec64
  * @uits: user's &struct old_itimerspec32
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int get_old_itimerspec32(struct itimerspec64 *its,
 			const struct old_itimerspec32 __user *uits)
@@ -1039,7 +1043,7 @@ EXPORT_SYMBOL_GPL(get_old_itimerspec32);
  * @its: input &struct itimerspec64
  * @uits: user's &struct old_itimerspec32
  *
- * Return: 0 on success or negative errno on error
+ * Return: %0 on success or negative errno on error
  */
 int put_old_itimerspec32(const struct itimerspec64 *its,
 			struct old_itimerspec32 __user *uits)

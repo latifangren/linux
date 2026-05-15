@@ -77,6 +77,7 @@ static void malidp_crtc_atomic_disable(struct drm_crtc *crtc,
 									 crtc);
 	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
 	struct malidp_hw_device *hwdev = malidp->dev;
+	int err;
 
 	/* always disable planes on the CRTC that is being turned off */
 	drm_atomic_helper_disable_planes_on_crtc(old_state, false);
@@ -86,7 +87,10 @@ static void malidp_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	clk_disable_unprepare(hwdev->pxlclk);
 
-	pm_runtime_put(crtc->dev->dev);
+	err = pm_runtime_put(crtc->dev->dev);
+	if (err < 0) {
+		DRM_DEBUG_DRIVER("Failed to disable runtime power management: %d\n", err);
+	}
 }
 
 static const struct gamma_curve_segment {
@@ -447,7 +451,7 @@ static struct drm_crtc_state *malidp_crtc_duplicate_state(struct drm_crtc *crtc)
 		return NULL;
 
 	old_state = to_malidp_crtc_state(crtc->state);
-	state = kmalloc_obj(*state);
+	state = kmalloc(sizeof(*state), GFP_KERNEL);
 	if (!state)
 		return NULL;
 
@@ -478,7 +482,8 @@ static void malidp_crtc_destroy_state(struct drm_crtc *crtc,
 
 static void malidp_crtc_reset(struct drm_crtc *crtc)
 {
-	struct malidp_crtc_state *state = kzalloc_obj(*state);
+	struct malidp_crtc_state *state =
+		kzalloc(sizeof(*state), GFP_KERNEL);
 
 	if (crtc->state)
 		malidp_crtc_destroy_state(crtc, crtc->state);

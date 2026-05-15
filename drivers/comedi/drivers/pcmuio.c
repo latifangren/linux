@@ -521,12 +521,11 @@ static int pcmuio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	const struct pcmuio_board *board = dev->board_ptr;
 	struct comedi_subdevice *s;
 	struct pcmuio_private *devpriv;
-	unsigned int io_len = board->num_asics * PCMUIO_ASIC_IOSIZE;
 	int ret;
 	int i;
 
-	ret = comedi_check_request_region(dev, it->options[0], io_len,
-					  0, 0xffff, io_len);
+	ret = comedi_request_region(dev, it->options[0],
+				    board->num_asics * PCMUIO_ASIC_IOSIZE);
 	if (ret)
 		return ret;
 

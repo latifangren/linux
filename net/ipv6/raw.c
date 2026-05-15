@@ -90,24 +90,23 @@ EXPORT_SYMBOL_GPL(raw_v6_match);
  *	0 - deliver
  *	1 - block
  */
-static int icmpv6_filter(const struct sock *sk, struct sk_buff *skb)
+static int icmpv6_filter(const struct sock *sk, const struct sk_buff *skb)
 {
+	struct icmp6hdr _hdr;
 	const struct icmp6hdr *hdr;
-	const __u32 *data;
-	unsigned int type;
 
 	/* We require only the four bytes of the ICMPv6 header, not any
 	 * additional bytes of message body in "struct icmp6hdr".
 	 */
-	if (!pskb_may_pull(skb, ICMPV6_HDRLEN))
-		return 1;
+	hdr = skb_header_pointer(skb, skb_transport_offset(skb),
+				 ICMPV6_HDRLEN, &_hdr);
+	if (hdr) {
+		const __u32 *data = &raw6_sk(sk)->filter.data[0];
+		unsigned int type = hdr->icmp6_type;
 
-	hdr = (struct icmp6hdr *)skb->data;
-	type = hdr->icmp6_type;
-
-	data = &raw6_sk(sk)->filter.data[0];
-
-	return (data[type >> 5] & (1U << (type & 31))) != 0;
+		return (data[type >> 5] & (1U << (type & 31))) != 0;
+	}
+	return 1;
 }
 
 #if IS_ENABLED(CONFIG_IPV6_MIP6)
@@ -142,13 +141,15 @@ EXPORT_SYMBOL(rawv6_mh_filter_unregister);
 static bool ipv6_raw_deliver(struct sk_buff *skb, int nexthdr)
 {
 	struct net *net = dev_net(skb->dev);
-	const struct ipv6hdr *ip6h;
+	const struct in6_addr *saddr;
+	const struct in6_addr *daddr;
 	struct hlist_head *hlist;
-	bool delivered = false;
 	struct sock *sk;
+	bool delivered = false;
 	__u8 hash;
 
-	ip6h = ipv6_hdr(skb);
+	saddr = &ipv6_hdr(skb)->saddr;
+	daddr = saddr + 1;
 
 	hash = raw_hashfunc(net, nexthdr);
 	hlist = &raw_v6_hashinfo.ht[hash];
@@ -156,13 +157,13 @@ static bool ipv6_raw_deliver(struct sk_buff *skb, int nexthdr)
 	sk_for_each_rcu(sk, hlist) {
 		int filtered;
 
-		if (!raw_v6_match(net, sk, nexthdr, &ip6h->daddr, &ip6h->saddr,
+		if (!raw_v6_match(net, sk, nexthdr, daddr, saddr,
 				  inet6_iif(skb), inet6_sdif(skb)))
 			continue;
 
 		if (atomic_read(&sk->sk_rmem_alloc) >=
 		    READ_ONCE(sk->sk_rcvbuf)) {
-			sk_drops_inc(sk);
+			atomic_inc(&sk->sk_drops);
 			continue;
 		}
 
@@ -170,7 +171,6 @@ static bool ipv6_raw_deliver(struct sk_buff *skb, int nexthdr)
 		switch (nexthdr) {
 		case IPPROTO_ICMPV6:
 			filtered = icmpv6_filter(sk, skb);
-			ip6h = ipv6_hdr(skb);
 			break;
 
 #if IS_ENABLED(CONFIG_IPV6_MIP6)
@@ -214,8 +214,7 @@ bool raw6_local_deliver(struct sk_buff *skb, int nexthdr)
 }
 
 /* This cleans up af_inet6 a bit. -DaveM */
-static int rawv6_bind(struct sock *sk, struct sockaddr_unsized *uaddr,
-		      int addr_len)
+static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct ipv6_pinfo *np = inet6_sk(sk);
@@ -362,15 +361,14 @@ static inline int rawv6_rcv_skb(struct sock *sk, struct sk_buff *skb)
 
 	if ((raw6_sk(sk)->checksum || rcu_access_pointer(sk->sk_filter)) &&
 	    skb_checksum_complete(skb)) {
-		sk_drops_inc(sk);
+		atomic_inc(&sk->sk_drops);
 		sk_skb_reason_drop(sk, skb, SKB_DROP_REASON_SKB_CSUM);
 		return NET_RX_DROP;
 	}
 
 	/* Charge it to the socket. */
 	skb_dst_drop(skb);
-	reason = sock_queue_rcv_skb_reason(sk, skb);
-	if (reason) {
+	if (sock_queue_rcv_skb_reason(sk, skb, &reason) < 0) {
 		sk_skb_reason_drop(sk, skb, reason);
 		return NET_RX_DROP;
 	}
@@ -391,7 +389,7 @@ int rawv6_rcv(struct sock *sk, struct sk_buff *skb)
 	struct raw6_sock *rp = raw6_sk(sk);
 
 	if (!xfrm6_policy_check(sk, XFRM_POLICY_IN, skb)) {
-		sk_drops_inc(sk);
+		atomic_inc(&sk->sk_drops);
 		sk_skb_reason_drop(sk, skb, SKB_DROP_REASON_XFRM_POLICY);
 		return NET_RX_DROP;
 	}
@@ -416,7 +414,7 @@ int rawv6_rcv(struct sock *sk, struct sk_buff *skb)
 
 	if (inet_test_bit(HDRINCL, sk)) {
 		if (skb_checksum_complete(skb)) {
-			sk_drops_inc(sk);
+			atomic_inc(&sk->sk_drops);
 			sk_skb_reason_drop(sk, skb, SKB_DROP_REASON_SKB_CSUM);
 			return NET_RX_DROP;
 		}
@@ -433,7 +431,7 @@ int rawv6_rcv(struct sock *sk, struct sk_buff *skb)
  */
 
 static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
-			 int flags)
+			 int flags, int *addr_len)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	DECLARE_SOCKADDR(struct sockaddr_in6 *, sin6, msg->msg_name);
@@ -445,10 +443,10 @@ static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		return -EOPNOTSUPP;
 
 	if (flags & MSG_ERRQUEUE)
-		return ipv6_recv_error(sk, msg, len);
+		return ipv6_recv_error(sk, msg, len, addr_len);
 
 	if (np->rxopt.bits.rxpmtu && READ_ONCE(np->rxpmtu))
-		return ipv6_recv_rxpmtu(sk, msg, len);
+		return ipv6_recv_rxpmtu(sk, msg, len, addr_len);
 
 	skb = skb_recv_datagram(sk, flags, &err);
 	if (!skb)
@@ -482,7 +480,7 @@ static int rawv6_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		sin6->sin6_flowinfo = 0;
 		sin6->sin6_scope_id = ipv6_iface_scope_id(&sin6->sin6_addr,
 							  inet6_iif(skb));
-		msg->msg_namelen = sizeof(*sin6);
+		*addr_len = sizeof(*sin6);
 	}
 
 	sock_recv_cmsgs(msg, sk, skb);
@@ -530,7 +528,7 @@ static int rawv6_push_pending_frames(struct sock *sk, struct flowi6 *fl6,
 
 	offset = rp->offset;
 	total_len = inet_sk(sk)->cork.base.length;
-	opt = inet_sk(sk)->cork.base6.opt;
+	opt = inet6_sk(sk)->cork.opt;
 	total_len -= opt ? opt->opt_flen : 0;
 
 	if (offset >= total_len - 1) {
@@ -621,7 +619,7 @@ static int rawv6_send_hdrinc(struct sock *sk, struct msghdr *msg, int length,
 	skb_reserve(skb, hlen);
 
 	skb->protocol = htons(ETH_P_IPV6);
-	skb->priority = sockc->priority;
+	skb->priority = READ_ONCE(sk->sk_priority);
 	skb->mark = sockc->mark;
 	skb_set_delivery_type_by_clockid(skb, sockc->transmit_time, sk->sk_clockid);
 
@@ -631,7 +629,7 @@ static int rawv6_send_hdrinc(struct sock *sk, struct msghdr *msg, int length,
 
 	skb->ip_summed = CHECKSUM_NONE;
 
-	skb_setup_tx_timestamp(skb, sockc);
+	skb_setup_tx_timestamp(skb, sockc->tsflags);
 
 	if (flags & MSG_CONFIRM)
 		skb_set_dst_pending_confirm(skb, 1);
@@ -771,15 +769,17 @@ static int rawv6_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 	hdrincl = inet_test_bit(HDRINCL, sk);
 
-	ipcm6_init_sk(&ipc6, sk);
-
 	/*
 	 *	Get and verify the address.
 	 */
 	memset(&fl6, 0, sizeof(fl6));
 
-	fl6.flowi6_mark = ipc6.sockc.mark;
-	fl6.flowi6_uid = sk_uid(sk);
+	fl6.flowi6_mark = READ_ONCE(sk->sk_mark);
+	fl6.flowi6_uid = sk->sk_uid;
+
+	ipcm6_init_sk(&ipc6, sk);
+	ipc6.sockc.tsflags = READ_ONCE(sk->sk_tsflags);
+	ipc6.sockc.mark = fl6.flowi6_mark;
 
 	if (sin6) {
 		if (addr_len < SIN6_LEN_RFC2133)
@@ -1177,7 +1177,6 @@ static int rawv6_init_sk(struct sock *sk)
 {
 	struct raw6_sock *rp = raw6_sk(sk);
 
-	sk->sk_drop_counters = &rp->drop_counters;
 	switch (inet_sk(sk)->inet_num) {
 	case IPPROTO_ICMPV6:
 		rp->checksum = 1;

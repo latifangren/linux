@@ -70,17 +70,9 @@ enum {
 #define AM62A7_SUPPORT_R_MPU_OPP		BIT(1)
 #define AM62A7_SUPPORT_V_MPU_OPP		BIT(2)
 
-#define AM62L3_EFUSE_E_MPU_OPP			5
-#define AM62L3_EFUSE_O_MPU_OPP			15
-
-#define AM62L3_SUPPORT_E_MPU_OPP		BIT(0)
-#define AM62L3_SUPPORT_O_MPU_OPP		BIT(1)
-
 #define AM62P5_EFUSE_O_MPU_OPP			15
 #define AM62P5_EFUSE_S_MPU_OPP			19
-#define AM62P5_EFUSE_T_MPU_OPP			20
 #define AM62P5_EFUSE_U_MPU_OPP			21
-#define AM62P5_EFUSE_V_MPU_OPP			22
 
 #define AM62P5_SUPPORT_O_MPU_OPP		BIT(0)
 #define AM62P5_SUPPORT_U_MPU_OPP		BIT(2)
@@ -101,8 +93,6 @@ struct ti_cpufreq_soc_data {
 	bool multi_regulator;
 /* Backward compatibility hack: Might have missing syscon */
 #define TI_QUIRK_SYSCON_MAY_BE_MISSING	0x1
-/* Backward compatibility hack: new syscon size is 1 register wide */
-#define TI_QUIRK_SYSCON_IS_SINGLE_REG	0x2
 	u8 quirks;
 };
 
@@ -161,9 +151,7 @@ static unsigned long am62p5_efuse_xlate(struct ti_cpufreq_data *opp_data,
 	unsigned long calculated_efuse = AM62P5_SUPPORT_O_MPU_OPP;
 
 	switch (efuse) {
-	case AM62P5_EFUSE_V_MPU_OPP:
 	case AM62P5_EFUSE_U_MPU_OPP:
-	case AM62P5_EFUSE_T_MPU_OPP:
 	case AM62P5_EFUSE_S_MPU_OPP:
 		calculated_efuse |= AM62P5_SUPPORT_U_MPU_OPP;
 		fallthrough;
@@ -214,22 +202,6 @@ static unsigned long am625_efuse_xlate(struct ti_cpufreq_data *opp_data,
 		fallthrough;
 	case AM625_EFUSE_K_MPU_OPP:
 		calculated_efuse |= AM625_SUPPORT_K_MPU_OPP;
-	}
-
-	return calculated_efuse;
-}
-
-static unsigned long am62l3_efuse_xlate(struct ti_cpufreq_data *opp_data,
-				       unsigned long efuse)
-{
-	unsigned long calculated_efuse = AM62L3_SUPPORT_E_MPU_OPP;
-
-	switch (efuse) {
-	case AM62L3_EFUSE_O_MPU_OPP:
-		calculated_efuse |= AM62L3_SUPPORT_O_MPU_OPP;
-		fallthrough;
-	case AM62L3_EFUSE_E_MPU_OPP:
-		calculated_efuse |= AM62L3_SUPPORT_E_MPU_OPP;
 	}
 
 	return calculated_efuse;
@@ -333,11 +305,10 @@ static struct ti_cpufreq_soc_data am3517_soc_data = {
 };
 
 static const struct soc_device_attribute k3_cpufreq_soc[] = {
-	{ .family = "AM62X", },
-	{ .family = "AM62AX", },
-	{ .family = "AM62DX", },
-	{ .family = "AM62LX", },
-	{ .family = "AM62PX", },
+	{ .family = "AM62X", .revision = "SR1.0" },
+	{ .family = "AM62AX", .revision = "SR1.0" },
+	{ .family = "AM62PX", .revision = "SR1.0" },
+	{ .family = "AM62DX", .revision = "SR1.0" },
 	{ /* sentinel */ }
 };
 
@@ -346,8 +317,8 @@ static struct ti_cpufreq_soc_data am625_soc_data = {
 	.efuse_offset = 0x0018,
 	.efuse_mask = 0x07c0,
 	.efuse_shift = 0x6,
+	.rev_offset = 0x0014,
 	.multi_regulator = false,
-	.quirks = TI_QUIRK_SYSCON_IS_SINGLE_REG,
 };
 
 static struct ti_cpufreq_soc_data am62a7_soc_data = {
@@ -355,14 +326,7 @@ static struct ti_cpufreq_soc_data am62a7_soc_data = {
 	.efuse_offset = 0x0,
 	.efuse_mask = 0x07c0,
 	.efuse_shift = 0x6,
-	.multi_regulator = false,
-};
-
-static struct ti_cpufreq_soc_data am62l3_soc_data = {
-	.efuse_xlate = am62l3_efuse_xlate,
-	.efuse_offset = 0x0,
-	.efuse_mask = 0x07c0,
-	.efuse_shift = 0x6,
+	.rev_offset = 0x0014,
 	.multi_regulator = false,
 };
 
@@ -371,6 +335,7 @@ static struct ti_cpufreq_soc_data am62p5_soc_data = {
 	.efuse_offset = 0x0,
 	.efuse_mask = 0x07c0,
 	.efuse_shift = 0x6,
+	.rev_offset = 0x0014,
 	.multi_regulator = false,
 };
 
@@ -390,10 +355,6 @@ static int ti_cpufreq_get_efuse(struct ti_cpufreq_data *opp_data,
 
 	ret = regmap_read(opp_data->syscon, opp_data->soc_data->efuse_offset,
 			  &efuse);
-
-	if (opp_data->soc_data->quirks & TI_QUIRK_SYSCON_IS_SINGLE_REG && ret == -EIO)
-		ret = regmap_read(opp_data->syscon, 0x0, &efuse);
-
 	if (opp_data->soc_data->quirks & TI_QUIRK_SYSCON_MAY_BE_MISSING && ret == -EIO) {
 		/* not a syscon register! */
 		void __iomem *regs = ioremap(OMAP3_SYSCON_BASE +
@@ -494,13 +455,22 @@ static const struct of_device_id ti_cpufreq_of_match[]  __maybe_unused = {
 	{ .compatible = "ti,am625", .data = &am625_soc_data, },
 	{ .compatible = "ti,am62a7", .data = &am62a7_soc_data, },
 	{ .compatible = "ti,am62d2", .data = &am62a7_soc_data, },
-	{ .compatible = "ti,am62l3", .data = &am62l3_soc_data, },
 	{ .compatible = "ti,am62p5", .data = &am62p5_soc_data, },
 	/* legacy */
 	{ .compatible = "ti,omap3430", .data = &omap34xx_soc_data, },
 	{ .compatible = "ti,omap3630", .data = &omap36xx_soc_data, },
 	{},
 };
+
+static const struct of_device_id *ti_cpufreq_match_node(void)
+{
+	struct device_node *np __free(device_node) = of_find_node_by_path("/");
+	const struct of_device_id *match;
+
+	match = of_match_node(ti_cpufreq_of_match, np);
+
+	return match;
+}
 
 static int ti_cpufreq_probe(struct platform_device *pdev)
 {
@@ -586,7 +556,7 @@ static int __init ti_cpufreq_init(void)
 	const struct of_device_id *match;
 
 	/* Check to ensure we are on a compatible platform */
-	match = of_machine_get_match(ti_cpufreq_of_match);
+	match = ti_cpufreq_match_node();
 	if (match)
 		platform_device_register_data(NULL, "ti-cpufreq", -1, match,
 					      sizeof(*match));

@@ -52,7 +52,6 @@
 #include <rdma/ib.h>
 #include <rdma/uverbs_std_types.h>
 #include <rdma/rdma_netlink.h>
-#include <rdma/ib_ucaps.h>
 
 #include "uverbs.h"
 #include "core_priv.h"
@@ -382,7 +381,7 @@ void ib_uverbs_comp_handler(struct ib_cq *cq, void *cq_context)
 		return;
 	}
 
-	entry = kmalloc_obj(*entry, GFP_ATOMIC);
+	entry = kmalloc(sizeof(*entry), GFP_ATOMIC);
 	if (!entry) {
 		spin_unlock_irqrestore(&ev_queue->lock, flags);
 		return;
@@ -417,7 +416,7 @@ void ib_uverbs_async_handler(struct ib_uverbs_async_event_file *async_file,
 		return;
 	}
 
-	entry = kmalloc_obj(*entry, GFP_ATOMIC);
+	entry = kmalloc(sizeof(*entry), GFP_ATOMIC);
 	if (!entry) {
 		spin_unlock_irqrestore(&async_file->ev_queue.lock, flags);
 		return;
@@ -737,7 +736,7 @@ static void rdma_umap_open(struct vm_area_struct *vma)
 	if (!ufile->ucontext)
 		goto out_unlock;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		goto out_unlock;
 	rdma_umap_priv_init(priv, vma, opriv->entry);
@@ -756,7 +755,7 @@ out_zap:
 	 * point, so zap it.
 	 */
 	vma->vm_private_data = NULL;
-	zap_special_vma_range(vma, vma->vm_start, vma->vm_end - vma->vm_start);
+	zap_vma_ptes(vma, vma->vm_start, vma->vm_end - vma->vm_start);
 }
 
 static void rdma_umap_close(struct vm_area_struct *vma)
@@ -782,7 +781,7 @@ static void rdma_umap_close(struct vm_area_struct *vma)
 }
 
 /*
- * Once the zap_special_vma_range has been called touches to the VMA will come here and
+ * Once the zap_vma_ptes has been called touches to the VMA will come here and
  * we return a dummy writable zero page for all the pfns.
  */
 static vm_fault_t rdma_umap_fault(struct vm_fault *vmf)
@@ -878,7 +877,7 @@ void uverbs_user_mmap_disassociate(struct ib_uverbs_file *ufile)
 				continue;
 			list_del_init(&priv->list);
 
-			zap_special_vma_range(vma, vma->vm_start,
+			zap_vma_ptes(vma, vma->vm_start,
 				     vma->vm_end - vma->vm_start);
 
 			if (priv->entry) {
@@ -966,7 +965,7 @@ static int ib_uverbs_open(struct inode *inode, struct file *filp)
 		}
 	}
 
-	file = kzalloc_obj(*file);
+	file = kzalloc(sizeof(*file), GFP_KERNEL);
 	if (!file) {
 		ret = -ENOMEM;
 		if (module_dependent)
@@ -1154,7 +1153,7 @@ static int ib_uverbs_add_one(struct ib_device *device)
 	    device->type == RDMA_DEVICE_TYPE_SMI)
 		return -EOPNOTSUPP;
 
-	uverbs_dev = kzalloc_obj(*uverbs_dev);
+	uverbs_dev = kzalloc(sizeof(*uverbs_dev), GFP_KERNEL);
 	if (!uverbs_dev)
 		return -ENOMEM;
 
@@ -1346,7 +1345,6 @@ static void __exit ib_uverbs_cleanup(void)
 				 IB_UVERBS_NUM_FIXED_MINOR);
 	unregister_chrdev_region(dynamic_uverbs_dev,
 				 IB_UVERBS_NUM_DYNAMIC_MINOR);
-	ib_cleanup_ucaps();
 	mmu_notifier_synchronize();
 }
 

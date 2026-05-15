@@ -1890,7 +1890,7 @@ int ovs_nla_get_identifier(struct sw_flow_id *sfid, const struct nlattr *ufid,
 		return 0;
 
 	/* If UFID was not provided, use unmasked key. */
-	new_key = kmalloc_obj(*new_key);
+	new_key = kmalloc(sizeof(*new_key), GFP_KERNEL);
 	if (!new_key)
 		return -ENOMEM;
 	memcpy(new_key, key, sizeof(*key));
@@ -1901,7 +1901,7 @@ int ovs_nla_get_identifier(struct sw_flow_id *sfid, const struct nlattr *ufid,
 
 u32 ovs_nla_get_ufid_flags(const struct nlattr *attr)
 {
-	return nla_get_u32_default(attr, 0);
+	return attr ? nla_get_u32(attr) : 0;
 }
 
 /**
@@ -3010,8 +3010,7 @@ static int validate_userspace(const struct nlattr *attr)
 	struct nlattr *a[OVS_USERSPACE_ATTR_MAX + 1];
 	int error;
 
-	error = nla_parse_deprecated_strict(a, OVS_USERSPACE_ATTR_MAX,
-					    nla_data(attr), nla_len(attr),
+	error = nla_parse_nested_deprecated(a, OVS_USERSPACE_ATTR_MAX, attr,
 					    userspace_policy, NULL);
 	if (error)
 		return error;

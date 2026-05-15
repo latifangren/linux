@@ -502,7 +502,6 @@ struct tegra_xudc {
 	struct clk_bulk_data *clks;
 
 	bool device_mode;
-	bool current_device_mode;
 	struct work_struct usb_role_sw_work;
 
 	struct phy **usb3_phy;
@@ -716,8 +715,6 @@ static void tegra_xudc_device_mode_on(struct tegra_xudc *xudc)
 
 	phy_set_mode_ext(xudc->curr_utmi_phy, PHY_MODE_USB_OTG,
 			 USB_ROLE_DEVICE);
-
-	xudc->current_device_mode = true;
 }
 
 static void tegra_xudc_device_mode_off(struct tegra_xudc *xudc)
@@ -727,8 +724,6 @@ static void tegra_xudc_device_mode_off(struct tegra_xudc *xudc)
 	int err;
 
 	dev_dbg(xudc->dev, "device mode off\n");
-
-	xudc->current_device_mode = false;
 
 	connected = !!(xudc_readl(xudc, PORTSC) & PORTSC_CCS);
 
@@ -812,7 +807,8 @@ static void tegra_xudc_update_data_role(struct tegra_xudc *xudc,
 		return;
 	}
 
-	xudc->device_mode = usbphy->last_event == USB_EVENT_VBUS;
+	xudc->device_mode = (usbphy->last_event == USB_EVENT_VBUS) ? true :
+								     false;
 
 	phy_index = tegra_xudc_get_phy_index(xudc, usbphy);
 	dev_dbg(xudc->dev, "%s(): current phy index is %d\n", __func__,
@@ -1906,7 +1902,7 @@ tegra_xudc_ep_alloc_request(struct usb_ep *usb_ep, gfp_t gfp)
 {
 	struct tegra_xudc_request *req;
 
-	req = kzalloc_obj(*req, gfp);
+	req = kzalloc(sizeof(*req), gfp);
 	if (!req)
 		return NULL;
 
@@ -4048,9 +4044,9 @@ static int __maybe_unused tegra_xudc_resume(struct device *dev)
 
 	spin_lock_irqsave(&xudc->lock, flags);
 	xudc->suspended = false;
-	if (xudc->device_mode != xudc->current_device_mode)
-		schedule_work(&xudc->usb_role_sw_work);
 	spin_unlock_irqrestore(&xudc->lock, flags);
+
+	schedule_work(&xudc->usb_role_sw_work);
 
 	pm_runtime_enable(dev);
 

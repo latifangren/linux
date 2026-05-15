@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/interrupt-controller/realtek,rtd1619-irq-mux.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Realtek RTD1619 interrupt mux controller
+
+maintainers:
+  - Realtek Linux Kernel Team <linux-kernel@realtek.com>
+
+properties:
+  compatible:
+    const: realtek,rtd1619-irq-mux
+
+  reg:
+    minItems: 1
+    maxItems: 2
+
+  interrupts:
+    minItems: 1
+    maxItems: 2
+
+  realtek,mux-nr:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 1
+    maximum: 2
+    description: Number of mux blocks.
+
+  realtek,intr-status:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 2
+    description: Status register offsets for each mux block.
+
+  realtek,intr-en:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 1
+    maxItems: 2
+    description: Enable register offsets for each mux block.
+
+  interrupt-controller: true
+
+  '#interrupt-cells':
+    const: 2
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - realtek,mux-nr
+  - realtek,intr-status
+  - realtek,intr-en
+  - interrupt-controller
+  - '#interrupt-cells'
+
+additionalProperties: false
+
+examples:
+  - |
+    interrupt-controller@9801b000 {
+      compatible = "realtek,rtd1619-irq-mux";
+      reg = <0x9801b000 0x100>, <0x98007000 0x100>;
+      interrupts = <0 40 4>, <0 41 4>;
+      realtek,mux-nr = <2>;
+      realtek,intr-status = <0xc>, <0x0>;
+      realtek,intr-en = <0x80>, <0x40>;
+      interrupt-controller;
+      #interrupt-cells = <2>;
+    };

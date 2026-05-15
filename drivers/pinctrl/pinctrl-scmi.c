@@ -40,6 +40,8 @@ struct scmi_pinctrl {
 	struct pinctrl_desc pctl_desc;
 	struct pinfunction *functions;
 	unsigned int nr_functions;
+	struct pinctrl_pin_desc *pins;
+	unsigned int nr_pins;
 };
 
 static int pinctrl_scmi_get_groups_count(struct pinctrl_dev *pctldev)
@@ -251,8 +253,14 @@ static int pinctrl_scmi_map_pinconf_type(enum pin_config_param param,
 	case PIN_CONFIG_MODE_LOW_POWER:
 		*type = SCMI_PIN_LOW_POWER_MODE;
 		break;
+	case PIN_CONFIG_OUTPUT:
+		*type = SCMI_PIN_OUTPUT_VALUE;
+		break;
 	case PIN_CONFIG_OUTPUT_ENABLE:
 		*type = SCMI_PIN_OUTPUT_MODE;
+		break;
+	case PIN_CONFIG_OUTPUT_IMPEDANCE_OHMS:
+		*type = SCMI_PIN_OUTPUT_VALUE;
 		break;
 	case PIN_CONFIG_POWER_SOURCE:
 		*type = SCMI_PIN_POWER_SOURCE;
@@ -270,28 +278,6 @@ static int pinctrl_scmi_map_pinconf_type(enum pin_config_param param,
 	return 0;
 }
 
-static int pinctrl_scmi_map_pinconf_type_get(enum pin_config_param param,
-					     enum scmi_pinctrl_conf_type *type)
-{
-	if (param == PIN_CONFIG_LEVEL) {
-		*type = SCMI_PIN_INPUT_VALUE;
-		return 0;
-	}
-
-	return pinctrl_scmi_map_pinconf_type(param, type);
-}
-
-static int pinctrl_scmi_map_pinconf_type_set(enum pin_config_param param,
-					     enum scmi_pinctrl_conf_type *type)
-{
-	if (param == PIN_CONFIG_LEVEL) {
-		*type = SCMI_PIN_OUTPUT_VALUE;
-		return 0;
-	}
-
-	return pinctrl_scmi_map_pinconf_type(param, type);
-}
-
 static int pinctrl_scmi_pinconf_get(struct pinctrl_dev *pctldev,
 				    unsigned int pin, unsigned long *config)
 {
@@ -306,7 +292,7 @@ static int pinctrl_scmi_pinconf_get(struct pinctrl_dev *pctldev,
 
 	config_type = pinconf_to_config_param(*config);
 
-	ret = pinctrl_scmi_map_pinconf_type_get(config_type, &type);
+	ret = pinctrl_scmi_map_pinconf_type(config_type, &type);
 	if (ret)
 		return ret;
 
@@ -335,7 +321,7 @@ pinctrl_scmi_alloc_configs(struct pinctrl_dev *pctldev, u32 num_configs,
 	if (!*p_config_value)
 		return -ENOMEM;
 
-	*p_config_type = kzalloc_objs(**p_config_type, num_configs);
+	*p_config_type = kcalloc(num_configs, sizeof(**p_config_type), GFP_KERNEL);
 	if (!*p_config_type) {
 		kfree(*p_config_value);
 		return -ENOMEM;
@@ -361,7 +347,7 @@ static int pinctrl_scmi_pinconf_set(struct pinctrl_dev *pctldev,
 				    unsigned long *configs,
 				    unsigned int num_configs)
 {
-	int i, cnt, ret;
+	int i, ret;
 	struct scmi_pinctrl *pmx = pinctrl_dev_get_drvdata(pctldev);
 	enum scmi_pinctrl_conf_type config_type[SCMI_NUM_CONFIGS];
 	u32 config_value[SCMI_NUM_CONFIGS];
@@ -377,21 +363,17 @@ static int pinctrl_scmi_pinconf_set(struct pinctrl_dev *pctldev,
 	if (ret)
 		return ret;
 
-	cnt = 0;
 	for (i = 0; i < num_configs; i++) {
 		param = pinconf_to_config_param(configs[i]);
-		if (param == PIN_CONFIG_PERSIST_STATE)
-			continue;
-		ret = pinctrl_scmi_map_pinconf_type_set(param, &p_config_type[cnt]);
+		ret = pinctrl_scmi_map_pinconf_type(param, &p_config_type[i]);
 		if (ret) {
 			dev_err(pmx->dev, "Error map pinconf_type %d\n", ret);
 			goto free_config;
 		}
-		p_config_value[cnt] = pinconf_to_config_argument(configs[i]);
-		cnt++;
+		p_config_value[i] = pinconf_to_config_argument(configs[i]);
 	}
 
-	ret = pinctrl_ops->settings_conf(pmx->ph, pin, PIN_TYPE, cnt,
+	ret = pinctrl_ops->settings_conf(pmx->ph, pin, PIN_TYPE, num_configs,
 					 p_config_type,  p_config_value);
 	if (ret)
 		dev_err(pmx->dev, "Error parsing config %d\n", ret);
@@ -425,7 +407,7 @@ static int pinctrl_scmi_pinconf_group_set(struct pinctrl_dev *pctldev,
 
 	for (i = 0; i < num_configs; i++) {
 		param = pinconf_to_config_param(configs[i]);
-		ret = pinctrl_scmi_map_pinconf_type_set(param, &p_config_type[i]);
+		ret = pinctrl_scmi_map_pinconf_type(param, &p_config_type[i]);
 		if (ret) {
 			dev_err(pmx->dev, "Error map pinconf_type %d\n", ret);
 			goto free_config;
@@ -460,7 +442,7 @@ static int pinctrl_scmi_pinconf_group_get(struct pinctrl_dev *pctldev,
 		return -EINVAL;
 
 	config_type = pinconf_to_config_param(*config);
-	ret = pinctrl_scmi_map_pinconf_type_get(config_type, &type);
+	ret = pinctrl_scmi_map_pinconf_type(config_type, &type);
 	if (ret) {
 		dev_err(pmx->dev, "Error map pinconf_type %d\n", ret);
 		return ret;
@@ -524,9 +506,7 @@ static int pinctrl_scmi_get_pins(struct scmi_pinctrl *pmx,
 }
 
 static const char * const scmi_pinctrl_blocklist[] = {
-	"fsl,imx94",
 	"fsl,imx95",
-	"fsl,imx952",
 	NULL
 };
 

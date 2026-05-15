@@ -187,7 +187,7 @@ static struct device * __init bcm47xx_setup_device(void)
 	struct device *dev;
 	int err;
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return NULL;
 
@@ -256,6 +256,12 @@ static int __init bcm47xx_cpu_fixes(void)
 }
 arch_initcall(bcm47xx_cpu_fixes);
 
+static struct fixed_phy_status bcm47xx_fixed_phy_status __initdata = {
+	.link	= 1,
+	.speed	= SPEED_100,
+	.duplex	= DUPLEX_FULL,
+};
+
 static int __init bcm47xx_register_bus_complete(void)
 {
 	switch (bcm47xx_bus_type) {
@@ -276,6 +282,7 @@ static int __init bcm47xx_register_bus_complete(void)
 	bcm47xx_leds_register();
 	bcm47xx_workarounds();
 
+	fixed_phy_add(PHY_POLL, 0, &bcm47xx_fixed_phy_status);
 	return 0;
 }
 device_initcall(bcm47xx_register_bus_complete);

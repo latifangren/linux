@@ -789,31 +789,21 @@ static int tls_push_record(struct sock *sk, int flags,
 	i = msg_pl->sg.end;
 	sk_msg_iter_var_prev(i);
 
-	/* msg_pl->sg.data is a ring; data[MAX+1] is reserved for the wrap
-	 * link (frags won't use it). 'i' is now the last filled entry:
-	 *
-	 *         i   end              start
-	 *         v    v                 v            [ rsv ]
-	 *  [ d ][ d ][   ][   ]...[   ][ d ][ d ][ d ][chain]
-	 *    ^   END                                     v
-	 *     `-----------------------------------------'
-	 *
-	 * Note that SGL does not allow chain-after-chain, so for TLS 1.3,
-	 * we must make sure we don't create the wrap entry and then chain
-	 * link to content_type immediately at index 0.
-	 */
-	if (i < msg_pl->sg.start)
-		sg_chain(msg_pl->sg.data, ARRAY_SIZE(msg_pl->sg.data),
-			 msg_pl->sg.data);
-
 	rec->content_type = record_type;
 	if (prot->version == TLS_1_3_VERSION) {
 		/* Add content type to end of message.  No padding added */
 		sg_set_buf(&rec->sg_content_type, &rec->content_type, 1);
 		sg_mark_end(&rec->sg_content_type);
-		sg_chain(msg_pl->sg.data, i + 2, &rec->sg_content_type);
+		sg_chain(msg_pl->sg.data, msg_pl->sg.end + 1,
+			 &rec->sg_content_type);
 	} else {
 		sg_mark_end(sk_msg_elem(msg_pl, i));
+	}
+
+	if (msg_pl->sg.end < msg_pl->sg.start) {
+		sg_chain(&msg_pl->sg.data[msg_pl->sg.start],
+			 MAX_SKB_FRAGS - msg_pl->sg.start + 1,
+			 msg_pl->sg.data);
 	}
 
 	i = msg_pl->sg.start;
@@ -1100,7 +1090,7 @@ static int tls_sw_sendmsg_locked(struct sock *sk, struct msghdr *msg,
 		orig_size = msg_pl->sg.size;
 		full_record = false;
 		try_to_copy = msg_data_left(msg);
-		record_room = tls_ctx->tx_max_payload_len - msg_pl->sg.size;
+		record_room = TLS_MAX_PAYLOAD_SIZE - msg_pl->sg.size;
 		if (try_to_copy >= record_room) {
 			try_to_copy = record_room;
 			full_record = true;
@@ -1375,10 +1365,6 @@ tls_rx_rec_wait(struct sock *sk, struct sk_psock *psock, bool nonblock,
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	int ret = 0;
 	long timeo;
-
-	/* a rekey is pending, let userspace deal with it */
-	if (unlikely(ctx->key_update_pending))
-		return -EKEYEXPIRED;
 
 	timeo = sock_rcvtimeo(sk, nonblock);
 
@@ -1789,36 +1775,6 @@ tls_decrypt_device(struct sock *sk, struct msghdr *msg,
 	return 1;
 }
 
-static int tls_check_pending_rekey(struct sock *sk, struct tls_context *ctx,
-				   struct sk_buff *skb)
-{
-	const struct strp_msg *rxm = strp_msg(skb);
-	const struct tls_msg *tlm = tls_msg(skb);
-	char hs_type;
-	int err;
-
-	if (likely(tlm->control != TLS_RECORD_TYPE_HANDSHAKE))
-		return 0;
-
-	if (rxm->full_len < 1)
-		return 0;
-
-	err = skb_copy_bits(skb, rxm->offset, &hs_type, 1);
-	if (err < 0) {
-		DEBUG_NET_WARN_ON_ONCE(1);
-		return err;
-	}
-
-	if (hs_type == TLS_HANDSHAKE_KEYUPDATE) {
-		struct tls_sw_context_rx *rx_ctx = ctx->priv_ctx_rx;
-
-		WRITE_ONCE(rx_ctx->key_update_pending, true);
-		TLS_INC_STATS(sock_net(sk), LINUX_MIB_TLSRXREKEYRECEIVED);
-	}
-
-	return 0;
-}
-
 static int tls_rx_one_record(struct sock *sk, struct msghdr *msg,
 			     struct tls_decrypt_arg *darg)
 {
@@ -1838,7 +1794,7 @@ static int tls_rx_one_record(struct sock *sk, struct msghdr *msg,
 	rxm->full_len -= prot->overhead_size;
 	tls_advance_record_sn(sk, prot, &tls_ctx->rx);
 
-	return tls_check_pending_rekey(sk, tls_ctx, darg->skb);
+	return 0;
 }
 
 int decrypt_skb(struct sock *sk, struct scatterlist *sgout)
@@ -2052,7 +2008,8 @@ static void tls_rx_reader_unlock(struct sock *sk, struct tls_sw_context_rx *ctx)
 int tls_sw_recvmsg(struct sock *sk,
 		   struct msghdr *msg,
 		   size_t len,
-		   int flags)
+		   int flags,
+		   int *addr_len)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
@@ -2327,9 +2284,9 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 	if (copied < 0)
 		goto splice_requeue;
 
-	if (copied < rxm->full_len) {
-		rxm->offset += copied;
-		rxm->full_len -= copied;
+	if (chunk < rxm->full_len) {
+		rxm->offset += len;
+		rxm->full_len -= len;
 		goto splice_requeue;
 	}
 
@@ -2634,12 +2591,8 @@ void tls_sw_free_ctx_rx(struct tls_context *tls_ctx)
 void tls_sw_free_resources_rx(struct sock *sk)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
-	struct tls_sw_context_rx *ctx;
-
-	ctx = tls_sw_ctx_rx(tls_ctx);
 
 	tls_sw_release_resources_rx(sk);
-	__tls_strp_done(&ctx->strp);
 	tls_sw_free_ctx_rx(tls_ctx);
 }
 
@@ -2721,7 +2674,7 @@ static struct tls_sw_context_tx *init_ctx_tx(struct tls_context *ctx, struct soc
 	struct tls_sw_context_tx *sw_ctx_tx;
 
 	if (!ctx->priv_ctx_tx) {
-		sw_ctx_tx = kzalloc_obj(*sw_ctx_tx);
+		sw_ctx_tx = kzalloc(sizeof(*sw_ctx_tx), GFP_KERNEL);
 		if (!sw_ctx_tx)
 			return NULL;
 	} else {
@@ -2742,7 +2695,7 @@ static struct tls_sw_context_rx *init_ctx_rx(struct tls_context *ctx)
 	struct tls_sw_context_rx *sw_ctx_rx;
 
 	if (!ctx->priv_ctx_rx) {
-		sw_ctx_rx = kzalloc_obj(*sw_ctx_rx);
+		sw_ctx_rx = kzalloc(sizeof(*sw_ctx_rx), GFP_KERNEL);
 		if (!sw_ctx_rx)
 			return NULL;
 	} else {
@@ -2789,22 +2742,12 @@ int init_prot_info(struct tls_prot_info *prot,
 	return 0;
 }
 
-static void tls_finish_key_update(struct sock *sk, struct tls_context *tls_ctx)
+int tls_set_sw_offload(struct sock *sk, int tx)
 {
-	struct tls_sw_context_rx *ctx = tls_ctx->priv_ctx_rx;
-
-	WRITE_ONCE(ctx->key_update_pending, false);
-	/* wake-up pre-existing poll() */
-	ctx->saved_data_ready(sk);
-}
-
-int tls_set_sw_offload(struct sock *sk, int tx,
-		       struct tls_crypto_info *new_crypto_info)
-{
-	struct tls_crypto_info *crypto_info, *src_crypto_info;
 	struct tls_sw_context_tx *sw_ctx_tx = NULL;
 	struct tls_sw_context_rx *sw_ctx_rx = NULL;
 	const struct tls_cipher_desc *cipher_desc;
+	struct tls_crypto_info *crypto_info;
 	char *iv, *rec_seq, *key, *salt;
 	struct cipher_context *cctx;
 	struct tls_prot_info *prot;
@@ -2816,47 +2759,44 @@ int tls_set_sw_offload(struct sock *sk, int tx,
 	ctx = tls_get_ctx(sk);
 	prot = &ctx->prot_info;
 
-	/* new_crypto_info != NULL means rekey */
-	if (!new_crypto_info) {
-		if (tx) {
-			ctx->priv_ctx_tx = init_ctx_tx(ctx, sk);
-			if (!ctx->priv_ctx_tx)
-				return -ENOMEM;
-		} else {
-			ctx->priv_ctx_rx = init_ctx_rx(ctx);
-			if (!ctx->priv_ctx_rx)
-				return -ENOMEM;
-		}
-	}
-
 	if (tx) {
+		ctx->priv_ctx_tx = init_ctx_tx(ctx, sk);
+		if (!ctx->priv_ctx_tx)
+			return -ENOMEM;
+
 		sw_ctx_tx = ctx->priv_ctx_tx;
 		crypto_info = &ctx->crypto_send.info;
 		cctx = &ctx->tx;
 		aead = &sw_ctx_tx->aead_send;
 	} else {
+		ctx->priv_ctx_rx = init_ctx_rx(ctx);
+		if (!ctx->priv_ctx_rx)
+			return -ENOMEM;
+
 		sw_ctx_rx = ctx->priv_ctx_rx;
 		crypto_info = &ctx->crypto_recv.info;
 		cctx = &ctx->rx;
 		aead = &sw_ctx_rx->aead_recv;
 	}
 
-	src_crypto_info = new_crypto_info ?: crypto_info;
-
-	cipher_desc = get_cipher_desc(src_crypto_info->cipher_type);
+	cipher_desc = get_cipher_desc(crypto_info->cipher_type);
 	if (!cipher_desc) {
 		rc = -EINVAL;
 		goto free_priv;
 	}
 
-	rc = init_prot_info(prot, src_crypto_info, cipher_desc);
+	rc = init_prot_info(prot, crypto_info, cipher_desc);
 	if (rc)
 		goto free_priv;
 
-	iv = crypto_info_iv(src_crypto_info, cipher_desc);
-	key = crypto_info_key(src_crypto_info, cipher_desc);
-	salt = crypto_info_salt(src_crypto_info, cipher_desc);
-	rec_seq = crypto_info_rec_seq(src_crypto_info, cipher_desc);
+	iv = crypto_info_iv(crypto_info, cipher_desc);
+	key = crypto_info_key(crypto_info, cipher_desc);
+	salt = crypto_info_salt(crypto_info, cipher_desc);
+	rec_seq = crypto_info_rec_seq(crypto_info, cipher_desc);
+
+	memcpy(cctx->iv, salt, cipher_desc->salt);
+	memcpy(cctx->iv + cipher_desc->salt, iv, cipher_desc->iv);
+	memcpy(cctx->rec_seq, rec_seq, cipher_desc->rec_seq);
 
 	if (!*aead) {
 		*aead = crypto_alloc_aead(cipher_desc->cipher_name, 0, 0);
@@ -2869,48 +2809,25 @@ int tls_set_sw_offload(struct sock *sk, int tx,
 
 	ctx->push_pending_record = tls_sw_push_pending_record;
 
-	/* setkey is the last operation that could fail during a
-	 * rekey. if it succeeds, we can start modifying the
-	 * context.
-	 */
 	rc = crypto_aead_setkey(*aead, key, cipher_desc->key);
-	if (rc) {
-		if (new_crypto_info)
-			goto out;
-		else
-			goto free_aead;
-	}
+	if (rc)
+		goto free_aead;
 
-	if (!new_crypto_info) {
-		rc = crypto_aead_setauthsize(*aead, prot->tag_size);
-		if (rc)
-			goto free_aead;
-	}
+	rc = crypto_aead_setauthsize(*aead, prot->tag_size);
+	if (rc)
+		goto free_aead;
 
-	if (!tx && !new_crypto_info) {
+	if (sw_ctx_rx) {
 		tfm = crypto_aead_tfm(sw_ctx_rx->aead_recv);
 
 		tls_update_rx_zc_capable(ctx);
 		sw_ctx_rx->async_capable =
-			src_crypto_info->version != TLS_1_3_VERSION &&
+			crypto_info->version != TLS_1_3_VERSION &&
 			!!(tfm->__crt_alg->cra_flags & CRYPTO_ALG_ASYNC);
 
 		rc = tls_strp_init(&sw_ctx_rx->strp, sk);
 		if (rc)
 			goto free_aead;
-	}
-
-	memcpy(cctx->iv, salt, cipher_desc->salt);
-	memcpy(cctx->iv + cipher_desc->salt, iv, cipher_desc->iv);
-	memcpy(cctx->rec_seq, rec_seq, cipher_desc->rec_seq);
-
-	if (new_crypto_info) {
-		unsafe_memcpy(crypto_info, new_crypto_info,
-			      cipher_desc->crypto_info,
-			      /* size was checked in do_tls_setsockopt_conf */);
-		memzero_explicit(new_crypto_info, cipher_desc->crypto_info);
-		if (!tx)
-			tls_finish_key_update(sk, ctx);
 	}
 
 	goto out;
@@ -2919,14 +2836,12 @@ free_aead:
 	crypto_free_aead(*aead);
 	*aead = NULL;
 free_priv:
-	if (!new_crypto_info) {
-		if (tx) {
-			kfree(ctx->priv_ctx_tx);
-			ctx->priv_ctx_tx = NULL;
-		} else {
-			kfree(ctx->priv_ctx_rx);
-			ctx->priv_ctx_rx = NULL;
-		}
+	if (tx) {
+		kfree(ctx->priv_ctx_tx);
+		ctx->priv_ctx_tx = NULL;
+	} else {
+		kfree(ctx->priv_ctx_rx);
+		ctx->priv_ctx_rx = NULL;
 	}
 out:
 	return rc;

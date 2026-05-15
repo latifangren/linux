@@ -930,8 +930,7 @@ static void fun_get_rmon_stats(struct net_device *netdev,
 }
 
 static void fun_get_fec_stats(struct net_device *netdev,
-			      struct ethtool_fec_stats *stats,
-			      struct ethtool_fec_hist *hist)
+			      struct ethtool_fec_stats *stats)
 {
 	const struct funeth_priv *fp = netdev_priv(netdev);
 
@@ -946,9 +945,17 @@ static void fun_get_fec_stats(struct net_device *netdev,
 #undef TX_STAT
 #undef FEC_STAT
 
-static u32 fun_get_rx_ring_count(struct net_device *netdev)
+static int fun_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *cmd,
+			 u32 *rule_locs)
 {
-	return netdev->real_num_rx_queues;
+	switch (cmd->cmd) {
+	case ETHTOOL_GRXRINGS:
+		cmd->data = netdev->real_num_rx_queues;
+		return 0;
+	default:
+		break;
+	}
+	return -EOPNOTSUPP;
 }
 
 static int fun_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info)
@@ -1161,8 +1168,8 @@ static const struct ethtool_ops fun_ethtool_ops = {
 	.get_sset_count      = fun_get_sset_count,
 	.get_strings         = fun_get_strings,
 	.get_ethtool_stats   = fun_get_ethtool_stats,
+	.get_rxnfc	     = fun_get_rxnfc,
 	.set_rxnfc           = fun_set_rxnfc,
-	.get_rx_ring_count   = fun_get_rx_ring_count,
 	.get_rxfh_indir_size = fun_get_rxfh_indir_size,
 	.get_rxfh_key_size   = fun_get_rxfh_key_size,
 	.get_rxfh            = fun_get_rxfh,

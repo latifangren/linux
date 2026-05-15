@@ -20,7 +20,7 @@
 
 #define PMC_MCR_CSS_SHIFT	(16)
 
-#define MASTER_MAX_ID		9
+#define MASTER_MAX_ID		4
 
 #define to_clk_master(hw) container_of(hw, struct clk_master, hw)
 
@@ -488,7 +488,7 @@ at91_clk_register_master_internal(struct regmap *regmap,
 	if (!name || !num_parents || !(parent_names || parent_hws) || !lock)
 		return ERR_PTR(-EINVAL);
 
-	master = kzalloc_obj(*master);
+	master = kzalloc(sizeof(*master), GFP_KERNEL);
 	if (!master)
 		return ERR_PTR(-ENOMEM);
 
@@ -831,7 +831,7 @@ at91_clk_sama7g5_register_master(struct regmap *regmap,
 	    !lock || id > MASTER_MAX_ID)
 		return ERR_PTR(-EINVAL);
 
-	master = kzalloc_obj(*master);
+	master = kzalloc(sizeof(*master), GFP_KERNEL);
 	if (!master)
 		return ERR_PTR(-ENOMEM);
 

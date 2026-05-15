@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: ISC
 /* Copyright (C) 2020 MediaTek Inc. */
 
 #include "mt76_connac.h"
@@ -9,13 +9,10 @@
 #define HE_PREP(f, m, v)	le16_encode_bits(le32_get_bits(v, MT_CRXV_HE_##m),\
 						 IEEE80211_RADIOTAP_HE_##f)
 
-void mt76_connac_gen_ppe_thresh(u8 *he_ppet, int nss, enum nl80211_band band)
+void mt76_connac_gen_ppe_thresh(u8 *he_ppet, int nss)
 {
 	static const u8 ppet16_ppet8_ru3_ru0[] = { 0x1c, 0xc7, 0x71 };
-	u8 i, ppet_bits, ppet_size, ru_bit_mask = 0xf;
-
-	if (band == NL80211_BAND_2GHZ)
-		ru_bit_mask = 0x3;
+	u8 i, ppet_bits, ppet_size, ru_bit_mask = 0x7; /* HE80 */
 
 	he_ppet[0] = FIELD_PREP(IEEE80211_PPE_THRES_NSS_MASK, nss - 1) |
 		     FIELD_PREP(IEEE80211_PPE_THRES_RU_INDEX_BITMASK_MASK,
@@ -173,7 +170,7 @@ void mt76_connac_write_hw_txp(struct mt76_dev *dev,
 
 	txp->msdu_id[0] = cpu_to_le16(id | MT_MSDU_ID_VALID);
 
-	if (is_mt7663(dev) || is_connac2(dev) || is_mt7925(dev))
+	if (is_mt7663(dev) || is_mt7921(dev) || is_mt7925(dev))
 		last_mask = MT_TXD_LEN_LAST;
 	else
 		last_mask = MT_TXD_LEN_AMSDU_LAST |
@@ -217,7 +214,7 @@ mt76_connac_txp_skb_unmap_hw(struct mt76_dev *dev,
 	u32 last_mask;
 	int i;
 
-	if (is_mt7663(dev) || is_connac2(dev) || is_mt7925(dev))
+	if (is_mt7663(dev) || is_mt7921(dev) || is_mt7925(dev))
 		last_mask = MT_TXD_LEN_LAST;
 	else
 		last_mask = MT_TXD_LEN_MSDU_LAST;
@@ -294,30 +291,27 @@ EXPORT_SYMBOL_GPL(mt76_connac_init_tx_queues);
 })
 
 u16 mt76_connac2_mac_tx_rate_val(struct mt76_phy *mphy,
-				 struct ieee80211_bss_conf *conf,
+				 struct ieee80211_vif *vif,
 				 bool beacon, bool mcast)
 {
-	u8 nss = 0, mode = 0, band = NL80211_BAND_2GHZ;
-	int rateidx = 0, offset = 0, mcast_rate;
-	struct cfg80211_chan_def *chandef;
-	struct mt76_vif_link *mvif;
+	struct mt76_vif *mvif = (struct mt76_vif *)vif->drv_priv;
+	struct cfg80211_chan_def *chandef = mvif->ctx ?
+					    &mvif->ctx->def : &mphy->chandef;
+	u8 nss = 0, mode = 0, band = chandef->chan->band;
+	int rateidx = 0, mcast_rate;
 
-	if (!conf)
+	if (!vif)
 		goto legacy;
 
-	mvif = mt76_vif_conf_link(mphy->dev, conf->vif, conf);
-	chandef = mvif->ctx ? &mvif->ctx->def : &mphy->chandef;
-	band = chandef->chan->band;
-
-	if (is_connac2(mphy->dev)) {
-		rateidx = ffs(conf->basic_rates) - 1;
+	if (is_mt7921(mphy->dev)) {
+		rateidx = ffs(vif->bss_conf.basic_rates) - 1;
 		goto legacy;
 	}
 
 	if (beacon) {
 		struct cfg80211_bitrate_mask *mask;
 
-		mask = &conf->beacon_tx_rate;
+		mask = &vif->bss_conf.beacon_tx_rate;
 
 		__bitrate_mask_check(he_mcs, HE_SU);
 		__bitrate_mask_check(vht_mcs, VHT);
@@ -329,25 +323,14 @@ u16 mt76_connac2_mac_tx_rate_val(struct mt76_phy *mphy,
 		}
 	}
 
-	mcast_rate = conf->mcast_rate[band];
+	mcast_rate = vif->bss_conf.mcast_rate[band];
 	if (mcast && mcast_rate > 0)
 		rateidx = mcast_rate - 1;
 	else
-		rateidx = ffs(conf->basic_rates) - 1;
+		rateidx = ffs(vif->bss_conf.basic_rates) - 1;
 
 legacy:
-	if (band != NL80211_BAND_2GHZ)
-		offset = 4;
-
-	/* pick the lowest rate for hidden nodes */
-	if (rateidx < 0)
-		rateidx = 0;
-
-	rateidx += offset;
-	if (rateidx >= ARRAY_SIZE(mt76_rates))
-		rateidx = offset;
-
-	rateidx = mt76_rates[rateidx].hw_value;
+	rateidx = mt76_calculate_default_rate(mphy, vif, rateidx);
 	mode = rateidx >> 8;
 	rateidx &= GENMASK(7, 0);
 out:
@@ -413,10 +396,10 @@ mt76_connac2_mac_write_txwi_80211(struct mt76_dev *dev, __le32 *txwi,
 	u32 val;
 
 	if (ieee80211_is_action(fc) &&
-	    skb->len >= IEEE80211_MIN_ACTION_SIZE(addba_req.capab) &&
+	    skb->len >= IEEE80211_MIN_ACTION_SIZE + 1 + 1 + 2 &&
 	    mgmt->u.action.category == WLAN_CATEGORY_BACK &&
-	    mgmt->u.action.action_code == WLAN_ACTION_ADDBA_REQ) {
-		u16 capab = le16_to_cpu(mgmt->u.action.addba_req.capab);
+	    mgmt->u.action.u.addba_req.action_code == WLAN_ACTION_ADDBA_REQ) {
+		u16 capab = le16_to_cpu(mgmt->u.action.u.addba_req.capab);
 
 		txwi[5] |= cpu_to_le32(MT_TXD5_ADD_BA);
 		tid = (capab >> 2) & IEEE80211_QOS_CTL_TID_MASK;
@@ -511,7 +494,7 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 	bool amsdu_en = wcid->amsdu;
 
 	if (vif) {
-		struct mt76_vif_link *mvif = (struct mt76_vif_link *)vif->drv_priv;
+		struct mt76_vif *mvif = (struct mt76_vif *)vif->drv_priv;
 
 		omac_idx = mvif->omac_idx;
 		wmm_idx = mvif->wmm_idx;
@@ -548,7 +531,7 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 	val = MT_TXD1_LONG_FORMAT |
 	      FIELD_PREP(MT_TXD1_WLAN_IDX, wcid->idx) |
 	      FIELD_PREP(MT_TXD1_OWN_MAC, omac_idx);
-	if (!is_connac2(dev))
+	if (!is_mt7921(dev))
 		val |= MT_TXD1_VTA;
 	if (phy_idx || band_idx)
 		val |= MT_TXD1_TGID;
@@ -557,7 +540,7 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 	txwi[2] = 0;
 
 	val = FIELD_PREP(MT_TXD3_REM_TX_COUNT, 15);
-	if (!is_connac2(dev))
+	if (!is_mt7921(dev))
 		val |= MT_TXD3_SW_POWER_MGMT;
 	if (key)
 		val |= MT_TXD3_PROTECT_FRAME;
@@ -587,9 +570,8 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 		struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 		bool multicast = ieee80211_is_data(hdr->frame_control) &&
 				 is_multicast_ether_addr(hdr->addr1);
-		u16 rate = mt76_connac2_mac_tx_rate_val(mphy,
-							vif ? &vif->bss_conf : NULL,
-							beacon, multicast);
+		u16 rate = mt76_connac2_mac_tx_rate_val(mphy, vif, beacon,
+							multicast);
 		u32 val = MT_TXD6_FIXED_BW;
 
 		/* hardware won't add HTC for mgmt/ctrl frame */
@@ -599,7 +581,7 @@ void mt76_connac2_mac_write_txwi(struct mt76_dev *dev, __le32 *txwi,
 		txwi[6] |= cpu_to_le32(val);
 		txwi[3] |= cpu_to_le32(MT_TXD3_BA_DISABLE);
 
-		if (!is_connac2(dev)) {
+		if (!is_mt7921(dev)) {
 			u8 spe_idx = mt76_connac_spe_idx(mphy->antenna_mask);
 
 			if (!spe_idx)
@@ -831,7 +813,7 @@ mt76_connac2_mac_decode_he_mu_radiotap(struct mt76_dev *dev, struct sk_buff *skb
 	};
 	struct ieee80211_radiotap_he_mu *he_mu;
 
-	if (is_connac2(dev)) {
+	if (is_mt7921(dev)) {
 		mu_known.flags1 |= HE_BITS(MU_FLAGS1_SIG_B_COMP_KNOWN);
 		mu_known.flags2 |= HE_BITS(MU_FLAGS2_PUNC_FROM_SIG_A_BW_KNOWN);
 	}
@@ -1047,7 +1029,7 @@ int mt76_connac2_mac_fill_rx_rate(struct mt76_dev *dev,
 		stbc = FIELD_GET(MT_PRXV_HT_STBC, v0);
 		gi = FIELD_GET(MT_PRXV_HT_SGI, v0);
 		*mode = FIELD_GET(MT_PRXV_TX_MODE, v0);
-		if (is_connac2(dev))
+		if (is_mt7921(dev))
 			dcm = !!(idx & MT_PRXV_TX_DCM);
 		else
 			dcm = FIELD_GET(MT_PRXV_DCM, v0);
@@ -1153,10 +1135,8 @@ void mt76_connac2_tx_check_aggr(struct ieee80211_sta *sta, __le32 *txwi)
 		return;
 
 	wcid = (struct mt76_wcid *)sta->drv_priv;
-	if (!test_and_set_bit(tid, &wcid->ampdu_state)) {
-		if (ieee80211_start_tx_ba_session(sta, tid, 0))
-			clear_bit(tid, &wcid->ampdu_state);
-	}
+	if (!test_and_set_bit(tid, &wcid->ampdu_state))
+		ieee80211_start_tx_ba_session(sta, tid, 0);
 }
 EXPORT_SYMBOL_GPL(mt76_connac2_tx_check_aggr);
 
@@ -1178,12 +1158,16 @@ void mt76_connac2_txwi_free(struct mt76_dev *dev, struct mt76_txwi_cache *t,
 		wcid_idx = wcid->idx;
 	} else {
 		wcid_idx = le32_get_bits(txwi[1], MT_TXD1_WLAN_IDX);
-		wcid = __mt76_wcid_ptr(dev, wcid_idx);
+		wcid = rcu_dereference(dev->wcid[wcid_idx]);
 
 		if (wcid && wcid->sta) {
 			sta = container_of((void *)wcid, struct ieee80211_sta,
 					   drv_priv);
-			mt76_wcid_add_poll(dev, wcid);
+			spin_lock_bh(&dev->sta_poll_lock);
+			if (list_empty(&wcid->poll_list))
+				list_add_tail(&wcid->poll_list,
+					      &dev->sta_poll_list);
+			spin_unlock_bh(&dev->sta_poll_lock);
 		}
 	}
 
@@ -1209,11 +1193,5 @@ void mt76_connac2_tx_token_put(struct mt76_dev *dev)
 	}
 	spin_unlock_bh(&dev->token_lock);
 	idr_destroy(&dev->token);
-
-	for (id = 0; id < __MT_MAX_BAND; id++) {
-		struct mt76_phy *phy = dev->phys[id];
-		if (phy)
-			atomic_set(&phy->mgmt_tx_pending, 0);
-	}
 }
 EXPORT_SYMBOL_GPL(mt76_connac2_tx_token_put);

@@ -176,7 +176,7 @@ static int mhi_alloc_aligned_ring(struct mhi_controller *mhi_cntrl,
 	return 0;
 }
 
-static void mhi_deinit_free_irq(struct mhi_controller *mhi_cntrl)
+void mhi_deinit_free_irq(struct mhi_controller *mhi_cntrl)
 {
 	int i;
 	struct mhi_event *mhi_event = mhi_cntrl->mhi_event;
@@ -191,7 +191,7 @@ static void mhi_deinit_free_irq(struct mhi_controller *mhi_cntrl)
 	free_irq(mhi_cntrl->irq[0], mhi_cntrl);
 }
 
-static int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
+int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
 {
 	struct mhi_event *mhi_event = mhi_cntrl->mhi_event;
 	unsigned long irq_flags = IRQF_SHARED | IRQF_NO_SUSPEND;
@@ -253,7 +253,7 @@ error_request:
 	return ret;
 }
 
-static void mhi_deinit_dev_ctxt(struct mhi_controller *mhi_cntrl)
+void mhi_deinit_dev_ctxt(struct mhi_controller *mhi_cntrl)
 {
 	int i;
 	struct mhi_ctxt *mhi_ctxt = mhi_cntrl->mhi_ctxt;
@@ -298,7 +298,7 @@ static void mhi_deinit_dev_ctxt(struct mhi_controller *mhi_cntrl)
 	mhi_cntrl->mhi_ctxt = NULL;
 }
 
-static int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
+int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
 {
 	struct mhi_ctxt *mhi_ctxt;
 	struct mhi_chan_ctxt *chan_ctxt;
@@ -313,7 +313,7 @@ static int mhi_init_dev_ctxt(struct mhi_controller *mhi_cntrl)
 	atomic_set(&mhi_cntrl->dev_wake, 0);
 	atomic_set(&mhi_cntrl->pending_pkts, 0);
 
-	mhi_ctxt = kzalloc_obj(*mhi_ctxt);
+	mhi_ctxt = kzalloc(sizeof(*mhi_ctxt), GFP_KERNEL);
 	if (!mhi_ctxt)
 		return -ENOMEM;
 
@@ -699,7 +699,8 @@ static int parse_ev_cfg(struct mhi_controller *mhi_cntrl,
 
 	num = config->num_events;
 	mhi_cntrl->total_ev_rings = num;
-	mhi_cntrl->mhi_event = kzalloc_objs(*mhi_cntrl->mhi_event, num);
+	mhi_cntrl->mhi_event = kcalloc(num, sizeof(*mhi_cntrl->mhi_event),
+				       GFP_KERNEL);
 	if (!mhi_cntrl->mhi_event)
 		return -ENOMEM;
 
@@ -840,7 +841,17 @@ static int parse_ch_cfg(struct mhi_controller *mhi_cntrl,
 		mhi_chan->lpm_notify = ch_cfg->lpm_notify;
 		mhi_chan->offload_ch = ch_cfg->offload_channel;
 		mhi_chan->db_cfg.reset_req = ch_cfg->doorbell_mode_switch;
+		mhi_chan->pre_alloc = ch_cfg->auto_queue;
 		mhi_chan->wake_capable = ch_cfg->wake_capable;
+
+		/*
+		 * If MHI host allocates buffers, then the channel direction
+		 * should be DMA_FROM_DEVICE
+		 */
+		if (mhi_chan->pre_alloc && mhi_chan->dir != DMA_FROM_DEVICE) {
+			dev_err(dev, "Invalid channel configuration\n");
+			goto error_chan_cfg;
+		}
 
 		/*
 		 * Bi-directional and direction less channel must be an
@@ -937,7 +948,8 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 	if (ret)
 		return -EINVAL;
 
-	mhi_cntrl->mhi_cmd = kzalloc_objs(*mhi_cntrl->mhi_cmd, NR_OF_CMD_RINGS);
+	mhi_cntrl->mhi_cmd = kcalloc(NR_OF_CMD_RINGS,
+				     sizeof(*mhi_cntrl->mhi_cmd), GFP_KERNEL);
 	if (!mhi_cntrl->mhi_cmd) {
 		ret = -ENOMEM;
 		goto err_free_event;
@@ -1093,7 +1105,7 @@ struct mhi_controller *mhi_alloc_controller(void)
 {
 	struct mhi_controller *mhi_cntrl;
 
-	mhi_cntrl = kzalloc_obj(*mhi_cntrl);
+	mhi_cntrl = kzalloc(sizeof(*mhi_cntrl), GFP_KERNEL);
 
 	return mhi_cntrl;
 }
@@ -1131,7 +1143,7 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 	}
 	mhi_cntrl->bhi = mhi_cntrl->regs + bhi_off;
 
-	if (mhi_cntrl->fbc_download || mhi_cntrl->rddm_size || mhi_cntrl->seg_len) {
+	if (mhi_cntrl->fbc_download || mhi_cntrl->rddm_size) {
 		ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->regs, BHIEOFF,
 				   &bhie_off);
 		if (ret) {
@@ -1230,7 +1242,7 @@ struct mhi_device *mhi_alloc_device(struct mhi_controller *mhi_cntrl)
 	struct mhi_device *mhi_dev;
 	struct device *dev;
 
-	mhi_dev = kzalloc_obj(*mhi_dev);
+	mhi_dev = kzalloc(sizeof(*mhi_dev), GFP_KERNEL);
 	if (!mhi_dev)
 		return ERR_PTR(-ENOMEM);
 
@@ -1253,7 +1265,7 @@ struct mhi_device *mhi_alloc_device(struct mhi_controller *mhi_cntrl)
 	return mhi_dev;
 }
 
-static int mhi_probe(struct device *dev)
+static int mhi_driver_probe(struct device *dev)
 {
 	struct mhi_device *mhi_dev = to_mhi_device(dev);
 	struct mhi_controller *mhi_cntrl = mhi_dev->mhi_cntrl;
@@ -1329,7 +1341,7 @@ exit_probe:
 	return ret;
 }
 
-static void mhi_remove(struct device *dev)
+static int mhi_driver_remove(struct device *dev)
 {
 	struct mhi_device *mhi_dev = to_mhi_device(dev);
 	struct mhi_driver *mhi_drv = to_mhi_driver(dev->driver);
@@ -1343,7 +1355,7 @@ static void mhi_remove(struct device *dev)
 
 	/* Skip if it is a controller device */
 	if (mhi_dev->dev_type == MHI_DEVICE_CONTROLLER)
-		return;
+		return 0;
 
 	/* Reset both channels */
 	for (dir = 0; dir < 2; dir++) {
@@ -1395,6 +1407,8 @@ static void mhi_remove(struct device *dev)
 
 	while (mhi_dev->dev_wake)
 		mhi_device_put(mhi_dev);
+
+	return 0;
 }
 
 int __mhi_driver_register(struct mhi_driver *mhi_drv, struct module *owner)
@@ -1406,6 +1420,8 @@ int __mhi_driver_register(struct mhi_driver *mhi_drv, struct module *owner)
 
 	driver->bus = &mhi_bus_type;
 	driver->owner = owner;
+	driver->probe = mhi_driver_probe;
+	driver->remove = mhi_driver_remove;
 
 	return driver_register(driver);
 }
@@ -1452,8 +1468,6 @@ const struct bus_type mhi_bus_type = {
 	.dev_name = "mhi",
 	.match = mhi_match,
 	.uevent = mhi_uevent,
-	.probe = mhi_probe,
-	.remove = mhi_remove,
 	.dev_groups = mhi_dev_groups,
 };
 

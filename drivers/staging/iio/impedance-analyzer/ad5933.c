@@ -5,7 +5,6 @@
  * Copyright 2011 Analog Devices Inc.
  */
 
-#include <linux/bits.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -195,7 +194,8 @@ static int ad5933_set_freq(struct ad5933_state *st,
 		u8 d8[4];
 	} dat;
 
-	freqreg = div64_ul(BIT_ULL(27) * freq, st->mclk_hz / 4);
+	freqreg = (u64)freq * (u64)(1 << 27);
+	do_div(freqreg, st->mclk_hz / 4);
 
 	switch (reg) {
 	case AD5933_REG_FREQ_START:
@@ -271,12 +271,11 @@ static ssize_t ad5933_show_frequency(struct device *dev,
 		u8 d8[4];
 	} dat;
 
-	if (!iio_device_claim_direct(indio_dev))
-		return -EBUSY;
-
+	ret = iio_device_claim_direct_mode(indio_dev);
+	if (ret)
+		return ret;
 	ret = ad5933_i2c_read(st->client, this_attr->address, 3, &dat.d8[1]);
-
-	iio_device_release_direct(indio_dev);
+	iio_device_release_direct_mode(indio_dev);
 	if (ret < 0)
 		return ret;
 
@@ -285,7 +284,7 @@ static ssize_t ad5933_show_frequency(struct device *dev,
 	freqreg = (u64)freqreg * (u64)(st->mclk_hz / 4);
 	do_div(freqreg, BIT(27));
 
-	return sysfs_emit(buf, "%llu\n", freqreg);
+	return sprintf(buf, "%d\n", (int)freqreg);
 }
 
 static ssize_t ad5933_store_frequency(struct device *dev,
@@ -306,12 +305,11 @@ static ssize_t ad5933_store_frequency(struct device *dev,
 	if (val > AD5933_MAX_OUTPUT_FREQ_Hz)
 		return -EINVAL;
 
-	if (!iio_device_claim_direct(indio_dev))
-		return -EBUSY;
-
+	ret = iio_device_claim_direct_mode(indio_dev);
+	if (ret)
+		return ret;
 	ret = ad5933_set_freq(st, this_attr->address, val);
-
-	iio_device_release_direct(indio_dev);
+	iio_device_release_direct_mode(indio_dev);
 
 	return ret ? ret : len;
 }
@@ -338,27 +336,27 @@ static ssize_t ad5933_show(struct device *dev,
 	mutex_lock(&st->lock);
 	switch ((u32)this_attr->address) {
 	case AD5933_OUT_RANGE:
-		len = sysfs_emit(buf, "%u\n",
-				 st->range_avail[(st->ctrl_hb >> 1) & 0x3]);
+		len = sprintf(buf, "%u\n",
+			      st->range_avail[(st->ctrl_hb >> 1) & 0x3]);
 		break;
 	case AD5933_OUT_RANGE_AVAIL:
-		len = sysfs_emit(buf, "%u %u %u %u\n", st->range_avail[0],
-				 st->range_avail[3], st->range_avail[2],
-				 st->range_avail[1]);
+		len = sprintf(buf, "%u %u %u %u\n", st->range_avail[0],
+			      st->range_avail[3], st->range_avail[2],
+			      st->range_avail[1]);
 		break;
 	case AD5933_OUT_SETTLING_CYCLES:
-		len = sysfs_emit(buf, "%d\n", st->settling_cycles);
+		len = sprintf(buf, "%d\n", st->settling_cycles);
 		break;
 	case AD5933_IN_PGA_GAIN:
-		len = sysfs_emit(buf, "%s\n",
-				 (st->ctrl_hb & AD5933_CTRL_PGA_GAIN_1) ?
-				 "1" : "0.2");
+		len = sprintf(buf, "%s\n",
+			      (st->ctrl_hb & AD5933_CTRL_PGA_GAIN_1) ?
+			      "1" : "0.2");
 		break;
 	case AD5933_IN_PGA_GAIN_AVAIL:
-		len = sysfs_emit(buf, "1 0.2\n");
+		len = sprintf(buf, "1 0.2\n");
 		break;
 	case AD5933_FREQ_POINTS:
-		len = sysfs_emit(buf, "%d\n", st->freq_points);
+		len = sprintf(buf, "%d\n", st->freq_points);
 		break;
 	default:
 		ret = -EINVAL;
@@ -386,9 +384,9 @@ static ssize_t ad5933_store(struct device *dev,
 			return ret;
 	}
 
-	if (!iio_device_claim_direct(indio_dev))
-		return -EBUSY;
-
+	ret = iio_device_claim_direct_mode(indio_dev);
+	if (ret)
+		return ret;
 	mutex_lock(&st->lock);
 	switch ((u32)this_attr->address) {
 	case AD5933_OUT_RANGE:
@@ -440,8 +438,7 @@ static ssize_t ad5933_store(struct device *dev,
 	}
 
 	mutex_unlock(&st->lock);
-
-	iio_device_release_direct(indio_dev);
+	iio_device_release_direct_mode(indio_dev);
 	return ret ? ret : len;
 }
 
@@ -509,9 +506,9 @@ static int ad5933_read_raw(struct iio_dev *indio_dev,
 
 	switch (m) {
 	case IIO_CHAN_INFO_RAW:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
-
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
 		ret = ad5933_cmd(st, AD5933_CTRL_MEASURE_TEMP);
 		if (ret < 0)
 			goto out;
@@ -524,8 +521,7 @@ static int ad5933_read_raw(struct iio_dev *indio_dev,
 				      2, (u8 *)&dat);
 		if (ret < 0)
 			goto out;
-
-		iio_device_release_direct(indio_dev);
+		iio_device_release_direct_mode(indio_dev);
 		*val = sign_extend32(be16_to_cpu(dat), 13);
 
 		return IIO_VAL_INT;
@@ -537,7 +533,7 @@ static int ad5933_read_raw(struct iio_dev *indio_dev,
 
 	return -EINVAL;
 out:
-	iio_device_release_direct(indio_dev);
+	iio_device_release_direct_mode(indio_dev);
 	return ret;
 }
 
@@ -632,9 +628,9 @@ static void ad5933_work(struct work_struct *work)
 		int scan_count = bitmap_weight(indio_dev->active_scan_mask,
 					       iio_get_masklength(indio_dev));
 		ret = ad5933_i2c_read(st->client,
-				      test_bit(1, indio_dev->active_scan_mask) ?
-				      AD5933_REG_REAL_DATA : AD5933_REG_IMAG_DATA,
-				      scan_count * 2, (u8 *)buf);
+				test_bit(1, indio_dev->active_scan_mask) ?
+				AD5933_REG_REAL_DATA : AD5933_REG_IMAG_DATA,
+				scan_count * 2, (u8 *)buf);
 		if (ret)
 			return;
 
@@ -728,7 +724,7 @@ static int ad5933_probe(struct i2c_client *client)
 static const struct i2c_device_id ad5933_id[] = {
 	{ "ad5933" },
 	{ "ad5934" },
-	{ }
+	{}
 };
 
 MODULE_DEVICE_TABLE(i2c, ad5933_id);
@@ -736,7 +732,7 @@ MODULE_DEVICE_TABLE(i2c, ad5933_id);
 static const struct of_device_id ad5933_of_match[] = {
 	{ .compatible = "adi,ad5933" },
 	{ .compatible = "adi,ad5934" },
-	{ }
+	{ },
 };
 
 MODULE_DEVICE_TABLE(of, ad5933_of_match);

@@ -774,7 +774,7 @@ static int fsi_master_gpio_probe(struct platform_device *pdev)
 	struct gpio_desc *gpio;
 	int rc;
 
-	master = kzalloc_obj(*master);
+	master = kzalloc(sizeof(*master), GFP_KERNEL);
 	if (!master)
 		return -ENOMEM;
 
@@ -888,7 +888,7 @@ static struct platform_driver fsi_master_gpio_driver = {
 		.of_match_table	= fsi_master_gpio_match,
 	},
 	.probe	= fsi_master_gpio_probe,
-	.remove = fsi_master_gpio_remove,
+	.remove_new = fsi_master_gpio_remove,
 };
 
 module_platform_driver(fsi_master_gpio_driver);

@@ -166,7 +166,7 @@ static int cougar_bind_shared_data(struct hid_device *hdev,
 
 	shared = cougar_get_shared_data(hdev);
 	if (!shared) {
-		shared = kzalloc_obj(*shared);
+		shared = kzalloc(sizeof(*shared), GFP_KERNEL);
 		if (!shared) {
 			error = -ENOMEM;
 			goto out;

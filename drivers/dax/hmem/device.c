@@ -4,7 +4,6 @@
 #include <linux/module.h>
 #include <linux/dax.h>
 #include <linux/mm.h>
-#include "../bus.h"
 
 static bool nohmem;
 module_param_named(disable, nohmem, bool, 0444);
@@ -34,21 +33,9 @@ int walk_hmem_resources(struct device *host, walk_hmem_fn fn)
 }
 EXPORT_SYMBOL_GPL(walk_hmem_resources);
 
-static void hmem_work(struct work_struct *work)
-{
-	/* place holder until dax_hmem driver attaches */
-}
-
-static struct hmem_platform_device hmem_platform = {
-	.pdev = {
-		.name = "hmem_platform",
-		.id = 0,
-	},
-	.work = __WORK_INITIALIZER(hmem_platform.work, hmem_work),
-};
-
 static void __hmem_register_resource(int target_nid, struct resource *res)
 {
+	struct platform_device *pdev;
 	struct resource *new;
 	int rc;
 
@@ -64,13 +51,17 @@ static void __hmem_register_resource(int target_nid, struct resource *res)
 	if (platform_initialized)
 		return;
 
-	rc = platform_device_register(&hmem_platform.pdev);
-	if (rc) {
+	pdev = platform_device_alloc("hmem_platform", 0);
+	if (!pdev) {
 		pr_err_once("failed to register device-dax hmem_platform device\n");
 		return;
 	}
 
-	platform_initialized = true;
+	rc = platform_device_add(pdev);
+	if (rc)
+		platform_device_put(pdev);
+	else
+		platform_initialized = true;
 }
 
 void hmem_register_resource(int target_nid, struct resource *res)
@@ -92,7 +83,8 @@ static __init int hmem_register_one(struct resource *res, void *data)
 
 static __init int hmem_init(void)
 {
-	walk_soft_reserve_res(0, -1, NULL, hmem_register_one);
+	walk_iomem_res_desc(IORES_DESC_SOFT_RESERVED,
+			IORESOURCE_MEM, 0, -1, NULL, hmem_register_one);
 	return 0;
 }
 

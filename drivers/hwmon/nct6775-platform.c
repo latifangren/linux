@@ -167,8 +167,7 @@ static inline int nct6775_asuswmi_write(u8 bank, u8 reg, u8 val)
 
 static inline int nct6775_asuswmi_read(u8 bank, u8 reg, u8 *val)
 {
-	u32 tmp = 0;
-	int ret;
+	u32 ret, tmp = 0;
 
 	ret = nct6775_asuswmi_evaluate_method(ASUSWMI_METHODID_RHWM, bank,
 					      reg, 0, &tmp);
@@ -1159,7 +1158,6 @@ static const char * const asus_wmi_boards[] = {
 	"Pro A520M-C",
 	"Pro A520M-C II",
 	"Pro B550M-C",
-	"Pro WS W480-ACE",
 	"Pro WS X570-ACE",
 	"ProArt B550-CREATOR",
 	"ProArt X570-CREATOR WIFI",
@@ -1259,7 +1257,6 @@ static const char * const asus_wmi_boards[] = {
 	"TUF Z390-PRO GAMING",
 	"TUF Z390M-PRO GAMING",
 	"TUF Z390M-PRO GAMING (WI-FI)",
-	"W480/SYS",
 	"WS Z390 PRO",
 	"Z490-GUNDAM (WI-FI)",
 };
@@ -1272,7 +1269,6 @@ static const char * const asus_msi_boards[] = {
 	"EX-B760M-V5 D4",
 	"EX-H510M-V3",
 	"EX-H610M-V3 D4",
-	"G15CE",
 	"G15CF",
 	"PRIME A620M-A",
 	"PRIME B560-PLUS",
@@ -1323,8 +1319,6 @@ static const char * const asus_msi_boards[] = {
 	"PRIME X670-P",
 	"PRIME X670-P WIFI",
 	"PRIME X670E-PRO WIFI",
-	"PRIME X870-P",
-	"PRIME X870-P WIFI",
 	"PRIME Z590-A",
 	"PRIME Z590-P",
 	"PRIME Z590-P WIFI",
@@ -1367,18 +1361,11 @@ static const char * const asus_msi_boards[] = {
 	"ProArt B660-CREATOR D4",
 	"ProArt B760-CREATOR D4",
 	"ProArt X670E-CREATOR WIFI",
-	"ProArt X870E-CREATOR WIFI",
 	"ProArt Z690-CREATOR WIFI",
 	"ProArt Z790-CREATOR WIFI",
 	"ROG CROSSHAIR X670E EXTREME",
 	"ROG CROSSHAIR X670E GENE",
 	"ROG CROSSHAIR X670E HERO",
-	"ROG CROSSHAIR X870E APEX",
-	"ROG CROSSHAIR X870E DARK HERO",
-	"ROG CROSSHAIR X870E EXTREME",
-	"ROG CROSSHAIR X870E GLACIAL",
-	"ROG CROSSHAIR X870E HERO",
-	"ROG CROSSHAIR X870E HERO BTF",
 	"ROG MAXIMUS XIII APEX",
 	"ROG MAXIMUS XIII EXTREME",
 	"ROG MAXIMUS XIII EXTREME GLACIAL",
@@ -1416,12 +1403,6 @@ static const char * const asus_msi_boards[] = {
 	"ROG STRIX X670E-E GAMING WIFI",
 	"ROG STRIX X670E-F GAMING WIFI",
 	"ROG STRIX X670E-I GAMING WIFI",
-	"ROG STRIX X870-A GAMING WIFI",
-	"ROG STRIX X870-F GAMING WIFI",
-	"ROG STRIX X870-I GAMING WIFI",
-	"ROG STRIX X870E-E GAMING WIFI",
-	"ROG STRIX X870E-E GAMING WIFI7 R2",
-	"ROG STRIX X870E-H GAMING WIFI7",
 	"ROG STRIX Z590-A GAMING WIFI",
 	"ROG STRIX Z590-A GAMING WIFI II",
 	"ROG STRIX Z590-E GAMING WIFI",
@@ -1468,9 +1449,6 @@ static const char * const asus_msi_boards[] = {
 	"TUF GAMING H770-PRO WIFI",
 	"TUF GAMING X670E-PLUS",
 	"TUF GAMING X670E-PLUS WIFI",
-	"TUF GAMING X870-PLUS WIFI",
-	"TUF GAMING X870-PRO WIFI7 W NEO",
-	"TUF GAMING X870E-PLUS WIFI7",
 	"TUF GAMING Z590-PLUS",
 	"TUF GAMING Z590-PLUS WIFI",
 	"TUF GAMING Z690-PLUS",
@@ -1480,9 +1458,6 @@ static const char * const asus_msi_boards[] = {
 	"TUF GAMING Z790-PLUS D4",
 	"TUF GAMING Z790-PLUS WIFI",
 	"TUF GAMING Z790-PLUS WIFI D4",
-	"X870 AYW GAMING WIFI W",
-	"X870 MAX GAMING WIFI7",
-	"X870 MAX GAMING WIFI7 W",
 	"Z590 WIFI GUNDAM EDITION",
 };
 
@@ -1648,7 +1623,7 @@ static void __exit sensors_nct6775_platform_exit(void)
 MODULE_AUTHOR("Guenter Roeck <linux@roeck-us.net>");
 MODULE_DESCRIPTION("Platform driver for NCT6775F and compatible chips");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("HWMON_NCT6775");
+MODULE_IMPORT_NS(HWMON_NCT6775);
 
 module_init(sensors_nct6775_platform_init);
 module_exit(sensors_nct6775_platform_exit);

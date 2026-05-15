@@ -112,7 +112,7 @@ static struct rxrpc_local *rxrpc_alloc_local(struct net *net,
 	struct rxrpc_local *local;
 	u32 tmp;
 
-	local = kzalloc_obj(struct rxrpc_local);
+	local = kzalloc(sizeof(struct rxrpc_local), GFP_KERNEL);
 	if (local) {
 		refcount_set(&local->ref, 1);
 		atomic_set(&local->active_users, 1);
@@ -215,6 +215,9 @@ static int rxrpc_open_socket(struct rxrpc_local *local, struct net *net)
 
 		/* we want to set the don't fragment bit */
 		rxrpc_local_dont_fragment(local, true);
+
+		/* We want receive timestamps. */
+		sock_enable_timestamps(usk);
 		break;
 
 	default:
@@ -449,7 +452,9 @@ void rxrpc_destroy_local(struct rxrpc_local *local)
 #endif
 	rxrpc_purge_queue(&local->rx_queue);
 	rxrpc_purge_client_connections(local);
-	page_frag_cache_drain(&local->tx_alloc);
+	if (local->tx_alloc.va)
+		__page_frag_cache_drain(virt_to_page(local->tx_alloc.va),
+					local->tx_alloc.pagecnt_bias);
 }
 
 /*

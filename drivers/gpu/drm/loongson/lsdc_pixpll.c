@@ -6,7 +6,6 @@
 #include <linux/delay.h>
 
 #include <drm/drm_managed.h>
-#include <drm/drm_print.h>
 
 #include "lsdc_drv.h"
 
@@ -124,7 +123,7 @@ static int lsdc_pixel_pll_setup(struct lsdc_pixpll * const this)
 	if (!this->mmio)
 		return -ENOMEM;
 
-	pparms = kzalloc_obj(*pparms);
+	pparms = kzalloc(sizeof(*pparms), GFP_KERNEL);
 	if (!pparms) {
 		iounmap(this->mmio);
 		return -ENOMEM;

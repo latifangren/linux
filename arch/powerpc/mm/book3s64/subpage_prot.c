@@ -73,13 +73,13 @@ static void hpte_flush_range(struct mm_struct *mm, unsigned long addr,
 	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
 	if (!pte)
 		return;
-	lazy_mmu_mode_enable();
+	arch_enter_lazy_mmu_mode();
 	for (; npages > 0; --npages) {
 		pte_update(mm, addr, pte, 0, 0, 0);
 		addr += PAGE_SIZE;
 		++pte;
 	}
-	lazy_mmu_mode_disable();
+	arch_leave_lazy_mmu_mode();
 	pte_unmap_unlock(pte - 1, ptl);
 }
 
@@ -221,7 +221,7 @@ SYSCALL_DEFINE3(subpage_prot, unsigned long, addr,
 		 * Allocate subpage prot table if not already done.
 		 * Do this with mmap_lock held
 		 */
-		spt = kzalloc_obj(struct subpage_prot_table);
+		spt = kzalloc(sizeof(struct subpage_prot_table), GFP_KERNEL);
 		if (!spt) {
 			err = -ENOMEM;
 			goto out;

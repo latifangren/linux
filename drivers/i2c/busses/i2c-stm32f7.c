@@ -34,7 +34,6 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 
 #include "i2c-stm32.h"
 
@@ -544,7 +543,7 @@ static int stm32f7_i2c_compute_timing(struct stm32f7_i2c_dev *i2c_dev,
 				if (((sdadel >= sdadel_min) &&
 				     (sdadel <= sdadel_max)) &&
 				    (p != p_prev)) {
-					v = kmalloc_obj(*v);
+					v = kmalloc(sizeof(*v), GFP_KERNEL);
 					if (!v) {
 						ret = -ENOMEM;
 						goto exit;
@@ -723,7 +722,7 @@ static int stm32f7_i2c_setup_timing(struct stm32f7_i2c_dev *i2c_dev,
 	dev_dbg(i2c_dev->dev, "I2C Rise(%i) and Fall(%i) Time\n",
 		setup->rise_time, setup->fall_time);
 	dev_dbg(i2c_dev->dev, "I2C Analog Filter(%s), DNF(%i)\n",
-		str_on_off(i2c_dev->analog_filter), i2c_dev->dnf);
+		(i2c_dev->analog_filter ? "On" : "Off"), i2c_dev->dnf);
 
 	i2c_dev->bus_rate = setup->speed_freq;
 
@@ -742,14 +741,11 @@ static void stm32f7_i2c_dma_callback(void *arg)
 {
 	struct stm32f7_i2c_dev *i2c_dev = arg;
 	struct stm32_i2c_dma *dma = i2c_dev->dma;
-	struct stm32f7_i2c_msg *f7_msg = &i2c_dev->f7_msg;
 
 	stm32f7_i2c_disable_dma_req(i2c_dev);
 	dmaengine_terminate_async(dma->chan_using);
 	dma_unmap_single(i2c_dev->dev, dma->dma_buf, dma->dma_len,
 			 dma->dma_data_dir);
-	if (!f7_msg->smbus)
-		i2c_put_dma_safe_msg_buf(f7_msg->buf, i2c_dev->msg, true);
 	complete(&dma->dma_complete);
 }
 
@@ -885,7 +881,6 @@ static void stm32f7_i2c_xfer_msg(struct stm32f7_i2c_dev *i2c_dev,
 {
 	struct stm32f7_i2c_msg *f7_msg = &i2c_dev->f7_msg;
 	void __iomem *base = i2c_dev->base;
-	u8 *dma_buf;
 	u32 cr1, cr2;
 	int ret;
 
@@ -894,6 +889,8 @@ static void stm32f7_i2c_xfer_msg(struct stm32f7_i2c_dev *i2c_dev,
 	f7_msg->count = msg->len;
 	f7_msg->result = 0;
 	f7_msg->stop = (i2c_dev->msg_id >= i2c_dev->msg_num - 1);
+
+	reinit_completion(&i2c_dev->complete);
 
 	cr1 = readl_relaxed(base + STM32F7_I2C_CR1);
 	cr2 = readl_relaxed(base + STM32F7_I2C_CR2);
@@ -933,23 +930,17 @@ static void stm32f7_i2c_xfer_msg(struct stm32f7_i2c_dev *i2c_dev,
 
 	/* Configure DMA or enable RX/TX interrupt */
 	i2c_dev->use_dma = false;
-	if (i2c_dev->dma && !i2c_dev->atomic) {
-		dma_buf = i2c_get_dma_safe_msg_buf(msg, STM32F7_I2C_DMA_LEN_MIN);
-		if (dma_buf) {
-			f7_msg->buf = dma_buf;
-			ret = stm32_i2c_prep_dma_xfer(i2c_dev->dev, i2c_dev->dma,
-						      msg->flags & I2C_M_RD,
-						      f7_msg->count, f7_msg->buf,
-						      stm32f7_i2c_dma_callback,
-						      i2c_dev);
-			if (ret) {
-				dev_warn(i2c_dev->dev, "can't use DMA\n");
-				i2c_put_dma_safe_msg_buf(f7_msg->buf, msg, false);
-				f7_msg->buf = msg->buf;
-			} else {
-				i2c_dev->use_dma = true;
-			}
-		}
+	if (i2c_dev->dma && f7_msg->count >= STM32F7_I2C_DMA_LEN_MIN
+	    && !i2c_dev->atomic) {
+		ret = stm32_i2c_prep_dma_xfer(i2c_dev->dev, i2c_dev->dma,
+					      msg->flags & I2C_M_RD,
+					      f7_msg->count, f7_msg->buf,
+					      stm32f7_i2c_dma_callback,
+					      i2c_dev);
+		if (!ret)
+			i2c_dev->use_dma = true;
+		else
+			dev_warn(i2c_dev->dev, "can't use DMA\n");
 	}
 
 	if (!i2c_dev->use_dma) {
@@ -1726,8 +1717,6 @@ static int stm32f7_i2c_xfer_core(struct i2c_adapter *i2c_adap,
 	if (ret)
 		goto pm_free;
 
-	reinit_completion(&i2c_dev->complete);
-
 	stm32f7_i2c_xfer_msg(i2c_dev, msgs);
 
 	if (!i2c_dev->atomic)
@@ -1761,6 +1750,7 @@ static int stm32f7_i2c_xfer_core(struct i2c_adapter *i2c_adap,
 	}
 
 pm_free:
+	pm_runtime_mark_last_busy(i2c_dev->dev);
 	pm_runtime_put_autosuspend(i2c_dev->dev);
 
 	return (ret < 0) ? ret : num;
@@ -1869,6 +1859,7 @@ static int stm32f7_i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 	}
 
 pm_free:
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 	return ret;
 }
@@ -1975,6 +1966,7 @@ pm_free:
 	if (!stm32f7_i2c_is_slave_registered(i2c_dev))
 		stm32f7_i2c_enable_wakeup(i2c_dev, false);
 
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return ret;
@@ -2012,6 +2004,7 @@ static int stm32f7_i2c_unreg_slave(struct i2c_client *slave)
 		stm32f7_i2c_enable_wakeup(i2c_dev, false);
 	}
 
+	pm_runtime_mark_last_busy(i2c_dev->dev);
 	pm_runtime_put_autosuspend(i2c_dev->dev);
 
 	return 0;
@@ -2152,8 +2145,8 @@ static u32 stm32f7_i2c_func(struct i2c_adapter *adap)
 }
 
 static const struct i2c_algorithm stm32f7_i2c_algo = {
-	.xfer = stm32f7_i2c_xfer,
-	.xfer_atomic = stm32f7_i2c_xfer_atomic,
+	.master_xfer = stm32f7_i2c_xfer,
+	.master_xfer_atomic = stm32f7_i2c_xfer_atomic,
 	.smbus_xfer = stm32f7_i2c_smbus_xfer,
 	.functionality = stm32f7_i2c_func,
 	.reg_slave = stm32f7_i2c_reg_slave,
@@ -2253,7 +2246,7 @@ static int stm32f7_i2c_probe(struct platform_device *pdev)
 	snprintf(adap->name, sizeof(adap->name), "STM32F7 I2C(%pa)",
 		 &res->start);
 	adap->owner = THIS_MODULE;
-	adap->timeout = 8 * HZ;
+	adap->timeout = 2 * HZ;
 	adap->retries = 3;
 	adap->algo = &stm32f7_i2c_algo;
 	adap->dev.parent = &pdev->dev;
@@ -2324,6 +2317,7 @@ static int stm32f7_i2c_probe(struct platform_device *pdev)
 
 	dev_info(i2c_dev->dev, "STM32F7 I2C-%d bus adapter\n", adap->nr);
 
+	pm_runtime_mark_last_busy(i2c_dev->dev);
 	pm_runtime_put_autosuspend(i2c_dev->dev);
 
 	return 0;

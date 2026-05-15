@@ -5,22 +5,13 @@
 #include <bpf/bpf_core_read.h>
 #include "bpf_misc.h"
 
-struct test_pro_bss {
-	struct sockaddr_in old;
-	__u32 test_pid;
-};
-
-struct test_pro_bss bss;
+static struct sockaddr_in old;
 
 static int handle_sys_connect_common(struct sockaddr_in *uservaddr)
 {
 	struct sockaddr_in new;
-	__u32 cur = bpf_get_current_pid_tgid() >> 32;
 
-	if (bss.test_pid && cur != bss.test_pid)
-		return 0;
-
-	bpf_probe_read_user(&bss.old, sizeof(bss.old), uservaddr);
+	bpf_probe_read_user(&old, sizeof(old), uservaddr);
 	__builtin_memset(&new, 0xab, sizeof(new));
 	bpf_probe_write_user(uservaddr, &new, sizeof(new));
 

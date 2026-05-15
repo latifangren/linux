@@ -114,7 +114,7 @@ static int belkin_sa_port_probe(struct usb_serial_port *port)
 	struct usb_device *dev = port->serial->dev;
 	struct belkin_sa_private *priv;
 
-	priv = kmalloc_obj(struct belkin_sa_private);
+	priv = kmalloc(sizeof(struct belkin_sa_private), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
@@ -436,23 +436,33 @@ static int belkin_sa_tiocmset(struct tty_struct *tty,
 	unsigned long control_state;
 	unsigned long flags;
 	int retval = 0;
+	int rts = 0;
+	int dtr = 0;
 
 	spin_lock_irqsave(&priv->lock, flags);
 	control_state = priv->control_state;
 
-	if (set & TIOCM_RTS)
+	if (set & TIOCM_RTS) {
 		control_state |= TIOCM_RTS;
-	if (set & TIOCM_DTR)
+		rts = 1;
+	}
+	if (set & TIOCM_DTR) {
 		control_state |= TIOCM_DTR;
-	if (clear & TIOCM_RTS)
+		dtr = 1;
+	}
+	if (clear & TIOCM_RTS) {
 		control_state &= ~TIOCM_RTS;
-	if (clear & TIOCM_DTR)
+		rts = 1;
+	}
+	if (clear & TIOCM_DTR) {
 		control_state &= ~TIOCM_DTR;
+		dtr = 1;
+	}
 
 	priv->control_state = control_state;
 	spin_unlock_irqrestore(&priv->lock, flags);
 
-	if ((set | clear) & TIOCM_RTS) {
+	if (rts) {
 		retval = BSA_USB_CMD(BELKIN_SA_SET_RTS_REQUEST,
 					!!(control_state & TIOCM_RTS));
 		if (retval < 0) {
@@ -461,7 +471,7 @@ static int belkin_sa_tiocmset(struct tty_struct *tty,
 		}
 	}
 
-	if ((set | clear) & TIOCM_DTR) {
+	if (dtr) {
 		retval = BSA_USB_CMD(BELKIN_SA_SET_DTR_REQUEST,
 					!!(control_state & TIOCM_DTR));
 		if (retval < 0) {

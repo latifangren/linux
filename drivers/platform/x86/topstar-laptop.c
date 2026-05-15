@@ -232,9 +232,9 @@ static int topstar_acpi_fncx_switch(struct acpi_device *device, bool state)
 	return 0;
 }
 
-static void topstar_acpi_notify(acpi_handle handle, u32 event, void *data)
+static void topstar_acpi_notify(struct acpi_device *device, u32 event)
 {
-	struct topstar_laptop *topstar = data;
+	struct topstar_laptop *topstar = acpi_driver_data(device);
 	static bool dup_evnt[2];
 	bool *dup;
 
@@ -285,22 +285,20 @@ static const struct dmi_system_id topstar_dmi_ids[] = {
 	{}
 };
 
-static int topstar_acpi_probe(struct platform_device *pdev)
+static int topstar_acpi_add(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 	struct topstar_laptop *topstar;
 	int err;
 
 	dmi_check_system(topstar_dmi_ids);
 
-	topstar = kzalloc_obj(struct topstar_laptop);
+	topstar = kzalloc(sizeof(struct topstar_laptop), GFP_KERNEL);
 	if (!topstar)
 		return -ENOMEM;
 
-	platform_set_drvdata(pdev, topstar);
-
-	strscpy(acpi_device_name(device), "Topstar TPSACPI");
-	strscpy(acpi_device_class(device), TOPSTAR_LAPTOP_CLASS);
+	strcpy(acpi_device_name(device), "Topstar TPSACPI");
+	strcpy(acpi_device_class(device), TOPSTAR_LAPTOP_CLASS);
+	device->driver_data = topstar;
 	topstar->device = device;
 
 	err = topstar_acpi_init(topstar);
@@ -315,21 +313,14 @@ static int topstar_acpi_probe(struct platform_device *pdev)
 	if (err)
 		goto err_platform_exit;
 
-	err = acpi_dev_install_notify_handler(device, ACPI_DEVICE_NOTIFY,
-					      topstar_acpi_notify, topstar);
-	if (err)
-		goto err_input_exit;
-
 	if (led_workaround) {
 		err = topstar_led_init(topstar);
 		if (err)
-			goto err_notify_handler_exit;
+			goto err_input_exit;
 	}
 
 	return 0;
 
-err_notify_handler_exit:
-	acpi_dev_remove_notify_handler(device, ACPI_DEVICE_NOTIFY, topstar_acpi_notify);
 err_input_exit:
 	topstar_input_exit(topstar);
 err_platform_exit:
@@ -341,15 +332,13 @@ err_free:
 	return err;
 }
 
-static void topstar_acpi_remove(struct platform_device *pdev)
+static void topstar_acpi_remove(struct acpi_device *device)
 {
-	struct topstar_laptop *topstar = platform_get_drvdata(pdev);
+	struct topstar_laptop *topstar = acpi_driver_data(device);
 
 	if (led_workaround)
 		topstar_led_exit(topstar);
 
-	acpi_dev_remove_notify_handler(ACPI_COMPANION(&pdev->dev),
-				       ACPI_DEVICE_NOTIFY, topstar_acpi_notify);
 	topstar_input_exit(topstar);
 	topstar_platform_exit(topstar);
 	topstar_acpi_exit(topstar);
@@ -364,12 +353,14 @@ static const struct acpi_device_id topstar_device_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, topstar_device_ids);
 
-static struct platform_driver topstar_acpi_driver = {
-	.probe = topstar_acpi_probe,
-	.remove = topstar_acpi_remove,
-	.driver = {
-		.name = "Topstar laptop ACPI driver",
-		.acpi_match_table = topstar_device_ids,
+static struct acpi_driver topstar_acpi_driver = {
+	.name = "Topstar laptop ACPI driver",
+	.class = TOPSTAR_LAPTOP_CLASS,
+	.ids = topstar_device_ids,
+	.ops = {
+		.add = topstar_acpi_add,
+		.remove = topstar_acpi_remove,
+		.notify = topstar_acpi_notify,
 	},
 };
 
@@ -381,7 +372,7 @@ static int __init topstar_laptop_init(void)
 	if (ret < 0)
 		return ret;
 
-	ret = platform_driver_register(&topstar_acpi_driver);
+	ret = acpi_bus_register_driver(&topstar_acpi_driver);
 	if (ret < 0)
 		goto err_driver_unreg;
 
@@ -395,7 +386,7 @@ err_driver_unreg:
 
 static void __exit topstar_laptop_exit(void)
 {
-	platform_driver_unregister(&topstar_acpi_driver);
+	acpi_bus_unregister_driver(&topstar_acpi_driver);
 	platform_driver_unregister(&topstar_platform_driver);
 }
 

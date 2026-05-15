@@ -210,7 +210,7 @@
 		vin-supply = <&vcc12v_dcin>;
 	};
 
-	vcca_0v9: regulator-vcca-0v9 {
+	vcca_0v9: vcca-0v9 {
 		compatible = "regulator-fixed";
 		regulator-name = "vcca_0v9";
 		regulator-always-on;
@@ -613,8 +613,6 @@
 	num-lanes = <4>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie_perst>;
-	vpcie0v9-supply = <&vcca_0v9>;
-	vpcie1v8-supply = <&vcca_1v8>;
 	vpcie12v-supply = <&vcc12v_dcin>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
 	status = "okay";

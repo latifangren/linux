@@ -17,7 +17,6 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
 #include <linux/clk.h>
@@ -542,7 +541,7 @@ static void vc4_vec_encoder_disable(struct drm_encoder *encoder,
 {
 	struct drm_device *drm = encoder->dev;
 	struct vc4_vec *vec = encoder_to_vc4_vec(encoder);
-	int idx;
+	int idx, ret;
 
 	if (!drm_dev_enter(drm, &idx))
 		return;
@@ -556,8 +555,16 @@ static void vc4_vec_encoder_disable(struct drm_encoder *encoder,
 
 	clk_disable_unprepare(vec->clock);
 
-	pm_runtime_put(&vec->pdev->dev);
+	ret = pm_runtime_put(&vec->pdev->dev);
+	if (ret < 0) {
+		drm_err(drm, "Failed to release power domain: %d\n", ret);
+		goto err_dev_exit;
+	}
 
+	drm_dev_exit(idx);
+	return;
+
+err_dev_exit:
 	drm_dev_exit(idx);
 }
 
@@ -841,7 +848,7 @@ static void vc4_vec_dev_remove(struct platform_device *pdev)
 
 struct platform_driver vc4_vec_driver = {
 	.probe = vc4_vec_dev_probe,
-	.remove = vc4_vec_dev_remove,
+	.remove_new = vc4_vec_dev_remove,
 	.driver = {
 		.name = "vc4_vec",
 		.of_match_table = vc4_vec_dt_match,

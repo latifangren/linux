@@ -2,7 +2,6 @@
 /* Copyright (C) 2019 Intel Corporation */
 
 #include <linux/gpio/driver.h>
-#include <linux/gpio/generic.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -187,11 +186,9 @@ static int gpiochip_setup(struct device *dev, struct eqbr_gpio_ctrl *gctrl)
 	struct gpio_irq_chip *girq;
 	struct gpio_chip *gc;
 
-	gc = &gctrl->chip.gc;
+	gc = &gctrl->chip;
 	gc->label = gctrl->name;
 	gc->fwnode = gctrl->fwnode;
-	gc->request = gpiochip_generic_request;
-	gc->free = gpiochip_generic_free;
 
 	if (!fwnode_property_read_bool(gctrl->fwnode, "interrupt-controller")) {
 		dev_dbg(dev, "gc %s: doesn't act as interrupt controller!\n",
@@ -199,7 +196,7 @@ static int gpiochip_setup(struct device *dev, struct eqbr_gpio_ctrl *gctrl)
 		return 0;
 	}
 
-	girq = &gctrl->chip.gc.irq;
+	girq = &gctrl->chip.irq;
 	gpio_irq_chip_set_chip(girq, &eqbr_irq_chip);
 	girq->parent_handler = eqbr_irq_handler;
 	girq->num_parents = 1;
@@ -216,7 +213,6 @@ static int gpiochip_setup(struct device *dev, struct eqbr_gpio_ctrl *gctrl)
 
 static int gpiolib_reg(struct eqbr_pinctrl_drv_data *drvdata)
 {
-	struct gpio_generic_chip_config config;
 	struct device *dev = drvdata->dev;
 	struct eqbr_gpio_ctrl *gctrl;
 	struct device_node *np;
@@ -248,16 +244,12 @@ static int gpiolib_reg(struct eqbr_pinctrl_drv_data *drvdata)
 		}
 		raw_spin_lock_init(&gctrl->lock);
 
-		config = (struct gpio_generic_chip_config) {
-			.dev = dev,
-			.sz = gctrl->bank->nr_pins / 8,
-			.dat = gctrl->membase + GPIO_IN,
-			.set = gctrl->membase + GPIO_OUTSET,
-			.clr = gctrl->membase + GPIO_OUTCLR,
-			.dirout = gctrl->membase + GPIO_DIR,
-		};
-
-		ret = gpio_generic_chip_init(&gctrl->chip, &config);
+		ret = bgpio_init(&gctrl->chip, dev, gctrl->bank->nr_pins / 8,
+				 gctrl->membase + GPIO_IN,
+				 gctrl->membase + GPIO_OUTSET,
+				 gctrl->membase + GPIO_OUTCLR,
+				 gctrl->membase + GPIO_DIR,
+				 NULL, 0);
 		if (ret) {
 			dev_err(dev, "unable to init generic GPIO\n");
 			return ret;
@@ -267,7 +259,7 @@ static int gpiolib_reg(struct eqbr_pinctrl_drv_data *drvdata)
 		if (ret)
 			return ret;
 
-		ret = devm_gpiochip_add_data(dev, &gctrl->chip.gc, gctrl);
+		ret = devm_gpiochip_add_data(dev, &gctrl->chip, gctrl);
 		if (ret)
 			return ret;
 	}
@@ -332,7 +324,7 @@ static int eqbr_pinmux_set_mux(struct pinctrl_dev *pctldev,
 			       unsigned int selector, unsigned int group)
 {
 	struct eqbr_pinctrl_drv_data *pctl = pinctrl_dev_get_drvdata(pctldev);
-	const struct function_desc *func;
+	struct function_desc *func;
 	struct group_desc *grp;
 	unsigned int *pinmux;
 	int i;
@@ -452,7 +444,7 @@ static int eqbr_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
 	}
 	raw_spin_unlock_irqrestore(&pctl->lock, flags);
 	*config = pinconf_to_config_packed(param, val);
-
+;
 	return 0;
 }
 
@@ -512,7 +504,7 @@ static int eqbr_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
 					bank->pin_base, pin);
 				return -ENODEV;
 			}
-			gc = &gctrl->chip.gc;
+			gc = &gctrl->chip;
 			gc->direction_output(gc, offset, 0);
 			continue;
 		default:
@@ -700,8 +692,11 @@ static int eqbr_build_functions(struct eqbr_pinctrl_drv_data *drvdata)
 		if (funcs[i].name == NULL)
 			continue;
 
-		ret = pinmux_generic_add_pinfunction(drvdata->pctl_dev,
-						     &funcs[i], drvdata);
+		ret = pinmux_generic_add_function(drvdata->pctl_dev,
+						  funcs[i].name,
+						  funcs[i].groups,
+						  funcs[i].ngroups,
+						  drvdata);
 		if (ret < 0) {
 			dev_err(dev, "Failed to register function %s\n",
 				funcs[i].name);

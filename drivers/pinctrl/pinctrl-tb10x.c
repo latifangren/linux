@@ -607,7 +607,7 @@ static int tb10x_gpio_request_enable(struct pinctrl_dev *pctl,
 	int muxmode = -1;
 	int i;
 
-	guard(mutex)(&state->mutex);
+	mutex_lock(&state->mutex);
 
 	/*
 	 * Figure out to which port the requested GPIO belongs and how to
@@ -642,6 +642,7 @@ static int tb10x_gpio_request_enable(struct pinctrl_dev *pctl,
 					 * Error: The requested pin is already
 					 * used for something else.
 					 */
+					mutex_unlock(&state->mutex);
 					return -EBUSY;
 				}
 				break;
@@ -665,6 +666,8 @@ static int tb10x_gpio_request_enable(struct pinctrl_dev *pctl,
 	 */
 	if (muxport >= 0)
 		tb10x_pinctrl_set_config(state, muxport, muxmode);
+
+	mutex_unlock(&state->mutex);
 
 	return 0;
 }
@@ -692,27 +695,33 @@ static int tb10x_pctl_set_mux(struct pinctrl_dev *pctl,
 	if (grp->port < 0)
 		return 0;
 
-	guard(mutex)(&state->mutex);
+	mutex_lock(&state->mutex);
 
 	/*
 	 * Check if the requested function is compatible with previously
 	 * requested functions.
 	 */
 	if (state->ports[grp->port].count
-			&& (state->ports[grp->port].mode != grp->mode))
+			&& (state->ports[grp->port].mode != grp->mode)) {
+		mutex_unlock(&state->mutex);
 		return -EBUSY;
+	}
 
 	/*
 	 * Check if the requested function is compatible with previously
 	 * requested GPIOs.
 	 */
 	for (i = 0; i < grp->pincnt; i++)
-		if (test_bit(grp->pins[i], state->gpios))
+		if (test_bit(grp->pins[i], state->gpios)) {
+			mutex_unlock(&state->mutex);
 			return -EBUSY;
+		}
 
 	tb10x_pinctrl_set_config(state, grp->port, grp->mode);
 
 	state->ports[grp->port].count++;
+
+	mutex_unlock(&state->mutex);
 
 	return 0;
 }
@@ -726,7 +735,7 @@ static const struct pinmux_ops tb10x_pinmux_ops = {
 	.set_mux = tb10x_pctl_set_mux,
 };
 
-static const struct pinctrl_desc tb10x_pindesc = {
+static struct pinctrl_desc tb10x_pindesc = {
 	.name = "TB10x",
 	.pins = tb10x_pins,
 	.npins = ARRAY_SIZE(tb10x_pins),
@@ -811,10 +820,10 @@ MODULE_DEVICE_TABLE(of, tb10x_pinctrl_dt_ids);
 
 static struct platform_driver tb10x_pinctrl_pdrv = {
 	.probe   = tb10x_pinctrl_probe,
-	.remove  = tb10x_pinctrl_remove,
+	.remove_new = tb10x_pinctrl_remove,
 	.driver  = {
 		.name  = "tb10x_pinctrl",
-		.of_match_table = tb10x_pinctrl_dt_ids,
+		.of_match_table = of_match_ptr(tb10x_pinctrl_dt_ids),
 	}
 };
 

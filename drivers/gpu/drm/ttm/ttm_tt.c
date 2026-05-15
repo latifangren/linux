@@ -33,21 +33,17 @@
 
 #include <linux/cc_platform.h>
 #include <linux/debugfs.h>
-#include <linux/export.h>
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/shmem_fs.h>
 #include <drm/drm_cache.h>
 #include <drm/drm_device.h>
-#include <drm/drm_print.h>
 #include <drm/drm_util.h>
-#include <drm/ttm/ttm_backup.h>
 #include <drm/ttm/ttm_bo.h>
 #include <drm/ttm/ttm_tt.h>
 
 #include "ttm_module.h"
-#include "ttm_pool_internal.h"
 
 static unsigned long ttm_pages_limit;
 
@@ -95,8 +91,7 @@ int ttm_tt_create(struct ttm_buffer_object *bo, bool zero_alloc)
 	 * mapped TT pages need to be decrypted or otherwise the drivers
 	 * will end up sending encrypted mem to the gpu.
 	 */
-	if (ttm_pool_uses_dma_alloc(&bdev->pool) &&
-	    cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT)) {
+	if (bdev->pool.use_dma_alloc && cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT)) {
 		page_flags |= TTM_TT_FLAG_DECRYPTED;
 		drm_info_once(ddev, "TT memory decryption enabled.");
 	}
@@ -137,7 +132,8 @@ static int ttm_dma_tt_alloc_page_directory(struct ttm_tt *ttm)
 
 static int ttm_sg_tt_alloc_page_directory(struct ttm_tt *ttm)
 {
-	ttm->dma_address = kvzalloc_objs(*ttm->dma_address, ttm->num_pages);
+	ttm->dma_address = kvcalloc(ttm->num_pages, sizeof(*ttm->dma_address),
+				    GFP_KERNEL);
 	if (!ttm->dma_address)
 		return -ENOMEM;
 
@@ -162,8 +158,6 @@ static void ttm_tt_init_fields(struct ttm_tt *ttm,
 	ttm->swap_storage = NULL;
 	ttm->sg = bo->sg;
 	ttm->caching = caching;
-	ttm->restore = NULL;
-	ttm->backup = NULL;
 }
 
 int ttm_tt_init(struct ttm_tt *ttm, struct ttm_buffer_object *bo,
@@ -187,13 +181,6 @@ void ttm_tt_fini(struct ttm_tt *ttm)
 	if (ttm->swap_storage)
 		fput(ttm->swap_storage);
 	ttm->swap_storage = NULL;
-
-	if (ttm_tt_is_backed_up(ttm))
-		ttm_pool_drop_backed_up(ttm);
-	if (ttm->backup) {
-		ttm_backup_fini(ttm->backup);
-		ttm->backup = NULL;
-	}
 
 	if (ttm->pages)
 		kvfree(ttm->pages);
@@ -267,49 +254,6 @@ out_err:
 EXPORT_SYMBOL_FOR_TESTS_ONLY(ttm_tt_swapin);
 
 /**
- * ttm_tt_backup() - Helper to back up a struct ttm_tt.
- * @bdev: The TTM device.
- * @tt: The struct ttm_tt.
- * @flags: Flags that govern the backup behaviour.
- *
- * Update the page accounting and call ttm_pool_shrink_tt to free pages
- * or back them up.
- *
- * Return: Number of pages freed or swapped out, or negative error code on
- * error.
- */
-long ttm_tt_backup(struct ttm_device *bdev, struct ttm_tt *tt,
-		   const struct ttm_backup_flags flags)
-{
-	long ret;
-
-	if (WARN_ON(IS_ERR_OR_NULL(tt->backup)))
-		return 0;
-
-	ret = ttm_pool_backup(&bdev->pool, tt, &flags);
-	if (ret > 0) {
-		tt->page_flags &= ~TTM_TT_FLAG_PRIV_POPULATED;
-		tt->page_flags |= TTM_TT_FLAG_BACKED_UP;
-	}
-
-	return ret;
-}
-
-int ttm_tt_restore(struct ttm_device *bdev, struct ttm_tt *tt,
-		   const struct ttm_operation_ctx *ctx)
-{
-	int ret = ttm_pool_restore_and_alloc(&bdev->pool, tt, ctx);
-
-	if (ret)
-		return ret;
-
-	tt->page_flags &= ~TTM_TT_FLAG_BACKED_UP;
-
-	return 0;
-}
-EXPORT_SYMBOL(ttm_tt_restore);
-
-/**
  * ttm_tt_swapout - swap out tt object
  *
  * @bdev: TTM device structure.
@@ -329,7 +273,7 @@ int ttm_tt_swapout(struct ttm_device *bdev, struct ttm_tt *ttm,
 	struct page *to_page;
 	int i, ret;
 
-	swap_storage = shmem_file_setup("ttm swap", size, EMPTY_VMA_FLAGS);
+	swap_storage = shmem_file_setup("ttm swap", size, 0);
 	if (IS_ERR(swap_storage)) {
 		pr_err("Failed allocating swap storage\n");
 		return PTR_ERR(swap_storage);
@@ -380,7 +324,7 @@ int ttm_tt_populate(struct ttm_device *bdev,
 
 	if (!(ttm->page_flags & TTM_TT_FLAG_EXTERNAL)) {
 		atomic_long_add(ttm->num_pages, &ttm_pages_allocated);
-		if (ttm_pool_uses_dma32(&bdev->pool))
+		if (bdev->pool.use_dma32)
 			atomic_long_add(ttm->num_pages,
 					&ttm_dma32_pages_allocated);
 	}
@@ -404,7 +348,6 @@ int ttm_tt_populate(struct ttm_device *bdev,
 		goto error;
 
 	ttm->page_flags |= TTM_TT_FLAG_PRIV_POPULATED;
-	ttm->page_flags &= ~TTM_TT_FLAG_BACKED_UP;
 	if (unlikely(ttm->page_flags & TTM_TT_FLAG_SWAPPED)) {
 		ret = ttm_tt_swapin(ttm);
 		if (unlikely(ret != 0)) {
@@ -418,16 +361,13 @@ int ttm_tt_populate(struct ttm_device *bdev,
 error:
 	if (!(ttm->page_flags & TTM_TT_FLAG_EXTERNAL)) {
 		atomic_long_sub(ttm->num_pages, &ttm_pages_allocated);
-		if (ttm_pool_uses_dma32(&bdev->pool))
+		if (bdev->pool.use_dma32)
 			atomic_long_sub(ttm->num_pages,
 					&ttm_dma32_pages_allocated);
 	}
 	return ret;
 }
-
-#if IS_ENABLED(CONFIG_DRM_TTM_KUNIT_TEST)
 EXPORT_SYMBOL(ttm_tt_populate);
-#endif
 
 void ttm_tt_unpopulate(struct ttm_device *bdev, struct ttm_tt *ttm)
 {
@@ -441,7 +381,7 @@ void ttm_tt_unpopulate(struct ttm_device *bdev, struct ttm_tt *ttm)
 
 	if (!(ttm->page_flags & TTM_TT_FLAG_EXTERNAL)) {
 		atomic_long_sub(ttm->num_pages, &ttm_pages_allocated);
-		if (ttm_pool_uses_dma32(&bdev->pool))
+		if (bdev->pool.use_dma32)
 			atomic_long_sub(ttm->num_pages,
 					&ttm_dma32_pages_allocated);
 	}
@@ -455,7 +395,7 @@ EXPORT_SYMBOL_FOR_TESTS_ONLY(ttm_tt_unpopulate);
 /* Test the shrinker functions and dump the result */
 static int ttm_tt_debugfs_shrink_show(struct seq_file *m, void *data)
 {
-	struct ttm_operation_ctx ctx = { };
+	struct ttm_operation_ctx ctx = { false, false };
 
 	seq_printf(m, "%d\n", ttm_global_swapout(&ctx, GFP_KERNEL));
 	return 0;
@@ -534,32 +474,3 @@ unsigned long ttm_tt_pages_limit(void)
 	return ttm_pages_limit;
 }
 EXPORT_SYMBOL(ttm_tt_pages_limit);
-
-/**
- * ttm_tt_setup_backup() - Allocate and assign a backup structure for a ttm_tt
- * @tt: The ttm_tt for wich to allocate and assign a backup structure.
- *
- * Assign a backup structure to be used for tt backup. This should
- * typically be done at bo creation, to avoid allocations at shrinking
- * time.
- *
- * Return: 0 on success, negative error code on failure.
- */
-int ttm_tt_setup_backup(struct ttm_tt *tt)
-{
-	struct file *backup =
-		ttm_backup_shmem_create(((loff_t)tt->num_pages) << PAGE_SHIFT);
-
-	if (WARN_ON_ONCE(!(tt->page_flags & TTM_TT_FLAG_EXTERNAL_MAPPABLE)))
-		return -EINVAL;
-
-	if (IS_ERR(backup))
-		return PTR_ERR(backup);
-
-	if (tt->backup)
-		ttm_backup_fini(tt->backup);
-
-	tt->backup = backup;
-	return 0;
-}
-EXPORT_SYMBOL(ttm_tt_setup_backup);

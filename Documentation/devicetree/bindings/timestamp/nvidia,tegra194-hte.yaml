@@ -25,8 +25,6 @@ properties:
       - nvidia,tegra194-gte-lic
       - nvidia,tegra234-gte-aon
       - nvidia,tegra234-gte-lic
-      - nvidia,tegra264-gte-aon
-      - nvidia,tegra264-gte-lic
 
   reg:
     maxItems: 1
@@ -114,21 +112,9 @@ allOf:
           contains:
             enum:
               - nvidia,tegra234-gte-aon
-              - nvidia,tegra264-gte-aon
     then:
       required:
         - nvidia,gpio-controller
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - nvidia,tegra264-gte-aon
-              - nvidia,tegra264-gte-lic
-    then:
-      properties:
-        nvidia,slices: false
 
 additionalProperties: false
 

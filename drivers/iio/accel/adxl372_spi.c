@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * ADXL371/ADXL372 3-Axis Digital Accelerometer SPI driver
+ * ADXL372 3-Axis Digital Accelerometer SPI driver
  *
  * Copyright 2018 Analog Devices Inc.
  */
@@ -22,28 +22,24 @@ static const struct regmap_config adxl372_spi_regmap_config = {
 
 static int adxl372_spi_probe(struct spi_device *spi)
 {
-	const struct adxl372_chip_info *chip_info;
+	const struct spi_device_id *id = spi_get_device_id(spi);
 	struct regmap *regmap;
-
-	chip_info = spi_get_device_match_data(spi);
 
 	regmap = devm_regmap_init_spi(spi, &adxl372_spi_regmap_config);
 	if (IS_ERR(regmap))
 		return PTR_ERR(regmap);
 
-	return adxl372_probe(&spi->dev, regmap, spi->irq, chip_info);
+	return adxl372_probe(&spi->dev, regmap, spi->irq, id->name);
 }
 
 static const struct spi_device_id adxl372_spi_id[] = {
-	{ "adxl371", (kernel_ulong_t)&adxl371_chip_info },
-	{ "adxl372", (kernel_ulong_t)&adxl372_chip_info },
-	{ }
+	{ "adxl372", 0 },
+	{}
 };
 MODULE_DEVICE_TABLE(spi, adxl372_spi_id);
 
 static const struct of_device_id adxl372_of_match[] = {
-	{ .compatible = "adi,adxl371", .data = &adxl371_chip_info },
-	{ .compatible = "adi,adxl372", .data = &adxl372_chip_info },
+	{ .compatible = "adi,adxl372" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, adxl372_of_match);
@@ -60,7 +56,6 @@ static struct spi_driver adxl372_spi_driver = {
 module_spi_driver(adxl372_spi_driver);
 
 MODULE_AUTHOR("Stefan Popa <stefan.popa@analog.com>");
-MODULE_AUTHOR("Antoniu Miclaus <antoniu.miclaus@analog.com>");
-MODULE_DESCRIPTION("Analog Devices ADXL371/ADXL372 3-axis accelerometer SPI driver");
+MODULE_DESCRIPTION("Analog Devices ADXL372 3-axis accelerometer SPI driver");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("IIO_ADXL372");
+MODULE_IMPORT_NS(IIO_ADXL372);

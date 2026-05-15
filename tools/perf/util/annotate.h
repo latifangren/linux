@@ -15,7 +15,6 @@
 #include "hashmap.h"
 #include "disasm.h"
 #include "branch.h"
-#include "evsel.h"
 
 struct hist_browser_timer;
 struct hist_entry;
@@ -24,6 +23,7 @@ struct map_symbol;
 struct addr_map_symbol;
 struct option;
 struct perf_sample;
+struct evsel;
 struct symbol;
 struct annotated_data_type;
 
@@ -34,17 +34,8 @@ struct annotated_data_type;
 #define ANNOTATION__BR_CNTR_WIDTH 30
 #define ANNOTATION_DUMMY_LEN	256
 
-enum perf_disassembler {
-	PERF_DISASM_UNKNOWN = 0,
-	PERF_DISASM_LLVM,
-	PERF_DISASM_CAPSTONE,
-	PERF_DISASM_OBJDUMP,
-};
-#define MAX_DISASSEMBLERS (PERF_DISASM_OBJDUMP + 1)
-
 struct annotation_options {
 	bool hide_src_code,
-	     hide_src_code_on_title,
 	     use_offset,
 	     jump_arrows,
 	     print_lines,
@@ -56,11 +47,8 @@ struct annotation_options {
 	     show_asm_raw,
 	     show_br_cntr,
 	     annotate_src,
-	     code_with_type,
 	     full_addr;
 	u8   offset_level;
-	u8   disassemblers[MAX_DISASSEMBLERS];
-	u8   disassembler_used;
 	int  min_pcnt;
 	int  max_lines;
 	int  context;
@@ -140,8 +128,6 @@ struct disasm_line {
 	struct annotation_line	 al;
 };
 
-extern const char * const perf_disassembler__strs[];
-
 void annotation_line__add(struct annotation_line *al, struct list_head *head);
 
 static inline double annotation_data__percent(struct annotation_data *data,
@@ -199,20 +185,8 @@ struct annotation_write_ops {
 	void (*write_graph)(void *obj, int graph);
 };
 
-struct annotation_print_data {
-	struct hist_entry *he;
-	struct evsel *evsel;
-	const struct arch *arch;
-	struct debuginfo *dbg;
-	/* save data type info keyed by al->offset */
-	struct hashmap *type_hash;
-	/* It'll be set in hist_entry__annotate_printf() */
-	int addr_fmt_width;
-};
-
 void annotation_line__write(struct annotation_line *al, struct annotation *notes,
-			    const struct annotation_write_ops *ops,
-			    struct annotation_print_data *apd);
+			    struct annotation_write_ops *ops);
 
 int __annotation__scnprintf_samples_period(struct annotation *notes,
 					   char *bf, size_t size,
@@ -306,7 +280,6 @@ struct annotated_source {
 	int			nr_entries;
 	int			nr_asm_entries;
 	int			max_jump_sources;
-	bool			tried_source;
 	u64			start;
 	struct {
 		u8		addr;
@@ -394,23 +367,21 @@ static inline u8 annotation__br_cntr_width(void)
 void annotation__update_column_widths(struct annotation *notes);
 void annotation__toggle_full_addr(struct annotation *notes, struct map_symbol *ms);
 
-static inline struct sym_hist *annotated_source__histogram(struct annotated_source *src,
-							   const struct evsel *evsel)
+static inline struct sym_hist *annotated_source__histogram(struct annotated_source *src, int idx)
 {
-	return &src->histograms[evsel->core.idx];
+	return &src->histograms[idx];
 }
 
-static inline struct sym_hist *annotation__histogram(struct annotation *notes,
-						     const struct evsel *evsel)
+static inline struct sym_hist *annotation__histogram(struct annotation *notes, int idx)
 {
-	return annotated_source__histogram(notes->src, evsel);
+	return annotated_source__histogram(notes->src, idx);
 }
 
 static inline struct sym_hist_entry *
-annotated_source__hist_entry(struct annotated_source *src, const struct evsel *evsel, u64 offset)
+annotated_source__hist_entry(struct annotated_source *src, int idx, u64 offset)
 {
 	struct sym_hist_entry *entry;
-	long key = offset << 16 | evsel->core.idx;
+	long key = offset << 16 | idx;
 
 	if (!hashmap__find(src->samples, key, &entry))
 		return NULL;
@@ -441,10 +412,10 @@ void symbol__annotate_zero_histograms(struct symbol *sym);
 
 int symbol__annotate(struct map_symbol *ms,
 		     struct evsel *evsel,
-		     const struct arch **parch);
+		     struct arch **parch);
 int symbol__annotate2(struct map_symbol *ms,
 		      struct evsel *evsel,
-		      const struct arch **parch);
+		      struct arch **parch);
 
 enum symbol_disassemble_errno {
 	SYMBOL_ANNOTATE_ERRNO__SUCCESS		= 0,
@@ -464,25 +435,36 @@ enum symbol_disassemble_errno {
 	SYMBOL_ANNOTATE_ERRNO__ARCH_INIT_REGEXP,
 	SYMBOL_ANNOTATE_ERRNO__BPF_INVALID_FILE,
 	SYMBOL_ANNOTATE_ERRNO__BPF_MISSING_BTF,
-	SYMBOL_ANNOTATE_ERRNO__COULDNT_DETERMINE_FILE_TYPE,
 
 	__SYMBOL_ANNOTATE_ERRNO__END,
 };
 
 int symbol__strerror_disassemble(struct map_symbol *ms, int errnum, char *buf, size_t buflen);
 
-void symbol__annotate_zero_histogram(struct symbol *sym, struct evsel *evsel);
-void symbol__annotate_decay_histogram(struct symbol *sym, struct evsel *evsel);
+int symbol__annotate_printf(struct map_symbol *ms, struct evsel *evsel);
+void symbol__annotate_zero_histogram(struct symbol *sym, int evidx);
+void symbol__annotate_decay_histogram(struct symbol *sym, int evidx);
 void annotated_source__purge(struct annotated_source *as);
 
-int map_symbol__annotation_dump(struct map_symbol *ms, struct evsel *evsel,
-				struct hist_entry *he);
+int map_symbol__annotation_dump(struct map_symbol *ms, struct evsel *evsel);
 
 bool ui__has_annotation(void);
 
-int hist_entry__annotate_printf(struct hist_entry *he, struct evsel *evsel);
-int hist_entry__tty_annotate(struct hist_entry *he, struct evsel *evsel);
-int hist_entry__tty_annotate2(struct hist_entry *he, struct evsel *evsel);
+int symbol__tty_annotate(struct map_symbol *ms, struct evsel *evsel);
+
+int symbol__tty_annotate2(struct map_symbol *ms, struct evsel *evsel);
+
+#ifdef HAVE_SLANG_SUPPORT
+int symbol__tui_annotate(struct map_symbol *ms, struct evsel *evsel,
+			 struct hist_browser_timer *hbt);
+#else
+static inline int symbol__tui_annotate(struct map_symbol *ms __maybe_unused,
+				struct evsel *evsel  __maybe_unused,
+				struct hist_browser_timer *hbt __maybe_unused)
+{
+	return 0;
+}
+#endif
 
 void annotation_options__init(void);
 void annotation_options__exit(void);
@@ -546,7 +528,7 @@ struct annotated_insn_loc {
 	     i++, op_loc++)
 
 /* Get detailed location info in the instruction */
-int annotate_get_insn_location(const struct arch *arch, struct disasm_line *dl,
+int annotate_get_insn_location(struct arch *arch, struct disasm_line *dl,
 			       struct annotated_insn_loc *loc);
 
 /* Returns a data type from the sample instruction (if any) */
@@ -585,6 +567,4 @@ void debuginfo_cache__delete(void);
 int annotation_br_cntr_entry(char **str, int br_cntr_nr, u64 *br_cntr,
 			     int num_aggr, struct evsel *evsel);
 int annotation_br_cntr_abbr_list(char **str, struct evsel *evsel, bool header);
-
-int thread__get_arch(struct thread *thread, const struct arch **parch);
 #endif	/* __PERF_ANNOTATE_H */

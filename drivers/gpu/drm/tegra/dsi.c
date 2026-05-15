@@ -14,7 +14,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
-#include <linux/tegra-mipi-cal.h>
 
 #include <video/mipi_display.h>
 
@@ -23,7 +22,6 @@
 #include <drm/drm_file.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_print.h>
 #include <drm/drm_simple_kms_helper.h>
 
 #include "dc.h"
@@ -547,18 +545,11 @@ static void tegra_dsi_configure(struct tegra_dsi *dsi, unsigned int pipe,
 		/* horizontal back porch */
 		hbp = (mode->htotal - mode->hsync_end) * mul / div;
 
-		/* horizontal front porch */
-		hfp = (mode->hsync_start - mode->hdisplay) * mul / div;
-
-		if (dsi->master || dsi->slave) {
-			hact /= 2;
-			hsw /= 2;
-			hbp /= 2;
-			hfp /= 2;
-		}
-
 		if ((dsi->flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE) == 0)
 			hbp += hsw;
+
+		/* horizontal front porch */
+		hfp = (mode->hsync_start - mode->hdisplay) * mul / div;
 
 		/* subtract packet overhead */
 		hsw -= 10;
@@ -569,6 +560,11 @@ static void tegra_dsi_configure(struct tegra_dsi *dsi, unsigned int pipe,
 		tegra_dsi_writel(dsi, hact << 16 | hbp, DSI_PKT_LEN_2_3);
 		tegra_dsi_writel(dsi, hfp, DSI_PKT_LEN_4_5);
 		tegra_dsi_writel(dsi, 0x0f0f << 16, DSI_PKT_LEN_6_7);
+
+		/* set SOL delay (for non-burst mode only) */
+		tegra_dsi_writel(dsi, 8 * mul / div, DSI_SOL_DELAY);
+
+		/* TODO: implement ganged mode */
 	} else {
 		u16 bytes;
 
@@ -590,27 +586,28 @@ static void tegra_dsi_configure(struct tegra_dsi *dsi, unsigned int pipe,
 		value = MIPI_DCS_WRITE_MEMORY_START << 8 |
 			MIPI_DCS_WRITE_MEMORY_CONTINUE;
 		tegra_dsi_writel(dsi, value, DSI_DCS_CMDS);
+
+		/* set SOL delay */
+		if (dsi->master || dsi->slave) {
+			unsigned long delay, bclk, bclk_ganged;
+			unsigned int lanes = state->lanes;
+
+			/* SOL to valid, valid to FIFO and FIFO write delay */
+			delay = 4 + 4 + 2;
+			delay = DIV_ROUND_UP(delay * mul, div * lanes);
+			/* FIFO read delay */
+			delay = delay + 6;
+
+			bclk = DIV_ROUND_UP(mode->htotal * mul, div * lanes);
+			bclk_ganged = DIV_ROUND_UP(bclk * lanes / 2, lanes);
+			value = bclk - bclk_ganged + delay + 20;
+		} else {
+			/* TODO: revisit for non-ganged mode */
+			value = 8 * mul / div;
+		}
+
+		tegra_dsi_writel(dsi, value, DSI_SOL_DELAY);
 	}
-
-	/* set SOL delay */
-	if (dsi->master || dsi->slave) {
-		unsigned long delay, bclk, bclk_ganged;
-		unsigned int lanes = state->lanes;
-
-		/* SOL to valid, valid to FIFO and FIFO write delay */
-		delay = 4 + 4 + 2;
-		delay = DIV_ROUND_UP(delay * mul, div * lanes);
-		/* FIFO read delay */
-		delay = delay + 6;
-
-		bclk = DIV_ROUND_UP(mode->htotal * mul, div * lanes);
-		bclk_ganged = DIV_ROUND_UP(bclk * lanes / 2, lanes);
-		value = bclk - bclk_ganged + delay + 20;
-	} else {
-		value = 8 * mul / div;
-	}
-
-	tegra_dsi_writel(dsi, value, DSI_SOL_DELAY);
 
 	if (dsi->slave) {
 		tegra_dsi_configure(dsi->slave, pipe, mode);
@@ -773,7 +770,7 @@ static void tegra_dsi_soft_reset(struct tegra_dsi *dsi)
 
 static void tegra_dsi_connector_reset(struct drm_connector *connector)
 {
-	struct tegra_dsi_state *state = kzalloc_obj(*state);
+	struct tegra_dsi_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
 
 	if (!state)
 		return;
@@ -815,7 +812,7 @@ static const struct drm_connector_funcs tegra_dsi_connector_funcs = {
 
 static enum drm_mode_status
 tegra_dsi_connector_mode_valid(struct drm_connector *connector,
-			       const struct drm_display_mode *mode)
+			       struct drm_display_mode *mode)
 {
 	return MODE_OK;
 }
@@ -1556,6 +1553,7 @@ static int tegra_dsi_ganged_probe(struct tegra_dsi *dsi)
 static int tegra_dsi_probe(struct platform_device *pdev)
 {
 	struct tegra_dsi *dsi;
+	struct resource *regs;
 	int err;
 
 	dsi = devm_kzalloc(&pdev->dev, sizeof(*dsi), GFP_KERNEL);
@@ -1627,7 +1625,8 @@ static int tegra_dsi_probe(struct platform_device *pdev)
 		goto remove;
 	}
 
-	dsi->regs = devm_platform_ioremap_resource(pdev, 0);
+	regs = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dsi->regs = devm_ioremap_resource(&pdev->dev, regs);
 	if (IS_ERR(dsi->regs)) {
 		err = PTR_ERR(dsi->regs);
 		goto remove;
@@ -1703,5 +1702,5 @@ struct platform_driver tegra_dsi_driver = {
 		.of_match_table = tegra_dsi_of_match,
 	},
 	.probe = tegra_dsi_probe,
-	.remove = tegra_dsi_remove,
+	.remove_new = tegra_dsi_remove,
 };

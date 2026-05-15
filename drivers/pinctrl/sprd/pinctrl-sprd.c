@@ -258,7 +258,8 @@ static int sprd_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 	grp = sprd_pinctrl_find_group_by_name(pctl, np->name);
 	if (!grp) {
-		dev_err(pctl->dev, "unable to find group for node %pOF\n", np);
+		dev_err(pctl->dev, "unable to find group for node %s\n",
+			of_node_full_name(np));
 		return -EINVAL;
 	}
 
@@ -275,14 +276,16 @@ static int sprd_dt_node_to_map(struct pinctrl_dev *pctldev,
 	if (ret < 0) {
 		if (ret != -EINVAL)
 			dev_err(pctl->dev,
-				"%pOF: could not parse property function\n", np);
+				"%s: could not parse property function\n",
+				of_node_full_name(np));
 		function = NULL;
 	}
 
 	ret = pinconf_generic_parse_dt_config(np, pctldev, &configs,
 					      &num_configs);
 	if (ret < 0) {
-		dev_err(pctl->dev, "%pOF: could not parse node property\n", np);
+		dev_err(pctl->dev, "%s: could not parse node property\n",
+			of_node_full_name(np));
 		return ret;
 	}
 

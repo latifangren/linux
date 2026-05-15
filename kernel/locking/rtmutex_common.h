@@ -59,8 +59,8 @@ struct rt_mutex_waiter {
 };
 
 /**
- * struct rt_wake_q_head - Wrapper around regular wake_q_head to support
- *			   "sleeping" spinlocks on RT
+ * rt_wake_q_head - Wrapper around regular wake_q_head to support
+ *		    "sleeping" spinlocks on RT
  * @head:		The regular wake_q_head for sleeping lock variants
  * @rtlock_task:	Task pointer for RT lock (spin/rwlock) wakeups
  */
@@ -79,18 +79,11 @@ struct rt_wake_q_head {
  * PI-futex support (proxy locking functions, etc.):
  */
 extern void rt_mutex_init_proxy_locked(struct rt_mutex_base *lock,
-				       struct task_struct *proxy_owner)
-	__must_hold(&lock->wait_lock);
-
-extern void rt_mutex_proxy_unlock(struct rt_mutex_base *lock)
-	__must_hold(&lock->wait_lock);
-
+				       struct task_struct *proxy_owner);
+extern void rt_mutex_proxy_unlock(struct rt_mutex_base *lock);
 extern int __rt_mutex_start_proxy_lock(struct rt_mutex_base *lock,
 				     struct rt_mutex_waiter *waiter,
-				     struct task_struct *task,
-				     struct wake_q_head *)
-	__must_hold(&lock->wait_lock);
-
+				     struct task_struct *task);
 extern int rt_mutex_start_proxy_lock(struct rt_mutex_base *lock,
 				     struct rt_mutex_waiter *waiter,
 				     struct task_struct *task);
@@ -100,9 +93,8 @@ extern int rt_mutex_wait_proxy_lock(struct rt_mutex_base *lock,
 extern bool rt_mutex_cleanup_proxy_lock(struct rt_mutex_base *lock,
 				 struct rt_mutex_waiter *waiter);
 
-extern int rt_mutex_futex_trylock(struct rt_mutex_base *lock);
-extern int __rt_mutex_futex_trylock(struct rt_mutex_base *lock)
-	__must_hold(&lock->wait_lock);
+extern int rt_mutex_futex_trylock(struct rt_mutex_base *l);
+extern int __rt_mutex_futex_trylock(struct rt_mutex_base *l);
 
 extern void rt_mutex_futex_unlock(struct rt_mutex_base *lock);
 extern bool __rt_mutex_futex_unlock(struct rt_mutex_base *lock,
@@ -116,7 +108,6 @@ extern void rt_mutex_postunlock(struct rt_wake_q_head *wqh);
  */
 #ifdef CONFIG_RT_MUTEXES
 static inline int rt_mutex_has_waiters(struct rt_mutex_base *lock)
-	__must_hold(&lock->wait_lock)
 {
 	return !RB_EMPTY_ROOT(&lock->waiters.rb_root);
 }
@@ -128,7 +119,6 @@ static inline int rt_mutex_has_waiters(struct rt_mutex_base *lock)
  */
 static inline bool rt_mutex_waiter_is_top_waiter(struct rt_mutex_base *lock,
 						 struct rt_mutex_waiter *waiter)
-	__must_hold(&lock->wait_lock)
 {
 	struct rb_node *leftmost = rb_first_cached(&lock->waiters);
 
@@ -136,7 +126,6 @@ static inline bool rt_mutex_waiter_is_top_waiter(struct rt_mutex_base *lock,
 }
 
 static inline struct rt_mutex_waiter *rt_mutex_top_waiter(struct rt_mutex_base *lock)
-	__must_hold(&lock->wait_lock)
 {
 	struct rb_node *leftmost = rb_first_cached(&lock->waiters);
 	struct rt_mutex_waiter *w = NULL;
@@ -163,6 +152,15 @@ static inline struct rt_mutex_waiter *task_top_pi_waiter(struct task_struct *p)
 			pi_tree.entry);
 }
 
+#define RT_MUTEX_HAS_WAITERS	1UL
+
+static inline struct task_struct *rt_mutex_owner(struct rt_mutex_base *lock)
+{
+	unsigned long owner = (unsigned long) READ_ONCE(lock->owner);
+
+	return (struct task_struct *) (owner & ~RT_MUTEX_HAS_WAITERS);
+}
+
 /*
  * Constants for rt mutex functions which have a selectable deadlock
  * detection.
@@ -180,10 +178,9 @@ enum rtmutex_chainwalk {
 
 static inline void __rt_mutex_base_init(struct rt_mutex_base *lock)
 {
-	scoped_guard (raw_spinlock_init, &lock->wait_lock) {
-		lock->waiters = RB_ROOT_CACHED;
-		lock->owner = NULL;
-	}
+	raw_spin_lock_init(&lock->wait_lock);
+	lock->waiters = RB_ROOT_CACHED;
+	lock->owner = NULL;
 }
 
 /* Debug functions */

@@ -21,7 +21,6 @@
  * SOFTWARE.
  */
 
-#include <linux/export.h>
 #include <linux/slab.h>
 
 #include <drm/drm_flip_work.h>
@@ -37,7 +36,7 @@ static struct drm_flip_task *drm_flip_work_allocate_task(void *data, gfp_t flags
 {
 	struct drm_flip_task *task;
 
-	task = kzalloc_obj(*task, flags);
+	task = kzalloc(sizeof(*task), flags);
 	if (task)
 		task->data = data;
 

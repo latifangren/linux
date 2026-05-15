@@ -74,7 +74,7 @@ static int __init wpcm450_soc_init(void)
 		return -ENODEV;
 	}
 
-	attr = kzalloc_obj(*attr);
+	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
 	if (!attr)
 		return -ENOMEM;
 

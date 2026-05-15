@@ -365,7 +365,7 @@ static int snd_usx2y_usbpcm_hw_free(struct snd_pcm_substream *substream)
 	struct snd_usx2y_substream *playback_subs;
 	struct snd_usx2y_substream *cap_subs2;
 
-	guard(mutex)(&subs->usx2y->pcm_mutex);
+	mutex_lock(&subs->usx2y->pcm_mutex);
 	dev_dbg(&subs->usx2y->dev->dev, "%s(%p)\n", __func__, substream);
 
 	cap_subs2 = subs->usx2y->subs[SNDRV_PCM_STREAM_CAPTURE + 2];
@@ -394,6 +394,7 @@ static int snd_usx2y_usbpcm_hw_free(struct snd_pcm_substream *substream)
 				usx2y_usbpcm_urbs_release(cap_subs2);
 		}
 	}
+	mutex_unlock(&subs->usx2y->pcm_mutex);
 	return 0;
 }
 
@@ -503,13 +504,15 @@ static int snd_usx2y_usbpcm_prepare(struct snd_pcm_substream *substream)
 
 	dev_dbg(&usx2y->dev->dev, "snd_usx2y_pcm_prepare(%p)\n", substream);
 
-	guard(mutex)(&usx2y->pcm_mutex);
+	mutex_lock(&usx2y->pcm_mutex);
 
 	if (!usx2y->hwdep_pcm_shm) {
 		usx2y->hwdep_pcm_shm = alloc_pages_exact(USX2Y_HWDEP_PCM_PAGES,
 							 GFP_KERNEL);
-		if (!usx2y->hwdep_pcm_shm)
-			return -ENOMEM;
+		if (!usx2y->hwdep_pcm_shm) {
+			err = -ENOMEM;
+			goto up_prepare_mutex;
+		}
 		memset(usx2y->hwdep_pcm_shm, 0, USX2Y_HWDEP_PCM_PAGES);
 	}
 
@@ -520,19 +523,19 @@ static int snd_usx2y_usbpcm_prepare(struct snd_pcm_substream *substream)
 		if (usx2y->format != runtime->format) {
 			err = usx2y_format_set(usx2y, runtime->format);
 			if (err < 0)
-				return err;
+				goto up_prepare_mutex;
 		}
 		if (usx2y->rate != runtime->rate) {
 			err = usx2y_rate_set(usx2y, runtime->rate);
 			if (err < 0)
-				return err;
+				goto up_prepare_mutex;
 		}
 		dev_dbg(&usx2y->dev->dev,
 			"starting capture pipe for %s\n", subs == capsubs ?
 			"self" : "playpipe");
 		err = usx2y_usbpcm_urbs_start(capsubs);
 		if (err < 0)
-			return err;
+			goto up_prepare_mutex;
 	}
 
 	if (subs != capsubs) {
@@ -544,12 +547,14 @@ static int snd_usx2y_usbpcm_prepare(struct snd_pcm_substream *substream)
 					"Wait: iso_frames_per_buffer=%i,captured_iso_frames=%i\n",
 					usx2y_iso_frames_per_buffer(runtime, usx2y),
 					usx2y->hwdep_pcm_shm->captured_iso_frames);
-				if (msleep_interruptible(10))
-					return -ERESTARTSYS;
+				if (msleep_interruptible(10)) {
+					err = -ERESTARTSYS;
+					goto up_prepare_mutex;
+				}
 			}
 			err = usx2y_usbpcm_urbs_start(subs);
 			if (err < 0)
-				return err;
+				goto up_prepare_mutex;
 		}
 		dev_dbg(&usx2y->dev->dev,
 			"Ready: iso_frames_per_buffer=%i,captured_iso_frames=%i\n",
@@ -559,6 +564,8 @@ static int snd_usx2y_usbpcm_prepare(struct snd_pcm_substream *substream)
 		usx2y->hwdep_pcm_shm->capture_iso_start = -1;
 	}
 
+ up_prepare_mutex:
+	mutex_unlock(&usx2y->pcm_mutex);
 	return err;
 }
 
@@ -639,10 +646,11 @@ static int snd_usx2y_hwdep_pcm_open(struct snd_hwdep *hw, struct file *file)
 	struct snd_card *card = hw->card;
 	int err;
 
-	guard(mutex)(&usx2y(card)->pcm_mutex);
+	mutex_lock(&usx2y(card)->pcm_mutex);
 	err = usx2y_pcms_busy_check(card);
 	if (!err)
 		usx2y(card)->chip_status |= USX2Y_STAT_CHIP_MMAP_PCM_URBS;
+	mutex_unlock(&usx2y(card)->pcm_mutex);
 	return err;
 }
 
@@ -651,10 +659,11 @@ static int snd_usx2y_hwdep_pcm_release(struct snd_hwdep *hw, struct file *file)
 	struct snd_card *card = hw->card;
 	int err;
 
-	guard(mutex)(&usx2y(card)->pcm_mutex);
+	mutex_lock(&usx2y(card)->pcm_mutex);
 	err = usx2y_pcms_busy_check(card);
 	if (!err)
 		usx2y(hw->card)->chip_status &= ~USX2Y_STAT_CHIP_MMAP_PCM_URBS;
+	mutex_unlock(&usx2y(card)->pcm_mutex);
 	return err;
 }
 

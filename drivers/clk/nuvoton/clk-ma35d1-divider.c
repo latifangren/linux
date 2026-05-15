@@ -39,13 +39,12 @@ static unsigned long ma35d1_clkdiv_recalc_rate(struct clk_hw *hw, unsigned long 
 				   CLK_DIVIDER_ROUND_CLOSEST, dclk->width);
 }
 
-static int ma35d1_clkdiv_determine_rate(struct clk_hw *hw,
-					struct clk_rate_request *req)
+static long ma35d1_clkdiv_round_rate(struct clk_hw *hw, unsigned long rate, unsigned long *prate)
 {
 	struct ma35d1_adc_clk_div *dclk = to_ma35d1_adc_clk_div(hw);
 
-	return divider_determine_rate(hw, req, dclk->table, dclk->width,
-				      CLK_DIVIDER_ROUND_CLOSEST);
+	return divider_round_rate(hw, rate, prate, dclk->table,
+				  dclk->width, CLK_DIVIDER_ROUND_CLOSEST);
 }
 
 static int ma35d1_clkdiv_set_rate(struct clk_hw *hw, unsigned long rate, unsigned long parent_rate)
@@ -72,7 +71,7 @@ static int ma35d1_clkdiv_set_rate(struct clk_hw *hw, unsigned long rate, unsigne
 
 static const struct clk_ops ma35d1_adc_clkdiv_ops = {
 	.recalc_rate = ma35d1_clkdiv_recalc_rate,
-	.determine_rate = ma35d1_clkdiv_determine_rate,
+	.round_rate = ma35d1_clkdiv_round_rate,
 	.set_rate = ma35d1_clkdiv_set_rate,
 };
 

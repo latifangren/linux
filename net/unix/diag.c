@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
-
-#include <linux/dcache.h>
-#include <linux/module.h>
-#include <linux/skbuff.h>
-#include <linux/sock_diag.h>
 #include <linux/types.h>
-#include <linux/user_namespace.h>
-#include <net/af_unix.h>
+#include <linux/spinlock.h>
+#include <linux/sock_diag.h>
+#include <linux/unix_diag.h>
+#include <linux/skbuff.h>
+#include <linux/module.h>
+#include <linux/uidgid.h>
 #include <net/netlink.h>
+#include <net/af_unix.h>
 #include <net/tcp_states.h>
-#include <uapi/linux/unix_diag.h>
-
-#include "af_unix.h"
+#include <net/sock.h>
 
 static int sk_diag_dump_name(struct sock *sk, struct sk_buff *nlskb)
 {
@@ -50,7 +48,7 @@ static int sk_diag_dump_vfs(struct sock *sk, struct sk_buff *nlskb)
 static int sk_diag_dump_peer(struct sock *sk, struct sk_buff *nlskb)
 {
 	struct sock *peer;
-	u64 ino;
+	int ino;
 
 	peer = unix_peer_get(sk);
 	if (peer) {
@@ -111,13 +109,13 @@ static int sk_diag_show_rqlen(struct sock *sk, struct sk_buff *nlskb)
 static int sk_diag_dump_uid(struct sock *sk, struct sk_buff *nlskb,
 			    struct user_namespace *user_ns)
 {
-	uid_t uid = from_kuid_munged(user_ns, sk_uid(sk));
+	uid_t uid = from_kuid_munged(user_ns, sock_i_uid(sk));
 	return nla_put(nlskb, UNIX_DIAG_UID, sizeof(uid_t), &uid);
 }
 
 static int sk_diag_fill(struct sock *sk, struct sk_buff *skb, struct unix_diag_req *req,
 			struct user_namespace *user_ns,
-			u32 portid, u32 seq, u32 flags, u64 sk_ino)
+			u32 portid, u32 seq, u32 flags, int sk_ino)
 {
 	struct nlmsghdr *nlh;
 	struct unix_diag_msg *rep;
@@ -191,7 +189,7 @@ static int unix_diag_dump(struct sk_buff *skb, struct netlink_callback *cb)
 		num = 0;
 		spin_lock(&net->unx.table.locks[slot]);
 		sk_for_each(sk, &net->unx.table.buckets[slot]) {
-			u64 sk_ino;
+			int sk_ino;
 
 			if (num < s_num)
 				goto next;

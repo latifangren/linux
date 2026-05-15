@@ -24,7 +24,6 @@
 
 #include <linux/string.h>
 #include <linux/errno.h>
-#include <linux/filelock.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/bio.h>
@@ -157,6 +156,5 @@ const struct file_operations udf_dir_operations = {
 	.read			= generic_read_dir,
 	.iterate_shared		= udf_readdir,
 	.unlocked_ioctl		= udf_ioctl,
-	.fsync			= udf_fsync,
-	.setlease		= generic_setlease,
+	.fsync			= generic_file_fsync,
 };

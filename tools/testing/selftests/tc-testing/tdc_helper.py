@@ -16,9 +16,9 @@ def get_categorized_testlist(alltests, ucat):
 
 
 def get_unique_item(lst):
-    """Return unique items while preserving original order."""
+    """ For a list, return a list of the unique items in the list. """
     if len(lst) > 1:
-        return list(dict.fromkeys(lst))
+        return list(set(lst))
     else:
         return lst
 
@@ -38,14 +38,10 @@ def list_test_cases(testlist):
 
 
 def list_categories(testlist):
-    """Show all unique categories present in the test cases."""
-    categories = set()
-    for t in testlist:
-        if 'category' in t:
-            categories.update(t['category'])
-
+    """ Show all categories that are present in a test case file. """
+    categories = set(map(lambda x: x['category'], testlist))
     print("Available categories:")
-    print(", ".join(sorted(categories)))
+    print(", ".join(str(s) for s in categories))
     print("")
 
 

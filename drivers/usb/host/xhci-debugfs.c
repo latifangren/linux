@@ -87,7 +87,7 @@ static struct xhci_regset *xhci_debugfs_alloc_regset(struct xhci_hcd *xhci)
 {
 	struct xhci_regset	*regset;
 
-	regset = kzalloc_obj(*regset);
+	regset = kzalloc(sizeof(*regset), GFP_KERNEL);
 	if (!regset)
 		return NULL;
 
@@ -232,7 +232,16 @@ static struct xhci_file_map ring_files[] = {
 
 static int xhci_ring_open(struct inode *inode, struct file *file)
 {
-	const struct xhci_file_map *f_map = debugfs_get_aux(file);
+	int			i;
+	struct xhci_file_map	*f_map;
+	const char		*file_name = file_dentry(file)->d_iname;
+
+	for (i = 0; i < ARRAY_SIZE(ring_files); i++) {
+		f_map = &ring_files[i];
+
+		if (strcmp(f_map->name, file_name) == 0)
+			break;
+	}
 
 	return single_open(file, f_map->show, inode->i_private);
 }
@@ -279,13 +288,12 @@ static int xhci_endpoint_context_show(struct seq_file *s, void *unused)
 	for (ep_index = 0; ep_index < 31; ep_index++) {
 		ep_ctx = xhci_get_ep_ctx(xhci, dev->out_ctx, ep_index);
 		dma = dev->out_ctx->dma + (ep_index + 1) * CTX_SIZE(xhci->hcc_params);
-		seq_printf(s, "%pad: %s, virt_state:%#x\n", &dma,
+		seq_printf(s, "%pad: %s\n", &dma,
 			   xhci_decode_ep_context(str,
 						  le32_to_cpu(ep_ctx->ep_info),
 						  le32_to_cpu(ep_ctx->ep_info2),
 						  le64_to_cpu(ep_ctx->deq),
-						  le32_to_cpu(ep_ctx->tx_info)),
-						  dev->eps[ep_index].ep_state);
+						  le32_to_cpu(ep_ctx->tx_info)));
 	}
 
 	return 0;
@@ -309,7 +317,16 @@ static struct xhci_file_map context_files[] = {
 
 static int xhci_context_open(struct inode *inode, struct file *file)
 {
-	const struct xhci_file_map *f_map = debugfs_get_aux(file);
+	int			i;
+	struct xhci_file_map	*f_map;
+	const char		*file_name = file_dentry(file)->d_iname;
+
+	for (i = 0; i < ARRAY_SIZE(context_files); i++) {
+		f_map = &context_files[i];
+
+		if (strcmp(f_map->name, file_name) == 0)
+			break;
+	}
 
 	return single_open(file, f_map->show, inode->i_private);
 }
@@ -329,7 +346,7 @@ static int xhci_portsc_show(struct seq_file *s, void *unused)
 	u32			portsc;
 	char			str[XHCI_MSG_MAX];
 
-	portsc = xhci_portsc_readl(port);
+	portsc = readl(port->addr);
 	seq_printf(s, "%s\n", xhci_decode_portsc(str, portsc));
 
 	return 0;
@@ -355,11 +372,11 @@ static ssize_t xhci_port_write(struct file *file,  const char __user *ubuf,
 
 	if (!strncmp(buf, "compliance", 10)) {
 		/* If CTC is clear, compliance is enabled by default */
-		if (!(xhci->hcc_params2 & HCC2_CTC))
+		if (!HCC2_CTC(xhci->hcc_params2))
 			return count;
 		spin_lock_irqsave(&xhci->lock, flags);
 		/* compliance mode can only be enabled on ports in RxDetect */
-		portsc = xhci_portsc_readl(port);
+		portsc = readl(port->addr);
 		if ((portsc & PORT_PLS_MASK) != XDEV_RXDETECT) {
 			spin_unlock_irqrestore(&xhci->lock, flags);
 			return -EPERM;
@@ -367,7 +384,7 @@ static ssize_t xhci_port_write(struct file *file,  const char __user *ubuf,
 		portsc = xhci_port_state_to_neutral(portsc);
 		portsc &= ~PORT_PLS_MASK;
 		portsc |= PORT_LINK_STROBE | XDEV_COMP_MODE;
-		xhci_portsc_writel(port, portsc);
+		writel(portsc, port->addr);
 		spin_unlock_irqrestore(&xhci->lock, flags);
 	} else {
 		return -EINVAL;
@@ -383,47 +400,6 @@ static const struct file_operations port_fops = {
 	.release		= single_release,
 };
 
-static int xhci_portli_show(struct seq_file *s, void *unused)
-{
-	struct xhci_port	*port = s->private;
-	struct xhci_hcd		*xhci;
-	u32			portli;
-
-	portli = readl(&port->port_reg->portli);
-
-	/* port without protocol capability isn't added to a roothub */
-	if (!port->rhub) {
-		seq_printf(s, "0x%08x\n", portli);
-		return 0;
-	}
-
-	xhci = hcd_to_xhci(port->rhub->hcd);
-
-	/* PORTLI fields are valid if port is a USB3 or eUSB2V2 port */
-	if (port->rhub == &xhci->usb3_rhub)
-		seq_printf(s, "0x%08x LEC=%u RLC=%u TLC=%u\n", portli,
-			   PORT_LEC(portli), PORT_RX_LANES(portli), PORT_TX_LANES(portli));
-	else if (xhci->hcc_params2 & HCC2_E2V2C)
-		seq_printf(s, "0x%08x RDR=%u TDR=%u\n", portli,
-			   PORTLI_RDR(portli), PORTLI_TDR(portli));
-	else
-		seq_printf(s, "0x%08x RsvdP\n", portli);
-
-	return 0;
-}
-
-static int xhci_portli_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, xhci_portli_show, inode->i_private);
-}
-
-static const struct file_operations portli_fops = {
-	.open			= xhci_portli_open,
-	.read			= seq_read,
-	.llseek			= seq_lseek,
-	.release		= single_release,
-};
-
 static void xhci_debugfs_create_files(struct xhci_hcd *xhci,
 				      struct xhci_file_map *files,
 				      size_t nentries, void *data,
@@ -433,8 +409,7 @@ static void xhci_debugfs_create_files(struct xhci_hcd *xhci,
 	int			i;
 
 	for (i = 0; i < nentries; i++)
-		debugfs_create_file_aux(files[i].name, 0444, parent,
-					data, &files[i], fops);
+		debugfs_create_file(files[i].name, 0444, parent, data, fops);
 }
 
 static struct dentry *xhci_debugfs_create_ring_dir(struct xhci_hcd *xhci,
@@ -476,7 +451,7 @@ void xhci_debugfs_create_endpoint(struct xhci_hcd *xhci,
 	if (spriv->eps[ep_index])
 		return;
 
-	epriv = kzalloc_obj(*epriv);
+	epriv = kzalloc(sizeof(*epriv), GFP_KERNEL);
 	if (!epriv)
 		return;
 
@@ -616,7 +591,7 @@ void xhci_debugfs_create_slot(struct xhci_hcd *xhci, int slot_id)
 	struct xhci_slot_priv	*priv;
 	struct xhci_virt_device	*dev = xhci->devs[slot_id];
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return;
 
@@ -654,126 +629,22 @@ void xhci_debugfs_remove_slot(struct xhci_hcd *xhci, int slot_id)
 static void xhci_debugfs_create_ports(struct xhci_hcd *xhci,
 				      struct dentry *parent)
 {
+	unsigned int		num_ports;
 	char			port_name[8];
 	struct xhci_port	*port;
 	struct dentry		*dir;
 
+	num_ports = HCS_MAX_PORTS(xhci->hcs_params1);
+
 	parent = debugfs_create_dir("ports", parent);
 
-	for (int i = 0; i < xhci->max_ports; i++) {
-		scnprintf(port_name, sizeof(port_name), "port%02d", i + 1);
+	while (num_ports--) {
+		scnprintf(port_name, sizeof(port_name), "port%02d",
+			  num_ports + 1);
 		dir = debugfs_create_dir(port_name, parent);
-		port = &xhci->hw_ports[i];
+		port = &xhci->hw_ports[num_ports];
 		debugfs_create_file("portsc", 0644, dir, port, &port_fops);
-		debugfs_create_file("portli", 0444, dir, port, &portli_fops);
 	}
-}
-
-static int xhci_port_bw_show(struct xhci_hcd *xhci, u8 dev_speed,
-				struct seq_file *s)
-{
-	unsigned int			i;
-	int				ret;
-	struct xhci_container_ctx	*ctx;
-	struct usb_hcd			*hcd = xhci_to_hcd(xhci);
-	struct device			*dev = hcd->self.controller;
-
-	ret = pm_runtime_get_sync(dev);
-	if (ret < 0)
-		return ret;
-
-	ctx = xhci_alloc_port_bw_ctx(xhci, 0);
-	if (!ctx) {
-		pm_runtime_put_sync(dev);
-		return -ENOMEM;
-	}
-
-	/* get roothub port bandwidth */
-	ret = xhci_get_port_bandwidth(xhci, ctx, dev_speed);
-	if (ret)
-		goto err_out;
-
-	/* print all roothub ports available bandwidth
-	 * refer to xhci rev1_2 protocol 6.2.6 , byte 0 is reserved
-	 */
-	for (i = 1; i <= xhci->max_ports; i++)
-		seq_printf(s, "port[%d] available bw: %d%%.\n", i,
-				ctx->bytes[i]);
-err_out:
-	if (ret == -EIO) {
-		seq_puts(s, "Get Port Bandwidth failed\n");
-		ret = 0;
-	}
-	pm_runtime_put_sync(dev);
-	xhci_free_port_bw_ctx(xhci, ctx);
-	return ret;
-}
-
-static int xhci_ss_bw_show(struct seq_file *s, void *unused)
-{
-	int ret;
-	struct xhci_hcd		*xhci = (struct xhci_hcd *)s->private;
-
-	ret = xhci_port_bw_show(xhci, DEV_PORT_SPEED(XDEV_SS), s);
-	return ret;
-}
-
-static int xhci_hs_bw_show(struct seq_file *s, void *unused)
-{
-	int ret;
-	struct xhci_hcd		*xhci = (struct xhci_hcd *)s->private;
-
-	ret = xhci_port_bw_show(xhci, DEV_PORT_SPEED(XDEV_HS), s);
-	return ret;
-}
-
-static int xhci_fs_bw_show(struct seq_file *s, void *unused)
-{
-	int ret;
-	struct xhci_hcd		*xhci = (struct xhci_hcd *)s->private;
-
-	ret = xhci_port_bw_show(xhci, DEV_PORT_SPEED(XDEV_FS), s);
-	return ret;
-}
-
-static struct xhci_file_map bw_context_files[] = {
-	{"SS_BW",	xhci_ss_bw_show, },
-	{"HS_BW",	xhci_hs_bw_show, },
-	{"FS_BW",	xhci_fs_bw_show, },
-};
-
-static int bw_context_open(struct inode *inode, struct file *file)
-{
-	int			i;
-	struct xhci_file_map	*f_map;
-	const char		*file_name = file_dentry(file)->d_iname;
-
-	for (i = 0; i < ARRAY_SIZE(bw_context_files); i++) {
-		f_map = &bw_context_files[i];
-
-		if (strcmp(f_map->name, file_name) == 0)
-			break;
-	}
-
-	return single_open(file, f_map->show, inode->i_private);
-}
-
-static const struct file_operations bw_fops = {
-	.open			= bw_context_open,
-	.read			= seq_read,
-	.llseek			= seq_lseek,
-	.release		= single_release,
-};
-
-static void xhci_debugfs_create_bandwidth(struct xhci_hcd *xhci,
-					struct dentry *parent)
-{
-	parent = debugfs_create_dir("port_bandwidth", parent);
-
-	xhci_debugfs_create_files(xhci, bw_context_files,
-			  ARRAY_SIZE(bw_context_files),
-			  xhci,
-			  parent, &bw_fops);
 }
 
 void xhci_debugfs_init(struct xhci_hcd *xhci)
@@ -826,8 +697,6 @@ void xhci_debugfs_init(struct xhci_hcd *xhci)
 	xhci->debugfs_slots = debugfs_create_dir("devices", xhci->debugfs_root);
 
 	xhci_debugfs_create_ports(xhci, xhci->debugfs_root);
-
-	xhci_debugfs_create_bandwidth(xhci, xhci->debugfs_root);
 }
 
 void xhci_debugfs_exit(struct xhci_hcd *xhci)

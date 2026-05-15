@@ -94,10 +94,9 @@ void ext2_evict_inode(struct inode * inode)
 		if (inode->i_blocks)
 			ext2_truncate_blocks(inode, 0);
 		ext2_xattr_delete_inode(inode);
-	} else {
-		mmb_sync(&EXT2_I(inode)->i_metadata_bhs);
 	}
-	mmb_invalidate(&EXT2_I(inode)->i_metadata_bhs);
+
+	invalidate_inode_buffers(inode);
 	clear_inode(inode);
 
 	ext2_discard_reservation(inode);
@@ -527,7 +526,7 @@ static int ext2_alloc_branch(struct inode *inode,
 		}
 		set_buffer_uptodate(bh);
 		unlock_buffer(bh);
-		mmb_mark_buffer_dirty(bh, &EXT2_I(inode)->i_metadata_bhs);
+		mark_buffer_dirty_inode(bh, inode);
 		/* We used to sync bh here if IS_SYNC(inode).
 		 * But we now rely upon generic_write_sync()
 		 * and b_inode_buffers.  But not for directories.
@@ -598,7 +597,7 @@ static void ext2_splice_branch(struct inode *inode,
 
 	/* had we spliced it onto indirect block? */
 	if (where->bh)
-		mmb_mark_buffer_dirty(where->bh, &EXT2_I(inode)->i_metadata_bhs);
+		mark_buffer_dirty_inode(where->bh, inode);
 
 	inode_set_ctime_current(inode);
 	mark_inode_dirty(inode);
@@ -639,8 +638,7 @@ static int ext2_get_blocks(struct inode *inode,
 	int count = 0;
 	ext2_fsblk_t first_block = 0;
 
-	if (WARN_ON_ONCE(maxblocks == 0))
-		return -EINVAL;
+	BUG_ON(maxblocks == 0);
 
 	depth = ext2_block_to_path(inode,iblock,offsets,&blocks_to_boundary);
 
@@ -927,7 +925,7 @@ static void ext2_readahead(struct readahead_control *rac)
 }
 
 static int
-ext2_write_begin(const struct kiocb *iocb, struct address_space *mapping,
+ext2_write_begin(struct file *file, struct address_space *mapping,
 		loff_t pos, unsigned len, struct folio **foliop, void **fsdata)
 {
 	int ret;
@@ -938,14 +936,13 @@ ext2_write_begin(const struct kiocb *iocb, struct address_space *mapping,
 	return ret;
 }
 
-static int ext2_write_end(const struct kiocb *iocb,
-			  struct address_space *mapping,
-			  loff_t pos, unsigned len, unsigned copied,
-			  struct folio *folio, void *fsdata)
+static int ext2_write_end(struct file *file, struct address_space *mapping,
+			loff_t pos, unsigned len, unsigned copied,
+			struct folio *folio, void *fsdata)
 {
 	int ret;
 
-	ret = generic_write_end(iocb, mapping, pos, len, copied, folio, fsdata);
+	ret = generic_write_end(file, mapping, pos, len, copied, folio, fsdata);
 	if (ret < len)
 		ext2_write_failed(mapping, pos + len);
 	return ret;
@@ -1154,7 +1151,7 @@ static void ext2_free_branches(struct inode *inode, __le32 *p, __le32 *q, int de
 			 */ 
 			if (!bh) {
 				ext2_error(inode->i_sb, "ext2_free_branches",
-					"Read failure, inode=%llu, block=%ld",
+					"Read failure, inode=%ld, block=%ld",
 					inode->i_ino, nr);
 				continue;
 			}
@@ -1212,8 +1209,7 @@ static void __ext2_truncate_blocks(struct inode *inode, loff_t offset)
 		if (partial == chain)
 			mark_inode_dirty(inode);
 		else
-			mmb_mark_buffer_dirty(partial->bh,
-					      &EXT2_I(inode)->i_metadata_bhs);
+			mark_buffer_dirty_inode(partial->bh, inode);
 		ext2_free_branches(inode, &nr, &nr+1, (chain+n-1) - partial);
 	}
 	/* Clear the ends of indirect blocks on the shared branch */
@@ -1222,8 +1218,7 @@ static void __ext2_truncate_blocks(struct inode *inode, loff_t offset)
 				   partial->p + 1,
 				   (__le32*)partial->bh->b_data+addr_per_block,
 				   (chain+n-1) - partial);
-		mmb_mark_buffer_dirty(partial->bh,
-				      &EXT2_I(inode)->i_metadata_bhs);
+		mark_buffer_dirty_inode(partial->bh, inode);
 		brelse (partial->bh);
 		partial--;
 	}
@@ -1306,7 +1301,7 @@ static int ext2_setsize(struct inode *inode, loff_t newsize)
 
 	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
 	if (inode_needs_sync(inode)) {
-		mmb_sync(&EXT2_I(inode)->i_metadata_bhs);
+		sync_mapping_buffers(inode->i_mapping);
 		sync_inode_metadata(inode, 1);
 	} else {
 		mark_inode_dirty(inode);
@@ -1402,7 +1397,7 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
-	if (!(inode_state_read_once(inode) & I_NEW))
+	if (!(inode->i_state & I_NEW))
 		return inode;
 
 	ei = EXT2_I(inode);
@@ -1434,17 +1429,9 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	 * the test is that same one that e2fsck uses
 	 * NeilBrown 1999oct15
 	 */
-	if (inode->i_nlink == 0) {
-		if (inode->i_mode == 0 || ei->i_dtime) {
-			/* this inode is deleted */
-			ret = -ESTALE;
-		} else {
-			ext2_error(sb, __func__,
-				   "inode %lu has zero i_nlink with mode 0%o and no dtime, "
-				   "filesystem may be corrupt",
-				   ino, inode->i_mode);
-			ret = -EFSCORRUPTED;
-		}
+	if (inode->i_nlink == 0 && (inode->i_mode == 0 || ei->i_dtime)) {
+		/* this inode is deleted */
+		ret = -ESTALE;
 		goto bad_inode;
 	}
 	inode->i_blocks = le32_to_cpu(raw_inode->i_blocks);

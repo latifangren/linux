@@ -15,7 +15,7 @@
 #include <linux/fb.h>
 #include <linux/platform_device.h>
 #include <linux/printk.h>
-#include <linux/sysfb.h>
+#include <linux/screen_info.h>
 #include <video/vga.h>
 #include <asm/efi.h>
 #include <drm/drm_utils.h> /* For drm_get_panel_orientation_quirk */
@@ -275,7 +275,7 @@ static const struct fb_ops efifb_ops = {
 	.fb_setcolreg	= efifb_setcolreg,
 };
 
-static void efifb_setup(struct screen_info *si, char *options)
+static int efifb_setup(struct screen_info *si, char *options)
 {
 	char *this_opt;
 
@@ -299,6 +299,8 @@ static void efifb_setup(struct screen_info *si, char *options)
 				use_bgrt = false;
 		}
 	}
+
+	return 0;
 }
 
 static inline bool fb_base_is_valid(struct screen_info *si)
@@ -345,7 +347,6 @@ ATTRIBUTE_GROUPS(efifb);
 
 static int efifb_probe(struct platform_device *dev)
 {
-	struct sysfb_display_info *dpy;
 	struct screen_info *si;
 	struct fb_info *info;
 	struct efifb_par *par;
@@ -361,11 +362,10 @@ static int efifb_probe(struct platform_device *dev)
 	 * driver. We get a copy of the attached screen_info, so that we can
 	 * modify its values without affecting later drivers.
 	 */
-	dpy = dev_get_platdata(&dev->dev);
-	if (!dpy)
+	si = dev_get_platdata(&dev->dev);
+	if (!si)
 		return -ENODEV;
-
-	si = devm_kmemdup(&dev->dev, &dpy->screen, sizeof(*si), GFP_KERNEL);
+	si = devm_kmemdup(&dev->dev, si, sizeof(*si), GFP_KERNEL);
 	if (!si)
 		return -ENOMEM;
 

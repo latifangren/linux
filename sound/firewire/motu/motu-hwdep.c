@@ -101,14 +101,18 @@ static __poll_t hwdep_poll(struct snd_hwdep *hwdep, struct file *file,
 			       poll_table *wait)
 {
 	struct snd_motu *motu = hwdep->private_data;
+	__poll_t events;
 
 	poll_wait(file, &motu->hwdep_wait, wait);
 
-	guard(spinlock_irq)(&motu->lock);
+	spin_lock_irq(&motu->lock);
 	if (motu->dev_lock_changed || motu->msg || has_dsp_event(motu))
-		return EPOLLIN | EPOLLRDNORM;
+		events = EPOLLIN | EPOLLRDNORM;
 	else
-		return 0;
+		events = 0;
+	spin_unlock_irq(&motu->lock);
+
+	return events;
 }
 
 static int hwdep_get_info(struct snd_motu *motu, void __user *arg)
@@ -132,35 +136,48 @@ static int hwdep_get_info(struct snd_motu *motu, void __user *arg)
 
 static int hwdep_lock(struct snd_motu *motu)
 {
-	guard(spinlock_irq)(&motu->lock);
+	int err;
+
+	spin_lock_irq(&motu->lock);
 
 	if (motu->dev_lock_count == 0) {
 		motu->dev_lock_count = -1;
-		return 0;
+		err = 0;
 	} else {
-		return -EBUSY;
+		err = -EBUSY;
 	}
+
+	spin_unlock_irq(&motu->lock);
+
+	return err;
 }
 
 static int hwdep_unlock(struct snd_motu *motu)
 {
-	guard(spinlock_irq)(&motu->lock);
+	int err;
+
+	spin_lock_irq(&motu->lock);
 
 	if (motu->dev_lock_count == -1) {
 		motu->dev_lock_count = 0;
-		return 0;
+		err = 0;
 	} else {
-		return -EBADFD;
+		err = -EBADFD;
 	}
+
+	spin_unlock_irq(&motu->lock);
+
+	return err;
 }
 
 static int hwdep_release(struct snd_hwdep *hwdep, struct file *file)
 {
 	struct snd_motu *motu = hwdep->private_data;
 
-	guard(spinlock_irq)(&motu->lock);
+	spin_lock_irq(&motu->lock);
 	if (motu->dev_lock_count == -1)
 		motu->dev_lock_count = 0;
+	spin_unlock_irq(&motu->lock);
 
 	return 0;
 }
@@ -185,7 +202,7 @@ static int hwdep_ioctl(struct snd_hwdep *hwdep, struct file *file,
 		if (!(motu->spec->flags & SND_MOTU_SPEC_REGISTER_DSP))
 			return -ENXIO;
 
-		meter = kzalloc_obj(*meter);
+		meter = kzalloc(sizeof(*meter), GFP_KERNEL);
 		if (!meter)
 			return -ENOMEM;
 
@@ -207,7 +224,7 @@ static int hwdep_ioctl(struct snd_hwdep *hwdep, struct file *file,
 		if (!(motu->spec->flags & SND_MOTU_SPEC_COMMAND_DSP))
 			return -ENXIO;
 
-		meter = kzalloc_obj(*meter);
+		meter = kzalloc(sizeof(*meter), GFP_KERNEL);
 		if (!meter)
 			return -ENOMEM;
 
@@ -229,7 +246,7 @@ static int hwdep_ioctl(struct snd_hwdep *hwdep, struct file *file,
 		if (!(motu->spec->flags & SND_MOTU_SPEC_REGISTER_DSP))
 			return -ENXIO;
 
-		param = kzalloc_obj(*param);
+		param = kzalloc(sizeof(*param), GFP_KERNEL);
 		if (!param)
 			return -ENOMEM;
 
@@ -274,7 +291,7 @@ int snd_motu_create_hwdep_device(struct snd_motu *motu)
 	if (err < 0)
 		return err;
 
-	strscpy(hwdep->name, "MOTU");
+	strcpy(hwdep->name, "MOTU");
 	hwdep->iface = SNDRV_HWDEP_IFACE_FW_MOTU;
 	hwdep->ops = ops;
 	hwdep->private_data = motu;

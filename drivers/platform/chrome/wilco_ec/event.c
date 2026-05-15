@@ -38,7 +38,6 @@
 #include <linux/io.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/platform_device.h>
 #include <linux/poll.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
@@ -107,7 +106,7 @@ static struct ec_event_queue *event_queue_new(int capacity)
 {
 	struct ec_event_queue *q;
 
-	q = kzalloc_flex(*q, entries, capacity);
+	q = kzalloc(struct_size(q, entries, capacity), GFP_KERNEL);
 	if (!q)
 		return NULL;
 
@@ -199,7 +198,7 @@ struct event_device_data {
 
 /**
  * enqueue_events() - Place EC events in queue to be read by userspace.
- * @dev: Device the events came from.
+ * @adev: Device the events came from.
  * @buf: Buffer of event data.
  * @length: Length of event data buffer.
  *
@@ -210,9 +209,9 @@ struct event_device_data {
  *
  * Return: 0 on success or negative error code on failure.
  */
-static int enqueue_events(struct device *dev, const u8 *buf, u32 length)
+static int enqueue_events(struct acpi_device *adev, const u8 *buf, u32 length)
 {
-	struct event_device_data *dev_data = dev_get_drvdata(dev);
+	struct event_device_data *dev_data = adev->driver_data;
 	struct ec_event *event, *queue_event, *old_event;
 	size_t num_words, event_size;
 	u32 offset = 0;
@@ -223,14 +222,14 @@ static int enqueue_events(struct device *dev, const u8 *buf, u32 length)
 		num_words = ec_event_num_words(event);
 		event_size = ec_event_size(event);
 		if (num_words > EC_ACPI_MAX_EVENT_WORDS) {
-			dev_err(dev, "Too many event words: %zu > %d\n",
+			dev_err(&adev->dev, "Too many event words: %zu > %d\n",
 				num_words, EC_ACPI_MAX_EVENT_WORDS);
 			return -EOVERFLOW;
 		}
 
 		/* Ensure event does not overflow the available buffer */
 		if ((offset + event_size) > length) {
-			dev_err(dev, "Event exceeds buffer: %zu > %d\n",
+			dev_err(&adev->dev, "Event exceeds buffer: %zu > %d\n",
 				offset + event_size, length);
 			return -EOVERFLOW;
 		}
@@ -254,22 +253,19 @@ static int enqueue_events(struct device *dev, const u8 *buf, u32 length)
 
 /**
  * event_device_notify() - Callback when EC generates an event over ACPI.
- * @handle: ACPI handle of the device that the event is coming from.
+ * @adev: The device that the event is coming from.
  * @value: Value passed to Notify() in ACPI.
- * @data: Notify handler data.
  *
  * This function will read the events from the device and enqueue them.
  */
-static void event_device_notify(acpi_handle handle, u32 value, void *data)
+static void event_device_notify(struct acpi_device *adev, u32 value)
 {
 	struct acpi_buffer event_buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	struct device *dev = data;
-	struct acpi_device *adev = ACPI_COMPANION(dev);
 	union acpi_object *obj;
 	acpi_status status;
 
 	if (value != EC_ACPI_NOTIFY_EVENT) {
-		dev_err(dev, "Invalid event: 0x%08x\n", value);
+		dev_err(&adev->dev, "Invalid event: 0x%08x\n", value);
 		return;
 	}
 
@@ -277,31 +273,31 @@ static void event_device_notify(acpi_handle handle, u32 value, void *data)
 	status = acpi_evaluate_object(adev->handle, EC_ACPI_GET_EVENT,
 				      NULL, &event_buffer);
 	if (ACPI_FAILURE(status)) {
-		dev_err(dev, "Error executing ACPI method %s()\n",
+		dev_err(&adev->dev, "Error executing ACPI method %s()\n",
 			EC_ACPI_GET_EVENT);
 		return;
 	}
 
 	obj = (union acpi_object *)event_buffer.pointer;
 	if (!obj) {
-		dev_err(dev, "Nothing returned from %s()\n",
+		dev_err(&adev->dev, "Nothing returned from %s()\n",
 			EC_ACPI_GET_EVENT);
 		return;
 	}
 	if (obj->type != ACPI_TYPE_BUFFER) {
-		dev_err(dev, "Invalid object returned from %s()\n",
+		dev_err(&adev->dev, "Invalid object returned from %s()\n",
 			EC_ACPI_GET_EVENT);
 		kfree(obj);
 		return;
 	}
 	if (obj->buffer.length < sizeof(struct ec_event)) {
-		dev_err(dev, "Invalid buffer length %d from %s()\n",
+		dev_err(&adev->dev, "Invalid buffer length %d from %s()\n",
 			obj->buffer.length, EC_ACPI_GET_EVENT);
 		kfree(obj);
 		return;
 	}
 
-	enqueue_events(dev, obj->buffer.pointer, obj->buffer.length);
+	enqueue_events(adev, obj->buffer.pointer, obj->buffer.length);
 	kfree(obj);
 }
 
@@ -436,8 +432,8 @@ static void hangup_device(struct event_device_data *dev_data)
 }
 
 /**
- * event_device_probe() - Callback when creating a new device.
- * @pdev: Platform device that we will be receiving events from.
+ * event_device_add() - Callback when creating a new device.
+ * @adev: ACPI device that we will be receiving events from.
  *
  * This finds a free minor number for the device, allocates and initializes
  * some device data, and creates a new device and char dev node.
@@ -449,7 +445,7 @@ static void hangup_device(struct event_device_data *dev_data)
  *
  * Return: 0 on success, negative error code on failure.
  */
-static int event_device_probe(struct platform_device *pdev)
+static int event_device_add(struct acpi_device *adev)
 {
 	struct event_device_data *dev_data;
 	int error, minor;
@@ -457,18 +453,18 @@ static int event_device_probe(struct platform_device *pdev)
 	minor = ida_alloc_max(&event_ida, EVENT_MAX_DEV-1, GFP_KERNEL);
 	if (minor < 0) {
 		error = minor;
-		dev_err(&pdev->dev, "Failed to find minor number: %d\n", error);
+		dev_err(&adev->dev, "Failed to find minor number: %d\n", error);
 		return error;
 	}
 
-	dev_data = kzalloc_obj(*dev_data);
+	dev_data = kzalloc(sizeof(*dev_data), GFP_KERNEL);
 	if (!dev_data) {
 		error = -ENOMEM;
 		goto free_minor;
 	}
 
 	/* Initialize the device data. */
-	platform_set_drvdata(pdev, dev_data);
+	adev->driver_data = dev_data;
 	dev_data->events = event_queue_new(queue_size);
 	if (!dev_data->events) {
 		kfree(dev_data);
@@ -493,17 +489,8 @@ static int event_device_probe(struct platform_device *pdev)
 	if (error)
 		goto free_dev_data;
 
-	/* Install an ACPI notify handler. */
-	error = acpi_dev_install_notify_handler(ACPI_COMPANION(&pdev->dev),
-						ACPI_DEVICE_NOTIFY,
-						event_device_notify, &pdev->dev);
-	if (error)
-		goto free_cdev;
-
 	return 0;
 
-free_cdev:
-	cdev_device_del(&dev_data->cdev, &dev_data->dev);
 free_dev_data:
 	hangup_device(dev_data);
 free_minor:
@@ -511,12 +498,10 @@ free_minor:
 	return error;
 }
 
-static void event_device_remove(struct platform_device *pdev)
+static void event_device_remove(struct acpi_device *adev)
 {
-	struct event_device_data *dev_data = platform_get_drvdata(pdev);
+	struct event_device_data *dev_data = adev->driver_data;
 
-	acpi_dev_remove_notify_handler(ACPI_COMPANION(&pdev->dev),
-				       ACPI_DEVICE_NOTIFY, event_device_notify);
 	cdev_device_del(&dev_data->cdev, &dev_data->dev);
 	ida_free(&event_ida, MINOR(dev_data->dev.devt));
 	hangup_device(dev_data);
@@ -528,12 +513,14 @@ static const struct acpi_device_id event_acpi_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, event_acpi_ids);
 
-static struct platform_driver event_driver = {
-	.probe = event_device_probe,
-	.remove = event_device_remove,
-	.driver = {
-		.name = DRV_NAME,
-		.acpi_match_table = event_acpi_ids,
+static struct acpi_driver event_driver = {
+	.name = DRV_NAME,
+	.class = DRV_NAME,
+	.ids = event_acpi_ids,
+	.ops = {
+		.add = event_device_add,
+		.notify = event_device_notify,
+		.remove = event_device_remove,
 	},
 };
 
@@ -556,7 +543,7 @@ static int __init event_module_init(void)
 	}
 	event_major = MAJOR(dev_num);
 
-	ret = platform_driver_register(&event_driver);
+	ret = acpi_bus_register_driver(&event_driver);
 	if (ret < 0) {
 		pr_err(DRV_NAME ": Failed registering driver: %d\n", ret);
 		goto unregister_region;
@@ -574,7 +561,7 @@ destroy_class:
 
 static void __exit event_module_exit(void)
 {
-	platform_driver_unregister(&event_driver);
+	acpi_bus_unregister_driver(&event_driver);
 	unregister_chrdev_region(MKDEV(event_major, 0), EVENT_MAX_DEV);
 	class_unregister(&event_class);
 	ida_destroy(&event_ida);

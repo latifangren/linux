@@ -2797,7 +2797,7 @@ static int sisusb_probe(struct usb_interface *intf,
 			dev->devnum);
 
 	/* Allocate memory for our private */
-	sisusb = kzalloc_obj(*sisusb);
+	sisusb = kzalloc(sizeof(*sisusb), GFP_KERNEL);
 	if (!sisusb)
 		return -ENOMEM;
 

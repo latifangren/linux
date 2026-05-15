@@ -16,7 +16,6 @@ description: |-
 properties:
   compatible:
     oneOf:
-      - const: rockchip,rk3288-vdec
       - const: rockchip,rk3399-vdec
       - const: rockchip,rk3576-vdec
       - const: rockchip,rk3588-vdec
@@ -28,20 +27,16 @@ properties:
 
   reg:
     minItems: 1
-    maxItems: 3
+    items:
+      - description: The function configuration registers base
+      - description: The link table configuration registers base
+      - description: The cache configuration registers base
 
   reg-names:
-    oneOf:
-      - items:
-          - const: link
-          - const: function
-          - const: cache
-      - items:
-          - const: function
-          - const: link
-          - const: cache
-        deprecated: true
-        description: Use link,function,cache block order instead.
+    items:
+      - const: function
+      - const: link
+      - const: cache
 
   interrupts:
     maxItems: 1
@@ -127,8 +122,6 @@ allOf:
           minItems: 5
         reset-names:
           minItems: 5
-      required:
-        - reg-names
     else:
       properties:
         reg:

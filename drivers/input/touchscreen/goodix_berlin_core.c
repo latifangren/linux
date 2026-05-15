@@ -12,7 +12,7 @@
  * to the previous generations.
  *
  * Currently the driver only handles Multitouch events with already
- * programmed firmware and "config" for "Revision A/D" Berlin IC.
+ * programmed firmware and "config" for "Revision D" Berlin IC.
  *
  * Support is missing for:
  * - ESD Management
@@ -20,16 +20,14 @@
  * - "Config" update/flashing
  * - Stylus Events
  * - Gesture Events
- * - Support for revision B
+ * - Support for older revisions (A & B)
  */
 
 #include <linux/bitfield.h>
-#include <linux/export.h>
 #include <linux/gpio/consumer.h>
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/input/touchscreen.h>
-#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sizes.h>
@@ -55,8 +53,10 @@
 
 #define GOODIX_BERLIN_DEV_CONFIRM_VAL		0xAA
 #define GOODIX_BERLIN_BOOTOPTION_ADDR		0x10000
+#define GOODIX_BERLIN_FW_VERSION_INFO_ADDR	0x10014
 
 #define GOODIX_BERLIN_IC_INFO_MAX_LEN		SZ_1K
+#define GOODIX_BERLIN_IC_INFO_ADDR		0x10070
 
 #define GOODIX_BERLIN_CHECKSUM_SIZE		sizeof(u16)
 
@@ -175,8 +175,6 @@ struct goodix_berlin_core {
 	/* Runtime parameters extracted from IC_INFO buffer  */
 	u32 touch_data_addr;
 
-	const struct goodix_berlin_ic_data *ic_data;
-
 	struct goodix_berlin_event event;
 };
 
@@ -265,7 +263,7 @@ static int goodix_berlin_power_on(struct goodix_berlin_core *cd)
 		goto err_vddio_disable;
 	}
 
-	/* Vendor waits 15ms for AVDD to settle */
+	/* Vendor waits 15ms for IOVDD to settle */
 	usleep_range(15000, 15100);
 
 	gpiod_set_value_cansleep(cd->reset_gpio, 0);
@@ -301,7 +299,7 @@ static int goodix_berlin_read_version(struct goodix_berlin_core *cd)
 {
 	int error;
 
-	error = regmap_raw_read(cd->regmap, cd->ic_data->fw_version_info_addr,
+	error = regmap_raw_read(cd->regmap, GOODIX_BERLIN_FW_VERSION_INFO_ADDR,
 				&cd->fw_version, sizeof(cd->fw_version));
 	if (error) {
 		dev_err(cd->dev, "error reading fw version, %d\n", error);
@@ -369,7 +367,7 @@ static int goodix_berlin_get_ic_info(struct goodix_berlin_core *cd)
 	if (!afe_data)
 		return -ENOMEM;
 
-	error = regmap_raw_read(cd->regmap, cd->ic_data->ic_info_addr,
+	error = regmap_raw_read(cd->regmap, GOODIX_BERLIN_IC_INFO_ADDR,
 				&length_raw, sizeof(length_raw));
 	if (error) {
 		dev_err(cd->dev, "failed get ic info length, %d\n", error);
@@ -382,8 +380,8 @@ static int goodix_berlin_get_ic_info(struct goodix_berlin_core *cd)
 		return -EINVAL;
 	}
 
-	error = regmap_raw_read(cd->regmap, cd->ic_data->ic_info_addr, afe_data,
-				length);
+	error = regmap_raw_read(cd->regmap, GOODIX_BERLIN_IC_INFO_ADDR,
+				afe_data, length);
 	if (error) {
 		dev_err(cd->dev, "failed get ic info data, %d\n", error);
 		return error;
@@ -628,14 +626,6 @@ static int goodix_berlin_input_dev_config(struct goodix_berlin_core *cd,
 
 	touchscreen_parse_properties(cd->input_dev, true, &cd->props);
 
-	/*
-	 * The resolution of these touchscreens is about 10 units/mm, the actual
-	 * resolution does not matter much since we set INPUT_PROP_DIRECT.
-	 * Set it to 10 to ensure userspace isn't off by an order of magnitude.
-	 */
-	input_abs_set_res(cd->input_dev, ABS_MT_POSITION_X, 10);
-	input_abs_set_res(cd->input_dev, ABS_MT_POSITION_Y, 10);
-
 	error = input_mt_init_slots(cd->input_dev, GOODIX_BERLIN_MAX_TOUCH,
 				    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
 	if (error)
@@ -683,7 +673,7 @@ static void goodix_berlin_power_off_act(void *data)
 }
 
 static ssize_t registers_read(struct file *filp, struct kobject *kobj,
-			      const struct bin_attribute *bin_attr,
+			      struct bin_attribute *bin_attr,
 			      char *buf, loff_t off, size_t count)
 {
 	struct device *dev = kobj_to_dev(kobj);
@@ -696,7 +686,7 @@ static ssize_t registers_read(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t registers_write(struct file *filp, struct kobject *kobj,
-			       const struct bin_attribute *bin_attr,
+			       struct bin_attribute *bin_attr,
 			       char *buf, loff_t off, size_t count)
 {
 	struct device *dev = kobj_to_dev(kobj);
@@ -708,9 +698,9 @@ static ssize_t registers_write(struct file *filp, struct kobject *kobj,
 	return error ? error : count;
 }
 
-static const BIN_ATTR_ADMIN_RW(registers, 0);
+static BIN_ATTR_ADMIN_RW(registers, 0);
 
-static const struct bin_attribute *const goodix_berlin_bin_attrs[] = {
+static struct bin_attribute *goodix_berlin_bin_attrs[] = {
 	&bin_attr_registers,
 	NULL,
 };
@@ -726,8 +716,7 @@ const struct attribute_group *goodix_berlin_groups[] = {
 EXPORT_SYMBOL_GPL(goodix_berlin_groups);
 
 int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
-			struct regmap *regmap,
-			const struct goodix_berlin_ic_data *ic_data)
+			struct regmap *regmap)
 {
 	struct goodix_berlin_core *cd;
 	int error;
@@ -744,7 +733,6 @@ int goodix_berlin_probe(struct device *dev, int irq, const struct input_id *id,
 	cd->dev = dev;
 	cd->regmap = regmap;
 	cd->irq = irq;
-	cd->ic_data = ic_data;
 
 	cd->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(cd->reset_gpio))

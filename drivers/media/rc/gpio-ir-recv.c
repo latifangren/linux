@@ -48,8 +48,10 @@ static irqreturn_t gpio_ir_recv_irq(int irq, void *dev_id)
 	if (val >= 0)
 		ir_raw_event_store_edge(gpio_dev->rcdev, val == 1);
 
-	if (pmdev)
+	if (pmdev) {
+		pm_runtime_mark_last_busy(pmdev);
 		pm_runtime_put_autosuspend(pmdev);
+	}
 
 	return IRQ_HANDLED;
 }

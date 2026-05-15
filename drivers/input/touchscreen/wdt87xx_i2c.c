@@ -813,46 +813,56 @@ static int wdt87xx_load_chunk(struct i2c_client *client,
 	return 0;
 }
 
-static int wdt87xx_do_update_firmware(struct wdt87xx_data *wdt,
+static int wdt87xx_do_update_firmware(struct i2c_client *client,
 				      const struct firmware *fw,
 				      unsigned int chunk_id)
 {
-	struct i2c_client *client = wdt->client;
+	struct wdt87xx_data *wdt = i2c_get_clientdata(client);
 	int error;
+
+	error = wdt87xx_validate_firmware(wdt, fw);
+	if (error)
+		return error;
+
+	error = mutex_lock_interruptible(&wdt->fw_mutex);
+	if (error)
+		return error;
+
+	disable_irq(client->irq);
 
 	error = wdt87xx_load_chunk(client, fw, chunk_id);
 	if (error) {
 		dev_err(&client->dev,
 			"firmware load failed (type: %d): %d\n",
 			chunk_id, error);
-		return error;
+		goto out;
 	}
 
 	error = wdt87xx_sw_reset(client);
 	if (error) {
 		dev_err(&client->dev, "soft reset failed: %d\n", error);
-		return error;
+		goto out;
 	}
 
 	/* Refresh the parameters */
 	error = wdt87xx_get_sysparam(client, &wdt->param);
-	if (error) {
+	if (error)
 		dev_err(&client->dev,
 			"failed to refresh system parameters: %d\n", error);
-		return error;
-	}
+out:
+	enable_irq(client->irq);
+	mutex_unlock(&wdt->fw_mutex);
 
-	return 0;
+	return error ? error : 0;
 }
 
 static int wdt87xx_update_firmware(struct device *dev,
 				   const char *fw_name, unsigned int chunk_id)
 {
 	struct i2c_client *client = to_i2c_client(dev);
-	struct wdt87xx_data *wdt = i2c_get_clientdata(client);
+	const struct firmware *fw;
 	int error;
 
-	const struct firmware *fw __free(firmware) = NULL;
 	error = request_firmware(&fw, fw_name, dev);
 	if (error) {
 		dev_err(&client->dev, "unable to retrieve firmware %s: %d\n",
@@ -860,19 +870,11 @@ static int wdt87xx_update_firmware(struct device *dev,
 		return error;
 	}
 
-	error = wdt87xx_validate_firmware(wdt, fw);
-	if (error)
-		return error;
+	error = wdt87xx_do_update_firmware(client, fw, chunk_id);
 
-	scoped_cond_guard(mutex_intr, return -EINTR, &wdt->fw_mutex) {
-		guard(disable_irq)(&client->irq);
+	release_firmware(fw);
 
-		error = wdt87xx_do_update_firmware(wdt, fw, chunk_id);
-		if (error)
-			return error;
-	}
-
-	return 0;
+	return error ? error : 0;
 }
 
 static ssize_t config_csum_show(struct device *dev,
@@ -1024,8 +1026,10 @@ static int wdt87xx_ts_create_input_device(struct wdt87xx_data *wdt)
 	int error;
 
 	input = devm_input_allocate_device(dev);
-	if (!input)
+	if (!input) {
+		dev_err(dev, "failed to allocate input device\n");
 		return -ENOMEM;
+	}
 	wdt->input = input;
 
 	input->name = "WDT87xx Touchscreen";
@@ -1049,8 +1053,10 @@ static int wdt87xx_ts_create_input_device(struct wdt87xx_data *wdt)
 			    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
 
 	error = input_register_device(input);
-	if (error)
-		return dev_err_probe(dev, error, "failed to register input device\n");
+	if (error) {
+		dev_err(dev, "failed to register input device: %d\n", error);
+		return error;
+	}
 
 	return 0;
 }
@@ -1090,8 +1096,10 @@ static int wdt87xx_ts_probe(struct i2c_client *client)
 					  NULL, wdt87xx_ts_interrupt,
 					  IRQF_ONESHOT,
 					  client->name, wdt);
-	if (error)
+	if (error) {
+		dev_err(&client->dev, "request irq failed: %d\n", error);
 		return error;
+	}
 
 	return 0;
 }
@@ -1145,13 +1153,11 @@ static const struct i2c_device_id wdt87xx_dev_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, wdt87xx_dev_id);
 
-#ifdef CONFIG_ACPI
 static const struct acpi_device_id wdt87xx_acpi_id[] = {
 	{ "WDHT0001", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, wdt87xx_acpi_id);
-#endif
 
 static struct i2c_driver wdt87xx_driver = {
 	.probe		= wdt87xx_ts_probe,

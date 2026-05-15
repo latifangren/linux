@@ -29,7 +29,6 @@
 #include <linux/circ_buf.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
-#include <linux/export.h>
 #include <linux/poll.h>
 #include <linux/uaccess.h>
 
@@ -224,7 +223,7 @@ static int crtc_crc_open(struct inode *inode, struct file *filep)
 	if (WARN_ON(values_cnt == 0))
 		return -EINVAL;
 
-	entries = kzalloc_objs(*entries, DRM_CRC_ENTRIES_NR);
+	entries = kcalloc(DRM_CRC_ENTRIES_NR, sizeof(*entries), GFP_KERNEL);
 	if (!entries)
 		return -ENOMEM;
 

@@ -4,7 +4,7 @@
  * by Jurriaan Kalkman 06-2005  *
  ********************************/
 
-#include "font.h"
+#include <linux/font.h>
 
 #define FONTDATAMAX 9216
 

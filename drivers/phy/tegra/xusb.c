@@ -543,7 +543,7 @@ static int tegra_xusb_port_init(struct tegra_xusb_port *port,
 
 	device_initialize(&port->dev);
 	port->dev.type = &tegra_xusb_port_type;
-	device_set_node(&port->dev, of_fwnode_handle(of_node_get(np)));
+	port->dev.of_node = of_node_get(np);
 	port->dev.parent = padctl->dev;
 
 	err = dev_set_name(&port->dev, "%s-%u", name, index);
@@ -796,7 +796,7 @@ static int tegra_xusb_add_usb2_port(struct tegra_xusb_padctl *padctl,
 	if (!np || !of_device_is_available(np))
 		goto out;
 
-	usb2 = kzalloc_obj(*usb2);
+	usb2 = kzalloc(sizeof(*usb2), GFP_KERNEL);
 	if (!usb2) {
 		err = -ENOMEM;
 		goto out;
@@ -863,7 +863,7 @@ static int tegra_xusb_add_ulpi_port(struct tegra_xusb_padctl *padctl,
 	if (!np || !of_device_is_available(np))
 		goto out;
 
-	ulpi = kzalloc_obj(*ulpi);
+	ulpi = kzalloc(sizeof(*ulpi), GFP_KERNEL);
 	if (!ulpi) {
 		err = -ENOMEM;
 		goto out;
@@ -919,7 +919,7 @@ static int tegra_xusb_add_hsic_port(struct tegra_xusb_padctl *padctl,
 	if (!np || !of_device_is_available(np))
 		goto out;
 
-	hsic = kzalloc_obj(*hsic);
+	hsic = kzalloc(sizeof(*hsic), GFP_KERNEL);
 	if (!hsic) {
 		err = -ENOMEM;
 		goto out;
@@ -1004,7 +1004,7 @@ static int tegra_xusb_add_usb3_port(struct tegra_xusb_padctl *padctl,
 	if (!np || !of_device_is_available(np))
 		goto out;
 
-	usb3 = kzalloc_obj(*usb3);
+	usb3 = kzalloc(sizeof(*usb3), GFP_KERNEL);
 	if (!usb3) {
 		err = -ENOMEM;
 		goto out;
@@ -1327,7 +1327,7 @@ static struct platform_driver tegra_xusb_padctl_driver = {
 		.pm = &tegra_xusb_padctl_pm_ops,
 	},
 	.probe = tegra_xusb_padctl_probe,
-	.remove = tegra_xusb_padctl_remove,
+	.remove_new = tegra_xusb_padctl_remove,
 };
 module_platform_driver(tegra_xusb_padctl_driver);
 

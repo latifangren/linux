@@ -300,6 +300,10 @@
 	status = "okay";
 };
 
+&pd_npu {
+	domain-supply = <&vdd_npu_s0>;
+};
+
 &pinctrl {
 	keys {
 		pwm15_ir_m1: pwm15-ir-m1 {

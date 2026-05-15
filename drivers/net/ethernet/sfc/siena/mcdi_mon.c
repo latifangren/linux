@@ -350,12 +350,13 @@ int efx_siena_mcdi_mon_probe(struct efx_nic *efx)
 	 * value, min, max, crit, alarm and label for each sensor.
 	 */
 	n_attrs = 6 * n_sensors;
-	hwmon->attrs = kzalloc_objs(*hwmon->attrs, n_attrs);
+	hwmon->attrs = kcalloc(n_attrs, sizeof(*hwmon->attrs), GFP_KERNEL);
 	if (!hwmon->attrs) {
 		rc = -ENOMEM;
 		goto fail;
 	}
-	hwmon->group.attrs = kzalloc_objs(struct attribute *, n_attrs + 1);
+	hwmon->group.attrs = kcalloc(n_attrs + 1, sizeof(struct attribute *),
+				     GFP_KERNEL);
 	if (!hwmon->group.attrs) {
 		rc = -ENOMEM;
 		goto fail;

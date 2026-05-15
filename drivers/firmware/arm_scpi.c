@@ -634,14 +634,14 @@ static struct scpi_dvfs_info *scpi_dvfs_get_info(u8 domain)
 	if (!buf.opp_count)
 		return ERR_PTR(-ENOENT);
 
-	info = kmalloc_obj(*info);
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return ERR_PTR(-ENOMEM);
 
 	info->count = buf.opp_count;
 	info->latency = le16_to_cpu(buf.latency) * 1000; /* uS to nS */
 
-	info->opps = kzalloc_objs(*opp, info->count);
+	info->opps = kcalloc(info->count, sizeof(*opp), GFP_KERNEL);
 	if (!info->opps) {
 		kfree(info);
 		return ERR_PTR(-ENOMEM);
@@ -1050,7 +1050,7 @@ static struct platform_driver scpi_driver = {
 		.dev_groups = versions_groups,
 	},
 	.probe = scpi_probe,
-	.remove = scpi_remove,
+	.remove_new = scpi_remove,
 };
 module_platform_driver(scpi_driver);
 

@@ -471,13 +471,16 @@ static irqreturn_t snd_intel8x0m_interrupt(int irq, void *dev_id)
 	unsigned int status;
 	unsigned int i;
 
-	guard(spinlock)(&chip->reg_lock);
+	spin_lock(&chip->reg_lock);
 	status = igetdword(chip, chip->int_sta_reg);
-	if (status == 0xffffffff) /* we are not yet resumed */
+	if (status == 0xffffffff) { /* we are not yet resumed */
+		spin_unlock(&chip->reg_lock);
 		return IRQ_NONE;
+	}
 	if ((status & chip->int_sta_mask) == 0) {
 		if (status)
 			iputdword(chip, chip->int_sta_reg, status);
+		spin_unlock(&chip->reg_lock);
 		return IRQ_NONE;
 	}
 
@@ -489,6 +492,7 @@ static irqreturn_t snd_intel8x0m_interrupt(int irq, void *dev_id)
 
 	/* ack them */
 	iputdword(chip, chip->int_sta_reg, status & chip->int_sta_mask);
+	spin_unlock(&chip->reg_lock);
 	
 	return IRQ_HANDLED;
 }
@@ -674,7 +678,7 @@ static int snd_intel8x0m_pcm1(struct intel8x0m *chip, int device,
 	if (rec->suffix)
 		sprintf(name, "Intel ICH - %s", rec->suffix);
 	else
-		strscpy(name, "Intel ICH");
+		strcpy(name, "Intel ICH");
 	err = snd_pcm_new(chip->card, name, device,
 			  rec->playback_ops ? 1 : 0,
 			  rec->capture_ops ? 1 : 0, &pcm);
@@ -692,7 +696,7 @@ static int snd_intel8x0m_pcm1(struct intel8x0m *chip, int device,
 	if (rec->suffix)
 		sprintf(pcm->name, "%s - %s", chip->card->shortname, rec->suffix);
 	else
-		strscpy(pcm->name, chip->card->shortname);
+		strcpy(pcm->name, chip->card->shortname);
 	chip->pcm[device] = pcm;
 
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
@@ -1056,7 +1060,7 @@ static int snd_intel8x0m_init(struct snd_card *card,
 	chip->pci = pci;
 	chip->irq = -1;
 
-	err = pcim_request_all_regions(pci, card->shortname);
+	err = pci_request_regions(pci, card->shortname);
 	if (err < 0)
 		return err;
 
@@ -1180,11 +1184,11 @@ static int __snd_intel8x0m_probe(struct pci_dev *pci,
 		return err;
 	chip = card->private_data;
 
-	strscpy(card->driver, "ICH-MODEM");
-	strscpy(card->shortname, "Intel ICH");
+	strcpy(card->driver, "ICH-MODEM");
+	strcpy(card->shortname, "Intel ICH");
 	for (name = shortnames; name->id; name++) {
 		if (pci->device == name->id) {
-			strscpy(card->shortname, name->s);
+			strcpy(card->shortname, name->s);
 			break;
 		}
 	}

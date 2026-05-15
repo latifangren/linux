@@ -10,9 +10,9 @@
 #include <media/videobuf2-dma-contig.h>
 #include "mtk-mdp3-m2m.h"
 
-static inline struct mdp_m2m_ctx *file_to_ctx(struct file *filp)
+static inline struct mdp_m2m_ctx *fh_to_ctx(struct v4l2_fh *fh)
 {
-	return container_of(file_to_v4l2_fh(filp), struct mdp_m2m_ctx, fh);
+	return container_of(fh, struct mdp_m2m_ctx, fh);
 }
 
 static inline struct mdp_m2m_ctx *ctrl_to_ctx(struct v4l2_ctrl *ctrl)
@@ -51,7 +51,7 @@ static void mdp_m2m_process_done(void *priv, int vb_state)
 	ctx->curr_param.frame_no = ctx->frame_count[MDP_M2M_SRC];
 	src_vbuf->sequence = ctx->frame_count[MDP_M2M_SRC]++;
 	dst_vbuf->sequence = ctx->frame_count[MDP_M2M_DST]++;
-	v4l2_m2m_buf_copy_metadata(src_vbuf, dst_vbuf);
+	v4l2_m2m_buf_copy_metadata(src_vbuf, dst_vbuf, true);
 
 	v4l2_m2m_buf_done(src_vbuf, vb_state);
 	v4l2_m2m_buf_done(dst_vbuf, vb_state);
@@ -266,6 +266,8 @@ static void mdp_m2m_buf_queue(struct vb2_buffer *vb)
 
 static const struct vb2_ops mdp_m2m_qops = {
 	.queue_setup	= mdp_m2m_queue_setup,
+	.wait_prepare	= vb2_ops_wait_prepare,
+	.wait_finish	= vb2_ops_wait_finish,
 	.buf_prepare	= mdp_m2m_buf_prepare,
 	.start_streaming = mdp_m2m_start_streaming,
 	.stop_streaming	= mdp_m2m_stop_streaming,
@@ -285,7 +287,7 @@ static int mdp_m2m_querycap(struct file *file, void *fh,
 static int mdp_m2m_enum_fmt_mplane(struct file *file, void *fh,
 				   struct v4l2_fmtdesc *f)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 
 	return mdp_enum_fmt_mplane(ctx->mdp_dev, f);
 }
@@ -293,7 +295,7 @@ static int mdp_m2m_enum_fmt_mplane(struct file *file, void *fh,
 static int mdp_m2m_g_fmt_mplane(struct file *file, void *fh,
 				struct v4l2_format *f)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 	struct mdp_frame *frame;
 	struct v4l2_pix_format_mplane *pix_mp;
 
@@ -311,7 +313,7 @@ static int mdp_m2m_g_fmt_mplane(struct file *file, void *fh,
 static int mdp_m2m_s_fmt_mplane(struct file *file, void *fh,
 				struct v4l2_format *f)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 	struct mdp_frame *frame = ctx_get_frame(ctx, f->type);
 	struct mdp_frame *capture;
 	const struct mdp_format *fmt;
@@ -354,7 +356,7 @@ static int mdp_m2m_s_fmt_mplane(struct file *file, void *fh,
 static int mdp_m2m_try_fmt_mplane(struct file *file, void *fh,
 				  struct v4l2_format *f)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 
 	if (!mdp_try_fmt_mplane(ctx->mdp_dev, f, &ctx->curr_param, ctx->id))
 		return -EINVAL;
@@ -365,7 +367,7 @@ static int mdp_m2m_try_fmt_mplane(struct file *file, void *fh,
 static int mdp_m2m_g_selection(struct file *file, void *fh,
 			       struct v4l2_selection *s)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 	struct mdp_frame *frame;
 	bool valid = false;
 
@@ -417,7 +419,7 @@ static int mdp_m2m_g_selection(struct file *file, void *fh,
 static int mdp_m2m_s_selection(struct file *file, void *fh,
 			       struct v4l2_selection *s)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(fh);
 	struct mdp_frame *frame = ctx_get_frame(ctx, s->type);
 	struct mdp_frame *capture;
 	struct v4l2_rect r;
@@ -568,7 +570,7 @@ static int mdp_m2m_open(struct file *file)
 	struct v4l2_format default_format = {};
 	const struct mdp_limit *limit = mdp->mdp_data->def_limit;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -585,13 +587,14 @@ static int mdp_m2m_open(struct file *file)
 	ctx->mdp_dev = mdp;
 
 	v4l2_fh_init(&ctx->fh, vdev);
+	file->private_data = &ctx->fh;
 	ret = mdp_m2m_ctrls_create(ctx);
 	if (ret)
 		goto err_exit_fh;
 
 	/* Use separate control handler per file handle */
 	ctx->fh.ctrl_handler = &ctx->ctrl_handler;
-	v4l2_fh_add(&ctx->fh, file);
+	v4l2_fh_add(&ctx->fh);
 
 	mutex_init(&ctx->ctx_lock);
 	ctx->m2m_ctx = v4l2_m2m_ctx_init(mdp->m2m_dev, ctx, mdp_m2m_queue_init);
@@ -628,7 +631,7 @@ err_release_m2m_ctx:
 	v4l2_m2m_ctx_release(ctx->m2m_ctx);
 err_release_handler:
 	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
-	v4l2_fh_del(&ctx->fh, file);
+	v4l2_fh_del(&ctx->fh);
 err_exit_fh:
 	v4l2_fh_exit(&ctx->fh);
 	ida_free(&mdp->mdp_ida, ctx->id);
@@ -642,7 +645,7 @@ err_free_ctx:
 
 static int mdp_m2m_release(struct file *file)
 {
-	struct mdp_m2m_ctx *ctx = file_to_ctx(file);
+	struct mdp_m2m_ctx *ctx = fh_to_ctx(file->private_data);
 	struct mdp_dev *mdp = video_drvdata(file);
 	struct device *dev = &mdp->pdev->dev;
 
@@ -652,7 +655,7 @@ static int mdp_m2m_release(struct file *file)
 		mdp_vpu_put_locked(mdp);
 
 	v4l2_ctrl_handler_free(&ctx->ctrl_handler);
-	v4l2_fh_del(&ctx->fh, file);
+	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
 	ida_free(&mdp->mdp_ida, ctx->id);
 	mutex_unlock(&mdp->m2m_lock);

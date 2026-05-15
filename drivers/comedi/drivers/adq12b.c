@@ -179,8 +179,7 @@ static int adq12b_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	struct comedi_subdevice *s;
 	int ret;
 
-	ret = comedi_check_request_region(dev, it->options[0], 0x10,
-					  0x300, 0x3af, 0x20);
+	ret = comedi_request_region(dev, it->options[0], 0x10);
 	if (ret)
 		return ret;
 

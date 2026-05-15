@@ -192,7 +192,7 @@ static int __pollwake(wait_queue_entry_t *wait, unsigned mode, int sync, void *k
 	 * and is paired with smp_store_mb() in poll_schedule_timeout.
 	 */
 	smp_wmb();
-	WRITE_ONCE(pwq->triggered, 1);
+	pwq->triggered = 1;
 
 	/*
 	 * Perform the default wake up operation using a dummy
@@ -237,7 +237,7 @@ static int poll_schedule_timeout(struct poll_wqueues *pwq, int state,
 	int rc = -EINTR;
 
 	set_current_state(state);
-	if (!READ_ONCE(pwq->triggered))
+	if (!pwq->triggered)
 		rc = schedule_hrtimeout_range(expires, slack, HRTIMER_MODE_ABS);
 	__set_current_state(TASK_RUNNING);
 
@@ -462,22 +462,15 @@ get_max:
 			 EPOLLNVAL)
 #define POLLEX_SET (EPOLLPRI | EPOLLNVAL)
 
-static inline __poll_t select_poll_one(int fd, poll_table *wait, unsigned long in,
+static inline void wait_key_set(poll_table *wait, unsigned long in,
 				unsigned long out, unsigned long bit,
 				__poll_t ll_flag)
 {
-	CLASS(fd, f)(fd);
-
-	if (fd_empty(f))
-		return EPOLLNVAL;
-
 	wait->_key = POLLEX_SET | ll_flag;
 	if (in & bit)
 		wait->_key |= POLLIN_SET;
 	if (out & bit)
 		wait->_key |= POLLOUT_SET;
-
-	return vfs_poll(fd_file(f), wait);
 }
 
 static noinline_for_stack int do_select(int n, fd_set_bits *fds, struct timespec64 *end_time)
@@ -529,12 +522,20 @@ static noinline_for_stack int do_select(int n, fd_set_bits *fds, struct timespec
 			}
 
 			for (j = 0; j < BITS_PER_LONG; ++j, ++i, bit <<= 1) {
+				struct fd f;
 				if (i >= n)
 					break;
 				if (!(bit & all_bits))
 					continue;
-				mask = select_poll_one(i, wait, in, out, bit,
-						       busy_flag);
+				mask = EPOLLNVAL;
+				f = fdget(i);
+				if (fd_file(f)) {
+					wait_key_set(wait, in, out, bit,
+						     busy_flag);
+					mask = vfs_poll(fd_file(f), wait);
+
+					fdput(f);
+				}
 				if ((mask & POLLIN_SET) && (in & bit)) {
 					res_in |= bit;
 					retval++;
@@ -630,7 +631,7 @@ int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 	long stack_fds[SELECT_STACK_ALLOC/sizeof(long)];
 
 	ret = -EINVAL;
-	if (unlikely(n < 0))
+	if (n < 0)
 		goto out_nofds;
 
 	/* max_fds can increase, so grab it once to avoid race */
@@ -776,13 +777,17 @@ static inline int get_sigset_argpack(struct sigset_argpack *to,
 {
 	// the path is hot enough for overhead of copy_from_user() to matter
 	if (from) {
-		scoped_user_read_access(from, Efault) {
-			unsafe_get_user(to->p, &from->p, Efault);
-			unsafe_get_user(to->size, &from->size, Efault);
-		}
+		if (can_do_masked_user_access())
+			from = masked_user_access_begin(from);
+		else if (!user_read_access_begin(from, sizeof(*from)))
+			return -EFAULT;
+		unsafe_get_user(to->p, &from->p, Efault);
+		unsafe_get_user(to->size, &from->size, Efault);
+		user_read_access_end();
 	}
 	return 0;
 Efault:
+	user_read_access_end();
 	return -EFAULT;
 }
 
@@ -851,14 +856,15 @@ static inline __poll_t do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 				     __poll_t busy_flag)
 {
 	int fd = pollfd->fd;
-	__poll_t mask, filter;
+	__poll_t mask = 0, filter;
+	struct fd f;
 
-	if (unlikely(fd < 0))
-		return 0;
-
-	CLASS(fd, f)(fd);
-	if (fd_empty(f))
-		return EPOLLNVAL;
+	if (fd < 0)
+		goto out;
+	mask = EPOLLNVAL;
+	f = fdget(fd);
+	if (!fd_file(f))
+		goto out;
 
 	/* userland u16 ->events contains POLL... bitmap */
 	filter = demangle_poll(pollfd->events) | EPOLLERR | EPOLLHUP;
@@ -866,7 +872,13 @@ static inline __poll_t do_pollfd(struct pollfd *pollfd, poll_table *pwait,
 	mask = vfs_poll(fd_file(f), pwait);
 	if (mask & busy_flag)
 		*can_busy_poll = true;
-	return mask & filter;		/* Mask out unneeded events. */
+	mask &= filter;		/* Mask out unneeded events. */
+	fdput(f);
+
+out:
+	/* ... and so does ->revents */
+	pollfd->revents = mangle_poll(mask);
+	return mask;
 }
 
 static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
@@ -898,7 +910,6 @@ static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
 			pfd = walk->entries;
 			pfd_end = pfd + walk->len;
 			for (; pfd != pfd_end; pfd++) {
-				__poll_t mask;
 				/*
 				 * Fish for events. If we found one, record it
 				 * and kill poll_table->_qproc, so we don't
@@ -906,9 +917,8 @@ static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
 				 * this. They'll get immediately deregistered
 				 * when we break out and return.
 				 */
-				mask = do_pollfd(pfd, pt, &can_busy_loop, busy_flag);
-				pfd->revents = mangle_poll(mask);
-				if (mask) {
+				if (do_pollfd(pfd, pt, &can_busy_loop,
+					      busy_flag)) {
 					count++;
 					pt->_qproc = NULL;
 					/* found something, stop busy polling */
@@ -993,7 +1003,8 @@ static int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 		todo -= walk->len;
 
 		len = min(todo, POLLFD_PER_PAGE);
-		walk = walk->next = kmalloc_flex(*walk, entries, len);
+		walk = walk->next = kmalloc(struct_size(walk, entries, len),
+					    GFP_KERNEL);
 		if (!walk) {
 			err = -ENOMEM;
 			goto out_fds;
@@ -1004,17 +1015,17 @@ static int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
 	fdcount = do_poll(head, &table, end_time);
 	poll_freewait(&table);
 
-	scoped_user_write_access_size(ufds, nfds * sizeof(*ufds), out_fds) {
-		struct pollfd __user *_ufds = ufds;
+	if (!user_write_access_begin(ufds, nfds * sizeof(*ufds)))
+		goto out_fds;
 
-		for (walk = head; walk; walk = walk->next) {
-			struct pollfd *fds = walk->entries;
-			unsigned int j;
+	for (walk = head; walk; walk = walk->next) {
+		struct pollfd *fds = walk->entries;
+		unsigned int j;
 
-			for (j = walk->len; j; fds++, _ufds++, j--)
-				unsafe_put_user(fds->revents, &_ufds->revents, out_fds);
-		}
-	}
+		for (j = walk->len; j; fds++, ufds++, j--)
+			unsafe_put_user(fds->revents, &ufds->revents, Efault);
+  	}
+	user_write_access_end();
 
 	err = fdcount;
 out_fds:
@@ -1026,17 +1037,25 @@ out_fds:
 	}
 
 	return err;
+
+Efault:
+	user_write_access_end();
+	err = -EFAULT;
+	goto out_fds;
 }
 
 static long do_restart_poll(struct restart_block *restart_block)
 {
 	struct pollfd __user *ufds = restart_block->poll.ufds;
 	int nfds = restart_block->poll.nfds;
-	struct timespec64 *to = NULL;
+	struct timespec64 *to = NULL, end_time;
 	int ret;
 
-	if (restart_block->poll.has_timeout)
-		to = &restart_block->poll.end_time;
+	if (restart_block->poll.has_timeout) {
+		end_time.tv_sec = restart_block->poll.tv_sec;
+		end_time.tv_nsec = restart_block->poll.tv_nsec;
+		to = &end_time;
+	}
 
 	ret = do_sys_poll(ufds, nfds, to);
 
@@ -1068,7 +1087,8 @@ SYSCALL_DEFINE3(poll, struct pollfd __user *, ufds, unsigned int, nfds,
 		restart_block->poll.nfds = nfds;
 
 		if (timeout_msecs >= 0) {
-			restart_block->poll.end_time = end_time;
+			restart_block->poll.tv_sec = end_time.tv_sec;
+			restart_block->poll.tv_nsec = end_time.tv_nsec;
 			restart_block->poll.has_timeout = 1;
 		} else
 			restart_block->poll.has_timeout = 0;
@@ -1333,13 +1353,15 @@ static inline int get_compat_sigset_argpack(struct compat_sigset_argpack *to,
 					    struct compat_sigset_argpack __user *from)
 {
 	if (from) {
-		scoped_user_read_access(from, efault) {
-			unsafe_get_user(to->p, &from->p, efault);
-			unsafe_get_user(to->size, &from->size, efault);
-		}
+		if (!user_read_access_begin(from, sizeof(*from)))
+			return -EFAULT;
+		unsafe_get_user(to->p, &from->p, Efault);
+		unsafe_get_user(to->size, &from->size, Efault);
+		user_read_access_end();
 	}
 	return 0;
-efault:
+Efault:
+	user_read_access_end();
 	return -EFAULT;
 }
 

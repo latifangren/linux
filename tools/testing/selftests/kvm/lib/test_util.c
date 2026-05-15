@@ -18,27 +18,20 @@
 
 #include "test_util.h"
 
-sigjmp_buf expect_sigbus_jmpbuf;
-
-void __attribute__((used)) expect_sigbus_handler(int signum)
-{
-	siglongjmp(expect_sigbus_jmpbuf, 1);
-}
-
 /*
  * Random number generator that is usable from guest code. This is the
  * Park-Miller LCG using standard constants.
  */
 
-struct guest_random_state new_guest_random_state(u32 seed)
+struct guest_random_state new_guest_random_state(uint32_t seed)
 {
 	struct guest_random_state s = {.seed = seed};
 	return s;
 }
 
-u32 guest_random_u32(struct guest_random_state *state)
+uint32_t guest_random_u32(struct guest_random_state *state)
 {
-	state->seed = (u64)state->seed * 48271 % ((u32)(1 << 31) - 1);
+	state->seed = (uint64_t)state->seed * 48271 % ((uint32_t)(1 << 31) - 1);
 	return state->seed;
 }
 
@@ -83,12 +76,12 @@ size_t parse_size(const char *size)
 	return base << shift;
 }
 
-s64 timespec_to_ns(struct timespec ts)
+int64_t timespec_to_ns(struct timespec ts)
 {
-	return (s64)ts.tv_nsec + 1000000000LL * (s64)ts.tv_sec;
+	return (int64_t)ts.tv_nsec + 1000000000LL * (int64_t)ts.tv_sec;
 }
 
-struct timespec timespec_add_ns(struct timespec ts, s64 ns)
+struct timespec timespec_add_ns(struct timespec ts, int64_t ns)
 {
 	struct timespec res;
 
@@ -101,15 +94,15 @@ struct timespec timespec_add_ns(struct timespec ts, s64 ns)
 
 struct timespec timespec_add(struct timespec ts1, struct timespec ts2)
 {
-	s64 ns1 = timespec_to_ns(ts1);
-	s64 ns2 = timespec_to_ns(ts2);
+	int64_t ns1 = timespec_to_ns(ts1);
+	int64_t ns2 = timespec_to_ns(ts2);
 	return timespec_add_ns((struct timespec){0}, ns1 + ns2);
 }
 
 struct timespec timespec_sub(struct timespec ts1, struct timespec ts2)
 {
-	s64 ns1 = timespec_to_ns(ts1);
-	s64 ns2 = timespec_to_ns(ts2);
+	int64_t ns1 = timespec_to_ns(ts1);
+	int64_t ns2 = timespec_to_ns(ts2);
 	return timespec_add_ns((struct timespec){0}, ns1 - ns2);
 }
 
@@ -123,7 +116,7 @@ struct timespec timespec_elapsed(struct timespec start)
 
 struct timespec timespec_div(struct timespec ts, int divisor)
 {
-	s64 ns = timespec_to_ns(ts) / divisor;
+	int64_t ns = timespec_to_ns(ts) / divisor;
 
 	return timespec_add_ns((struct timespec){0}, ns);
 }
@@ -139,55 +132,35 @@ void print_skip(const char *fmt, ...)
 	puts(", skipping test");
 }
 
-static bool test_sysfs_path(const char *path)
+bool thp_configured(void)
 {
-	struct stat statbuf;
 	int ret;
+	struct stat statbuf;
 
-	ret = stat(path, &statbuf);
+	ret = stat("/sys/kernel/mm/transparent_hugepage", &statbuf);
 	TEST_ASSERT(ret == 0 || (ret == -1 && errno == ENOENT),
-		    "Error in stat()ing '%s'", path);
+		    "Error in stating /sys/kernel/mm/transparent_hugepage");
 
 	return ret == 0;
 }
 
-bool thp_configured(void)
-{
-	return test_sysfs_path("/sys/kernel/mm/transparent_hugepage");
-}
-
-static size_t get_sysfs_val(const char *path)
+size_t get_trans_hugepagesz(void)
 {
 	size_t size;
 	FILE *f;
 	int ret;
 
-	f = fopen(path, "r");
-	TEST_ASSERT(f, "Error opening '%s'", path);
-
-	ret = fscanf(f, "%ld", &size);
-	TEST_ASSERT(ret > 0, "Error reading '%s'", path);
-
-	/* Re-scan the input stream to verify the entire file was read. */
-	ret = fscanf(f, "%ld", &size);
-	TEST_ASSERT(ret < 1, "Error reading '%s'", path);
-
-	fclose(f);
-	return size;
-}
-
-size_t get_trans_hugepagesz(void)
-{
 	TEST_ASSERT(thp_configured(), "THP is not configured in host kernel");
 
-	return get_sysfs_val("/sys/kernel/mm/transparent_hugepage/hpage_pmd_size");
-}
+	f = fopen("/sys/kernel/mm/transparent_hugepage/hpage_pmd_size", "r");
+	TEST_ASSERT(f != NULL, "Error in opening transparent_hugepage/hpage_pmd_size");
 
-bool is_numa_balancing_enabled(void)
-{
-	if (!test_sysfs_path("/proc/sys/kernel/numa_balancing"))
-		return false;
-	return get_sysfs_val("/proc/sys/kernel/numa_balancing") == 1;
+	ret = fscanf(f, "%ld", &size);
+	ret = fscanf(f, "%ld", &size);
+	TEST_ASSERT(ret < 1, "Error reading transparent_hugepage/hpage_pmd_size");
+	fclose(f);
+
+	return size;
 }
 
 size_t get_def_hugetlb_pagesz(void)
@@ -225,7 +198,7 @@ size_t get_def_hugetlb_pagesz(void)
 #define ANON_FLAGS	(MAP_PRIVATE | MAP_ANONYMOUS)
 #define ANON_HUGE_FLAGS	(ANON_FLAGS | MAP_HUGETLB)
 
-const struct vm_mem_backing_src_alias *vm_mem_backing_src_alias(u32 i)
+const struct vm_mem_backing_src_alias *vm_mem_backing_src_alias(uint32_t i)
 {
 	static const struct vm_mem_backing_src_alias aliases[] = {
 		[VM_MEM_SRC_ANONYMOUS] = {
@@ -317,9 +290,9 @@ const struct vm_mem_backing_src_alias *vm_mem_backing_src_alias(u32 i)
 
 #define MAP_HUGE_PAGE_SIZE(x) (1ULL << ((x >> MAP_HUGE_SHIFT) & MAP_HUGE_MASK))
 
-size_t get_backing_src_pagesz(u32 i)
+size_t get_backing_src_pagesz(uint32_t i)
 {
-	u32 flag = vm_mem_backing_src_alias(i)->flag;
+	uint32_t flag = vm_mem_backing_src_alias(i)->flag;
 
 	switch (i) {
 	case VM_MEM_SRC_ANONYMOUS:
@@ -335,7 +308,7 @@ size_t get_backing_src_pagesz(u32 i)
 	}
 }
 
-bool is_backing_src_hugetlb(u32 i)
+bool is_backing_src_hugetlb(uint32_t i)
 {
 	return !!(vm_mem_backing_src_alias(i)->flag & MAP_HUGETLB);
 }

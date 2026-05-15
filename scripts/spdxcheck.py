@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0
-# Copyright Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
+# Copyright Thomas Gleixner <tglx@linutronix.de>
 
 from argparse import ArgumentParser
 from ply import lex, yacc
@@ -214,15 +214,9 @@ class id_parser(object):
                 # Remove trailing xml comment closure
                 if line.strip().endswith('-->'):
                     expr = expr.rstrip('-->').strip()
-                # Remove trailing Jinja2 comment closure
-                if line.strip().endswith('#}'):
-                    expr = expr.rstrip('#}').strip()
                 # Special case for SH magic boot code files
                 if line.startswith('LIST \"'):
                     expr = expr.rstrip('\"').strip()
-                # Remove j2 comment closure
-                if line.startswith('{#'):
-                    expr = expr.rstrip('#}').strip()
                 self.parse(expr)
                 self.spdx_valid += 1
                 #

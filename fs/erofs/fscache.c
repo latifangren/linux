@@ -3,6 +3,7 @@
  * Copyright (C) 2022, Alibaba Cloud
  * Copyright (C) 2022, Bytedance Inc. All rights reserved.
  */
+#include <linux/pseudo_fs.h>
 #include <linux/fscache.h>
 #include "internal.h"
 
@@ -11,6 +12,18 @@ static DEFINE_MUTEX(erofs_domain_cookies_lock);
 static LIST_HEAD(erofs_domain_list);
 static LIST_HEAD(erofs_domain_cookies_list);
 static struct vfsmount *erofs_pseudo_mnt;
+
+static int erofs_anon_init_fs_context(struct fs_context *fc)
+{
+	return init_pseudo(fc, EROFS_SUPER_MAGIC) ? 0 : -ENOMEM;
+}
+
+static struct file_system_type erofs_anon_fs_type = {
+	.owner		= THIS_MODULE,
+	.name           = "pseudo_erofs",
+	.init_fs_context = erofs_anon_init_fs_context,
+	.kill_sb        = kill_anon_super,
+};
 
 struct erofs_fscache_io {
 	struct netfs_cache_resources cres;
@@ -70,7 +83,7 @@ static void erofs_fscache_req_put(struct erofs_fscache_rq *req)
 static struct erofs_fscache_rq *erofs_fscache_req_alloc(struct address_space *mapping,
 						loff_t start, size_t len)
 {
-	struct erofs_fscache_rq *req = kzalloc_obj(*req);
+	struct erofs_fscache_rq *req = kzalloc(sizeof(*req), GFP_KERNEL);
 
 	if (!req)
 		return NULL;
@@ -89,7 +102,8 @@ static void erofs_fscache_req_io_put(struct erofs_fscache_io *io)
 		erofs_fscache_req_put(req);
 }
 
-static void erofs_fscache_req_end_io(void *priv, ssize_t transferred_or_error)
+static void erofs_fscache_req_end_io(void *priv,
+		ssize_t transferred_or_error, bool was_async)
 {
 	struct erofs_fscache_io *io = priv;
 	struct erofs_fscache_rq *req = io->private;
@@ -101,7 +115,7 @@ static void erofs_fscache_req_end_io(void *priv, ssize_t transferred_or_error)
 
 static struct erofs_fscache_io *erofs_fscache_req_io_alloc(struct erofs_fscache_rq *req)
 {
-	struct erofs_fscache_io *io = kzalloc_obj(*io);
+	struct erofs_fscache_io *io = kzalloc(sizeof(*io), GFP_KERNEL);
 
 	if (!io)
 		return NULL;
@@ -166,7 +180,8 @@ struct erofs_fscache_bio {
 	struct bio_vec bvecs[BIO_MAX_VECS];
 };
 
-static void erofs_fscache_bio_endio(void *priv, ssize_t transferred_or_error)
+static void erofs_fscache_bio_endio(void *priv,
+		ssize_t transferred_or_error, bool was_async)
 {
 	struct erofs_fscache_bio *io = priv;
 
@@ -181,7 +196,7 @@ struct bio *erofs_fscache_bio_alloc(struct erofs_map_dev *mdev)
 {
 	struct erofs_fscache_bio *io;
 
-	io = kmalloc_obj(*io, GFP_KERNEL | __GFP_NOFAIL);
+	io = kmalloc(sizeof(*io), GFP_KERNEL | __GFP_NOFAIL);
 	bio_init(&io->bio, NULL, io->bvecs, BIO_MAX_VECS, REQ_OP_READ);
 	io->io.private = mdev->m_dif->fscache->cookie;
 	io->io.end_io = erofs_fscache_bio_endio;
@@ -261,8 +276,7 @@ static int erofs_fscache_data_read_slice(struct erofs_fscache_rq *req)
 		size_t size = map.m_llen;
 		void *src;
 
-		src = erofs_read_metabuf(&buf, sb, map.m_pa,
-					 erofs_inode_in_metabox(inode));
+		src = erofs_read_metabuf(&buf, sb, map.m_pa, EROFS_KMAP);
 		if (IS_ERR(src))
 			return PTR_ERR(src);
 
@@ -379,7 +393,7 @@ static void erofs_fscache_domain_put(struct erofs_domain *domain)
 		}
 		fscache_relinquish_volume(domain->volume, NULL, false);
 		mutex_unlock(&erofs_domain_list_lock);
-		kfree_sensitive(domain->domain_id);
+		kfree(domain->domain_id);
 		kfree(domain);
 		return;
 	}
@@ -417,7 +431,7 @@ static int erofs_fscache_init_domain(struct super_block *sb)
 	struct erofs_domain *domain;
 	struct erofs_sb_info *sbi = EROFS_SB(sb);
 
-	domain = kzalloc_obj(struct erofs_domain);
+	domain = kzalloc(sizeof(struct erofs_domain), GFP_KERNEL);
 	if (!domain)
 		return -ENOMEM;
 
@@ -446,7 +460,7 @@ static int erofs_fscache_init_domain(struct super_block *sb)
 	sbi->domain = domain;
 	return 0;
 out:
-	kfree_sensitive(domain->domain_id);
+	kfree(domain->domain_id);
 	kfree(domain);
 	return err;
 }
@@ -482,7 +496,7 @@ static struct erofs_fscache *erofs_fscache_acquire_cookie(struct super_block *sb
 	struct inode *inode;
 	int ret;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return ERR_PTR(-ENOMEM);
 	INIT_LIST_HEAD(&ctx->node);

@@ -33,6 +33,8 @@
 #endif
 #include "ssl-common.h"
 
+#define PKEY_ID_PKCS7 2
+
 static __attribute__((noreturn))
 void format(void)
 {
@@ -41,9 +43,7 @@ void format(void)
 	exit(2);
 }
 
-#ifdef USE_PKCS11_ENGINE
 static const char *key_pass;
-#endif
 static BIO *wb;
 static char *cert_dst;
 static bool verbose;
@@ -135,9 +135,7 @@ int main(int argc, char **argv)
 	if (verbose_env && strchr(verbose_env, '1'))
 		verbose = true;
 
-#ifdef USE_PKCS11_ENGINE
-	key_pass = getenv("KBUILD_SIGN_PIN");
-#endif
+        key_pass = getenv("KBUILD_SIGN_PIN");
 
 	if (argc != 3)
 		format();

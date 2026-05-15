@@ -511,7 +511,8 @@ static int starfive_aes_map_sg(struct starfive_cryp_dev *cryp,
 		     stsg = sg_next(stsg), dtsg = sg_next(dtsg)) {
 			src_nents = dma_map_sg(cryp->dev, stsg, 1, DMA_BIDIRECTIONAL);
 			if (src_nents == 0)
-				return -ENOMEM;
+				return dev_err_probe(cryp->dev, -ENOMEM,
+						     "dma_map_sg error\n");
 
 			dst_nents = src_nents;
 			len = min(sg_dma_len(stsg), remain);
@@ -527,11 +528,13 @@ static int starfive_aes_map_sg(struct starfive_cryp_dev *cryp,
 		for (stsg = src, dtsg = dst;;) {
 			src_nents = dma_map_sg(cryp->dev, stsg, 1, DMA_TO_DEVICE);
 			if (src_nents == 0)
-				return -ENOMEM;
+				return dev_err_probe(cryp->dev, -ENOMEM,
+						     "dma_map_sg src error\n");
 
 			dst_nents = dma_map_sg(cryp->dev, dtsg, 1, DMA_FROM_DEVICE);
 			if (dst_nents == 0)
-				return -ENOMEM;
+				return dev_err_probe(cryp->dev, -ENOMEM,
+						     "dma_map_sg dst error\n");
 
 			len = min(sg_dma_len(stsg), sg_dma_len(dtsg));
 			len = min(len, remain);
@@ -666,7 +669,8 @@ static int starfive_aes_aead_do_one_req(struct crypto_engine *engine, void *areq
 	if (cryp->assoclen) {
 		rctx->adata = kzalloc(cryp->assoclen + AES_BLOCK_SIZE, GFP_KERNEL);
 		if (!rctx->adata)
-			return -ENOMEM;
+			return dev_err_probe(cryp->dev, -ENOMEM,
+					     "Failed to alloc memory for adata");
 
 		if (sg_copy_to_buffer(req->src, sg_nents_for_len(req->src, cryp->assoclen),
 				      rctx->adata, cryp->assoclen) != cryp->assoclen) {
@@ -988,27 +992,27 @@ static int starfive_aes_ccm_decrypt(struct aead_request *req)
 
 static int starfive_aes_ecb_init_tfm(struct crypto_skcipher *tfm)
 {
-	return starfive_aes_init_tfm(tfm, "ecb(aes-lib)");
+	return starfive_aes_init_tfm(tfm, "ecb(aes-generic)");
 }
 
 static int starfive_aes_cbc_init_tfm(struct crypto_skcipher *tfm)
 {
-	return starfive_aes_init_tfm(tfm, "cbc(aes-lib)");
+	return starfive_aes_init_tfm(tfm, "cbc(aes-generic)");
 }
 
 static int starfive_aes_ctr_init_tfm(struct crypto_skcipher *tfm)
 {
-	return starfive_aes_init_tfm(tfm, "ctr(aes-lib)");
+	return starfive_aes_init_tfm(tfm, "ctr(aes-generic)");
 }
 
 static int starfive_aes_ccm_init_tfm(struct crypto_aead *tfm)
 {
-	return starfive_aes_aead_init_tfm(tfm, "ccm_base(ctr(aes-lib),cbcmac-aes-lib)");
+	return starfive_aes_aead_init_tfm(tfm, "ccm_base(ctr(aes-generic),cbcmac(aes-generic))");
 }
 
 static int starfive_aes_gcm_init_tfm(struct crypto_aead *tfm)
 {
-	return starfive_aes_aead_init_tfm(tfm, "gcm_base(ctr(aes-lib),ghash-lib)");
+	return starfive_aes_aead_init_tfm(tfm, "gcm_base(ctr(aes-generic),ghash-generic)");
 }
 
 static struct skcipher_engine_alg skcipher_algs[] = {

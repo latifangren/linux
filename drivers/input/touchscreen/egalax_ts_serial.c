@@ -99,7 +99,7 @@ static int egalax_connect(struct serio *serio, struct serio_driver *drv)
 	struct input_dev *input_dev;
 	int error;
 
-	egalax = kzalloc_obj(*egalax);
+	egalax = kzalloc(sizeof(*egalax), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!egalax || !input_dev) {
 		error = -ENOMEM;
@@ -108,7 +108,8 @@ static int egalax_connect(struct serio *serio, struct serio_driver *drv)
 
 	egalax->serio = serio;
 	egalax->input = input_dev;
-	scnprintf(egalax->phys, sizeof(egalax->phys), "%s/input0", serio->phys);
+	snprintf(egalax->phys, sizeof(egalax->phys),
+		 "%s/input0", serio->phys);
 
 	input_dev->name = "EETI eGalaxTouch Serial TouchScreen";
 	input_dev->phys = egalax->phys;

@@ -13,12 +13,14 @@
 #include <net/netfilter/nf_tables_offload.h>
 #include <net/netfilter/nf_dup_netdev.h>
 
+#define NF_RECURSION_LIMIT	2
+
+static DEFINE_PER_CPU(u8, nf_dup_skb_recursion);
+
 static void nf_do_netdev_egress(struct sk_buff *skb, struct net_device *dev,
 				enum nf_dev_hooks hook)
 {
-	u8 *nf_dup_skb_recursion = nf_get_nf_dup_skb_recursion();
-
-	if (*nf_dup_skb_recursion > NF_RECURSION_LIMIT)
+	if (__this_cpu_read(nf_dup_skb_recursion) > NF_RECURSION_LIMIT)
 		goto err;
 
 	if (hook == NF_NETDEV_INGRESS && skb_mac_header_was_set(skb)) {
@@ -30,9 +32,9 @@ static void nf_do_netdev_egress(struct sk_buff *skb, struct net_device *dev,
 
 	skb->dev = dev;
 	skb_clear_tstamp(skb);
-	(*nf_dup_skb_recursion)++;
+	__this_cpu_inc(nf_dup_skb_recursion);
 	dev_queue_xmit(skb);
-	(*nf_dup_skb_recursion)--;
+	__this_cpu_dec(nf_dup_skb_recursion);
 	return;
 err:
 	kfree_skb(skb);
@@ -79,10 +81,7 @@ int nft_fwd_dup_netdev_offload(struct nft_offload_ctx *ctx,
 	if (!dev)
 		return -EOPNOTSUPP;
 
-	entry = nft_flow_action_entry_next(ctx, flow);
-	if (!entry)
-		return -E2BIG;
-
+	entry = &flow->rule->action.entries[ctx->num_actions++];
 	entry->id = id;
 	entry->dev = dev;
 

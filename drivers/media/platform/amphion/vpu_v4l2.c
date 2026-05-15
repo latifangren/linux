@@ -102,6 +102,7 @@ static int vpu_notify_eos(struct vpu_inst *inst)
 int vpu_notify_source_change(struct vpu_inst *inst)
 {
 	static const struct v4l2_event ev = {
+		.id = 0,
 		.type = V4L2_EVENT_SOURCE_CHANGE,
 		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION
 	};
@@ -447,14 +448,17 @@ static void vpu_m2m_device_run(void *priv)
 {
 }
 
-static int vpu_m2m_job_ready(void *priv)
+static void vpu_m2m_job_abort(void *priv)
 {
-	return 0;
+	struct vpu_inst *inst = priv;
+	struct v4l2_m2m_ctx *m2m_ctx = inst->fh.m2m_ctx;
+
+	v4l2_m2m_job_finish(m2m_ctx->m2m_dev, m2m_ctx);
 }
 
 static const struct v4l2_m2m_ops vpu_m2m_ops = {
 	.device_run = vpu_m2m_device_run,
-	.job_ready = vpu_m2m_job_ready,
+	.job_abort = vpu_m2m_job_abort
 };
 
 static int vpu_vb2_queue_setup(struct vb2_queue *vq,
@@ -492,25 +496,14 @@ static int vpu_vb2_queue_setup(struct vb2_queue *vq,
 		call_void_vop(inst, release);
 	}
 
-	if (V4L2_TYPE_IS_CAPTURE(vq->type))
-		call_void_vop(inst, reset_frame_store);
-
 	return 0;
 }
 
 static int vpu_vb2_buf_init(struct vb2_buffer *vb)
 {
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
-	struct vpu_vb2_buffer *vpu_buf = to_vpu_vb2_buffer(vbuf);
-	struct vpu_inst *inst = vb2_get_drv_priv(vb->vb2_queue);
 
-	vpu_buf->fs_id = -1;
 	vpu_set_buffer_state(vbuf, VPU_BUF_STATE_IDLE);
-
-	if (!inst->ops->attach_frame_store || V4L2_TYPE_IS_OUTPUT(vb->type))
-		return 0;
-
-	call_void_vop(inst, attach_frame_store, vb);
 	return 0;
 }
 
@@ -649,6 +642,8 @@ static const struct vb2_ops vpu_vb2_ops = {
 	.start_streaming    = vpu_vb2_start_streaming,
 	.stop_streaming     = vpu_vb2_stop_streaming,
 	.buf_queue          = vpu_vb2_buf_queue,
+	.wait_prepare       = vb2_ops_wait_prepare,
+	.wait_finish        = vb2_ops_wait_finish,
 };
 
 static int vpu_m2m_queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_vq)
@@ -744,7 +739,7 @@ int vpu_v4l2_open(struct file *file, struct vpu_inst *inst)
 	inst->min_buffer_cap = 2;
 	inst->min_buffer_out = 2;
 	v4l2_fh_init(&inst->fh, func->vfd);
-	v4l2_fh_add(&inst->fh, file);
+	v4l2_fh_add(&inst->fh);
 
 	ret = call_vop(inst, ctrl_init);
 	if (ret)
@@ -758,6 +753,7 @@ int vpu_v4l2_open(struct file *file, struct vpu_inst *inst)
 	}
 
 	inst->fh.ctrl_handler = &inst->ctrl_handler;
+	file->private_data = &inst->fh;
 	inst->state = VPU_CODEC_STATE_DEINIT;
 	inst->workqueue = alloc_ordered_workqueue("vpu_inst", WQ_MEM_RECLAIM);
 	if (inst->workqueue) {
@@ -775,7 +771,7 @@ int vpu_v4l2_open(struct file *file, struct vpu_inst *inst)
 
 	return 0;
 error:
-	v4l2_fh_del(&inst->fh, file);
+	v4l2_fh_del(&inst->fh);
 	v4l2_fh_exit(&inst->fh);
 	vpu_inst_put(inst);
 	return ret;
@@ -796,7 +792,7 @@ int vpu_v4l2_close(struct file *file)
 	call_void_vop(inst, release);
 	vpu_inst_unlock(inst);
 
-	v4l2_fh_del(&inst->fh, file);
+	v4l2_fh_del(&inst->fh);
 	v4l2_fh_exit(&inst->fh);
 
 	vpu_inst_unregister(inst);

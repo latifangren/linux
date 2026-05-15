@@ -520,7 +520,7 @@ static int ptp_probe(struct pci_dev *pdev,
 	struct ptp *ptp;
 	int err;
 
-	ptp = kzalloc_obj(*ptp);
+	ptp = kzalloc(sizeof(*ptp), GFP_KERNEL);
 	if (!ptp) {
 		err = -ENOMEM;
 		goto error;
@@ -545,7 +545,8 @@ static int ptp_probe(struct pci_dev *pdev,
 	spin_lock_init(&ptp->ptp_lock);
 	if (cn10k_ptp_errata(ptp)) {
 		ptp->read_ptp_tstmp = &read_ptp_tstmp_sec_nsec;
-		hrtimer_setup(&ptp->hrtimer, ptp_reset_thresh, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		hrtimer_init(&ptp->hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		ptp->hrtimer.function = ptp_reset_thresh;
 	} else {
 		ptp->read_ptp_tstmp = &read_ptp_tstmp_nsec;
 	}

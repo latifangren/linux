@@ -432,7 +432,7 @@ static struct dmc620_pmu_irq *__dmc620_pmu_get_irq(int irq_num)
 		if (irq->irq_num == irq_num && refcount_inc_not_zero(&irq->refcount))
 			return irq;
 
-	irq = kzalloc_obj(*irq);
+	irq = kzalloc(sizeof(*irq), GFP_KERNEL);
 	if (!irq)
 		return ERR_PTR(-ENOMEM);
 
@@ -750,7 +750,7 @@ static struct platform_driver dmc620_pmu_driver = {
 		.suppress_bind_attrs = true,
 	},
 	.probe	= dmc620_pmu_device_probe,
-	.remove	= dmc620_pmu_device_remove,
+	.remove_new = dmc620_pmu_device_remove,
 };
 
 static int __init dmc620_pmu_init(void)

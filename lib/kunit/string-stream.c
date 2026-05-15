@@ -18,7 +18,7 @@ static struct string_stream_fragment *alloc_string_stream_fragment(int len, gfp_
 {
 	struct string_stream_fragment *frag;
 
-	frag = kzalloc_obj(*frag, gfp);
+	frag = kzalloc(sizeof(*frag), gfp);
 	if (!frag)
 		return ERR_PTR(-ENOMEM);
 
@@ -158,7 +158,7 @@ struct string_stream *alloc_string_stream(gfp_t gfp)
 {
 	struct string_stream *stream;
 
-	stream = kzalloc_obj(*stream, gfp);
+	stream = kzalloc(sizeof(*stream), gfp);
 	if (!stream)
 		return ERR_PTR(-ENOMEM);
 

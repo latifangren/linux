@@ -7,16 +7,13 @@
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
  */
 
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/gfp.h>
-#include <linux/mutex.h>
 
 #include <media/v4l2-subdev.h>
 
 #include "vsp1.h"
 #include "vsp1_dl.h"
-#include "vsp1_entity.h"
 #include "vsp1_pipe.h"
 #include "vsp1_uds.h"
 
@@ -113,42 +110,56 @@ static unsigned int uds_compute_ratio(unsigned int input, unsigned int output)
  * V4L2 Subdevice Pad Operations
  */
 
-static const unsigned int uds_codes[] = {
-	MEDIA_BUS_FMT_ARGB8888_1X32,
-	MEDIA_BUS_FMT_AYUV8_1X32,
-};
+static int uds_enum_mbus_code(struct v4l2_subdev *subdev,
+			      struct v4l2_subdev_state *sd_state,
+			      struct v4l2_subdev_mbus_code_enum *code)
+{
+	static const unsigned int codes[] = {
+		MEDIA_BUS_FMT_ARGB8888_1X32,
+		MEDIA_BUS_FMT_AYUV8_1X32,
+	};
+
+	return vsp1_subdev_enum_mbus_code(subdev, sd_state, code, codes,
+					  ARRAY_SIZE(codes));
+}
 
 static int uds_enum_frame_size(struct v4l2_subdev *subdev,
 			       struct v4l2_subdev_state *sd_state,
 			       struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct vsp1_uds *uds = to_uds(subdev);
-	int ret;
+	struct v4l2_subdev_state *state;
+	struct v4l2_mbus_framefmt *format;
+	int ret = 0;
 
-	ret = vsp1_subdev_enum_frame_size(subdev, sd_state, fse);
-	if (ret)
-		return ret;
+	state = vsp1_entity_get_state(&uds->entity, sd_state, fse->which);
+	if (!state)
+		return -EINVAL;
 
-	if (fse->pad == UDS_PAD_SOURCE) {
-		struct v4l2_subdev_state *state;
-		struct v4l2_mbus_framefmt *format;
+	format = v4l2_subdev_state_get_format(state, UDS_PAD_SINK);
 
-		state = vsp1_entity_get_state(&uds->entity, sd_state,
-					      fse->which);
-		if (!state)
-			return -EINVAL;
+	mutex_lock(&uds->entity.lock);
 
-		format = v4l2_subdev_state_get_format(state, UDS_PAD_SINK);
+	if (fse->index || fse->code != format->code) {
+		ret = -EINVAL;
+		goto done;
+	}
 
-		guard(mutex)(&uds->entity.lock);
-
+	if (fse->pad == UDS_PAD_SINK) {
+		fse->min_width = UDS_MIN_SIZE;
+		fse->max_width = UDS_MAX_SIZE;
+		fse->min_height = UDS_MIN_SIZE;
+		fse->max_height = UDS_MAX_SIZE;
+	} else {
 		uds_output_limits(format->width, &fse->min_width,
 				  &fse->max_width);
 		uds_output_limits(format->height, &fse->min_height,
 				  &fse->max_height);
 	}
 
-	return 0;
+done:
+	mutex_unlock(&uds->entity.lock);
+	return ret;
 }
 
 static void uds_try_format(struct vsp1_uds *uds,
@@ -166,8 +177,6 @@ static void uds_try_format(struct vsp1_uds *uds,
 		    fmt->code != MEDIA_BUS_FMT_AYUV8_1X32)
 			fmt->code = MEDIA_BUS_FMT_AYUV8_1X32;
 
-		vsp1_entity_adjust_color_space(fmt);
-
 		fmt->width = clamp(fmt->width, UDS_MIN_SIZE, UDS_MAX_SIZE);
 		fmt->height = clamp(fmt->height, UDS_MIN_SIZE, UDS_MAX_SIZE);
 		break;
@@ -177,11 +186,6 @@ static void uds_try_format(struct vsp1_uds *uds,
 		format = v4l2_subdev_state_get_format(sd_state, UDS_PAD_SINK);
 		fmt->code = format->code;
 
-		fmt->colorspace = format->colorspace;
-		fmt->xfer_func = format->xfer_func;
-		fmt->ycbcr_enc = format->ycbcr_enc;
-		fmt->quantization = format->quantization;
-
 		uds_output_limits(format->width, &minimum, &maximum);
 		fmt->width = clamp(fmt->width, minimum, maximum);
 		uds_output_limits(format->height, &minimum, &maximum);
@@ -190,6 +194,7 @@ static void uds_try_format(struct vsp1_uds *uds,
 	}
 
 	fmt->field = V4L2_FIELD_NONE;
+	fmt->colorspace = V4L2_COLORSPACE_SRGB;
 }
 
 static int uds_set_format(struct v4l2_subdev *subdev,
@@ -232,7 +237,7 @@ done:
  */
 
 static const struct v4l2_subdev_pad_ops uds_pad_ops = {
-	.enum_mbus_code = vsp1_subdev_enum_mbus_code,
+	.enum_mbus_code = uds_enum_mbus_code,
 	.enum_frame_size = uds_enum_frame_size,
 	.get_fmt = vsp1_subdev_get_pad_format,
 	.set_fmt = uds_set_format,
@@ -398,12 +403,6 @@ struct vsp1_uds *vsp1_uds_create(struct vsp1_device *vsp1, unsigned int index)
 	uds->entity.ops = &uds_entity_ops;
 	uds->entity.type = VSP1_ENTITY_UDS;
 	uds->entity.index = index;
-	uds->entity.codes = uds_codes;
-	uds->entity.num_codes = ARRAY_SIZE(uds_codes);
-	uds->entity.min_width = UDS_MIN_SIZE;
-	uds->entity.max_width = UDS_MAX_SIZE;
-	uds->entity.min_height = UDS_MIN_SIZE;
-	uds->entity.max_height = UDS_MAX_SIZE;
 
 	sprintf(name, "uds.%u", index);
 	ret = vsp1_entity_init(vsp1, &uds->entity, name, 2, &uds_ops,

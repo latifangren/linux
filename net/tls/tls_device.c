@@ -159,7 +159,7 @@ static void delete_all_records(struct tls_offload_context_tx *offload_ctx)
 	offload_ctx->retransmit_hint = NULL;
 }
 
-static void tls_tcp_clean_acked(struct sock *sk, u32 acked_seq)
+static void tls_icsk_clean_acked(struct sock *sk, u32 acked_seq)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_record_info *info, *temp;
@@ -206,7 +206,7 @@ void tls_device_sk_destruct(struct sock *sk)
 			destroy_record(ctx->open_record);
 		delete_all_records(ctx);
 		crypto_free_aead(ctx->aead_send);
-		clean_acked_data_disable(tcp_sk(sk));
+		clean_acked_data_disable(inet_csk(sk));
 	}
 
 	tls_device_queue_ctx_destruction(tls_ctx);
@@ -346,7 +346,7 @@ static int tls_create_new_record(struct tls_offload_context_tx *offload_ctx,
 	struct tls_record_info *record;
 	skb_frag_t *frag;
 
-	record = kmalloc_obj(*record);
+	record = kmalloc(sizeof(*record), GFP_KERNEL);
 	if (!record)
 		return -ENOMEM;
 
@@ -373,8 +373,7 @@ static int tls_do_allocation(struct sock *sk,
 	if (!offload_ctx->open_record) {
 		if (unlikely(!skb_page_frag_refill(prepend_size, pfrag,
 						   sk->sk_allocation))) {
-			if (!sk->sk_bypass_prot_mem)
-				READ_ONCE(sk->sk_prot)->enter_memory_pressure(sk);
+			READ_ONCE(sk->sk_prot)->enter_memory_pressure(sk);
 			sk_stream_moderate_sndbuf(sk);
 			return -ENOMEM;
 		}
@@ -462,7 +461,7 @@ static int tls_push_data(struct sock *sk,
 	/* TLS_HEADER_SIZE is not counted as part of the TLS record, and
 	 * we need to leave room for an authentication tag.
 	 */
-	max_open_record_len = tls_ctx->tx_max_payload_len +
+	max_open_record_len = TLS_MAX_PAYLOAD_SIZE +
 			      prot->prepend_size;
 	do {
 		rc = tls_do_allocation(sk, ctx, pfrag, prot->prepend_size);
@@ -1040,7 +1039,7 @@ static struct tls_offload_context_tx *alloc_offload_ctx_tx(struct tls_context *c
 	struct tls_offload_context_tx *offload_ctx;
 	__be64 rcd_sn;
 
-	offload_ctx = kzalloc_obj(*offload_ctx);
+	offload_ctx = kzalloc(sizeof(*offload_ctx), GFP_KERNEL);
 	if (!offload_ctx)
 		return NULL;
 
@@ -1110,7 +1109,7 @@ int tls_set_device_offload(struct sock *sk)
 	memcpy(ctx->tx.iv + cipher_desc->salt, iv, cipher_desc->iv);
 	memcpy(ctx->tx.rec_seq, rec_seq, cipher_desc->rec_seq);
 
-	start_marker_record = kmalloc_obj(*start_marker_record);
+	start_marker_record = kmalloc(sizeof(*start_marker_record), GFP_KERNEL);
 	if (!start_marker_record) {
 		rc = -ENOMEM;
 		goto release_netdev;
@@ -1131,7 +1130,7 @@ int tls_set_device_offload(struct sock *sk)
 	start_marker_record->num_frags = 0;
 	list_add_tail(&start_marker_record->list, &offload_ctx->records_list);
 
-	clean_acked_data_enable(tcp_sk(sk), &tls_tcp_clean_acked);
+	clean_acked_data_enable(inet_csk(sk), &tls_icsk_clean_acked);
 	ctx->push_pending_record = tls_device_push_pending_record;
 
 	/* TLS offload is greatly simplified if we don't send
@@ -1177,7 +1176,7 @@ int tls_set_device_offload(struct sock *sk)
 
 release_lock:
 	up_read(&device_offload_lock);
-	clean_acked_data_disable(tcp_sk(sk));
+	clean_acked_data_disable(inet_csk(sk));
 	crypto_free_aead(offload_ctx->aead_send);
 free_offload_ctx:
 	kfree(offload_ctx);
@@ -1224,7 +1223,7 @@ int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
 		goto release_lock;
 	}
 
-	context = kzalloc_obj(*context);
+	context = kzalloc(sizeof(*context), GFP_KERNEL);
 	if (!context) {
 		rc = -ENOMEM;
 		goto release_lock;
@@ -1232,7 +1231,7 @@ int tls_set_device_offload_rx(struct sock *sk, struct tls_context *ctx)
 	context->resync_nh_reset = 1;
 
 	ctx->priv_ctx_rx = context;
-	rc = tls_set_sw_offload(sk, 0, NULL);
+	rc = tls_set_sw_offload(sk, 0);
 	if (rc)
 		goto release_ctx;
 
@@ -1415,7 +1414,7 @@ int __init tls_device_init(void)
 	if (!dummy_page)
 		return -ENOMEM;
 
-	destruct_wq = alloc_workqueue("ktls_device_destruct", WQ_PERCPU, 0);
+	destruct_wq = alloc_workqueue("ktls_device_destruct", 0, 0);
 	if (!destruct_wq) {
 		err = -ENOMEM;
 		goto err_free_dummy;

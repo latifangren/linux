@@ -18,9 +18,9 @@
 #undef DEBUGDATA
 #undef DEBUGCCW
 
-#define pr_fmt(fmt) "ctcm: " fmt
+#define KMSG_COMPONENT "ctcm"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -179,7 +179,7 @@ void ctcmpc_dumpit(char *buf, int len)
 			ctcm_pr_debug("   %s (+%s) : %s  [%s]\n",
 					addr, boff, bhex, basc);
 			dup = 0;
-			strscpy(duphex, bhex);
+			strcpy(duphex, bhex);
 		} else
 			dup++;
 
@@ -1163,7 +1163,7 @@ static void ctcmpc_unpack_skb(struct channel *ch, struct sk_buff *pskb)
 			skb_pull(pskb, new_len); /* point to next PDU */
 		}
 	} else {
-		mpcginfo = kmalloc_obj(struct mpcg_info, GFP_ATOMIC);
+		mpcginfo = kmalloc(sizeof(struct mpcg_info), GFP_ATOMIC);
 		if (mpcginfo == NULL)
 					goto done;
 
@@ -1259,7 +1259,7 @@ struct mpc_group *ctcmpc_init_mpc_group(struct ctcm_priv *priv)
 	CTCM_DBF_TEXT_(MPC_SETUP, CTC_DBF_INFO,
 			"Enter %s(%p)", CTCM_FUNTAIL, priv);
 
-	grp = kzalloc_obj(struct mpc_group);
+	grp = kzalloc(sizeof(struct mpc_group), GFP_KERNEL);
 	if (grp == NULL)
 		return NULL;
 

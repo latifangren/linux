@@ -237,9 +237,11 @@ MODULE_DEVICE_TABLE(pci, snd_es1938_ids);
  * -----------------------------------------------------------------*/
 static void snd_es1938_mixer_write(struct es1938 *chip, unsigned char reg, unsigned char val)
 {
-	guard(spinlock_irqsave)(&chip->mixer_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&chip->mixer_lock, flags);
 	outb(reg, SLSB_REG(chip, MIXERADDR));
 	outb(val, SLSB_REG(chip, MIXERDATA));
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
 	dev_dbg(chip->card->dev, "Mixer reg %02x set to %02x\n", reg, val);
 }
 
@@ -249,10 +251,11 @@ static void snd_es1938_mixer_write(struct es1938 *chip, unsigned char reg, unsig
 static int snd_es1938_mixer_read(struct es1938 *chip, unsigned char reg)
 {
 	int data;
-
-	guard(spinlock_irqsave)(&chip->mixer_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&chip->mixer_lock, flags);
 	outb(reg, SLSB_REG(chip, MIXERADDR));
 	data = inb(SLSB_REG(chip, MIXERDATA));
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
 	dev_dbg(chip->card->dev, "Mixer reg %02x now is %02x\n", reg, data);
 	return data;
 }
@@ -263,9 +266,9 @@ static int snd_es1938_mixer_read(struct es1938 *chip, unsigned char reg)
 static int snd_es1938_mixer_bits(struct es1938 *chip, unsigned char reg,
 				 unsigned char mask, unsigned char val)
 {
+	unsigned long flags;
 	unsigned char old, new, oval;
-
-	guard(spinlock_irqsave)(&chip->mixer_lock);
+	spin_lock_irqsave(&chip->mixer_lock, flags);
 	outb(reg, SLSB_REG(chip, MIXERADDR));
 	old = inb(SLSB_REG(chip, MIXERDATA));
 	oval = old & mask;
@@ -276,6 +279,7 @@ static int snd_es1938_mixer_bits(struct es1938 *chip, unsigned char reg,
 			"Mixer reg %02x was %02x, set to %02x\n",
 			   reg, old, new);
 	}
+	spin_unlock_irqrestore(&chip->mixer_lock, flags);
 	return oval;
 }
 
@@ -318,9 +322,11 @@ static int snd_es1938_get_byte(struct es1938 *chip)
  * -----------------------------------------------------------------*/
 static void snd_es1938_write(struct es1938 *chip, unsigned char reg, unsigned char val)
 {
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	snd_es1938_write_cmd(chip, reg);
 	snd_es1938_write_cmd(chip, val);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	dev_dbg(chip->card->dev, "Reg %02x set to %02x\n", reg, val);
 }
 
@@ -330,11 +336,12 @@ static void snd_es1938_write(struct es1938 *chip, unsigned char reg, unsigned ch
 static unsigned char snd_es1938_read(struct es1938 *chip, unsigned char reg)
 {
 	unsigned char val;
-
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	snd_es1938_write_cmd(chip, ESS_CMD_READREG);
 	snd_es1938_write_cmd(chip, reg);
 	val = snd_es1938_get_byte(chip);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	dev_dbg(chip->card->dev, "Reg %02x now is %02x\n", reg, val);
 	return val;
 }
@@ -345,9 +352,9 @@ static unsigned char snd_es1938_read(struct es1938 *chip, unsigned char reg)
 static int snd_es1938_bits(struct es1938 *chip, unsigned char reg, unsigned char mask,
 			   unsigned char val)
 {
+	unsigned long flags;
 	unsigned char old, new, oval;
-
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	snd_es1938_write_cmd(chip, ESS_CMD_READREG);
 	snd_es1938_write_cmd(chip, reg);
 	old = snd_es1938_get_byte(chip);
@@ -359,6 +366,7 @@ static int snd_es1938_bits(struct es1938 *chip, unsigned char reg, unsigned char
 		dev_dbg(chip->card->dev, "Reg %02x was %02x, set to %02x\n",
 			   reg, old, new);
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return oval;
 }
 
@@ -974,7 +982,7 @@ static int snd_es1938_new_pcm(struct es1938 *chip, int device)
 	
 	pcm->private_data = chip;
 	pcm->info_flags = 0;
-	strscpy(pcm->name, "ESS Solo-1");
+	strcpy(pcm->name, "ESS Solo-1");
 
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
 				       &chip->pci->dev, 64*1024, 64*1024);
@@ -1523,7 +1531,7 @@ static int snd_es1938_create(struct snd_card *card,
 	chip->card = card;
 	chip->pci = pci;
 	chip->irq = -1;
-	err = pcim_request_all_regions(pci, "ESS Solo-1");
+	err = pci_request_regions(pci, "ESS Solo-1");
 	if (err < 0)
 		return err;
 	chip->io_port = pci_resource_start(pci, 0);
@@ -1650,7 +1658,7 @@ static int snd_es1938_mixer(struct es1938 *chip)
 
 	card = chip->card;
 
-	strscpy(card->mixername, "ESS Solo-1");
+	strcpy(card->mixername, "ESS Solo-1");
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_es1938_controls); idx++) {
 		struct snd_kcontrol *kctl;
@@ -1712,8 +1720,8 @@ static int __snd_es1938_probe(struct pci_dev *pci,
 	if (err < 0)
 		return err;
 
-	strscpy(card->driver, "ES1938");
-	strscpy(card->shortname, "ESS ES1938 (Solo-1)");
+	strcpy(card->driver, "ES1938");
+	strcpy(card->shortname, "ESS ES1938 (Solo-1)");
 	sprintf(card->longname, "%s rev %i, irq %i",
 		card->shortname,
 		chip->revision,

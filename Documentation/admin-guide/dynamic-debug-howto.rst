@@ -223,13 +223,12 @@ The flags are::
   f    Include the function name
   s    Include the source file name
   l    Include line number
-  d    Include call trace
 
 For ``print_hex_dump_debug()`` and ``print_hex_dump_bytes()``, only
 the ``p`` flag has meaning, other flags are ignored.
 
-Note the regexp ``^[-+=][fslmptd_]+$`` matches a flags specification.
-To clear all flags at once, use ``=_`` or ``-fslmptd``.
+Note the regexp ``^[-+=][fslmpt_]+$`` matches a flags specification.
+To clear all flags at once, use ``=_`` or ``-fslmpt``.
 
 
 Debug messages during Boot Process

@@ -626,8 +626,8 @@
 
 		vreg_l6n_3p3: ldo6 {
 			regulator-name = "vreg_l6n_3p3";
-			regulator-min-microvolt = <3200000>;
-			regulator-max-microvolt = <3200000>;
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <3304000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
@@ -642,10 +642,10 @@
 
 &gpu {
 	status = "okay";
-};
 
-&gpu_zap_shader {
-	firmware-name = "qcom/sm8550/a740_zap.mbn";
+	zap-shader {
+		firmware-name = "qcom/sm8550/a740_zap.mbn";
+	};
 };
 
 &i2c_master_hub_0 {
@@ -670,10 +670,6 @@
 			};
 		};
 	};
-};
-
-&iris {
-	status = "okay";
 };
 
 &lpass_tlmm {
@@ -707,8 +703,8 @@
 		reg = <0>;
 
 		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&sde_dsi_active>, <&sde_te>;
-		pinctrl-1 = <&sde_dsi_suspend>, <&sde_te>;
+		pinctrl-0 = <&sde_dsi_active>, <&sde_te_active>;
+		pinctrl-1 = <&sde_dsi_suspend>, <&sde_te_suspend>;
 
 		vddio-supply = <&vreg_l12b_1p8>;
 		vci-supply = <&vreg_l13b_3p0>;
@@ -736,6 +732,10 @@
 
 &mdss_dp0 {
 	status = "okay";
+};
+
+&mdss_dp0_out {
+	data-lanes = <0 1>;
 };
 
 &pcie0 {
@@ -787,22 +787,6 @@
 &pm8550b_eusb2_repeater {
 	vdd18-supply = <&vreg_l15b_1p8>;
 	vdd3-supply = <&vreg_l5b_3p1>;
-};
-
-&pm8550vs_c {
-	status = "okay";
-};
-
-&pm8550vs_d {
-	status = "okay";
-};
-
-&pm8550vs_e {
-	status = "okay";
-};
-
-&pm8550vs_g {
-	status = "okay";
 };
 
 &qupv3_id_0 {
@@ -915,7 +899,14 @@
 		bias-pull-down;
 	};
 
-	sde_te: sde-te-state {
+	sde_te_active: sde-te-active-state {
+		pins = "gpio86";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	sde_te_suspend: sde-te-suspend-state {
 		pins = "gpio86";
 		function = "mdp_vsync";
 		drive-strength = <2>;

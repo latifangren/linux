@@ -361,10 +361,6 @@ static long efi_runtime_get_waketime(unsigned long arg)
 						getwakeuptime.enabled))
 		return -EFAULT;
 
-	if (getwakeuptime.pending && put_user(pending,
-						getwakeuptime.pending))
-		return -EFAULT;
-
 	if (getwakeuptime.time) {
 		if (copy_to_user(getwakeuptime.time, &efi_time,
 				sizeof(efi_time_t)))
@@ -614,7 +610,8 @@ static long efi_runtime_query_capsulecaps(unsigned long arg)
 	if (qcaps.capsule_count == ULONG_MAX)
 		return -EINVAL;
 
-	capsules = kzalloc_objs(efi_capsule_header_t, qcaps.capsule_count + 1);
+	capsules = kcalloc(qcaps.capsule_count + 1,
+			   sizeof(efi_capsule_header_t), GFP_KERNEL);
 	if (!capsules)
 		return -ENOMEM;
 

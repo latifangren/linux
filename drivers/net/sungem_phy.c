@@ -1165,7 +1165,7 @@ int sungem_phy_probe(struct mii_phy *phy, int mii_id)
 	int i;
 
 	/* We do not reset the mii_phy structure as the driver
-	 * may re-probe the PHY regularly
+	 * may re-probe the PHY regulary
 	 */
 	phy->mii_id = mii_id;
 

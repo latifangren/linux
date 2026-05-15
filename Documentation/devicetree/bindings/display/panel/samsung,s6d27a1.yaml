@@ -30,6 +30,8 @@ properties:
       configuration.
     maxItems: 1
 
+  reset-gpios: true
+
   vci-supply:
     description: regulator that supplies the VCI analog voltage
       usually around 3.0 V
@@ -38,12 +40,16 @@ properties:
     description: regulator that supplies the VCCIO voltage usually
       around 1.8 V
 
+  backlight: true
+
   spi-cpha: true
 
   spi-cpol: true
 
   spi-max-frequency:
     maximum: 1200000
+
+  port: true
 
 required:
   - compatible

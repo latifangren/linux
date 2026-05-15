@@ -7,6 +7,7 @@
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/jack.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 
 #include "../codecs/wm5102.h"
@@ -62,12 +63,12 @@ static int bells_set_bias_level(struct snd_soc_card *card,
 	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 	component = codec_dai->component;
 
-	if (snd_soc_dapm_to_dev(dapm) != codec_dai->dev)
+	if (dapm->dev != codec_dai->dev)
 		return 0;
 
 	switch (level) {
 	case SND_SOC_BIAS_PREPARE:
-		if (snd_soc_dapm_get_bias_level(dapm) != SND_SOC_BIAS_STANDBY)
+		if (dapm->bias_level != SND_SOC_BIAS_STANDBY)
 			break;
 
 		ret = snd_soc_component_set_pll(component, WM5102_FLL1,
@@ -108,7 +109,7 @@ static int bells_set_bias_level_post(struct snd_soc_card *card,
 	codec_dai = snd_soc_rtd_to_codec(rtd, 0);
 	component = codec_dai->component;
 
-	if (snd_soc_dapm_to_dev(dapm) != codec_dai->dev)
+	if (dapm->dev != codec_dai->dev)
 		return 0;
 
 	switch (level) {
@@ -132,6 +133,8 @@ static int bells_set_bias_level_post(struct snd_soc_card *card,
 	default:
 		break;
 	}
+
+	dapm->bias_level = level;
 
 	return 0;
 }
@@ -253,14 +256,14 @@ static struct snd_soc_dai_link bells_dai_wm2200[] = {
 		.name = "CPU-DSP",
 		.stream_name = "CPU-DSP",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		SND_SOC_DAILINK_REG(wm2200_cpu_dsp),
 	},
 	{
 		.name = "DSP-CODEC",
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		.c2c_params = &sub_params,
 		.num_c2c_params = 1,
 		.ignore_suspend = 1,
@@ -290,14 +293,14 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.name = "CPU-DSP",
 		.stream_name = "CPU-DSP",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		SND_SOC_DAILINK_REG(wm5102_cpu_dsp),
 	},
 	{
 		.name = "DSP-CODEC",
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		.c2c_params = &sub_params,
 		.num_c2c_params = 1,
 		.ignore_suspend = 1,
@@ -307,7 +310,7 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.name = "Baseband",
 		.stream_name = "Baseband",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
 		.c2c_params = &baseband_params,
 		.num_c2c_params = 1,
@@ -317,7 +320,7 @@ static struct snd_soc_dai_link bells_dai_wm5102[] = {
 		.name = "Sub",
 		.stream_name = "Sub",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBC_CFC,
+				| SND_SOC_DAIFMT_CBS_CFS,
 		.ignore_suspend = 1,
 		.c2c_params = &sub_params,
 		.num_c2c_params = 1,
@@ -348,14 +351,14 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.name = "CPU-DSP",
 		.stream_name = "CPU-DSP",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		SND_SOC_DAILINK_REG(wm5110_cpu_dsp),
 	},
 	{
 		.name = "DSP-CODEC",
 		.stream_name = "DSP-CODEC",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		.c2c_params = &sub_params,
 		.num_c2c_params = 1,
 		.ignore_suspend = 1,
@@ -365,7 +368,7 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.name = "Baseband",
 		.stream_name = "Baseband",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBP_CFP,
+				| SND_SOC_DAIFMT_CBM_CFM,
 		.ignore_suspend = 1,
 		.c2c_params = &baseband_params,
 		.num_c2c_params = 1,
@@ -375,7 +378,7 @@ static struct snd_soc_dai_link bells_dai_wm5110[] = {
 		.name = "Sub",
 		.stream_name = "Sub",
 		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF
-				| SND_SOC_DAIFMT_CBC_CFC,
+				| SND_SOC_DAIFMT_CBS_CFS,
 		.ignore_suspend = 1,
 		.c2c_params = &sub_params,
 		.num_c2c_params = 1,

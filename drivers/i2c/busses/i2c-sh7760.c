@@ -379,8 +379,8 @@ static u32 sh7760_i2c_func(struct i2c_adapter *adap)
 }
 
 static const struct i2c_algorithm sh7760_i2c_algo = {
-	.xfer = sh7760_i2c_master_xfer,
-	.functionality = sh7760_i2c_func,
+	.master_xfer	= sh7760_i2c_master_xfer,
+	.functionality	= sh7760_i2c_func,
 };
 
 /* calculate CCR register setting for a desired scl clock.  SCL clock is
@@ -443,7 +443,7 @@ static int sh7760_i2c_probe(struct platform_device *pdev)
 		goto out0;
 	}
 
-	id = kzalloc_obj(*id);
+	id = kzalloc(sizeof(*id), GFP_KERNEL);
 	if (!id) {
 		ret = -ENOMEM;
 		goto out0;

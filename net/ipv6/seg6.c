@@ -202,7 +202,7 @@ static int seg6_genl_sethmac(struct sk_buff *skb, struct genl_info *info)
 
 	secret = (char *)nla_data(info->attrs[SEG6_ATTR_SECRET]);
 
-	hinfo = kzalloc_obj(*hinfo);
+	hinfo = kzalloc(sizeof(*hinfo), GFP_KERNEL);
 	if (!hinfo) {
 		err = -ENOMEM;
 		goto out_unlock;
@@ -339,7 +339,7 @@ static int seg6_genl_dumphmac_start(struct netlink_callback *cb)
 	iter = (struct rhashtable_iter *)cb->args[0];
 
 	if (!iter) {
-		iter = kmalloc_obj(*iter);
+		iter = kmalloc(sizeof(*iter), GFP_KERNEL);
 		if (!iter)
 			return -ENOMEM;
 
@@ -421,13 +421,13 @@ static int __net_init seg6_net_init(struct net *net)
 {
 	struct seg6_pernet_data *sdata;
 
-	sdata = kzalloc_obj(*sdata);
+	sdata = kzalloc(sizeof(*sdata), GFP_KERNEL);
 	if (!sdata)
 		return -ENOMEM;
 
 	mutex_init(&sdata->lock);
 
-	sdata->tun_src = kzalloc_obj(*sdata->tun_src);
+	sdata->tun_src = kzalloc(sizeof(*sdata->tun_src), GFP_KERNEL);
 	if (!sdata->tun_src) {
 		kfree(sdata);
 		return -ENOMEM;
@@ -522,10 +522,16 @@ int __init seg6_init(void)
 	if (err)
 		goto out_unregister_iptun;
 
+	err = seg6_hmac_init();
+	if (err)
+		goto out_unregister_seg6;
+
 	pr_info("Segment Routing with IPv6\n");
 
 out:
 	return err;
+out_unregister_seg6:
+	seg6_local_exit();
 out_unregister_iptun:
 	seg6_iptunnel_exit();
 out_unregister_genl:
@@ -537,6 +543,7 @@ out_unregister_pernet:
 
 void seg6_exit(void)
 {
+	seg6_hmac_exit();
 	seg6_local_exit();
 	seg6_iptunnel_exit();
 	genl_unregister_family(&seg6_genl_family);

@@ -364,7 +364,8 @@ ch_readconfig(scsi_changer *ch)
 	}
 
 	/* look up the devices of the data transfer elements */
-	ch->dt = kzalloc_objs(*ch->dt, ch->counts[CHET_DT]);
+	ch->dt = kcalloc(ch->counts[CHET_DT], sizeof(*ch->dt),
+			 GFP_KERNEL);
 
 	if (!ch->dt) {
 		kfree(buffer);
@@ -893,9 +894,9 @@ static long ch_ioctl(struct file *file,
 
 /* ------------------------------------------------------------------------ */
 
-static int ch_probe(struct scsi_device *sd)
+static int ch_probe(struct device *dev)
 {
-	struct device *dev = &sd->sdev_gendev;
+	struct scsi_device *sd = to_scsi_device(dev);
 	struct device *class_dev;
 	int ret;
 	scsi_changer *ch;
@@ -903,7 +904,7 @@ static int ch_probe(struct scsi_device *sd)
 	if (sd->type != TYPE_MEDIUM_CHANGER)
 		return -ENODEV;
 
-	ch = kzalloc_obj(*ch);
+	ch = kzalloc(sizeof(*ch), GFP_KERNEL);
 	if (NULL == ch)
 		return -ENOMEM;
 
@@ -966,9 +967,8 @@ free_ch:
 	return ret;
 }
 
-static void ch_remove(struct scsi_device *sd)
+static int ch_remove(struct device *dev)
 {
-	struct device *dev = &sd->sdev_gendev;
 	scsi_changer *ch = dev_get_drvdata(dev);
 
 	spin_lock(&ch_index_lock);
@@ -979,14 +979,15 @@ static void ch_remove(struct scsi_device *sd)
 	device_destroy(&ch_sysfs_class, MKDEV(SCSI_CHANGER_MAJOR, ch->minor));
 	scsi_device_put(ch->device);
 	kref_put(&ch->ref, ch_destroy);
+	return 0;
 }
 
 static struct scsi_driver ch_template = {
-	.probe = ch_probe,
-	.remove = ch_remove,
-	.gendrv = {
+	.gendrv     	= {
 		.name	= "ch",
 		.owner	= THIS_MODULE,
+		.probe  = ch_probe,
+		.remove = ch_remove,
 	},
 };
 
@@ -1013,7 +1014,7 @@ static int __init init_ch_module(void)
 		       SCSI_CHANGER_MAJOR);
 		goto fail1;
 	}
-	rc = scsi_register_driver(&ch_template);
+	rc = scsi_register_driver(&ch_template.gendrv);
 	if (rc < 0)
 		goto fail2;
 	return 0;
@@ -1027,7 +1028,7 @@ static int __init init_ch_module(void)
 
 static void __exit exit_ch_module(void)
 {
-	scsi_unregister_driver(&ch_template);
+	scsi_unregister_driver(&ch_template.gendrv);
 	unregister_chrdev(SCSI_CHANGER_MAJOR, "ch");
 	class_unregister(&ch_sysfs_class);
 	idr_destroy(&ch_index_idr);

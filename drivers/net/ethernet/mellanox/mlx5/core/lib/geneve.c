@@ -134,7 +134,8 @@ void mlx5_geneve_tlv_option_del(struct mlx5_geneve *geneve)
 
 struct mlx5_geneve *mlx5_geneve_create(struct mlx5_core_dev *mdev)
 {
-	struct mlx5_geneve *geneve = kzalloc_obj(*geneve);
+	struct mlx5_geneve *geneve =
+		kzalloc(sizeof(*geneve), GFP_KERNEL);
 
 	if (!geneve)
 		return ERR_PTR(-ENOMEM);

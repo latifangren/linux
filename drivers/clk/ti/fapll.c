@@ -214,27 +214,24 @@ static int ti_fapll_set_div_mult(unsigned long rate,
 	return 0;
 }
 
-static int ti_fapll_determine_rate(struct clk_hw *hw,
-				   struct clk_rate_request *req)
+static long ti_fapll_round_rate(struct clk_hw *hw, unsigned long rate,
+				unsigned long *parent_rate)
 {
 	u32 pre_div_p, mult_n;
 	int error;
 
-	if (!req->rate)
+	if (!rate)
 		return -EINVAL;
 
-	error = ti_fapll_set_div_mult(req->rate, req->best_parent_rate,
+	error = ti_fapll_set_div_mult(rate, *parent_rate,
 				      &pre_div_p, &mult_n);
-	if (error) {
-		req->rate = error;
+	if (error)
+		return error;
 
-		return 0;
-	}
+	rate = *parent_rate / pre_div_p;
+	rate *= mult_n;
 
-	req->rate = req->best_parent_rate / pre_div_p;
-	req->rate *= mult_n;
-
-	return 0;
+	return rate;
 }
 
 static int ti_fapll_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -271,7 +268,7 @@ static const struct clk_ops ti_fapll_ops = {
 	.is_enabled = ti_fapll_is_enabled,
 	.recalc_rate = ti_fapll_recalc_rate,
 	.get_parent = ti_fapll_get_parent,
-	.determine_rate = ti_fapll_determine_rate,
+	.round_rate = ti_fapll_round_rate,
 	.set_rate = ti_fapll_set_rate,
 };
 
@@ -402,14 +399,14 @@ static u32 ti_fapll_synth_set_frac_rate(struct fapll_synth *synth,
 	return post_div_m;
 }
 
-static int ti_fapll_synth_determine_rate(struct clk_hw *hw,
-					 struct clk_rate_request *req)
+static long ti_fapll_synth_round_rate(struct clk_hw *hw, unsigned long rate,
+				      unsigned long *parent_rate)
 {
 	struct fapll_synth *synth = to_synth(hw);
 	struct fapll_data *fd = synth->fd;
 	unsigned long r;
 
-	if (ti_fapll_clock_is_bypass(fd) || !synth->div || !req->rate)
+	if (ti_fapll_clock_is_bypass(fd) || !synth->div || !rate)
 		return -EINVAL;
 
 	/* Only post divider m available with no fractional divider? */
@@ -417,26 +414,23 @@ static int ti_fapll_synth_determine_rate(struct clk_hw *hw,
 		unsigned long frac_rate;
 		u32 synth_post_div_m;
 
-		frac_rate = ti_fapll_synth_get_frac_rate(hw,
-							 req->best_parent_rate);
-		synth_post_div_m = DIV_ROUND_UP(frac_rate, req->rate);
+		frac_rate = ti_fapll_synth_get_frac_rate(hw, *parent_rate);
+		synth_post_div_m = DIV_ROUND_UP(frac_rate, rate);
 		r = DIV_ROUND_UP(frac_rate, synth_post_div_m);
 		goto out;
 	}
 
-	r = req->best_parent_rate * SYNTH_PHASE_K;
-	if (req->rate > r)
+	r = *parent_rate * SYNTH_PHASE_K;
+	if (rate > r)
 		goto out;
 
 	r = DIV_ROUND_UP_ULL(r, SYNTH_MAX_INT_DIV * SYNTH_MAX_DIV_M);
-	if (req->rate < r)
+	if (rate < r)
 		goto out;
 
-	r = req->rate;
+	r = rate;
 out:
-	req->rate = r;
-
-	return 0;
+	return r;
 }
 
 static int ti_fapll_synth_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -483,7 +477,7 @@ static const struct clk_ops ti_fapll_synt_ops = {
 	.disable = ti_fapll_synth_disable,
 	.is_enabled = ti_fapll_synth_is_enabled,
 	.recalc_rate = ti_fapll_synth_recalc_rate,
-	.determine_rate = ti_fapll_synth_determine_rate,
+	.round_rate = ti_fapll_synth_round_rate,
 	.set_rate = ti_fapll_synth_set_rate,
 };
 
@@ -499,7 +493,7 @@ static struct clk * __init ti_fapll_synth_setup(struct fapll_data *fd,
 	struct fapll_synth *synth;
 	struct clk *clk = ERR_PTR(-ENOMEM);
 
-	init = kzalloc_obj(*init);
+	init = kzalloc(sizeof(*init), GFP_KERNEL);
 	if (!init)
 		return ERR_PTR(-ENOMEM);
 
@@ -508,7 +502,7 @@ static struct clk * __init ti_fapll_synth_setup(struct fapll_data *fd,
 	init->parent_names = &parent;
 	init->num_parents = 1;
 
-	synth = kzalloc_obj(*synth);
+	synth = kzalloc(sizeof(*synth), GFP_KERNEL);
 	if (!synth)
 		goto free;
 
@@ -544,7 +538,7 @@ static void __init ti_fapll_setup(struct device_node *node)
 	const char *name;
 	int i;
 
-	fd = kzalloc_obj(*fd);
+	fd = kzalloc(sizeof(*fd), GFP_KERNEL);
 	if (!fd)
 		return;
 
@@ -554,7 +548,7 @@ static void __init ti_fapll_setup(struct device_node *node)
 	if (!fd->outputs.clks)
 		goto free;
 
-	init = kzalloc_obj(*init);
+	init = kzalloc(sizeof(*init), GFP_KERNEL);
 	if (!init)
 		goto free;
 

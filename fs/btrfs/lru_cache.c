@@ -111,7 +111,7 @@ int btrfs_lru_cache_store(struct btrfs_lru_cache *cache,
 	struct list_head *head;
 	int ret;
 
-	head = kmalloc_obj(*head, gfp);
+	head = kmalloc(sizeof(*head), gfp);
 	if (!head)
 		return -ENOMEM;
 

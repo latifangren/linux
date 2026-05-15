@@ -18,7 +18,6 @@
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 #include <linux/usb/role.h>
 
 #define DEVICE_DRIVER_NAME "hisi_hikey_usb"
@@ -68,7 +67,7 @@ static void hub_power_ctrl(struct hisi_hikey_usb *hisi_hikey_usb, int value)
 	if (ret)
 		dev_err(hisi_hikey_usb->dev,
 			"Can't switch regulator state to %s\n",
-			str_enabled_disabled(value));
+			value ? "enabled" : "disabled");
 }
 
 static void usb_switch_ctrl(struct hisi_hikey_usb *hisi_hikey_usb,
@@ -261,7 +260,7 @@ MODULE_DEVICE_TABLE(of, id_table_hisi_hikey_usb);
 
 static struct platform_driver hisi_hikey_usb_driver = {
 	.probe = hisi_hikey_usb_probe,
-	.remove = hisi_hikey_usb_remove,
+	.remove_new = hisi_hikey_usb_remove,
 	.driver = {
 		.name = DEVICE_DRIVER_NAME,
 		.of_match_table = id_table_hisi_hikey_usb,

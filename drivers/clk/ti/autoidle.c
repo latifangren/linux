@@ -30,7 +30,7 @@ static LIST_HEAD(autoidle_clks);
 
 /*
  * we have some non-atomic read/write
- * operations behind it, so let's
+ * operations behind it, so lets
  * take one lock for handling autoidle
  * of all clocks
  */
@@ -191,7 +191,7 @@ int __init of_ti_clk_autoidle_setup(struct device_node *node)
 	if (of_property_read_u32(node, "ti,autoidle-shift", &shift))
 		return 0;
 
-	clk = kzalloc_obj(*clk);
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 
 	if (!clk)
 		return -ENOMEM;

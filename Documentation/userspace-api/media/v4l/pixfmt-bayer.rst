@@ -1,5 +1,4 @@
 .. SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
-.. c:namespace:: V4L
 
 .. _pixfmt-bayer:
 
@@ -20,7 +19,6 @@ orders. See also `the Wikipedia article on Bayer filter
 .. toctree::
     :maxdepth: 1
 
-    pixfmt-rawnn-cru
     pixfmt-srggb8
     pixfmt-srggb8-pisp-comp
     pixfmt-srggb10
