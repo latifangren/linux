@@ -3080,7 +3080,7 @@ nla_put_failure:
 	return -1;
 }
 
-#if defined(CONFIG_NF_CONNTRACK_EVENTS) && !defined(CONFIG_NF_CONNTRACK_CHAIN_EVENTS)
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
 static int
 ctnetlink_expect_event(unsigned int events, const struct nf_exp_event *item)
 {
