@@ -65,17 +65,17 @@
 #define SMU_FEATURES_HIGH_MASK       0xFFFFFFFF00000000
 #define SMU_FEATURES_HIGH_SHIFT      32
 
-#define SMU11_DRIVER_IF_VERSION_ARCT 0x17
+#define SMC_DPM_FEATURE ( \
+	FEATURE_DPM_PREFETCHER_MASK | \
+	FEATURE_DPM_GFXCLK_MASK | \
+	FEATURE_DPM_UCLK_MASK | \
+	FEATURE_DPM_SOCCLK_MASK | \
+	FEATURE_DPM_MP0CLK_MASK | \
+	FEATURE_DPM_FCLK_MASK | \
+	FEATURE_DPM_XGMI_MASK)
 
-static const struct smu_feature_bits arcturus_dpm_features = {
-	.bits = { SMU_FEATURE_BIT_INIT(FEATURE_DPM_PREFETCHER_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_GFXCLK_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_UCLK_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_SOCCLK_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_MP0CLK_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_FCLK_BIT),
-		  SMU_FEATURE_BIT_INIT(FEATURE_DPM_XGMI_BIT) }
-};
+/* possible frequency drift (1Mhz) */
+#define EPSILON				1
 
 #define smnPCIE_ESM_CTRL			0x111003D0
 
@@ -251,7 +251,6 @@ static int arcturus_tables_init(struct smu_context *smu)
 {
 	struct smu_table_context *smu_table = &smu->smu_table;
 	struct smu_table *tables = smu_table->tables;
-	int ret;
 
 	SMU_TABLE_INIT(tables, SMU_TABLE_PPTABLE, sizeof(PPTable_t),
 		       PAGE_SIZE, AMDGPU_GEM_DOMAIN_VRAM);
@@ -269,17 +268,16 @@ static int arcturus_tables_init(struct smu_context *smu)
 		       sizeof(DpmActivityMonitorCoeffInt_t), PAGE_SIZE,
 		       AMDGPU_GEM_DOMAIN_VRAM);
 
-	smu_table->metrics_table = kzalloc_obj(SmuMetrics_t);
+	smu_table->metrics_table = kzalloc(sizeof(SmuMetrics_t), GFP_KERNEL);
 	if (!smu_table->metrics_table)
 		return -ENOMEM;
 	smu_table->metrics_time = 0;
 
-	ret = smu_driver_table_init(smu, SMU_DRIVER_TABLE_GPU_METRICS,
-				    sizeof(struct gpu_metrics_v1_3),
-				    SMU_GPU_METRICS_CACHE_INTERVAL);
-	if (ret) {
+	smu_table->gpu_metrics_table_size = sizeof(struct gpu_metrics_v1_3);
+	smu_table->gpu_metrics_table = kzalloc(smu_table->gpu_metrics_table_size, GFP_KERNEL);
+	if (!smu_table->gpu_metrics_table) {
 		kfree(smu_table->metrics_table);
-		return ret;
+		return -ENOMEM;
 	}
 
 	return 0;
@@ -309,13 +307,14 @@ static int arcturus_allocate_dpm_context(struct smu_context *smu)
 	struct smu_dpm_context *smu_dpm = &smu->smu_dpm;
 	struct smu_dpm_policy *policy;
 
-	smu_dpm->dpm_context = kzalloc_obj(struct smu_11_0_dpm_context);
+	smu_dpm->dpm_context = kzalloc(sizeof(struct smu_11_0_dpm_context),
+				       GFP_KERNEL);
 	if (!smu_dpm->dpm_context)
 		return -ENOMEM;
 	smu_dpm->dpm_context_size = sizeof(struct smu_11_0_dpm_context);
 
 	smu_dpm->dpm_policies =
-		kzalloc_obj(struct smu_dpm_policy_ctxt);
+		kzalloc(sizeof(struct smu_dpm_policy_ctxt), GFP_KERNEL);
 
 	if (!smu_dpm->dpm_policies)
 		return -ENOMEM;
@@ -347,9 +346,14 @@ static int arcturus_init_smc_tables(struct smu_context *smu)
 }
 
 static int
-arcturus_init_allowed_features(struct smu_context *smu)
+arcturus_get_allowed_feature_mask(struct smu_context *smu,
+				  uint32_t *feature_mask, uint32_t num)
 {
-	smu_feature_list_set_all(smu, SMU_FEATURE_LIST_ALLOWED);
+	if (num > 2)
+		return -EINVAL;
+
+	/* pptable will handle the features to enable */
+	memset(feature_mask, 0xFF, sizeof(uint32_t) * num);
 
 	return 0;
 }
@@ -358,75 +362,79 @@ static int arcturus_set_default_dpm_table(struct smu_context *smu)
 {
 	struct smu_11_0_dpm_context *dpm_context = smu->smu_dpm.dpm_context;
 	PPTable_t *driver_ppt = smu->smu_table.driver_pptable;
-	struct smu_dpm_table *dpm_table = NULL;
+	struct smu_11_0_dpm_table *dpm_table = NULL;
 	int ret = 0;
 
 	/* socclk dpm table setup */
 	dpm_table = &dpm_context->dpm_tables.soc_table;
-	dpm_table->clk_type = SMU_SOCCLK;
 	if (smu_cmn_feature_is_enabled(smu, SMU_FEATURE_DPM_SOCCLK_BIT)) {
 		ret = smu_v11_0_set_single_dpm_table(smu,
 						     SMU_SOCCLK,
 						     dpm_table);
 		if (ret)
 			return ret;
-		if (!driver_ppt->DpmDescriptor[PPCLK_SOCCLK].SnapToDiscrete)
-			dpm_table->flags |= SMU_DPM_TABLE_FINE_GRAINED;
+		dpm_table->is_fine_grained =
+			!driver_ppt->DpmDescriptor[PPCLK_SOCCLK].SnapToDiscrete;
 	} else {
 		dpm_table->count = 1;
 		dpm_table->dpm_levels[0].value = smu->smu_table.boot_values.socclk / 100;
 		dpm_table->dpm_levels[0].enabled = true;
+		dpm_table->min = dpm_table->dpm_levels[0].value;
+		dpm_table->max = dpm_table->dpm_levels[0].value;
 	}
 
 	/* gfxclk dpm table setup */
 	dpm_table = &dpm_context->dpm_tables.gfx_table;
-	dpm_table->clk_type = SMU_GFXCLK;
 	if (smu_cmn_feature_is_enabled(smu, SMU_FEATURE_DPM_GFXCLK_BIT)) {
 		ret = smu_v11_0_set_single_dpm_table(smu,
 						     SMU_GFXCLK,
 						     dpm_table);
 		if (ret)
 			return ret;
-		if (!driver_ppt->DpmDescriptor[PPCLK_GFXCLK].SnapToDiscrete)
-			dpm_table->flags |= SMU_DPM_TABLE_FINE_GRAINED;
+		dpm_table->is_fine_grained =
+			!driver_ppt->DpmDescriptor[PPCLK_GFXCLK].SnapToDiscrete;
 	} else {
 		dpm_table->count = 1;
 		dpm_table->dpm_levels[0].value = smu->smu_table.boot_values.gfxclk / 100;
 		dpm_table->dpm_levels[0].enabled = true;
+		dpm_table->min = dpm_table->dpm_levels[0].value;
+		dpm_table->max = dpm_table->dpm_levels[0].value;
 	}
 
 	/* memclk dpm table setup */
 	dpm_table = &dpm_context->dpm_tables.uclk_table;
-	dpm_table->clk_type = SMU_UCLK;
 	if (smu_cmn_feature_is_enabled(smu, SMU_FEATURE_DPM_UCLK_BIT)) {
 		ret = smu_v11_0_set_single_dpm_table(smu,
 						     SMU_UCLK,
 						     dpm_table);
 		if (ret)
 			return ret;
-		if (!driver_ppt->DpmDescriptor[PPCLK_UCLK].SnapToDiscrete)
-			dpm_table->flags |= SMU_DPM_TABLE_FINE_GRAINED;
+		dpm_table->is_fine_grained =
+			!driver_ppt->DpmDescriptor[PPCLK_UCLK].SnapToDiscrete;
 	} else {
 		dpm_table->count = 1;
 		dpm_table->dpm_levels[0].value = smu->smu_table.boot_values.uclk / 100;
 		dpm_table->dpm_levels[0].enabled = true;
+		dpm_table->min = dpm_table->dpm_levels[0].value;
+		dpm_table->max = dpm_table->dpm_levels[0].value;
 	}
 
 	/* fclk dpm table setup */
 	dpm_table = &dpm_context->dpm_tables.fclk_table;
-	dpm_table->clk_type = SMU_FCLK;
 	if (smu_cmn_feature_is_enabled(smu, SMU_FEATURE_DPM_FCLK_BIT)) {
 		ret = smu_v11_0_set_single_dpm_table(smu,
 						     SMU_FCLK,
 						     dpm_table);
 		if (ret)
 			return ret;
-		if (!driver_ppt->DpmDescriptor[PPCLK_FCLK].SnapToDiscrete)
-			dpm_table->flags |= SMU_DPM_TABLE_FINE_GRAINED;
+		dpm_table->is_fine_grained =
+			!driver_ppt->DpmDescriptor[PPCLK_FCLK].SnapToDiscrete;
 	} else {
 		dpm_table->count = 1;
 		dpm_table->dpm_levels[0].value = smu->smu_table.boot_values.fclk / 100;
 		dpm_table->dpm_levels[0].enabled = true;
+		dpm_table->min = dpm_table->dpm_levels[0].value;
+		dpm_table->max = dpm_table->dpm_levels[0].value;
 	}
 
 	/* XGMI PLPD is supported by 54.23.0 and onwards */
@@ -564,20 +572,23 @@ static int arcturus_populate_umd_state_clk(struct smu_context *smu)
 {
 	struct smu_11_0_dpm_context *dpm_context =
 				smu->smu_dpm.dpm_context;
-	struct smu_dpm_table *gfx_table = &dpm_context->dpm_tables.gfx_table;
-	struct smu_dpm_table *mem_table = &dpm_context->dpm_tables.uclk_table;
-	struct smu_dpm_table *soc_table = &dpm_context->dpm_tables.soc_table;
+	struct smu_11_0_dpm_table *gfx_table =
+				&dpm_context->dpm_tables.gfx_table;
+	struct smu_11_0_dpm_table *mem_table =
+				&dpm_context->dpm_tables.uclk_table;
+	struct smu_11_0_dpm_table *soc_table =
+				&dpm_context->dpm_tables.soc_table;
 	struct smu_umd_pstate_table *pstate_table =
 				&smu->pstate_table;
 
-	pstate_table->gfxclk_pstate.min = SMU_DPM_TABLE_MIN(gfx_table);
-	pstate_table->gfxclk_pstate.peak = SMU_DPM_TABLE_MAX(gfx_table);
+	pstate_table->gfxclk_pstate.min = gfx_table->min;
+	pstate_table->gfxclk_pstate.peak = gfx_table->max;
 
-	pstate_table->uclk_pstate.min = SMU_DPM_TABLE_MIN(mem_table);
-	pstate_table->uclk_pstate.peak = SMU_DPM_TABLE_MAX(mem_table);
+	pstate_table->uclk_pstate.min = mem_table->min;
+	pstate_table->uclk_pstate.peak = mem_table->max;
 
-	pstate_table->socclk_pstate.min = SMU_DPM_TABLE_MIN(soc_table);
-	pstate_table->socclk_pstate.peak = SMU_DPM_TABLE_MAX(soc_table);
+	pstate_table->socclk_pstate.min = soc_table->min;
+	pstate_table->socclk_pstate.peak = soc_table->max;
 
 	if (gfx_table->count > ARCTURUS_UMD_PSTATE_GFXCLK_LEVEL &&
 	    mem_table->count > ARCTURUS_UMD_PSTATE_MCLK_LEVEL &&
@@ -598,6 +609,29 @@ static int arcturus_populate_umd_state_clk(struct smu_context *smu)
 	}
 
 	return 0;
+}
+
+static void arcturus_get_clk_table(struct smu_context *smu,
+				   struct pp_clock_levels_with_latency *clocks,
+				   struct smu_11_0_dpm_table *dpm_table)
+{
+	uint32_t i;
+
+	clocks->num_levels = min_t(uint32_t,
+				   dpm_table->count,
+				   (uint32_t)PP_MAX_CLOCK_LEVELS);
+
+	for (i = 0; i < clocks->num_levels; i++) {
+		clocks->data[i].clocks_in_khz =
+			dpm_table->dpm_levels[i].value * 1000;
+		clocks->data[i].latency_in_us = 0;
+	}
+}
+
+static int arcturus_freqs_in_same_level(int32_t frequency1,
+					int32_t frequency2)
+{
+	return (abs(frequency1 - frequency2) <= EPSILON);
 }
 
 static int arcturus_get_smu_metrics_data(struct smu_context *smu,
@@ -766,18 +800,23 @@ static int arcturus_get_current_clk_freq_by_table(struct smu_context *smu,
 static int arcturus_emit_clk_levels(struct smu_context *smu,
 				    enum smu_clk_type type, char *buf, int *offset)
 {
-	struct smu_11_0_dpm_context *dpm_context = smu->smu_dpm.dpm_context;
-	struct smu_dpm_table *single_dpm_table;
-	struct smu_pcie_table *pcie_table;
-	uint32_t gen_speed, lane_width;
-	uint32_t cur_value = 0;
 	int ret = 0;
+	struct pp_clock_levels_with_latency clocks;
+	struct smu_11_0_dpm_table *single_dpm_table;
+	struct smu_dpm_context *smu_dpm = &smu->smu_dpm;
+	struct smu_11_0_dpm_context *dpm_context = NULL;
+	uint32_t gen_speed, lane_width;
+	uint32_t i, cur_value = 0;
+	bool freq_match;
+	unsigned int clock_mhz;
 	static const char attempt_string[] = "Attempt to get current";
 
 	if (amdgpu_ras_intr_triggered()) {
 		*offset += sysfs_emit_at(buf, *offset, "unavailable\n");
 		return -EBUSY;
 	}
+
+	dpm_context = smu_dpm->dpm_context;
 
 	switch (type) {
 	case SMU_SCLK:
@@ -786,11 +825,10 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s gfx clk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.gfx_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_MCLK:
@@ -799,11 +837,10 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s mclk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.uclk_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_SOCCLK:
@@ -812,11 +849,10 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s socclk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.soc_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_FCLK:
@@ -825,11 +861,10 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s fclk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.fclk_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_VCLK:
@@ -838,11 +873,10 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s vclk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.vclk_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_DCLK:
@@ -851,27 +885,56 @@ static int arcturus_emit_clk_levels(struct smu_context *smu,
 			dev_err(smu->adev->dev, "%s dclk Failed!", attempt_string);
 			return ret;
 		}
+
 		single_dpm_table = &(dpm_context->dpm_tables.dclk_table);
-		ret = smu_cmn_print_dpm_clk_levels(smu, single_dpm_table,
-						   cur_value, buf, offset);
-		if (ret < 0)
-			return ret;
+		arcturus_get_clk_table(smu, &clocks, single_dpm_table);
+
 		break;
 
 	case SMU_PCIE:
 		gen_speed = smu_v11_0_get_current_pcie_link_speed_level(smu);
 		lane_width = smu_v11_0_get_current_pcie_link_width_level(smu);
-		pcie_table = &(dpm_context->dpm_tables.pcie_table);
-		/* Populate with current state - arcturus only has boot level lclk */
-		pcie_table->lclk_levels = 1;
-		pcie_table->pcie_gen[0] = gen_speed;
-		pcie_table->pcie_lane[0] = lane_width;
-		pcie_table->lclk_freq[0] =
-			smu->smu_table.boot_values.lclk / 100;
-		ret = smu_cmn_print_pcie_levels(smu, pcie_table, gen_speed,
-						lane_width, buf, offset);
-		if (ret < 0)
-			return ret;
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	switch (type) {
+	case SMU_SCLK:
+	case SMU_MCLK:
+	case SMU_SOCCLK:
+	case SMU_FCLK:
+	case SMU_VCLK:
+	case SMU_DCLK:
+		/*
+		 * For DPM disabled case, there will be only one clock level.
+		 * And it's safe to assume that is always the current clock.
+		 */
+		for (i = 0; i < clocks.num_levels; i++) {
+			clock_mhz = clocks.data[i].clocks_in_khz / 1000;
+			freq_match = arcturus_freqs_in_same_level(clock_mhz, cur_value);
+			freq_match |= (clocks.num_levels == 1);
+
+			*offset += sysfs_emit_at(buf, *offset, "%d: %uMhz %s\n",
+				i, clock_mhz,
+				freq_match ? "*" : "");
+		}
+		break;
+
+	case SMU_PCIE:
+		*offset += sysfs_emit_at(buf, *offset, "0: %s %s %dMhz *\n",
+				(gen_speed == 0) ? "2.5GT/s," :
+				(gen_speed == 1) ? "5.0GT/s," :
+				(gen_speed == 2) ? "8.0GT/s," :
+				(gen_speed == 3) ? "16.0GT/s," : "",
+				(lane_width == 1) ? "x1" :
+				(lane_width == 2) ? "x2" :
+				(lane_width == 3) ? "x4" :
+				(lane_width == 4) ? "x8" :
+				(lane_width == 5) ? "x12" :
+				(lane_width == 6) ? "x16" : "",
+				smu->smu_table.boot_values.lclk / 100);
 		break;
 
 	default:
@@ -940,7 +1003,7 @@ static int arcturus_force_clk_levels(struct smu_context *smu,
 			enum smu_clk_type type, uint32_t mask)
 {
 	struct smu_11_0_dpm_context *dpm_context = smu->smu_dpm.dpm_context;
-	struct smu_dpm_table *single_dpm_table = NULL;
+	struct smu_11_0_dpm_table *single_dpm_table = NULL;
 	uint32_t soft_min_level, soft_max_level;
 	int ret = 0;
 
@@ -1284,7 +1347,7 @@ static int arcturus_get_power_limit(struct smu_context *smu,
 		*default_power_limit = power_limit;
 	if (max_power_limit)
 		*max_power_limit = power_limit;
-	/*
+	/**
 	 * No lower bound is imposed on the limit. Any unreasonable limit set
 	 * will result in frequent throttling.
 	 */
@@ -1525,22 +1588,450 @@ static int arcturus_set_performance_level(struct smu_context *smu,
 	return smu_v11_0_set_performance_level(smu, level);
 }
 
+static void arcturus_dump_pptable(struct smu_context *smu)
+{
+	struct smu_table_context *table_context = &smu->smu_table;
+	PPTable_t *pptable = table_context->driver_pptable;
+	int i;
+
+	dev_info(smu->adev->dev, "Dumped PPTable:\n");
+
+	dev_info(smu->adev->dev, "Version = 0x%08x\n", pptable->Version);
+
+	dev_info(smu->adev->dev, "FeaturesToRun[0] = 0x%08x\n", pptable->FeaturesToRun[0]);
+	dev_info(smu->adev->dev, "FeaturesToRun[1] = 0x%08x\n", pptable->FeaturesToRun[1]);
+
+	for (i = 0; i < PPT_THROTTLER_COUNT; i++) {
+		dev_info(smu->adev->dev, "SocketPowerLimitAc[%d] = %d\n", i, pptable->SocketPowerLimitAc[i]);
+		dev_info(smu->adev->dev, "SocketPowerLimitAcTau[%d] = %d\n", i, pptable->SocketPowerLimitAcTau[i]);
+	}
+
+	dev_info(smu->adev->dev, "TdcLimitSoc = %d\n", pptable->TdcLimitSoc);
+	dev_info(smu->adev->dev, "TdcLimitSocTau = %d\n", pptable->TdcLimitSocTau);
+	dev_info(smu->adev->dev, "TdcLimitGfx = %d\n", pptable->TdcLimitGfx);
+	dev_info(smu->adev->dev, "TdcLimitGfxTau = %d\n", pptable->TdcLimitGfxTau);
+
+	dev_info(smu->adev->dev, "TedgeLimit = %d\n", pptable->TedgeLimit);
+	dev_info(smu->adev->dev, "ThotspotLimit = %d\n", pptable->ThotspotLimit);
+	dev_info(smu->adev->dev, "TmemLimit = %d\n", pptable->TmemLimit);
+	dev_info(smu->adev->dev, "Tvr_gfxLimit = %d\n", pptable->Tvr_gfxLimit);
+	dev_info(smu->adev->dev, "Tvr_memLimit = %d\n", pptable->Tvr_memLimit);
+	dev_info(smu->adev->dev, "Tvr_socLimit = %d\n", pptable->Tvr_socLimit);
+	dev_info(smu->adev->dev, "FitLimit = %d\n", pptable->FitLimit);
+
+	dev_info(smu->adev->dev, "PpmPowerLimit = %d\n", pptable->PpmPowerLimit);
+	dev_info(smu->adev->dev, "PpmTemperatureThreshold = %d\n", pptable->PpmTemperatureThreshold);
+
+	dev_info(smu->adev->dev, "ThrottlerControlMask = %d\n", pptable->ThrottlerControlMask);
+
+	dev_info(smu->adev->dev, "UlvVoltageOffsetGfx = %d\n", pptable->UlvVoltageOffsetGfx);
+	dev_info(smu->adev->dev, "UlvPadding = 0x%08x\n", pptable->UlvPadding);
+
+	dev_info(smu->adev->dev, "UlvGfxclkBypass = %d\n", pptable->UlvGfxclkBypass);
+	dev_info(smu->adev->dev, "Padding234[0] = 0x%02x\n", pptable->Padding234[0]);
+	dev_info(smu->adev->dev, "Padding234[1] = 0x%02x\n", pptable->Padding234[1]);
+	dev_info(smu->adev->dev, "Padding234[2] = 0x%02x\n", pptable->Padding234[2]);
+
+	dev_info(smu->adev->dev, "MinVoltageGfx = %d\n", pptable->MinVoltageGfx);
+	dev_info(smu->adev->dev, "MinVoltageSoc = %d\n", pptable->MinVoltageSoc);
+	dev_info(smu->adev->dev, "MaxVoltageGfx = %d\n", pptable->MaxVoltageGfx);
+	dev_info(smu->adev->dev, "MaxVoltageSoc = %d\n", pptable->MaxVoltageSoc);
+
+	dev_info(smu->adev->dev, "LoadLineResistanceGfx = %d\n", pptable->LoadLineResistanceGfx);
+	dev_info(smu->adev->dev, "LoadLineResistanceSoc = %d\n", pptable->LoadLineResistanceSoc);
+
+	dev_info(smu->adev->dev, "[PPCLK_GFXCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_GFXCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].padding,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_GFXCLK].Padding16);
+
+	dev_info(smu->adev->dev, "[PPCLK_VCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_VCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_VCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_VCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_VCLK].padding,
+			pptable->DpmDescriptor[PPCLK_VCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_VCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_VCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_VCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_VCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_VCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_VCLK].Padding16);
+
+	dev_info(smu->adev->dev, "[PPCLK_DCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_DCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_DCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_DCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_DCLK].padding,
+			pptable->DpmDescriptor[PPCLK_DCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_DCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_DCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_DCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_DCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_DCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_DCLK].Padding16);
+
+	dev_info(smu->adev->dev, "[PPCLK_SOCCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_SOCCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].padding,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_SOCCLK].Padding16);
+
+	dev_info(smu->adev->dev, "[PPCLK_UCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_UCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_UCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_UCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_UCLK].padding,
+			pptable->DpmDescriptor[PPCLK_UCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_UCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_UCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_UCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_UCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_UCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_UCLK].Padding16);
+
+	dev_info(smu->adev->dev, "[PPCLK_FCLK]\n"
+			"  .VoltageMode          = 0x%02x\n"
+			"  .SnapToDiscrete       = 0x%02x\n"
+			"  .NumDiscreteLevels    = 0x%02x\n"
+			"  .padding              = 0x%02x\n"
+			"  .ConversionToAvfsClk{m = 0x%08x b = 0x%08x}\n"
+			"  .SsCurve            {a = 0x%08x b = 0x%08x c = 0x%08x}\n"
+			"  .SsFmin               = 0x%04x\n"
+			"  .Padding_16           = 0x%04x\n",
+			pptable->DpmDescriptor[PPCLK_FCLK].VoltageMode,
+			pptable->DpmDescriptor[PPCLK_FCLK].SnapToDiscrete,
+			pptable->DpmDescriptor[PPCLK_FCLK].NumDiscreteLevels,
+			pptable->DpmDescriptor[PPCLK_FCLK].padding,
+			pptable->DpmDescriptor[PPCLK_FCLK].ConversionToAvfsClk.m,
+			pptable->DpmDescriptor[PPCLK_FCLK].ConversionToAvfsClk.b,
+			pptable->DpmDescriptor[PPCLK_FCLK].SsCurve.a,
+			pptable->DpmDescriptor[PPCLK_FCLK].SsCurve.b,
+			pptable->DpmDescriptor[PPCLK_FCLK].SsCurve.c,
+			pptable->DpmDescriptor[PPCLK_FCLK].SsFmin,
+			pptable->DpmDescriptor[PPCLK_FCLK].Padding16);
+
+
+	dev_info(smu->adev->dev, "FreqTableGfx\n");
+	for (i = 0; i < NUM_GFXCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableGfx[i]);
+
+	dev_info(smu->adev->dev, "FreqTableVclk\n");
+	for (i = 0; i < NUM_VCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableVclk[i]);
+
+	dev_info(smu->adev->dev, "FreqTableDclk\n");
+	for (i = 0; i < NUM_DCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableDclk[i]);
+
+	dev_info(smu->adev->dev, "FreqTableSocclk\n");
+	for (i = 0; i < NUM_SOCCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableSocclk[i]);
+
+	dev_info(smu->adev->dev, "FreqTableUclk\n");
+	for (i = 0; i < NUM_UCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableUclk[i]);
+
+	dev_info(smu->adev->dev, "FreqTableFclk\n");
+	for (i = 0; i < NUM_FCLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%02d] = %d\n", i, pptable->FreqTableFclk[i]);
+
+	dev_info(smu->adev->dev, "Mp0clkFreq\n");
+	for (i = 0; i < NUM_MP0CLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->Mp0clkFreq[i]);
+
+	dev_info(smu->adev->dev, "Mp0DpmVoltage\n");
+	for (i = 0; i < NUM_MP0CLK_DPM_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->Mp0DpmVoltage[i]);
+
+	dev_info(smu->adev->dev, "GfxclkFidle = 0x%x\n", pptable->GfxclkFidle);
+	dev_info(smu->adev->dev, "GfxclkSlewRate = 0x%x\n", pptable->GfxclkSlewRate);
+	dev_info(smu->adev->dev, "Padding567[0] = 0x%x\n", pptable->Padding567[0]);
+	dev_info(smu->adev->dev, "Padding567[1] = 0x%x\n", pptable->Padding567[1]);
+	dev_info(smu->adev->dev, "Padding567[2] = 0x%x\n", pptable->Padding567[2]);
+	dev_info(smu->adev->dev, "Padding567[3] = 0x%x\n", pptable->Padding567[3]);
+	dev_info(smu->adev->dev, "GfxclkDsMaxFreq = %d\n", pptable->GfxclkDsMaxFreq);
+	dev_info(smu->adev->dev, "GfxclkSource = 0x%x\n", pptable->GfxclkSource);
+	dev_info(smu->adev->dev, "Padding456 = 0x%x\n", pptable->Padding456);
+
+	dev_info(smu->adev->dev, "EnableTdpm = %d\n", pptable->EnableTdpm);
+	dev_info(smu->adev->dev, "TdpmHighHystTemperature = %d\n", pptable->TdpmHighHystTemperature);
+	dev_info(smu->adev->dev, "TdpmLowHystTemperature = %d\n", pptable->TdpmLowHystTemperature);
+	dev_info(smu->adev->dev, "GfxclkFreqHighTempLimit = %d\n", pptable->GfxclkFreqHighTempLimit);
+
+	dev_info(smu->adev->dev, "FanStopTemp = %d\n", pptable->FanStopTemp);
+	dev_info(smu->adev->dev, "FanStartTemp = %d\n", pptable->FanStartTemp);
+
+	dev_info(smu->adev->dev, "FanGainEdge = %d\n", pptable->FanGainEdge);
+	dev_info(smu->adev->dev, "FanGainHotspot = %d\n", pptable->FanGainHotspot);
+	dev_info(smu->adev->dev, "FanGainVrGfx = %d\n", pptable->FanGainVrGfx);
+	dev_info(smu->adev->dev, "FanGainVrSoc = %d\n", pptable->FanGainVrSoc);
+	dev_info(smu->adev->dev, "FanGainVrMem = %d\n", pptable->FanGainVrMem);
+	dev_info(smu->adev->dev, "FanGainHbm = %d\n", pptable->FanGainHbm);
+
+	dev_info(smu->adev->dev, "FanPwmMin = %d\n", pptable->FanPwmMin);
+	dev_info(smu->adev->dev, "FanAcousticLimitRpm = %d\n", pptable->FanAcousticLimitRpm);
+	dev_info(smu->adev->dev, "FanThrottlingRpm = %d\n", pptable->FanThrottlingRpm);
+	dev_info(smu->adev->dev, "FanMaximumRpm = %d\n", pptable->FanMaximumRpm);
+	dev_info(smu->adev->dev, "FanTargetTemperature = %d\n", pptable->FanTargetTemperature);
+	dev_info(smu->adev->dev, "FanTargetGfxclk = %d\n", pptable->FanTargetGfxclk);
+	dev_info(smu->adev->dev, "FanZeroRpmEnable = %d\n", pptable->FanZeroRpmEnable);
+	dev_info(smu->adev->dev, "FanTachEdgePerRev = %d\n", pptable->FanTachEdgePerRev);
+	dev_info(smu->adev->dev, "FanTempInputSelect = %d\n", pptable->FanTempInputSelect);
+
+	dev_info(smu->adev->dev, "FuzzyFan_ErrorSetDelta = %d\n", pptable->FuzzyFan_ErrorSetDelta);
+	dev_info(smu->adev->dev, "FuzzyFan_ErrorRateSetDelta = %d\n", pptable->FuzzyFan_ErrorRateSetDelta);
+	dev_info(smu->adev->dev, "FuzzyFan_PwmSetDelta = %d\n", pptable->FuzzyFan_PwmSetDelta);
+	dev_info(smu->adev->dev, "FuzzyFan_Reserved = %d\n", pptable->FuzzyFan_Reserved);
+
+	dev_info(smu->adev->dev, "OverrideAvfsGb[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->OverrideAvfsGb[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "OverrideAvfsGb[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->OverrideAvfsGb[AVFS_VOLTAGE_SOC]);
+	dev_info(smu->adev->dev, "Padding8_Avfs[0] = %d\n", pptable->Padding8_Avfs[0]);
+	dev_info(smu->adev->dev, "Padding8_Avfs[1] = %d\n", pptable->Padding8_Avfs[1]);
+
+	dev_info(smu->adev->dev, "dBtcGbGfxPll{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->dBtcGbGfxPll.a,
+			pptable->dBtcGbGfxPll.b,
+			pptable->dBtcGbGfxPll.c);
+	dev_info(smu->adev->dev, "dBtcGbGfxAfll{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->dBtcGbGfxAfll.a,
+			pptable->dBtcGbGfxAfll.b,
+			pptable->dBtcGbGfxAfll.c);
+	dev_info(smu->adev->dev, "dBtcGbSoc{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->dBtcGbSoc.a,
+			pptable->dBtcGbSoc.b,
+			pptable->dBtcGbSoc.c);
+
+	dev_info(smu->adev->dev, "qAgingGb[AVFS_VOLTAGE_GFX]{m = 0x%x b = 0x%x}\n",
+			pptable->qAgingGb[AVFS_VOLTAGE_GFX].m,
+			pptable->qAgingGb[AVFS_VOLTAGE_GFX].b);
+	dev_info(smu->adev->dev, "qAgingGb[AVFS_VOLTAGE_SOC]{m = 0x%x b = 0x%x}\n",
+			pptable->qAgingGb[AVFS_VOLTAGE_SOC].m,
+			pptable->qAgingGb[AVFS_VOLTAGE_SOC].b);
+
+	dev_info(smu->adev->dev, "qStaticVoltageOffset[AVFS_VOLTAGE_GFX]{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_GFX].a,
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_GFX].b,
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_GFX].c);
+	dev_info(smu->adev->dev, "qStaticVoltageOffset[AVFS_VOLTAGE_SOC]{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_SOC].a,
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_SOC].b,
+			pptable->qStaticVoltageOffset[AVFS_VOLTAGE_SOC].c);
+
+	dev_info(smu->adev->dev, "DcTol[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->DcTol[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "DcTol[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->DcTol[AVFS_VOLTAGE_SOC]);
+
+	dev_info(smu->adev->dev, "DcBtcEnabled[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->DcBtcEnabled[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "DcBtcEnabled[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->DcBtcEnabled[AVFS_VOLTAGE_SOC]);
+	dev_info(smu->adev->dev, "Padding8_GfxBtc[0] = 0x%x\n", pptable->Padding8_GfxBtc[0]);
+	dev_info(smu->adev->dev, "Padding8_GfxBtc[1] = 0x%x\n", pptable->Padding8_GfxBtc[1]);
+
+	dev_info(smu->adev->dev, "DcBtcMin[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->DcBtcMin[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "DcBtcMin[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->DcBtcMin[AVFS_VOLTAGE_SOC]);
+	dev_info(smu->adev->dev, "DcBtcMax[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->DcBtcMax[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "DcBtcMax[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->DcBtcMax[AVFS_VOLTAGE_SOC]);
+
+	dev_info(smu->adev->dev, "DcBtcGb[AVFS_VOLTAGE_GFX] = 0x%x\n", pptable->DcBtcGb[AVFS_VOLTAGE_GFX]);
+	dev_info(smu->adev->dev, "DcBtcGb[AVFS_VOLTAGE_SOC] = 0x%x\n", pptable->DcBtcGb[AVFS_VOLTAGE_SOC]);
+
+	dev_info(smu->adev->dev, "XgmiDpmPstates\n");
+	for (i = 0; i < NUM_XGMI_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->XgmiDpmPstates[i]);
+	dev_info(smu->adev->dev, "XgmiDpmSpare[0] = 0x%02x\n", pptable->XgmiDpmSpare[0]);
+	dev_info(smu->adev->dev, "XgmiDpmSpare[1] = 0x%02x\n", pptable->XgmiDpmSpare[1]);
+
+	dev_info(smu->adev->dev, "VDDGFX_TVmin = %d\n", pptable->VDDGFX_TVmin);
+	dev_info(smu->adev->dev, "VDDSOC_TVmin = %d\n", pptable->VDDSOC_TVmin);
+	dev_info(smu->adev->dev, "VDDGFX_Vmin_HiTemp = %d\n", pptable->VDDGFX_Vmin_HiTemp);
+	dev_info(smu->adev->dev, "VDDGFX_Vmin_LoTemp = %d\n", pptable->VDDGFX_Vmin_LoTemp);
+	dev_info(smu->adev->dev, "VDDSOC_Vmin_HiTemp = %d\n", pptable->VDDSOC_Vmin_HiTemp);
+	dev_info(smu->adev->dev, "VDDSOC_Vmin_LoTemp = %d\n", pptable->VDDSOC_Vmin_LoTemp);
+	dev_info(smu->adev->dev, "VDDGFX_TVminHystersis = %d\n", pptable->VDDGFX_TVminHystersis);
+	dev_info(smu->adev->dev, "VDDSOC_TVminHystersis = %d\n", pptable->VDDSOC_TVminHystersis);
+
+	dev_info(smu->adev->dev, "DebugOverrides = 0x%x\n", pptable->DebugOverrides);
+	dev_info(smu->adev->dev, "ReservedEquation0{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->ReservedEquation0.a,
+			pptable->ReservedEquation0.b,
+			pptable->ReservedEquation0.c);
+	dev_info(smu->adev->dev, "ReservedEquation1{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->ReservedEquation1.a,
+			pptable->ReservedEquation1.b,
+			pptable->ReservedEquation1.c);
+	dev_info(smu->adev->dev, "ReservedEquation2{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->ReservedEquation2.a,
+			pptable->ReservedEquation2.b,
+			pptable->ReservedEquation2.c);
+	dev_info(smu->adev->dev, "ReservedEquation3{a = 0x%x b = 0x%x c = 0x%x}\n",
+			pptable->ReservedEquation3.a,
+			pptable->ReservedEquation3.b,
+			pptable->ReservedEquation3.c);
+
+	dev_info(smu->adev->dev, "MinVoltageUlvGfx = %d\n", pptable->MinVoltageUlvGfx);
+	dev_info(smu->adev->dev, "PaddingUlv = %d\n", pptable->PaddingUlv);
+
+	dev_info(smu->adev->dev, "TotalPowerConfig = %d\n", pptable->TotalPowerConfig);
+	dev_info(smu->adev->dev, "TotalPowerSpare1 = %d\n", pptable->TotalPowerSpare1);
+	dev_info(smu->adev->dev, "TotalPowerSpare2 = %d\n", pptable->TotalPowerSpare2);
+
+	dev_info(smu->adev->dev, "PccThresholdLow = %d\n", pptable->PccThresholdLow);
+	dev_info(smu->adev->dev, "PccThresholdHigh = %d\n", pptable->PccThresholdHigh);
+
+	dev_info(smu->adev->dev, "Board Parameters:\n");
+	dev_info(smu->adev->dev, "MaxVoltageStepGfx = 0x%x\n", pptable->MaxVoltageStepGfx);
+	dev_info(smu->adev->dev, "MaxVoltageStepSoc = 0x%x\n", pptable->MaxVoltageStepSoc);
+
+	dev_info(smu->adev->dev, "VddGfxVrMapping = 0x%x\n", pptable->VddGfxVrMapping);
+	dev_info(smu->adev->dev, "VddSocVrMapping = 0x%x\n", pptable->VddSocVrMapping);
+	dev_info(smu->adev->dev, "VddMemVrMapping = 0x%x\n", pptable->VddMemVrMapping);
+	dev_info(smu->adev->dev, "BoardVrMapping = 0x%x\n", pptable->BoardVrMapping);
+
+	dev_info(smu->adev->dev, "GfxUlvPhaseSheddingMask = 0x%x\n", pptable->GfxUlvPhaseSheddingMask);
+	dev_info(smu->adev->dev, "ExternalSensorPresent = 0x%x\n", pptable->ExternalSensorPresent);
+
+	dev_info(smu->adev->dev, "GfxMaxCurrent = 0x%x\n", pptable->GfxMaxCurrent);
+	dev_info(smu->adev->dev, "GfxOffset = 0x%x\n", pptable->GfxOffset);
+	dev_info(smu->adev->dev, "Padding_TelemetryGfx = 0x%x\n", pptable->Padding_TelemetryGfx);
+
+	dev_info(smu->adev->dev, "SocMaxCurrent = 0x%x\n", pptable->SocMaxCurrent);
+	dev_info(smu->adev->dev, "SocOffset = 0x%x\n", pptable->SocOffset);
+	dev_info(smu->adev->dev, "Padding_TelemetrySoc = 0x%x\n", pptable->Padding_TelemetrySoc);
+
+	dev_info(smu->adev->dev, "MemMaxCurrent = 0x%x\n", pptable->MemMaxCurrent);
+	dev_info(smu->adev->dev, "MemOffset = 0x%x\n", pptable->MemOffset);
+	dev_info(smu->adev->dev, "Padding_TelemetryMem = 0x%x\n", pptable->Padding_TelemetryMem);
+
+	dev_info(smu->adev->dev, "BoardMaxCurrent = 0x%x\n", pptable->BoardMaxCurrent);
+	dev_info(smu->adev->dev, "BoardOffset = 0x%x\n", pptable->BoardOffset);
+	dev_info(smu->adev->dev, "Padding_TelemetryBoardInput = 0x%x\n", pptable->Padding_TelemetryBoardInput);
+
+	dev_info(smu->adev->dev, "VR0HotGpio = %d\n", pptable->VR0HotGpio);
+	dev_info(smu->adev->dev, "VR0HotPolarity = %d\n", pptable->VR0HotPolarity);
+	dev_info(smu->adev->dev, "VR1HotGpio = %d\n", pptable->VR1HotGpio);
+	dev_info(smu->adev->dev, "VR1HotPolarity = %d\n", pptable->VR1HotPolarity);
+
+	dev_info(smu->adev->dev, "PllGfxclkSpreadEnabled = %d\n", pptable->PllGfxclkSpreadEnabled);
+	dev_info(smu->adev->dev, "PllGfxclkSpreadPercent = %d\n", pptable->PllGfxclkSpreadPercent);
+	dev_info(smu->adev->dev, "PllGfxclkSpreadFreq = %d\n", pptable->PllGfxclkSpreadFreq);
+
+	dev_info(smu->adev->dev, "UclkSpreadEnabled = %d\n", pptable->UclkSpreadEnabled);
+	dev_info(smu->adev->dev, "UclkSpreadPercent = %d\n", pptable->UclkSpreadPercent);
+	dev_info(smu->adev->dev, "UclkSpreadFreq = %d\n", pptable->UclkSpreadFreq);
+
+	dev_info(smu->adev->dev, "FclkSpreadEnabled = %d\n", pptable->FclkSpreadEnabled);
+	dev_info(smu->adev->dev, "FclkSpreadPercent = %d\n", pptable->FclkSpreadPercent);
+	dev_info(smu->adev->dev, "FclkSpreadFreq = %d\n", pptable->FclkSpreadFreq);
+
+	dev_info(smu->adev->dev, "FllGfxclkSpreadEnabled = %d\n", pptable->FllGfxclkSpreadEnabled);
+	dev_info(smu->adev->dev, "FllGfxclkSpreadPercent = %d\n", pptable->FllGfxclkSpreadPercent);
+	dev_info(smu->adev->dev, "FllGfxclkSpreadFreq = %d\n", pptable->FllGfxclkSpreadFreq);
+
+	for (i = 0; i < NUM_I2C_CONTROLLERS; i++) {
+		dev_info(smu->adev->dev, "I2cControllers[%d]:\n", i);
+		dev_info(smu->adev->dev, "                   .Enabled = %d\n",
+				pptable->I2cControllers[i].Enabled);
+		dev_info(smu->adev->dev, "                   .SlaveAddress = 0x%x\n",
+				pptable->I2cControllers[i].SlaveAddress);
+		dev_info(smu->adev->dev, "                   .ControllerPort = %d\n",
+				pptable->I2cControllers[i].ControllerPort);
+		dev_info(smu->adev->dev, "                   .ControllerName = %d\n",
+				pptable->I2cControllers[i].ControllerName);
+		dev_info(smu->adev->dev, "                   .ThermalThrottler = %d\n",
+				pptable->I2cControllers[i].ThermalThrotter);
+		dev_info(smu->adev->dev, "                   .I2cProtocol = %d\n",
+				pptable->I2cControllers[i].I2cProtocol);
+		dev_info(smu->adev->dev, "                   .Speed = %d\n",
+				pptable->I2cControllers[i].Speed);
+	}
+
+	dev_info(smu->adev->dev, "MemoryChannelEnabled = %d\n", pptable->MemoryChannelEnabled);
+	dev_info(smu->adev->dev, "DramBitWidth = %d\n", pptable->DramBitWidth);
+
+	dev_info(smu->adev->dev, "TotalBoardPower = %d\n", pptable->TotalBoardPower);
+
+	dev_info(smu->adev->dev, "XgmiLinkSpeed\n");
+	for (i = 0; i < NUM_XGMI_PSTATE_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->XgmiLinkSpeed[i]);
+	dev_info(smu->adev->dev, "XgmiLinkWidth\n");
+	for (i = 0; i < NUM_XGMI_PSTATE_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->XgmiLinkWidth[i]);
+	dev_info(smu->adev->dev, "XgmiFclkFreq\n");
+	for (i = 0; i < NUM_XGMI_PSTATE_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->XgmiFclkFreq[i]);
+	dev_info(smu->adev->dev, "XgmiSocVoltage\n");
+	for (i = 0; i < NUM_XGMI_PSTATE_LEVELS; i++)
+		dev_info(smu->adev->dev, "  .[%d] = %d\n", i, pptable->XgmiSocVoltage[i]);
+
+}
+
 static bool arcturus_is_dpm_running(struct smu_context *smu)
 {
 	int ret = 0;
-	struct smu_feature_bits feature_enabled;
+	uint64_t feature_enabled;
 
 	ret = smu_cmn_get_enabled_mask(smu, &feature_enabled);
 	if (ret)
 		return false;
 
-	return smu_feature_bits_test_mask(&feature_enabled,
-					  arcturus_dpm_features.bits);
+	return !!(feature_enabled & SMC_DPM_FEATURE);
 }
 
-static int arcturus_dpm_set_vcn_enable(struct smu_context *smu,
-					bool enable,
-					int inst)
+static int arcturus_dpm_set_vcn_enable(struct smu_context *smu, bool enable)
 {
 	int ret = 0;
 
@@ -1580,7 +2071,7 @@ static int arcturus_i2c_xfer(struct i2c_adapter *i2c_adap,
 	if (!adev->pm.dpm_enabled)
 		return -EBUSY;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
@@ -1683,10 +2174,10 @@ static int arcturus_i2c_control_init(struct smu_context *smu)
 		snprintf(control->name, sizeof(control->name), "AMDGPU SMU %d", i);
 		i2c_set_adapdata(control, smu_i2c);
 
-		res = devm_i2c_add_adapter(adev->dev, control);
+		res = i2c_add_adapter(control);
 		if (res) {
 			DRM_ERROR("Failed to register hw i2c, err: %d\n", res);
-			return res;
+			goto Out_err;
 		}
 	}
 
@@ -1694,12 +2185,27 @@ static int arcturus_i2c_control_init(struct smu_context *smu)
 	adev->pm.fru_eeprom_i2c_bus = &adev->pm.smu_i2c[1].adapter;
 
 	return 0;
+Out_err:
+	for ( ; i >= 0; i--) {
+		struct amdgpu_smu_i2c_bus *smu_i2c = &adev->pm.smu_i2c[i];
+		struct i2c_adapter *control = &smu_i2c->adapter;
+
+		i2c_del_adapter(control);
+	}
+	return res;
 }
 
 static void arcturus_i2c_control_fini(struct smu_context *smu)
 {
 	struct amdgpu_device *adev = smu->adev;
+	int i;
 
+	for (i = 0; i < MAX_SMU_I2C_BUSES; i++) {
+		struct amdgpu_smu_i2c_bus *smu_i2c = &adev->pm.smu_i2c[i];
+		struct i2c_adapter *control = &smu_i2c->adapter;
+
+		i2c_del_adapter(control);
+	}
 	adev->pm.ras_eeprom_i2c_bus = NULL;
 	adev->pm.fru_eeprom_i2c_bus = NULL;
 }
@@ -1812,9 +2318,9 @@ static uint16_t arcturus_get_current_pcie_link_speed(struct smu_context *smu)
 static ssize_t arcturus_get_gpu_metrics(struct smu_context *smu,
 					void **table)
 {
+	struct smu_table_context *smu_table = &smu->smu_table;
 	struct gpu_metrics_v1_3 *gpu_metrics =
-		(struct gpu_metrics_v1_3 *)smu_driver_table_ptr(
-			smu, SMU_DRIVER_TABLE_GPU_METRICS);
+		(struct gpu_metrics_v1_3 *)smu_table->gpu_metrics_table;
 	SmuMetrics_t metrics;
 	int ret = 0;
 
@@ -1868,14 +2374,12 @@ static ssize_t arcturus_get_gpu_metrics(struct smu_context *smu,
 
 	*table = (void *)gpu_metrics;
 
-	smu_driver_table_update_cache_time(smu, SMU_DRIVER_TABLE_GPU_METRICS);
-
 	return sizeof(struct gpu_metrics_v1_3);
 }
 
 static const struct pptable_funcs arcturus_ppt_funcs = {
 	/* init dpm */
-	.init_allowed_features = arcturus_init_allowed_features,
+	.get_allowed_feature_mask = arcturus_get_allowed_feature_mask,
 	/* btc */
 	.run_btc = arcturus_run_btc,
 	/* dpm/clk tables */
@@ -1890,6 +2394,8 @@ static const struct pptable_funcs arcturus_ppt_funcs = {
 	.get_power_profile_mode = arcturus_get_power_profile_mode,
 	.set_power_profile_mode = arcturus_set_power_profile_mode,
 	.set_performance_level = arcturus_set_performance_level,
+	/* debug (internal used) */
+	.dump_pptable = arcturus_dump_pptable,
 	.get_power_limit = arcturus_get_power_limit,
 	.is_dpm_running = arcturus_is_dpm_running,
 	.dpm_set_vcn_enable = arcturus_dpm_set_vcn_enable,
@@ -1907,12 +2413,14 @@ static const struct pptable_funcs arcturus_ppt_funcs = {
 	/* pptable related */
 	.setup_pptable = arcturus_setup_pptable,
 	.get_vbios_bootup_values = smu_v11_0_get_vbios_bootup_values,
-	.check_fw_version = smu_cmn_check_fw_version,
+	.check_fw_version = smu_v11_0_check_fw_version,
 	.write_pptable = smu_cmn_write_pptable,
 	.set_driver_table_location = smu_v11_0_set_driver_table_location,
 	.set_tool_table_location = smu_v11_0_set_tool_table_location,
 	.notify_memory_pool_location = smu_v11_0_notify_memory_pool_location,
 	.system_features_control = smu_v11_0_system_features_control,
+	.send_smc_msg_with_param = smu_cmn_send_smc_msg_with_param,
+	.send_smc_msg = smu_cmn_send_smc_msg,
 	.init_display_count = NULL,
 	.set_allowed_mask = smu_v11_0_set_allowed_mask,
 	.get_enabled_mask = smu_cmn_get_enabled_mask,
@@ -1955,11 +2463,11 @@ static const struct pptable_funcs arcturus_ppt_funcs = {
 void arcturus_set_ppt_funcs(struct smu_context *smu)
 {
 	smu->ppt_funcs = &arcturus_ppt_funcs;
+	smu->message_map = arcturus_message_map;
 	smu->clock_map = arcturus_clk_map;
 	smu->feature_map = arcturus_feature_mask_map;
 	smu->table_map = arcturus_table_map;
 	smu->pwr_src_map = arcturus_pwr_src_map;
 	smu->workload_map = arcturus_workload_map;
-	smu->smc_driver_if_version = SMU11_DRIVER_IF_VERSION_ARCT;
-	smu_v11_0_init_msg_ctl(smu, arcturus_message_map);
+	smu_v11_0_set_smu_mailbox_registers(smu);
 }

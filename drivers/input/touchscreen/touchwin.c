@@ -109,7 +109,7 @@ static int tw_connect(struct serio *serio, struct serio_driver *drv)
 	struct input_dev *input_dev;
 	int err;
 
-	tw = kzalloc_obj(*tw);
+	tw = kzalloc(sizeof(*tw), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!tw || !input_dev) {
 		err = -ENOMEM;
@@ -118,7 +118,7 @@ static int tw_connect(struct serio *serio, struct serio_driver *drv)
 
 	tw->serio = serio;
 	tw->dev = input_dev;
-	scnprintf(tw->phys, sizeof(tw->phys), "%s/input0", serio->phys);
+	snprintf(tw->phys, sizeof(tw->phys), "%s/input0", serio->phys);
 
 	input_dev->name = "Touchwindow Serial TouchScreen";
 	input_dev->phys = tw->phys;

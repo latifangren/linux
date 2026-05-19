@@ -28,7 +28,7 @@
 #define CREATE_TRACE_POINTS
 #include "trace.h"
 
-static int catpt_do_suspend(struct device *dev)
+static int __maybe_unused catpt_suspend(struct device *dev)
 {
 	struct catpt_dev *cdev = dev_get_drvdata(dev);
 	struct dma_chan *chan;
@@ -41,7 +41,7 @@ static int catpt_do_suspend(struct device *dev)
 	memset(&cdev->dx_ctx, 0, sizeof(cdev->dx_ctx));
 	ret = catpt_ipc_enter_dxstate(cdev, CATPT_DX_STATE_D3, &cdev->dx_ctx);
 	if (ret) {
-		ret = CATPT_IPC_RET(ret);
+		ret = CATPT_IPC_ERROR(ret);
 		goto release_dma_chan;
 	}
 
@@ -72,14 +72,7 @@ release_dma_chan:
 	return catpt_dsp_power_down(cdev);
 }
 
-/* Do not block the system from suspending, recover on resume() if needed. */
-static int catpt_suspend(struct device *dev)
-{
-	catpt_do_suspend(dev);
-	return 0;
-}
-
-static int catpt_resume(struct device *dev)
+static int __maybe_unused catpt_resume(struct device *dev)
 {
 	struct catpt_dev *cdev = dev_get_drvdata(dev);
 	int ret, i;
@@ -107,13 +100,13 @@ static int catpt_resume(struct device *dev)
 
 		ret = catpt_ipc_set_device_format(cdev, &cdev->devfmt[i]);
 		if (ret)
-			return CATPT_IPC_RET(ret);
+			return CATPT_IPC_ERROR(ret);
 	}
 
 	return 0;
 }
 
-static int catpt_runtime_suspend(struct device *dev)
+static int __maybe_unused catpt_runtime_suspend(struct device *dev)
 {
 	if (!try_module_get(dev->driver->owner)) {
 		dev_info(dev, "module unloading, skipping suspend\n");
@@ -121,17 +114,17 @@ static int catpt_runtime_suspend(struct device *dev)
 	}
 	module_put(dev->driver->owner);
 
-	return catpt_do_suspend(dev);
+	return catpt_suspend(dev);
 }
 
-static int catpt_runtime_resume(struct device *dev)
+static int __maybe_unused catpt_runtime_resume(struct device *dev)
 {
 	return catpt_resume(dev);
 }
 
 static const struct dev_pm_ops catpt_dev_pm = {
-	SYSTEM_SLEEP_PM_OPS(catpt_suspend, catpt_resume)
-	RUNTIME_PM_OPS(catpt_runtime_suspend, catpt_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(catpt_suspend, catpt_resume)
+	SET_RUNTIME_PM_OPS(catpt_runtime_suspend, catpt_runtime_resume, NULL)
 };
 
 /* machine board owned by CATPT is removed with this hook */
@@ -191,25 +184,22 @@ static int catpt_probe_components(struct catpt_dev *cdev)
 		goto err_boot_fw;
 	}
 
-	/* reflect actual ADSP state in pm_runtime */
-	pm_runtime_set_active(cdev->dev);
-
-	pm_runtime_set_autosuspend_delay(cdev->dev, 2000);
-	pm_runtime_use_autosuspend(cdev->dev);
-	pm_runtime_mark_last_busy(cdev->dev);
-	/* Enable PM before spawning child device. See catpt_dai_pcm_new(). */
-	pm_runtime_enable(cdev->dev);
-
 	ret = catpt_register_board(cdev);
 	if (ret) {
 		dev_err(cdev->dev, "register board failed: %d\n", ret);
 		goto err_reg_board;
 	}
 
+	/* reflect actual ADSP state in pm_runtime */
+	pm_runtime_set_active(cdev->dev);
+
+	pm_runtime_set_autosuspend_delay(cdev->dev, 2000);
+	pm_runtime_use_autosuspend(cdev->dev);
+	pm_runtime_mark_last_busy(cdev->dev);
+	pm_runtime_enable(cdev->dev);
 	return 0;
 
 err_reg_board:
-	pm_runtime_disable(cdev->dev);
 	snd_soc_unregister_component(cdev->dev);
 err_boot_fw:
 	catpt_dmac_remove(cdev);
@@ -226,7 +216,7 @@ static void catpt_dev_init(struct catpt_dev *cdev, struct device *dev,
 	cdev->spec = spec;
 	init_completion(&cdev->fw_ready);
 	INIT_LIST_HEAD(&cdev->stream_list);
-	mutex_init(&cdev->stream_mutex);
+	spin_lock_init(&cdev->list_lock);
 	mutex_init(&cdev->clk_mutex);
 
 	/*
@@ -356,7 +346,6 @@ static struct snd_soc_acpi_mach wpt_machines[] = {
 static struct catpt_spec lpt_desc = {
 	.machines = lpt_machines,
 	.core_id = 0x01,
-	.fw_name = "intel/IntcSST1.bin",
 	.host_dram_offset = 0x000000,
 	.host_iram_offset = 0x080000,
 	.host_shim_offset = 0x0E7000,
@@ -372,7 +361,6 @@ static struct catpt_spec lpt_desc = {
 static struct catpt_spec wpt_desc = {
 	.machines = wpt_machines,
 	.core_id = 0x02,
-	.fw_name = "intel/IntcSST2.bin",
 	.host_dram_offset = 0x000000,
 	.host_iram_offset = 0x0A0000,
 	.host_shim_offset = 0x0FB000,
@@ -398,7 +386,7 @@ static struct platform_driver catpt_acpi_driver = {
 	.driver = {
 		.name = "intel_catpt",
 		.acpi_match_table = catpt_ids,
-		.pm = pm_ptr(&catpt_dev_pm),
+		.pm = &catpt_dev_pm,
 		.dev_groups = catpt_attr_groups,
 	},
 };

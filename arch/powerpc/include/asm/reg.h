@@ -60,7 +60,7 @@
 #define MSR_RI_LG	1		/* Recoverable Exception */
 #define MSR_LE_LG	0 		/* Little Endian */
 
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 #define __MASK(X)	(1<<(X))
 #else
 #define __MASK(X)	(1UL<<(X))
@@ -1358,7 +1358,7 @@
 #define PVR_ARCH_31_P11	0x0f000007
 
 /* Macros for setting and retrieving special purpose registers */
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #if defined(CONFIG_PPC64) || defined(__CHECKER__)
 typedef struct {
@@ -1400,7 +1400,6 @@ static inline void mtmsr_isync(unsigned long val)
 				     : "r" ((unsigned long)(v)) \
 				     : "memory")
 #define wrtspr(rn)	asm volatile("mtspr " __stringify(rn) ",2" : : : "memory")
-#define wrtspr_sync(rn)	asm volatile("mtspr " __stringify(rn) ",2; sync" : : : "memory")
 
 static inline void wrtee(unsigned long val)
 {
@@ -1451,6 +1450,6 @@ extern void scom970_write(unsigned int address, unsigned long value);
 struct pt_regs;
 
 extern void ppc_save_regs(struct pt_regs *regs);
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif /* __KERNEL__ */
 #endif /* _ASM_POWERPC_REG_H */

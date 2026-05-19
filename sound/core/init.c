@@ -129,7 +129,7 @@ int snd_device_alloc(struct device **dev_p, struct snd_card *card)
 	struct device *dev;
 
 	*dev_p = NULL;
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	device_initialize(dev);
@@ -363,11 +363,6 @@ static int snd_card_init(struct snd_card *card, struct device *parent,
 	card->debugfs_root = debugfs_create_dir(dev_name(&card->card_dev),
 						sound_debugfs_root);
 #endif
-#ifdef CONFIG_SND_CTL_DEBUG
-	card->value_buf = kmalloc(sizeof(*card->value_buf), GFP_KERNEL);
-	if (!card->value_buf)
-		return -ENOMEM;
-#endif
 	return 0;
 
       __error_ctl:
@@ -592,9 +587,6 @@ static int snd_card_do_free(struct snd_card *card)
 	snd_device_free_all(card);
 	if (card->private_free)
 		card->private_free(card);
-#ifdef CONFIG_SND_CTL_DEBUG
-	kfree(card->value_buf);
-#endif
 	if (snd_info_card_free(card) < 0) {
 		dev_warn(card->dev, "unable to free card info\n");
 		/* Not fatal error */
@@ -731,25 +723,27 @@ static void snd_card_set_id_no_lock(struct snd_card *card, const char *src,
 	 * ("card" conflicts with proc directories)
 	 */
 	if (!*id || !strncmp(id, "card", 4)) {
-		strscpy(card->id, "Default");
+		strcpy(id, "Default");
 		is_default = true;
 	}
 
 	len = strlen(id);
 	for (loops = 0; loops < SNDRV_CARDS; loops++) {
+		char *spos;
 		char sfxstr[5]; /* "_012" */
-		int sfxlen, slen;
+		int sfxlen;
 
 		if (card_id_ok(card, id))
 			return; /* OK */
 
 		/* Add _XYZ suffix */
-		sfxlen = scnprintf(sfxstr, sizeof(sfxstr), "_%X", loops + 1);
+		sprintf(sfxstr, "_%X", loops + 1);
+		sfxlen = strlen(sfxstr);
 		if (len + sfxlen >= sizeof(card->id))
-			slen = sizeof(card->id) - sfxlen - 1;
+			spos = id + sizeof(card->id) - sfxlen - 1;
 		else
-			slen = len;
-		strscpy(id + slen, sfxstr, sizeof(card->id) - slen);
+			spos = id + len;
+		strcpy(spos, sfxstr);
 	}
 	/* fallback to the default id */
 	if (!is_default) {
@@ -807,7 +801,7 @@ static ssize_t id_store(struct device *dev, struct device_attribute *attr,
 	guard(mutex)(&snd_card_mutex);
 	if (!card_id_ok(NULL, buf1))
 		return -EEXIST;
-	strscpy(card->id, buf1);
+	strcpy(card->id, buf1);
 	snd_info_card_id_change(card);
 
 	return count;
@@ -1068,7 +1062,7 @@ int snd_card_file_add(struct snd_card *card, struct file *file)
 {
 	struct snd_monitor_file *mfile;
 
-	mfile = kmalloc_obj(*mfile);
+	mfile = kmalloc(sizeof(*mfile), GFP_KERNEL);
 	if (mfile == NULL)
 		return -ENOMEM;
 	mfile->file = file;

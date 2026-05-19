@@ -47,7 +47,7 @@ mISDN_open(struct inode *ino, struct file *filep)
 
 	if (*debug & DEBUG_TIMER)
 		printk(KERN_DEBUG "%s(%p,%p)\n", __func__, ino, filep);
-	dev = kmalloc_obj(struct mISDNtimerdev);
+	dev = kmalloc(sizeof(struct mISDNtimerdev) , GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	dev->next_id = 1;
@@ -158,7 +158,7 @@ mISDN_poll(struct file *filep, poll_table *wait)
 static void
 dev_expire_timer(struct timer_list *t)
 {
-	struct mISDNtimer *timer = timer_container_of(timer, t, tl);
+	struct mISDNtimer *timer = from_timer(timer, t, tl);
 	u_long			flags;
 
 	spin_lock_irqsave(&timer->dev->lock, flags);
@@ -179,7 +179,7 @@ misdn_add_timer(struct mISDNtimerdev *dev, int timeout)
 		wake_up_interruptible(&dev->wait);
 		id = 0;
 	} else {
-		timer = kzalloc_obj(struct mISDNtimer);
+		timer = kzalloc(sizeof(struct mISDNtimer), GFP_KERNEL);
 		if (!timer)
 			return -ENOMEM;
 		timer->dev = dev;

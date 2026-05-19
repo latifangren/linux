@@ -73,7 +73,7 @@ typedef struct _SECURITY_BUFFER {
 	__le16 Length;
 	__le16 MaximumLength;
 	__le32 BufferOffset;	/* offset to buffer */
-} __packed SECURITY_BUFFER;
+} __attribute__((packed)) SECURITY_BUFFER;
 
 typedef struct _NEGOTIATE_MESSAGE {
 	__u8 Signature[sizeof(NTLMSSP_SIGNATURE)];
@@ -85,7 +85,7 @@ typedef struct _NEGOTIATE_MESSAGE {
 	   do not set the version is present flag */
 	char DomainString[];
 	/* followed by WorkstationString */
-} __packed NEGOTIATE_MESSAGE, *PNEGOTIATE_MESSAGE;
+} __attribute__((packed)) NEGOTIATE_MESSAGE, *PNEGOTIATE_MESSAGE;
 
 #define NTLMSSP_REVISION_W2K3 0x0F
 
@@ -121,7 +121,7 @@ typedef struct _CHALLENGE_MESSAGE {
 	SECURITY_BUFFER TargetInfoArray;
 	/* SECURITY_BUFFER for version info not present since we
 	   do not set the version is present flag */
-} __packed CHALLENGE_MESSAGE, *PCHALLENGE_MESSAGE;
+} __attribute__((packed)) CHALLENGE_MESSAGE, *PCHALLENGE_MESSAGE;
 
 typedef struct _AUTHENTICATE_MESSAGE {
 	__u8 Signature[sizeof(NTLMSSP_SIGNATURE)];
@@ -136,23 +136,22 @@ typedef struct _AUTHENTICATE_MESSAGE {
 	struct	ntlmssp_version Version;
 	/* SECURITY_BUFFER */
 	char UserString[];
-} __packed AUTHENTICATE_MESSAGE, *PAUTHENTICATE_MESSAGE;
+} __attribute__((packed)) AUTHENTICATE_MESSAGE, *PAUTHENTICATE_MESSAGE;
 
 /*
  * Size of the session key (crypto key encrypted with the password
  */
 
-int decode_ntlmssp_challenge(char *bcc_ptr, int blob_len,
-			     struct cifs_ses *ses);
+int decode_ntlmssp_challenge(char *bcc_ptr, int blob_len, struct cifs_ses *ses);
 int build_ntlmssp_negotiate_blob(unsigned char **pbuffer, u16 *buflen,
 				 struct cifs_ses *ses,
 				 struct TCP_Server_Info *server,
 				 const struct nls_table *nls_cp);
 int build_ntlmssp_smb3_negotiate_blob(unsigned char **pbuffer, u16 *buflen,
-				      struct cifs_ses *ses,
-				      struct TCP_Server_Info *server,
-				      const struct nls_table *nls_cp);
+				 struct cifs_ses *ses,
+				 struct TCP_Server_Info *server,
+				 const struct nls_table *nls_cp);
 int build_ntlmssp_auth_blob(unsigned char **pbuffer, u16 *buflen,
-			    struct cifs_ses *ses,
-			    struct TCP_Server_Info *server,
-			    const struct nls_table *nls_cp);
+			struct cifs_ses *ses,
+			struct TCP_Server_Info *server,
+			const struct nls_table *nls_cp);

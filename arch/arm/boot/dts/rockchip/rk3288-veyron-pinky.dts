@@ -47,7 +47,6 @@
 
 	key-power {
 		gpios = <&gpio0 RK_PA5 GPIO_ACTIVE_HIGH>;
-		linux,code = <KEY_POWER>;
 	};
 };
 

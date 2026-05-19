@@ -74,7 +74,8 @@ static int ssd130x_spi_probe(struct spi_device *spi)
 
 	t = devm_kzalloc(dev, sizeof(*t), GFP_KERNEL);
 	if (!t)
-		return -ENOMEM;
+		return dev_err_probe(dev, -ENOMEM,
+				     "Failed to allocate SPI transport data\n");
 
 	t->spi = spi;
 	t->dc = dc;
@@ -190,4 +191,4 @@ module_spi_driver(ssd130x_spi_driver);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR("Javier Martinez Canillas <javierm@redhat.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("DRM_SSD130X");
+MODULE_IMPORT_NS(DRM_SSD130X);

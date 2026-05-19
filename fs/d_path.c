@@ -241,9 +241,9 @@ static void get_fs_root_rcu(struct fs_struct *fs, struct path *root)
 	unsigned seq;
 
 	do {
-		seq = read_seqbegin(&fs->seq);
+		seq = read_seqcount_begin(&fs->seq);
 		*root = fs->root;
-	} while (read_seqretry(&fs->seq, seq));
+	} while (read_seqcount_retry(&fs->seq, seq));
 }
 
 /**
@@ -301,19 +301,18 @@ EXPORT_SYMBOL(d_path);
 char *dynamic_dname(char *buffer, int buflen, const char *fmt, ...)
 {
 	va_list args;
-	char *start;
+	char temp[64];
 	int sz;
 
 	va_start(args, fmt);
-	sz = vsnprintf(buffer, buflen, fmt, args) + 1;
+	sz = vsnprintf(temp, sizeof(temp), fmt, args) + 1;
 	va_end(args);
 
-	if (sz > NAME_MAX || sz > buflen)
+	if (sz > sizeof(temp) || sz > buflen)
 		return ERR_PTR(-ENAMETOOLONG);
 
-	/* Move the formatted d_name to the end of the buffer. */
-	start = buffer + (buflen - sz);
-	return memmove(start, buffer, sz);
+	buffer += buflen - sz;
+	return memcpy(buffer, temp, sz);
 }
 
 char *simple_dname(struct dentry *dentry, char *buffer, int buflen)
@@ -386,10 +385,10 @@ static void get_fs_root_and_pwd_rcu(struct fs_struct *fs, struct path *root,
 	unsigned seq;
 
 	do {
-		seq = read_seqbegin(&fs->seq);
+		seq = read_seqcount_begin(&fs->seq);
 		*root = fs->root;
 		*pwd = fs->pwd;
-	} while (read_seqretry(&fs->seq, seq));
+	} while (read_seqcount_retry(&fs->seq, seq));
 }
 
 /*

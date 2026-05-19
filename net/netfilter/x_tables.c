@@ -819,17 +819,13 @@ EXPORT_SYMBOL_GPL(xt_compat_match_to_user);
 
 /* non-compat version may have padding after verdict */
 struct compat_xt_standard_target {
-	/* Must be last as it ends in a flexible-array member. */
-	TRAILING_OVERLAP(struct compat_xt_entry_target, t, data,
-		compat_uint_t verdict;
-	);
+	struct compat_xt_entry_target t;
+	compat_uint_t verdict;
 };
 
 struct compat_xt_error_target {
-	/* Must be last as it ends in a flexible-array member. */
-	TRAILING_OVERLAP(struct compat_xt_entry_target, t, data,
-		char errorname[XT_FUNCTION_MAXNAMELEN];
-	);
+	struct compat_xt_entry_target t;
+	char errorname[XT_FUNCTION_MAXNAMELEN];
 };
 
 int xt_compat_check_entry_offsets(const void *base, const char *elems,
@@ -1344,12 +1340,11 @@ void xt_compat_unlock(u_int8_t af)
 EXPORT_SYMBOL_GPL(xt_compat_unlock);
 #endif
 
-struct static_key xt_tee_enabled __read_mostly;
-EXPORT_SYMBOL_GPL(xt_tee_enabled);
-
-#ifdef CONFIG_NETFILTER_XTABLES_LEGACY
 DEFINE_PER_CPU(seqcount_t, xt_recseq);
 EXPORT_PER_CPU_SYMBOL_GPL(xt_recseq);
+
+struct static_key xt_tee_enabled __read_mostly;
+EXPORT_SYMBOL_GPL(xt_tee_enabled);
 
 static int xt_jumpstack_alloc(struct xt_table_info *i)
 {
@@ -1542,7 +1537,6 @@ void *xt_unregister_table(struct xt_table *table)
 	return private;
 }
 EXPORT_SYMBOL_GPL(xt_unregister_table);
-#endif
 
 #ifdef CONFIG_PROC_FS
 static void *xt_table_seq_start(struct seq_file *seq, loff_t *pos)
@@ -1769,7 +1763,7 @@ xt_hook_ops_alloc(const struct xt_table *table, nf_hookfn *fn)
 	if (!num_hooks)
 		return ERR_PTR(-EINVAL);
 
-	ops = kzalloc_objs(*ops, num_hooks);
+	ops = kcalloc(num_hooks, sizeof(*ops), GFP_KERNEL);
 	if (ops == NULL)
 		return ERR_PTR(-ENOMEM);
 
@@ -1802,7 +1796,7 @@ int xt_register_template(const struct xt_table *table,
 	}
 
 	ret = -ENOMEM;
-	t = kzalloc_obj(*t);
+	t = kzalloc(sizeof(*t), GFP_KERNEL);
 	if (!t)
 		goto out_unlock;
 
@@ -1926,7 +1920,6 @@ void xt_proto_fini(struct net *net, u_int8_t af)
 }
 EXPORT_SYMBOL_GPL(xt_proto_fini);
 
-#ifdef CONFIG_NETFILTER_XTABLES_LEGACY
 /**
  * xt_percpu_counter_alloc - allocate x_tables rule counter
  *
@@ -1981,7 +1974,6 @@ void xt_percpu_counter_free(struct xt_counters *counters)
 		free_percpu((void __percpu *)pcnt);
 }
 EXPORT_SYMBOL_GPL(xt_percpu_counter_free);
-#endif
 
 static int __net_init xt_net_init(struct net *net)
 {
@@ -2014,13 +2006,11 @@ static int __init xt_init(void)
 	unsigned int i;
 	int rv;
 
-	if (IS_ENABLED(CONFIG_NETFILTER_XTABLES_LEGACY)) {
-		for_each_possible_cpu(i) {
-			seqcount_init(&per_cpu(xt_recseq, i));
-		}
+	for_each_possible_cpu(i) {
+		seqcount_init(&per_cpu(xt_recseq, i));
 	}
 
-	xt = kzalloc_objs(struct xt_af, NFPROTO_NUMPROTO);
+	xt = kcalloc(NFPROTO_NUMPROTO, sizeof(struct xt_af), GFP_KERNEL);
 	if (!xt)
 		return -ENOMEM;
 

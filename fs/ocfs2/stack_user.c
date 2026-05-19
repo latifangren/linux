@@ -360,6 +360,7 @@ static int ocfs2_control_do_setnode_msg(struct file *file,
 					struct ocfs2_control_message_setn *msg)
 {
 	long nodenum;
+	char *ptr = NULL;
 	struct ocfs2_control_private *p = file->private_data;
 
 	if (ocfs2_control_get_handshake_state(file) !=
@@ -374,7 +375,8 @@ static int ocfs2_control_do_setnode_msg(struct file *file,
 		return -EINVAL;
 	msg->space = msg->newline = '\0';
 
-	if (kstrtol(msg->nodestr, 16, &nodenum))
+	nodenum = simple_strtol(msg->nodestr, &ptr, 16);
+	if (!ptr || *ptr)
 		return -EINVAL;
 
 	if ((nodenum == LONG_MIN) || (nodenum == LONG_MAX) ||
@@ -389,6 +391,7 @@ static int ocfs2_control_do_setversion_msg(struct file *file,
 					   struct ocfs2_control_message_setv *msg)
 {
 	long major, minor;
+	char *ptr = NULL;
 	struct ocfs2_control_private *p = file->private_data;
 	struct ocfs2_protocol_version *max =
 		&ocfs2_user_plugin.sp_max_proto;
@@ -406,9 +409,11 @@ static int ocfs2_control_do_setversion_msg(struct file *file,
 		return -EINVAL;
 	msg->space1 = msg->space2 = msg->newline = '\0';
 
-	if (kstrtol(msg->major, 16, &major))
+	major = simple_strtol(msg->major, &ptr, 16);
+	if (!ptr || *ptr)
 		return -EINVAL;
-	if (kstrtol(msg->minor, 16, &minor))
+	minor = simple_strtol(msg->minor, &ptr, 16);
+	if (!ptr || *ptr)
 		return -EINVAL;
 
 	/*
@@ -436,6 +441,7 @@ static int ocfs2_control_do_down_msg(struct file *file,
 				     struct ocfs2_control_message_down *msg)
 {
 	long nodenum;
+	char *p = NULL;
 
 	if (ocfs2_control_get_handshake_state(file) !=
 	    OCFS2_CONTROL_HANDSHAKE_VALID)
@@ -450,7 +456,8 @@ static int ocfs2_control_do_down_msg(struct file *file,
 		return -EINVAL;
 	msg->space1 = msg->space2 = msg->newline = '\0';
 
-	if (kstrtol(msg->nodestr, 16, &nodenum))
+	nodenum = simple_strtol(msg->nodestr, &p, 16);
+	if (!p || *p)
 		return -EINVAL;
 
 	if ((nodenum == LONG_MIN) || (nodenum == LONG_MAX) ||
@@ -593,7 +600,7 @@ static int ocfs2_control_open(struct inode *inode, struct file *file)
 {
 	struct ocfs2_control_private *p;
 
-	p = kzalloc_obj(struct ocfs2_control_private);
+	p = kzalloc(sizeof(struct ocfs2_control_private), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 	p->op_this_node = -1;
@@ -952,7 +959,7 @@ static const struct dlm_lockspace_ops ocfs2_ls_ops = {
 static int user_cluster_disconnect(struct ocfs2_cluster_connection *conn)
 {
 	version_unlock(conn);
-	dlm_release_lockspace(conn->cc_lockspace, DLM_RELEASE_NORMAL);
+	dlm_release_lockspace(conn->cc_lockspace, 2);
 	conn->cc_lockspace = NULL;
 	ocfs2_live_connection_drop(conn->cc_private);
 	conn->cc_private = NULL;
@@ -967,7 +974,7 @@ static int user_cluster_connect(struct ocfs2_cluster_connection *conn)
 
 	BUG_ON(conn == NULL);
 
-	lc = kzalloc_obj(struct ocfs2_live_connection);
+	lc = kzalloc(sizeof(struct ocfs2_live_connection), GFP_KERNEL);
 	if (!lc)
 		return -ENOMEM;
 

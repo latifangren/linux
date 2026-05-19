@@ -2873,7 +2873,6 @@ static u32 qed_grc_dump_ctx_data(struct qed_hwfn *p_hwfn,
 							  false,
 							  SPLIT_TYPE_NONE, 0);
 		}
-		cond_resched();
 	}
 
 	return offset;
@@ -6821,7 +6820,9 @@ qed_mcp_trace_alloc_meta_data(struct qed_hwfn *p_hwfn,
 
 	/* Read number of formats and allocate memory for all formats */
 	meta->formats_num = qed_read_dword_from_buf(meta_buf_bytes, &offset);
-	meta->formats = kzalloc_objs(struct mcp_trace_format, meta->formats_num);
+	meta->formats = kcalloc(meta->formats_num,
+				sizeof(struct mcp_trace_format),
+				GFP_KERNEL);
 	if (!meta->formats)
 		return DBG_STATUS_VIRT_MEM_ALLOC_FAILED;
 
@@ -7534,7 +7535,8 @@ enum dbg_status qed_dbg_user_set_bin_ptr(struct qed_hwfn *p_hwfn,
 enum dbg_status qed_dbg_alloc_user_data(struct qed_hwfn *p_hwfn,
 					void **user_data_ptr)
 {
-	*user_data_ptr = kzalloc_obj(struct dbg_tools_user_data);
+	*user_data_ptr = kzalloc(sizeof(struct dbg_tools_user_data),
+				 GFP_KERNEL);
 	if (!(*user_data_ptr))
 		return DBG_STATUS_VIRT_MEM_ALLOC_FAILED;
 
@@ -7610,6 +7612,31 @@ enum dbg_status qed_print_mcp_trace_results(struct qed_hwfn *p_hwfn,
 	return qed_parse_mcp_trace_dump(p_hwfn,
 					dump_buf,
 					results_buf, &parsed_buf_size, true);
+}
+
+enum dbg_status qed_print_mcp_trace_results_cont(struct qed_hwfn *p_hwfn,
+						 u32 *dump_buf,
+						 char *results_buf)
+{
+	u32 parsed_buf_size;
+
+	return qed_parse_mcp_trace_dump(p_hwfn, dump_buf, results_buf,
+					&parsed_buf_size, false);
+}
+
+enum dbg_status qed_print_mcp_trace_line(struct qed_hwfn *p_hwfn,
+					 u8 *dump_buf,
+					 u32 num_dumped_bytes,
+					 char *results_buf)
+{
+	u32 parsed_results_bytes;
+
+	return qed_parse_mcp_trace_buf(p_hwfn,
+				       dump_buf,
+				       num_dumped_bytes,
+				       0,
+				       num_dumped_bytes,
+				       results_buf, &parsed_results_bytes);
 }
 
 /* Frees the specified MCP Trace meta data */

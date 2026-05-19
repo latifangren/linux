@@ -72,7 +72,6 @@
 	panel {
 		compatible = "edt,etm0700g0bdh6";
 		backlight = <&backlight>;
-		power-supply = <&reg_panel>;
 
 		port {
 			panel_in: endpoint {
@@ -88,13 +87,6 @@
 		regulator-max-microvolt = <5000000>;
 		gpio = <&gpio3 22 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
-	};
-
-	reg_panel: regulator-panel {
-		compatible = "regulator-fixed";
-		regulator-name = "panel";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
 	};
 
 	usdhc2_wifi_pwrseq: usdhc2-wifi-pwrseq {
@@ -119,8 +111,8 @@
 };
 
 &clks {
-	clocks = <&osc>, <&ckil>, <&ckih1>, <&anaclk1>, <&anaclk2>, <&clock_ksz8081>;
-	clock-names = "osc", "ckil", "ckih1", "anaclk1", "anaclk2", "enet_ref_pad";
+	clocks = <&clock_ksz8081>;
+	clock-names = "enet_ref_pad";
 	assigned-clocks = <&clks IMX6QDL_CLK_ENET_REF_SEL>;
 	assigned-clock-parents = <&clock_ksz8081>;
 };

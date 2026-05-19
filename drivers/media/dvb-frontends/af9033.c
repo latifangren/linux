@@ -1062,7 +1062,7 @@ static int af9033_probe(struct i2c_client *client)
 	};
 
 	/* Allocate memory for the internal state */
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev) {
 		ret = -ENOMEM;
 		goto err;

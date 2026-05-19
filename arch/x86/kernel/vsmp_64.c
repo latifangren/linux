@@ -18,6 +18,7 @@
 #include <asm/apic.h>
 #include <asm/pci-direct.h>
 #include <asm/io.h>
+#include <asm/paravirt.h>
 #include <asm/setup.h>
 
 #define TOPOLOGY_REGISTER_OFFSET 0x10

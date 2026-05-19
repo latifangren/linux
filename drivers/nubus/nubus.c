@@ -41,10 +41,6 @@ module_param_named(populate_procfs, nubus_populate_procfs, bool, 0);
 
 LIST_HEAD(nubus_func_rsrcs);
 
-static struct device nubus_parent = {
-	.init_name	= "nubus",
-};
-
 /* Meaning of "bytelanes":
 
    The card ROM may appear on any or all bytes of each long word in
@@ -510,7 +506,7 @@ nubus_get_functional_resource(struct nubus_board *board, int slot,
 	dir.procdir = nubus_proc_add_rsrc_dir(board->procdir, parent, board);
 
 	/* Actually we should probably panic if this fails */
-	fres = kzalloc_obj(*fres, GFP_ATOMIC);
+	fres = kzalloc(sizeof(*fres), GFP_ATOMIC);
 	if (!fres)
 		return NULL;
 	fres->resid = parent->type;
@@ -739,7 +735,7 @@ static void __init nubus_add_board(int slot, int bytelanes)
 	nubus_rewind(&rp, FORMAT_BLOCK_SIZE, bytelanes);
 
 	/* Actually we should probably panic if this fails */
-	if ((board = kzalloc_obj(*board, GFP_ATOMIC)) == NULL)
+	if ((board = kzalloc(sizeof(*board), GFP_ATOMIC)) == NULL)
 		return;
 	board->fblock = rp;
 
@@ -833,7 +829,7 @@ static void __init nubus_add_board(int slot, int bytelanes)
 		list_add_tail(&fres->list, &nubus_func_rsrcs);
 	}
 
-	if (nubus_device_register(&nubus_parent, board))
+	if (nubus_device_register(board))
 		put_device(&board->dev);
 }
 
@@ -886,11 +882,9 @@ static int __init nubus_init(void)
 		return 0;
 
 	nubus_proc_init();
-	err = device_register(&nubus_parent);
-	if (err) {
-		put_device(&nubus_parent);
+	err = nubus_parent_device_register();
+	if (err)
 		return err;
-	}
 	nubus_scan_bus();
 	return 0;
 }

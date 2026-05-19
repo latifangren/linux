@@ -24,7 +24,6 @@ patternProperties:
       cpu/codec dais.
 
     type: object
-    $ref: tdm-slot.yaml#
 
     properties:
       link-name:
@@ -39,17 +38,13 @@ patternProperties:
             - i2s
             - dsp_b
 
-      dai-tdm-slot-num: true
+      dai-tdm-slot-num:
+        description: see tdm-slot.txt.
+        $ref: /schemas/types.yaml#/definitions/uint32
 
-      dai-tdm-slot-width: true
-
-      playback-only:
-        description: link is used only for playback
-        $ref: /schemas/types.yaml#/definitions/flag
-
-      capture-only:
-        description: link is used only for capture
-        $ref: /schemas/types.yaml#/definitions/flag
+      dai-tdm-slot-width:
+        description: see tdm-slot.txt.
+        $ref: /schemas/types.yaml#/definitions/uint32
 
       cpu:
         description: Holds subnode which indicates cpu dai.
@@ -75,12 +70,6 @@ patternProperties:
     required:
       - link-name
       - cpu
-
-    allOf:
-      - not:
-          required:
-            - playback-only
-            - capture-only
 
     additionalProperties: false
 

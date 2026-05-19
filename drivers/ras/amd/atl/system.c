@@ -12,12 +12,6 @@
 
 #include "internal.h"
 
-#include <linux/prmt.h>
-
-const guid_t norm_to_sys_guid = GUID_INIT(0xE7180659, 0xA65D, 0x451D,
-					  0x92, 0xCD, 0x2B, 0x56, 0xF1,
-					  0x2B, 0xEB, 0xA6);
-
 int determine_node_id(struct addr_ctx *ctx, u8 socket_id, u8 die_id)
 {
 	u16 socket_id_bits, die_id_bits;
@@ -218,17 +212,15 @@ static int determine_df_rev(void)
 	if (!rev)
 		return determine_df_rev_legacy();
 
+	/*
+	 * Fail out for major revisions other than '4'.
+	 *
+	 * Explicit support should be added for newer systems to avoid issues.
+	 */
 	if (rev == 4)
 		return df4_determine_df_rev(reg);
 
-	/* All other systems should have PRM handlers. */
-	if (!acpi_prm_handler_available(&norm_to_sys_guid)) {
-		pr_debug("PRM not available\n");
-		return -ENODEV;
-	}
-
-	df_cfg.flags.prm_only = true;
-	return 0;
+	return -EINVAL;
 }
 
 static int get_dram_hole_base(void)
@@ -296,17 +288,11 @@ static void dump_df_cfg(void)
 
 int get_df_system_info(void)
 {
-	int ret;
-
-	ret = determine_df_rev();
-	if (ret) {
+	if (determine_df_rev()) {
 		pr_warn("Failed to determine DF Revision");
 		df_cfg.rev = UNKNOWN;
-		return ret;
+		return -EINVAL;
 	}
-
-	if (df_cfg.flags.prm_only)
-		return 0;
 
 	apply_node_id_shift();
 

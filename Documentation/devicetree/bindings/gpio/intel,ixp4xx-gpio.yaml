@@ -22,7 +22,7 @@ description: |
   and this can be enabled by a special flag.
 
 maintainers:
-  - Linus Walleij <linusw@kernel.org>
+  - Linus Walleij <linus.walleij@linaro.org>
 
 properties:
   compatible:

@@ -17,7 +17,6 @@
 #include <linux/vmalloc.h>
 #include <linux/mc146818rtc.h>
 #include <linux/rtc.h>
-#include <linux/string.h>
 #include <linux/module.h>
 #include <linux/memblock.h>
 
@@ -80,12 +79,13 @@ mk_resource_name(int pe, int port, char *str)
 {
 	char tmp[80];
 	char *name;
-	size_t sz;
-
-	sz = scnprintf(tmp, sizeof(tmp), "PCI %s PE %d PORT %d", str, pe, port);
-	sz += 1; /* NUL terminator */
-	name = memblock_alloc_or_panic(sz, SMP_CACHE_BYTES);
-	strscpy(name, tmp, sz);
+	
+	sprintf(tmp, "PCI %s PE %d PORT %d", str, pe, port);
+	name = memblock_alloc(strlen(tmp) + 1, SMP_CACHE_BYTES);
+	if (!name)
+		panic("%s: Failed to allocate %zu bytes\n", __func__,
+		      strlen(tmp) + 1);
+	strcpy(name, tmp);
 
 	return name;
 }
@@ -119,7 +119,10 @@ alloc_io7(unsigned int pe)
 		return NULL;
 	}
 
-	io7 = memblock_alloc_or_panic(sizeof(*io7), SMP_CACHE_BYTES);
+	io7 = memblock_alloc(sizeof(*io7), SMP_CACHE_BYTES);
+	if (!io7)
+		panic("%s: Failed to allocate %zu bytes\n", __func__,
+		      sizeof(*io7));
 	io7->pe = pe;
 	raw_spin_lock_init(&io7->irq_lock);
 
@@ -861,7 +864,7 @@ marvel_agp_setup(alpha_agp_info *agp)
 	if (!alpha_agpgart_size)
 		return -ENOMEM;
 
-	aper = kmalloc_obj(*aper);
+	aper = kmalloc(sizeof(*aper), GFP_KERNEL);
 	if (aper == NULL) return -ENOMEM;
 
 	aper->arena = agp->hose->sg_pci;
@@ -1059,7 +1062,7 @@ marvel_agp_info(void)
 	/*
 	 * Allocate the info structure.
 	 */
-	agp = kmalloc_obj(*agp);
+	agp = kmalloc(sizeof(*agp), GFP_KERNEL);
 	if (!agp)
 		return NULL;
 

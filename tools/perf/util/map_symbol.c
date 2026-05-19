@@ -2,11 +2,10 @@
 #include "map_symbol.h"
 #include "maps.h"
 #include "map.h"
-#include "thread.h"
 
 void map_symbol__exit(struct map_symbol *ms)
 {
-	thread__zput(ms->thread);
+	maps__zput(ms->maps);
 	map__zput(ms->map);
 }
 
@@ -17,7 +16,7 @@ void addr_map_symbol__exit(struct addr_map_symbol *ams)
 
 void map_symbol__copy(struct map_symbol *dst, struct map_symbol *src)
 {
-	dst->thread = thread__get(src->thread);
+	dst->maps = maps__get(src->maps);
 	dst->map = map__get(src->map);
 	dst->sym = src->sym;
 }

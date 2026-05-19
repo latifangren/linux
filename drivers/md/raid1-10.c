@@ -3,6 +3,11 @@
 #define RESYNC_BLOCK_SIZE (64*1024)
 #define RESYNC_PAGES ((RESYNC_BLOCK_SIZE + PAGE_SIZE-1) / PAGE_SIZE)
 
+/*
+ * Number of guaranteed raid bios in case of extreme VM load:
+ */
+#define	NR_RAID_BIOS 256
+
 /* when we get a read error on a read-only array, we redirect to another
  * device without failing the first device, or trying to over-write to
  * correct the read error.  To keep track of bad blocks on a per-bio
@@ -135,7 +140,7 @@ static inline bool raid1_add_bio_to_plug(struct mddev *mddev, struct bio *bio,
 	 * If bitmap is not enabled, it's safe to submit the io directly, and
 	 * this can get optimal performance.
 	 */
-	if (!md_bitmap_enabled(mddev, true)) {
+	if (!mddev->bitmap_ops->enabled(mddev)) {
 		raid1_submit_write(bio);
 		return true;
 	}
@@ -242,7 +247,7 @@ static inline int raid1_check_read_range(struct md_rdev *rdev,
 					 sector_t this_sector, int *len)
 {
 	sector_t first_bad;
-	sector_t bad_sectors;
+	int bad_sectors;
 
 	/* no bad block overlap */
 	if (!is_badblock(rdev, this_sector, *len, &first_bad, &bad_sectors))
@@ -278,12 +283,12 @@ static inline int raid1_check_read_range(struct md_rdev *rdev,
 static inline bool raid1_should_read_first(struct mddev *mddev,
 					   sector_t this_sector, int len)
 {
-	if ((mddev->resync_offset < this_sector + len))
+	if ((mddev->recovery_cp < this_sector + len))
 		return true;
 
 	if (mddev_is_clustered(mddev) &&
-	    mddev->cluster_ops->area_resyncing(mddev, READ, this_sector,
-					       this_sector + len))
+	    md_cluster_ops->area_resyncing(mddev, READ, this_sector,
+					   this_sector + len))
 		return true;
 
 	return false;

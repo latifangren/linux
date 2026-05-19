@@ -25,7 +25,6 @@
 #include <linux/kthread.h>
 #include <linux/wait.h>
 #include <linux/async.h>
-#include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
 #include <linux/pinctrl/devinfo.h>
 #include <linux/slab.h>
@@ -193,7 +192,7 @@ void driver_deferred_probe_trigger(void)
 	 * Kick the re-probe thread.  It may already be scheduled, but it is
 	 * safe to kick it again.
 	 */
-	queue_work(system_dfl_wq, &deferred_probe_work);
+	queue_work(system_unbound_wq, &deferred_probe_work);
 }
 
 /**
@@ -257,7 +256,11 @@ static int deferred_devs_show(struct seq_file *s, void *data)
 }
 DEFINE_SHOW_ATTRIBUTE(deferred_devs);
 
-static int driver_deferred_probe_timeout = CONFIG_DRIVER_DEFERRED_PROBE_TIMEOUT;
+#ifdef CONFIG_MODULES
+static int driver_deferred_probe_timeout = 10;
+#else
+static int driver_deferred_probe_timeout;
+#endif
 
 static int __init deferred_probe_timeout_setup(char *str)
 {
@@ -379,7 +382,8 @@ __exitcall(deferred_probe_exit);
 
 int __device_set_driver_override(struct device *dev, const char *s, size_t len)
 {
-	const char *new = NULL, *old;
+	const char *new, *old;
+	char *cp;
 
 	if (!s)
 		return -EINVAL;
@@ -399,30 +403,37 @@ int __device_set_driver_override(struct device *dev, const char *s, size_t len)
 	 */
 	len = strlen(s);
 
-	/* Handle trailing newline */
-	if (len) {
-		char *cp;
-
-		cp = strnchr(s, len, '\n');
-		if (cp)
-			len = cp - s;
-	}
-
-	/*
-	 * If empty string or "\n" passed, new remains NULL, clearing
-	 * the driver_override.name.
-	 */
-	if (len) {
-		new = kstrndup(s, len, GFP_KERNEL);
-		if (!new)
-			return -ENOMEM;
-	}
-
-	scoped_guard(spinlock, &dev->driver_override.lock) {
+	if (!len) {
+		/* Empty string passed - clear override */
+		spin_lock(&dev->driver_override.lock);
 		old = dev->driver_override.name;
-		dev->driver_override.name = new;
+		dev->driver_override.name = NULL;
+		spin_unlock(&dev->driver_override.lock);
+		kfree(old);
+
+		return 0;
 	}
 
+	cp = strnchr(s, len, '\n');
+	if (cp)
+		len = cp - s;
+
+	new = kstrndup(s, len, GFP_KERNEL);
+	if (!new)
+		return -ENOMEM;
+
+	spin_lock(&dev->driver_override.lock);
+	old = dev->driver_override.name;
+	if (cp != s) {
+		dev->driver_override.name = new;
+		spin_unlock(&dev->driver_override.lock);
+	} else {
+		/* "\n" passed - clear override */
+		dev->driver_override.name = NULL;
+		spin_unlock(&dev->driver_override.lock);
+
+		kfree(new);
+	}
 	kfree(old);
 
 	return 0;
@@ -596,14 +607,11 @@ static DEVICE_ATTR_RW(state_synced);
 static void device_unbind_cleanup(struct device *dev)
 {
 	devres_release_all(dev);
-	if (dev->driver->p_cb.post_unbind_rust)
-		dev->driver->p_cb.post_unbind_rust(dev);
 	arch_teardown_dma_ops(dev);
 	kfree(dev->dma_range_map);
 	dev->dma_range_map = NULL;
 	device_set_driver(dev, NULL);
 	dev_set_drvdata(dev, NULL);
-	dev_pm_domain_detach(dev, dev->power.detach_power_off);
 	if (dev->pm_domain && dev->pm_domain->dismiss)
 		dev->pm_domain->dismiss(dev);
 	pm_runtime_reinit(dev);
@@ -836,26 +844,6 @@ static int __driver_probe_device(const struct device_driver *drv, struct device 
 	if (dev->driver)
 		return -EBUSY;
 
-	/*
-	 * In device_add(), the "struct device" gets linked into the subsystem's
-	 * list of devices and broadcast to userspace (via uevent) before we're
-	 * quite ready to probe. Those open pathways to driver probe before
-	 * we've finished enough of device_add() to reliably support probe.
-	 * Detect this and tell other pathways to try again later. device_add()
-	 * itself will also try to probe immediately after setting
-	 * "ready_to_probe".
-	 */
-	if (!dev_ready_to_probe(dev))
-		return dev_err_probe(dev, -EPROBE_DEFER, "Device not ready to probe\n");
-
-	/*
-	 * Set can_match = true after calling dev_ready_to_probe(), so
-	 * driver_deferred_probe_add() won't actually add the device to the
-	 * deferred probe list when dev_ready_to_probe() returns false.
-	 *
-	 * When dev_ready_to_probe() returns false, it means that device_add()
-	 * will do another probe() attempt for us.
-	 */
 	dev->can_match = true;
 	dev_dbg(dev, "bus: '%s': %s: matched device with driver %s\n",
 		drv->bus->name, __func__, drv->name);
@@ -1147,15 +1135,7 @@ EXPORT_SYMBOL_GPL(device_attach);
 
 void device_initial_probe(struct device *dev)
 {
-	struct subsys_private *sp = bus_to_subsys(dev->bus);
-
-	if (!sp)
-		return;
-
-	if (sp->drivers_autoprobe)
-		__device_attach(dev, true);
-
-	subsys_put(sp);
+	__device_attach(dev, true);
 }
 
 /*

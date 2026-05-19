@@ -27,7 +27,6 @@
 #include <linux/phy.h>
 #include <net/arp.h>
 #include <net/macsec.h>
-#include <net/netdev_lock.h>
 
 #include "vlan.h"
 #include "vlanproc.h"
@@ -192,7 +191,7 @@ int vlan_dev_set_egress_priority(const struct net_device *dev,
 
 	/* Create a new mapping then. */
 	mp = vlan->egress_priority_map[skb_prio & 0xF];
-	np = kmalloc_obj(struct vlan_priority_tci_mapping);
+	np = kmalloc(sizeof(struct vlan_priority_tci_mapping), GFP_KERNEL);
 	if (!np)
 		return -ENOBUFS;
 
@@ -357,6 +356,7 @@ static int vlan_hwtstamp_set(struct net_device *dev,
 static int vlan_dev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct net_device *real_dev = vlan_dev_priv(dev)->real_dev;
+	const struct net_device_ops *ops = real_dev->netdev_ops;
 	struct ifreq ifrr;
 	int err = -EOPNOTSUPP;
 
@@ -367,7 +367,8 @@ static int vlan_dev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	case SIOCGMIIPHY:
 	case SIOCGMIIREG:
 	case SIOCSMIIREG:
-		err = dev_eth_ioctl(real_dev, &ifrr, cmd);
+		if (netif_device_present(real_dev) && ops->ndo_eth_ioctl)
+			err = ops->ndo_eth_ioctl(real_dev, &ifrr, cmd);
 		break;
 	}
 
@@ -537,7 +538,7 @@ static int vlan_dev_init(struct net_device *dev)
 		dev->state |= (1 << __LINK_STATE_NOCARRIER);
 
 	dev->hw_features = NETIF_F_HW_CSUM | NETIF_F_SG |
-			   NETIF_F_FRAGLIST | NETIF_F_GSO_SOFTWARE |
+			   NETIF_F_FRAGLIST | NETIF_F_GSO_SOFTWARE_ALL |
 			   NETIF_F_GSO_ENCAP_ALL |
 			   NETIF_F_HIGHDMA | NETIF_F_SCTP_CRC |
 			   NETIF_F_FCOE_CRC | NETIF_F_FSO;
@@ -633,7 +634,7 @@ static netdev_features_t vlan_dev_fix_features(struct net_device *dev,
 	if (lower_features & (NETIF_F_IP_CSUM|NETIF_F_IPV6_CSUM))
 		lower_features |= NETIF_F_HW_CSUM;
 	features = netdev_intersect_features(features, lower_features);
-	features |= old_features & (NETIF_F_SOFT_FEATURES | NETIF_F_GSO_SOFTWARE);
+	features |= old_features & (NETIF_F_SOFT_FEATURES | NETIF_F_GSO_SOFTWARE_ALL);
 
 	return features;
 }
@@ -701,14 +702,14 @@ static void vlan_dev_poll_controller(struct net_device *dev)
 	return;
 }
 
-static int vlan_dev_netpoll_setup(struct net_device *dev)
+static int vlan_dev_netpoll_setup(struct net_device *dev, struct netpoll_info *npinfo)
 {
 	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
 	struct net_device *real_dev = vlan->real_dev;
 	struct netpoll *netpoll;
 	int err = 0;
 
-	netpoll = kzalloc_obj(*netpoll);
+	netpoll = kzalloc(sizeof(*netpoll), GFP_KERNEL);
 	err = -ENOMEM;
 	if (!netpoll)
 		goto out;

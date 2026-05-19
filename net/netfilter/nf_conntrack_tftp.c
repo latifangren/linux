@@ -32,7 +32,9 @@ static unsigned int ports_c;
 module_param_array(ports, ushort, &ports_c, 0400);
 MODULE_PARM_DESC(ports, "Port numbers of TFTP servers");
 
-nf_nat_tftp_hook_fn __rcu *nf_nat_tftp_hook __read_mostly;
+unsigned int (*nf_nat_tftp_hook)(struct sk_buff *skb,
+				 enum ip_conntrack_info ctinfo,
+				 struct nf_conntrack_expect *exp) __read_mostly;
 EXPORT_SYMBOL_GPL(nf_nat_tftp_hook);
 
 static int tftp_help(struct sk_buff *skb,
@@ -45,7 +47,7 @@ static int tftp_help(struct sk_buff *skb,
 	struct nf_conntrack_expect *exp;
 	struct nf_conntrack_tuple *tuple;
 	unsigned int ret = NF_ACCEPT;
-	nf_nat_tftp_hook_fn *nf_nat_tftp;
+	typeof(nf_nat_tftp_hook) nf_nat_tftp;
 
 	tfh = skb_header_pointer(skb, protoff + sizeof(struct udphdr),
 				 sizeof(_tftph), &_tftph);

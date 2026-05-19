@@ -726,10 +726,8 @@ out:
 static irqreturn_t lance_dma_merr_int(int irq, void *dev_id)
 {
 	struct net_device *dev = dev_id;
-	u64 ldp = ioasic_read(IO_REG_LANCE_DMA_P);
 
-	pr_err_ratelimited("%s: DMA error at %#010llx\n", dev->name,
-			   (ldp & 0x1f) << 29 | (ldp & 0xffffffe0) >> 3);
+	printk(KERN_ERR "%s: DMA error\n", dev->name);
 	return IRQ_HANDLED;
 }
 
@@ -815,7 +813,7 @@ static int lance_open(struct net_device *dev)
 	if (lp->dma_irq >= 0) {
 		unsigned long flags;
 
-		if (request_irq(lp->dma_irq, lance_dma_merr_int, 0,
+		if (request_irq(lp->dma_irq, lance_dma_merr_int, IRQF_ONESHOT,
 				"lance error", dev)) {
 			free_irq(dev->irq, dev);
 			printk("%s: Can't get DMA IRQ %d\n", dev->name,
@@ -844,7 +842,7 @@ static int lance_close(struct net_device *dev)
 	volatile struct lance_regs *ll = lp->ll;
 
 	netif_stop_queue(dev);
-	timer_delete_sync(&lp->multicast_timer);
+	del_timer_sync(&lp->multicast_timer);
 
 	/* Stop the card */
 	writereg(&ll->rap, LE_CSR0);
@@ -1006,7 +1004,7 @@ static void lance_set_multicast(struct net_device *dev)
 
 static void lance_set_multicast_retry(struct timer_list *t)
 {
-	struct lance_private *lp = timer_container_of(lp, t, multicast_timer);
+	struct lance_private *lp = from_timer(lp, t, multicast_timer);
 	struct net_device *dev = lp->dev;
 
 	lance_set_multicast(dev);

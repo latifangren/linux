@@ -124,6 +124,5 @@
 };
 
 &xo_board_clk {
-	clock-div = <4>;
-	clock-mult = <1>;
+	clock-frequency = <24000000>;
 };

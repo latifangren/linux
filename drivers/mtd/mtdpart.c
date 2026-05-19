@@ -18,7 +18,6 @@
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/mtd/concat.h>
 
 #include "mtdcore.h"
 
@@ -54,7 +53,7 @@ static struct mtd_info *allocate_partition(struct mtd_info *parent,
 	u64 tmp;
 
 	/* allocate the partition structure */
-	child = kzalloc_obj(*child);
+	child = kzalloc(sizeof(*child), GFP_KERNEL);
 	name = kstrdup(part->name, GFP_KERNEL);
 	if (!name || !child) {
 		printk(KERN_ERR"memory allocation error while creating partitions for \"%s\"\n",
@@ -410,11 +409,6 @@ int add_mtd_partitions(struct mtd_info *parent,
 			goto err_del_partitions;
 		}
 
-		if (IS_REACHABLE(CONFIG_MTD_VIRT_CONCAT)) {
-			if (mtd_virt_concat_add(child))
-				continue;
-		}
-
 		mutex_lock(&master->master.partitions_lock);
 		list_add_tail(&child->part.node, &parent->partitions);
 		mutex_unlock(&master->master.partitions_lock);
@@ -699,9 +693,10 @@ int parse_mtd_partitions(struct mtd_info *master, const char *const *types,
 			parser = mtd_part_parser_get(*types);
 			if (!parser && !request_module("%s", *types))
 				parser = mtd_part_parser_get(*types);
+			pr_debug("%s: got parser %s\n", master->name,
+				parser ? parser->name : NULL);
 			if (!parser)
 				continue;
-			pr_debug("%s: got parser %s\n", master->name, parser->name);
 			ret = mtd_part_do_parse(parser, master, &pparts, data);
 			if (ret <= 0)
 				mtd_part_parser_put(parser);

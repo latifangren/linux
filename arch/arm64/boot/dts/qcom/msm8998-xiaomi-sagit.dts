@@ -543,7 +543,14 @@
 		bias-pull-down;
 	};
 
-	mdss_te_state: mdss-te-state {
+	mdss_te_active_state: mdss-te-active-state {
+		pins = "gpio10";
+		function = "mdp_vsync_a";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	mdss_te_suspend_state: mdss-te-suspend-state {
 		pins = "gpio10";
 		function = "mdp_vsync_a";
 		drive-strength = <2>;

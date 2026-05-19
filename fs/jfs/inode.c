@@ -29,7 +29,7 @@ struct inode *jfs_iget(struct super_block *sb, unsigned long ino)
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
-	if (!(inode_state_read_once(inode) & I_NEW))
+	if (!(inode->i_state & I_NEW))
 		return inode;
 
 	ret = diRead(inode);
@@ -64,7 +64,7 @@ struct inode *jfs_iget(struct super_block *sb, unsigned long ino)
 		inode->i_op = &jfs_file_inode_operations;
 		init_special_inode(inode, inode->i_mode, inode->i_rdev);
 	} else {
-		printk(KERN_DEBUG "JFS: Invalid file type 0%04o for inode %llu.\n",
+		printk(KERN_DEBUG "JFS: Invalid file type 0%04o for inode %lu.\n",
 		       inode->i_mode, inode->i_ino);
 		iget_failed(inode);
 		return ERR_PTR(-EIO);
@@ -296,10 +296,9 @@ static void jfs_write_failed(struct address_space *mapping, loff_t to)
 	}
 }
 
-static int jfs_write_begin(const struct kiocb *iocb,
-			   struct address_space *mapping,
-			   loff_t pos, unsigned len,
-			   struct folio **foliop, void **fsdata)
+static int jfs_write_begin(struct file *file, struct address_space *mapping,
+				loff_t pos, unsigned len,
+				struct folio **foliop, void **fsdata)
 {
 	int ret;
 
@@ -310,14 +309,13 @@ static int jfs_write_begin(const struct kiocb *iocb,
 	return ret;
 }
 
-static int jfs_write_end(const struct kiocb *iocb,
-			 struct address_space *mapping,
-			 loff_t pos, unsigned len, unsigned copied,
-			 struct folio *folio, void *fsdata)
+static int jfs_write_end(struct file *file, struct address_space *mapping,
+		loff_t pos, unsigned len, unsigned copied, struct folio *folio,
+		void *fsdata)
 {
 	int ret;
 
-	ret = generic_write_end(iocb, mapping, pos, len, copied, folio, fsdata);
+	ret = generic_write_end(file, mapping, pos, len, copied, folio, fsdata);
 	if (ret < len)
 		jfs_write_failed(mapping, pos + len);
 	return ret;
@@ -377,7 +375,7 @@ void jfs_truncate_nolock(struct inode *ip, loff_t length)
 
 	ASSERT(length >= 0);
 
-	if (test_cflag(COMMIT_Nolink, ip) || isReadOnly(ip)) {
+	if (test_cflag(COMMIT_Nolink, ip)) {
 		xtTruncate(0, ip, length, COMMIT_WMAP);
 		return;
 	}

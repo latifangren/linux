@@ -5,9 +5,6 @@
 
 #include <linux/highmem.h>
 
-#include <drm/drm_print.h>
-#include <drm/intel/intel_gmd_misc_regs.h>
-
 #include "display/intel_display.h"
 #include "i915_drv.h"
 #include "i915_reg.h"
@@ -331,7 +328,6 @@ static bool fence_is_active(const struct i915_fence_reg *fence)
 
 static struct i915_fence_reg *fence_find(struct i915_ggtt *ggtt)
 {
-	struct intel_display *display = ggtt->vm.i915->display;
 	struct i915_fence_reg *active = NULL;
 	struct i915_fence_reg *fence, *fn;
 
@@ -357,7 +353,7 @@ static struct i915_fence_reg *fence_find(struct i915_ggtt *ggtt)
 	}
 
 	/* Wait for completion of pending flips which consume fences */
-	if (intel_has_pending_fb_unpin(display))
+	if (intel_has_pending_fb_unpin(ggtt->vm.i915))
 		return ERR_PTR(-EAGAIN);
 
 	return ERR_PTR(-ENOBUFS);
@@ -753,7 +749,7 @@ static void swizzle_page(struct page *page)
 	char *vaddr;
 	int i;
 
-	vaddr = kmap_local_page(page);
+	vaddr = kmap(page);
 
 	for (i = 0; i < PAGE_SIZE; i += 128) {
 		memcpy(temp, &vaddr[i], 64);
@@ -761,7 +757,7 @@ static void swizzle_page(struct page *page)
 		memcpy(&vaddr[i + 64], temp, 64);
 	}
 
-	kunmap_local(vaddr);
+	kunmap(page);
 }
 
 /**
@@ -866,7 +862,9 @@ void intel_ggtt_init_fences(struct i915_ggtt *ggtt)
 	if (intel_vgpu_active(i915))
 		num_fences = intel_uncore_read(uncore,
 					       vgtif_reg(avail_rs.fence_num));
-	ggtt->fence_regs = kzalloc_objs(*ggtt->fence_regs, num_fences);
+	ggtt->fence_regs = kcalloc(num_fences,
+				   sizeof(*ggtt->fence_regs),
+				   GFP_KERNEL);
 	if (!ggtt->fence_regs)
 		num_fences = 0;
 
@@ -916,15 +914,15 @@ void intel_gt_init_swizzling(struct intel_gt *gt)
 	if (GRAPHICS_VER(i915) == 6)
 		intel_uncore_write(uncore,
 				   ARB_MODE,
-				   REG_MASKED_FIELD_ENABLE(ARB_MODE_SWIZZLE_SNB));
+				   _MASKED_BIT_ENABLE(ARB_MODE_SWIZZLE_SNB));
 	else if (GRAPHICS_VER(i915) == 7)
 		intel_uncore_write(uncore,
 				   ARB_MODE,
-				   REG_MASKED_FIELD_ENABLE(ARB_MODE_SWIZZLE_IVB));
+				   _MASKED_BIT_ENABLE(ARB_MODE_SWIZZLE_IVB));
 	else if (GRAPHICS_VER(i915) == 8)
 		intel_uncore_write(uncore,
 				   GAMTARBMODE,
-				   REG_MASKED_FIELD_ENABLE(ARB_MODE_SWIZZLE_BDW));
+				   _MASKED_BIT_ENABLE(ARB_MODE_SWIZZLE_BDW));
 	else
 		MISSING_CASE(GRAPHICS_VER(i915));
 }

@@ -31,14 +31,18 @@
 /* Arbitrary bounded size for the event queue */
 #define CROS_MAX_EVENT_LEN	PAGE_SIZE
 
+struct chardev_data {
+	struct cros_ec_dev *ec_dev;
+	struct miscdevice misc;
+};
+
 struct chardev_priv {
-	struct cros_ec_device *ec_dev;
+	struct cros_ec_dev *ec_dev;
 	struct notifier_block notifier;
 	wait_queue_head_t wait_event;
 	unsigned long event_mask;
 	struct list_head events;
 	size_t event_len;
-	u16 cmd_offset;
 };
 
 struct ec_event {
@@ -48,7 +52,7 @@ struct ec_event {
 	u8 data[];
 };
 
-static int ec_get_version(struct chardev_priv *priv, char *str, int maxlen)
+static int ec_get_version(struct cros_ec_dev *ec, char *str, int maxlen)
 {
 	static const char * const current_image_name[] = {
 		"unknown", "read-only", "read-write", "invalid",
@@ -61,10 +65,10 @@ static int ec_get_version(struct chardev_priv *priv, char *str, int maxlen)
 	if (!msg)
 		return -ENOMEM;
 
-	msg->command = EC_CMD_GET_VERSION + priv->cmd_offset;
+	msg->command = EC_CMD_GET_VERSION + ec->cmd_offset;
 	msg->insize = sizeof(*resp);
 
-	ret = cros_ec_cmd_xfer_status(priv->ec_dev, msg);
+	ret = cros_ec_cmd_xfer_status(ec->ec_dev, msg);
 	if (ret < 0) {
 		snprintf(str, maxlen,
 			 "Unknown EC version, returned error: %d\n",
@@ -92,7 +96,7 @@ static int cros_ec_chardev_mkbp_event(struct notifier_block *nb,
 {
 	struct chardev_priv *priv = container_of(nb, struct chardev_priv,
 						 notifier);
-	struct cros_ec_device *ec_dev = priv->ec_dev;
+	struct cros_ec_device *ec_dev = priv->ec_dev->ec_dev;
 	struct ec_event *event;
 	unsigned long event_bit = 1 << ec_dev->event_data.event_type;
 	int total_size = sizeof(*event) + ec_dev->event_size;
@@ -157,24 +161,22 @@ out:
 static int cros_ec_chardev_open(struct inode *inode, struct file *filp)
 {
 	struct miscdevice *mdev = filp->private_data;
-	struct cros_ec_dev *ec = dev_get_drvdata(mdev->parent);
-	struct cros_ec_device *ec_dev = ec->ec_dev;
+	struct cros_ec_dev *ec_dev = dev_get_drvdata(mdev->parent);
 	struct chardev_priv *priv;
 	int ret;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
 	priv->ec_dev = ec_dev;
-	priv->cmd_offset = ec->cmd_offset;
 	filp->private_data = priv;
 	INIT_LIST_HEAD(&priv->events);
 	init_waitqueue_head(&priv->wait_event);
 	nonseekable_open(inode, filp);
 
 	priv->notifier.notifier_call = cros_ec_chardev_mkbp_event;
-	ret = blocking_notifier_chain_register(&ec_dev->event_notifier,
+	ret = blocking_notifier_chain_register(&ec_dev->ec_dev->event_notifier,
 					       &priv->notifier);
 	if (ret) {
 		dev_err(ec_dev->dev, "failed to register event notifier\n");
@@ -202,6 +204,7 @@ static ssize_t cros_ec_chardev_read(struct file *filp, char __user *buffer,
 	char msg[sizeof(struct ec_response_get_version) +
 		 sizeof(CROS_EC_DEV_VERSION)];
 	struct chardev_priv *priv = filp->private_data;
+	struct cros_ec_dev *ec_dev = priv->ec_dev;
 	size_t count;
 	int ret;
 
@@ -235,7 +238,7 @@ static ssize_t cros_ec_chardev_read(struct file *filp, char __user *buffer,
 	if (*offset != 0)
 		return 0;
 
-	ret = ec_get_version(priv, msg, sizeof(msg));
+	ret = ec_get_version(ec_dev, msg, sizeof(msg));
 	if (ret)
 		return ret;
 
@@ -251,10 +254,10 @@ static ssize_t cros_ec_chardev_read(struct file *filp, char __user *buffer,
 static int cros_ec_chardev_release(struct inode *inode, struct file *filp)
 {
 	struct chardev_priv *priv = filp->private_data;
-	struct cros_ec_device *ec_dev = priv->ec_dev;
+	struct cros_ec_dev *ec_dev = priv->ec_dev;
 	struct ec_event *event, *e;
 
-	blocking_notifier_chain_unregister(&ec_dev->event_notifier,
+	blocking_notifier_chain_unregister(&ec_dev->ec_dev->event_notifier,
 					   &priv->notifier);
 
 	list_for_each_entry_safe(event, e, &priv->events, node) {
@@ -269,7 +272,7 @@ static int cros_ec_chardev_release(struct inode *inode, struct file *filp)
 /*
  * Ioctls
  */
-static long cros_ec_chardev_ioctl_xcmd(struct chardev_priv *priv, void __user *arg)
+static long cros_ec_chardev_ioctl_xcmd(struct cros_ec_dev *ec, void __user *arg)
 {
 	struct cros_ec_command *s_cmd;
 	struct cros_ec_command u_cmd;
@@ -298,8 +301,8 @@ static long cros_ec_chardev_ioctl_xcmd(struct chardev_priv *priv, void __user *a
 		goto exit;
 	}
 
-	s_cmd->command += priv->cmd_offset;
-	ret = cros_ec_cmd_xfer(priv->ec_dev, s_cmd);
+	s_cmd->command += ec->cmd_offset;
+	ret = cros_ec_cmd_xfer(ec->ec_dev, s_cmd);
 	/* Only copy data to userland if data was received. */
 	if (ret < 0)
 		goto exit;
@@ -311,9 +314,10 @@ exit:
 	return ret;
 }
 
-static long cros_ec_chardev_ioctl_readmem(struct chardev_priv *priv, void __user *arg)
+static long cros_ec_chardev_ioctl_readmem(struct cros_ec_dev *ec,
+					   void __user *arg)
 {
-	struct cros_ec_device *ec_dev = priv->ec_dev;
+	struct cros_ec_device *ec_dev = ec->ec_dev;
 	struct cros_ec_readmem s_mem = { };
 	long num;
 
@@ -342,15 +346,16 @@ static long cros_ec_chardev_ioctl(struct file *filp, unsigned int cmd,
 				   unsigned long arg)
 {
 	struct chardev_priv *priv = filp->private_data;
+	struct cros_ec_dev *ec = priv->ec_dev;
 
 	if (_IOC_TYPE(cmd) != CROS_EC_DEV_IOC)
 		return -ENOTTY;
 
 	switch (cmd) {
 	case CROS_EC_DEV_IOCXCMD:
-		return cros_ec_chardev_ioctl_xcmd(priv, (void __user *)arg);
+		return cros_ec_chardev_ioctl_xcmd(ec, (void __user *)arg);
 	case CROS_EC_DEV_IOCRDMEM:
-		return cros_ec_chardev_ioctl_readmem(priv, (void __user *)arg);
+		return cros_ec_chardev_ioctl_readmem(ec, (void __user *)arg);
 	case CROS_EC_DEV_IOCEVENTMASK:
 		priv->event_mask = arg;
 		return 0;
@@ -372,30 +377,31 @@ static const struct file_operations chardev_fops = {
 
 static int cros_ec_chardev_probe(struct platform_device *pdev)
 {
-	struct cros_ec_dev *ec = dev_get_drvdata(pdev->dev.parent);
-	struct cros_ec_platform *ec_platform = dev_get_platdata(ec->dev);
-	struct miscdevice *misc;
+	struct cros_ec_dev *ec_dev = dev_get_drvdata(pdev->dev.parent);
+	struct cros_ec_platform *ec_platform = dev_get_platdata(ec_dev->dev);
+	struct chardev_data *data;
 
 	/* Create a char device: we want to create it anew */
-	misc = devm_kzalloc(&pdev->dev, sizeof(*misc), GFP_KERNEL);
-	if (!misc)
+	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
+	if (!data)
 		return -ENOMEM;
 
-	misc->minor = MISC_DYNAMIC_MINOR;
-	misc->fops = &chardev_fops;
-	misc->name = ec_platform->ec_name;
-	misc->parent = pdev->dev.parent;
+	data->ec_dev = ec_dev;
+	data->misc.minor = MISC_DYNAMIC_MINOR;
+	data->misc.fops = &chardev_fops;
+	data->misc.name = ec_platform->ec_name;
+	data->misc.parent = pdev->dev.parent;
 
-	dev_set_drvdata(&pdev->dev, misc);
+	dev_set_drvdata(&pdev->dev, data);
 
-	return misc_register(misc);
+	return misc_register(&data->misc);
 }
 
 static void cros_ec_chardev_remove(struct platform_device *pdev)
 {
-	struct miscdevice *misc = dev_get_drvdata(&pdev->dev);
+	struct chardev_data *data = dev_get_drvdata(&pdev->dev);
 
-	misc_deregister(misc);
+	misc_deregister(&data->misc);
 }
 
 static const struct platform_device_id cros_ec_chardev_id[] = {
@@ -409,7 +415,7 @@ static struct platform_driver cros_ec_chardev_driver = {
 		.name = DRV_NAME,
 	},
 	.probe = cros_ec_chardev_probe,
-	.remove = cros_ec_chardev_remove,
+	.remove_new = cros_ec_chardev_remove,
 	.id_table = cros_ec_chardev_id,
 };
 

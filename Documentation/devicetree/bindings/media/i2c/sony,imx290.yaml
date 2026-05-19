@@ -33,8 +33,6 @@ properties:
           - sony,imx290lqr # Colour
           - sony,imx290llr # Monochrome
           - sony,imx327lqr # Colour
-          - sony,imx462lqr # Colour
-          - sony,imx462llr # Monochrome
       - const: sony,imx290
         deprecated: true
 
@@ -51,7 +49,6 @@ properties:
 
   clock-frequency:
     description: Frequency of the xclk clock in Hz
-    deprecated: true
 
   vdda-supply:
     description: Analog power supply (2.9V)
@@ -101,6 +98,7 @@ required:
   - reg
   - clocks
   - clock-names
+  - clock-frequency
   - vdda-supply
   - vddd-supply
   - vdddo-supply
@@ -125,8 +123,7 @@ examples:
 
             clocks = <&gcc 90>;
             clock-names = "xclk";
-            assigned-clocks = <&clks 1>;
-            assigned-clock-rates = <37125000>;
+            clock-frequency = <37125000>;
 
             vdddo-supply = <&camera_vdddo_1v8>;
             vdda-supply = <&camera_vdda_2v8>;
@@ -137,7 +134,7 @@ examples:
             port {
                 imx290_ep: endpoint {
                     data-lanes = <1 2 3 4>;
-                    link-frequencies = /bits/ 64 <222750000 148500000>;
+                    link-frequencies = /bits/ 64 <445500000>;
                     remote-endpoint = <&csiphy0_ep>;
                 };
             };

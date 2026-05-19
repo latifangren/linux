@@ -322,7 +322,7 @@ static void pdr_indication_cb(struct qmi_handle *qmi,
 		ind_msg->service_path, ind_msg->curr_state,
 		ind_msg->transaction_id);
 
-	ind = kzalloc_obj(*ind);
+	ind = kzalloc(sizeof(*ind), GFP_KERNEL);
 	if (!ind)
 		return;
 
@@ -396,7 +396,8 @@ static int pdr_locate_service(struct pdr_handle *pdr, struct pdr_service *pds)
 	int domains_read = 0;
 	int ret, i;
 
-	struct servreg_get_domain_list_resp *resp __free(kfree) = kzalloc_obj(*resp);
+	struct servreg_get_domain_list_resp *resp __free(kfree) = kzalloc(sizeof(*resp),
+									  GFP_KERNEL);
 	if (!resp)
 		return -ENOMEM;
 
@@ -519,11 +520,11 @@ struct pdr_service *pdr_add_lookup(struct pdr_handle *pdr,
 	    !service_path || strlen(service_path) > SERVREG_NAME_LENGTH)
 		return ERR_PTR(-EINVAL);
 
-	struct pdr_service *pds __free(kfree) = kzalloc_obj(*pds);
+	struct pdr_service *pds __free(kfree) = kzalloc(sizeof(*pds), GFP_KERNEL);
 	if (!pds)
 		return ERR_PTR(-ENOMEM);
 
-	pds->service = QMI_SERVICE_ID_SERVREG_NOTIF;
+	pds->service = SERVREG_NOTIFIER_SERVICE;
 	strscpy(pds->service_name, service_name, sizeof(pds->service_name));
 	strscpy(pds->service_path, service_path, sizeof(pds->service_path));
 	pds->need_locator_lookup = true;
@@ -644,7 +645,7 @@ struct pdr_handle *pdr_handle_alloc(void (*status)(int state,
 	if (!status)
 		return ERR_PTR(-EINVAL);
 
-	struct pdr_handle *pdr __free(kfree) = kzalloc_obj(*pdr);
+	struct pdr_handle *pdr __free(kfree) = kzalloc(sizeof(*pdr), GFP_KERNEL);
 	if (!pdr)
 		return ERR_PTR(-ENOMEM);
 
@@ -678,7 +679,7 @@ struct pdr_handle *pdr_handle_alloc(void (*status)(int state,
 	if (ret < 0)
 		goto destroy_indack;
 
-	ret = qmi_add_lookup(&pdr->locator_hdl, QMI_SERVICE_ID_SERVREG_LOC, 1, 1);
+	ret = qmi_add_lookup(&pdr->locator_hdl, SERVREG_LOCATOR_SERVICE, 1, 1);
 	if (ret < 0)
 		goto release_qmi_handle;
 

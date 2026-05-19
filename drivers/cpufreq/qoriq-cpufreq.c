@@ -168,7 +168,7 @@ static int qoriq_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	if (!np)
 		return -ENODEV;
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		goto err_np;
 
@@ -181,11 +181,11 @@ static int qoriq_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	hwclk = __clk_get_hw(policy->clk);
 	count = clk_hw_get_num_parents(hwclk);
 
-	data->pclk = kzalloc_objs(struct clk *, count);
+	data->pclk = kcalloc(count, sizeof(struct clk *), GFP_KERNEL);
 	if (!data->pclk)
 		goto err_nomem2;
 
-	table = kzalloc_objs(*table, count + 1);
+	table = kcalloc(count + 1, sizeof(*table), GFP_KERNEL);
 	if (!table)
 		goto err_pclk;
 
@@ -254,6 +254,7 @@ static struct cpufreq_driver qoriq_cpufreq_driver = {
 	.verify		= cpufreq_generic_frequency_table_verify,
 	.target_index	= qoriq_cpufreq_target,
 	.get		= cpufreq_generic_get,
+	.attr		= cpufreq_generic_attr,
 };
 
 static const struct of_device_id qoriq_cpufreq_blacklist[] = {
@@ -295,7 +296,7 @@ static struct platform_driver qoriq_cpufreq_platform_driver = {
 		.name = "qoriq-cpufreq",
 	},
 	.probe = qoriq_cpufreq_probe,
-	.remove = qoriq_cpufreq_remove,
+	.remove_new = qoriq_cpufreq_remove,
 };
 module_platform_driver(qoriq_cpufreq_platform_driver);
 

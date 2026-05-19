@@ -31,7 +31,9 @@ properties:
     description: Negative 5V supply
 
   reset-gpios: true
+
   enable-gpios: true
+
   port: true
 
 required:

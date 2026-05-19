@@ -20,7 +20,7 @@
 //! The kernel will interface with the block device driver by calling the method
 //! implementations of the `Operations` trait.
 //!
-//! IO requests are passed to the driver as [`kernel::sync::aref::ARef<Request>`]
+//! IO requests are passed to the driver as [`kernel::types::ARef<Request>`]
 //! instances. The `Request` type is a wrapper around the C `struct request`.
 //! The driver must mark end of processing by calling one of the
 //! `Request::end`, methods. Failure to do so can lead to deadlock or timeout
@@ -53,7 +53,7 @@
 //! [`GenDiskBuilder`]: gen_disk::GenDiskBuilder
 //! [`GenDiskBuilder::build`]: gen_disk::GenDiskBuilder::build
 //!
-//! # Examples
+//! # Example
 //!
 //! ```rust
 //! use kernel::{
@@ -61,40 +61,35 @@
 //!     block::mq::*,
 //!     new_mutex,
 //!     prelude::*,
-//!     sync::{aref::ARef, Arc, Mutex},
+//!     sync::{Arc, Mutex},
+//!     types::{ARef, ForeignOwnable},
 //! };
 //!
 //! struct MyBlkDevice;
 //!
 //! #[vtable]
 //! impl Operations for MyBlkDevice {
-//!     type QueueData = ();
 //!
-//!     fn queue_rq(_queue_data: (), rq: ARef<Request<Self>>, _is_last: bool) -> Result {
+//!     fn queue_rq(rq: ARef<Request<Self>>, _is_last: bool) -> Result {
 //!         Request::end_ok(rq);
 //!         Ok(())
 //!     }
 //!
-//!     fn commit_rqs(_queue_data: ()) {}
-//!
-//!     fn complete(rq: ARef<Request<Self>>) {
-//!         Request::end_ok(rq)
-//!             .map_err(|_e| kernel::error::code::EIO)
-//!             .expect("Fatal error - expected to be able to end request");
-//!     }
+//!     fn commit_rqs() {}
 //! }
 //!
 //! let tagset: Arc<TagSet<MyBlkDevice>> =
 //!     Arc::pin_init(TagSet::new(1, 256, 1), flags::GFP_KERNEL)?;
 //! let mut disk = gen_disk::GenDiskBuilder::new()
 //!     .capacity_sectors(4096)
-//!     .build(fmt!("myblk"), tagset, ())?;
+//!     .build(format_args!("myblk"), tagset)?;
 //!
 //! # Ok::<(), kernel::error::Error>(())
 //! ```
 
 pub mod gen_disk;
 mod operations;
+mod raw_writer;
 mod request;
 mod tag_set;
 

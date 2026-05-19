@@ -229,6 +229,7 @@
 #include <linux/uaccess.h>
 #include <asm/desc.h>
 #include <asm/olpc.h>
+#include <asm/paravirt.h>
 #include <asm/reboot.h>
 #include <asm/nospec-branch.h>
 #include <asm/ibt.h>
@@ -1576,7 +1577,7 @@ static int do_open(struct inode *inode, struct file *filp)
 {
 	struct apm_user *as;
 
-	as = kmalloc_obj(*as);
+	as = kmalloc(sizeof(*as), GFP_KERNEL);
 	if (as == NULL)
 		return -ENOMEM;
 

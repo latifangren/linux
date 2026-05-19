@@ -143,7 +143,7 @@ static int chaoskey_probe(struct usb_interface *interface,
 
 	/* Looks good, allocate and initialize */
 
-	dev = kzalloc_obj(struct chaoskey);
+	dev = kzalloc(sizeof(struct chaoskey), GFP_KERNEL);
 
 	if (dev == NULL)
 		goto out;

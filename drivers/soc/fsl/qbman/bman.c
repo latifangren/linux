@@ -700,7 +700,7 @@ struct bman_pool *bman_new_pool(void)
 	if (bm_alloc_bpid_range(&bpid, 1))
 		return NULL;
 
-	pool = kmalloc_obj(*pool);
+	pool = kmalloc(sizeof(*pool), GFP_KERNEL);
 	if (!pool)
 		goto err;
 

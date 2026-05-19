@@ -108,7 +108,7 @@ struct nfc_llcp_sdp_tlv *nfc_llcp_build_sdres_tlv(u8 tid, u8 sap)
 	struct nfc_llcp_sdp_tlv *sdres;
 	u8 value[2];
 
-	sdres = kzalloc_obj(struct nfc_llcp_sdp_tlv);
+	sdres = kzalloc(sizeof(struct nfc_llcp_sdp_tlv), GFP_KERNEL);
 	if (sdres == NULL)
 		return NULL;
 
@@ -141,7 +141,7 @@ struct nfc_llcp_sdp_tlv *nfc_llcp_build_sdreq_tlv(u8 tid, const char *uri,
 	if (WARN_ON_ONCE(uri_len > U8_MAX - 4))
 		return NULL;
 
-	sdreq = kzalloc_obj(struct nfc_llcp_sdp_tlv);
+	sdreq = kzalloc(sizeof(struct nfc_llcp_sdp_tlv), GFP_KERNEL);
 	if (sdreq == NULL)
 		return NULL;
 

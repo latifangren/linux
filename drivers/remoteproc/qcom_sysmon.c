@@ -619,7 +619,7 @@ static irqreturn_t sysmon_shutdown_interrupt(int irq, void *data)
  * @name:	name of this subdev, to use in SSR
  * @ssctl_instance: instance id of the ssctl QMI service
  *
- * Return: A new qcom_sysmon object, or an error pointer on failure
+ * Return: A new qcom_sysmon object, or NULL on failure
  */
 struct qcom_sysmon *qcom_add_sysmon_subdev(struct rproc *rproc,
 					   const char *name,
@@ -628,7 +628,7 @@ struct qcom_sysmon *qcom_add_sysmon_subdev(struct rproc *rproc,
 	struct qcom_sysmon *sysmon;
 	int ret;
 
-	sysmon = kzalloc_obj(*sysmon);
+	sysmon = kzalloc(sizeof(*sysmon), GFP_KERNEL);
 	if (!sysmon)
 		return ERR_PTR(-ENOMEM);
 
@@ -677,7 +677,7 @@ struct qcom_sysmon *qcom_add_sysmon_subdev(struct rproc *rproc,
 		return ERR_PTR(ret);
 	}
 
-	qmi_add_lookup(&sysmon->qmi, QMI_SERVICE_ID_SSCTL, 0, 0);
+	qmi_add_lookup(&sysmon->qmi, 43, 0, 0);
 
 	sysmon->subdev.prepare = sysmon_prepare;
 	sysmon->subdev.start = sysmon_start;

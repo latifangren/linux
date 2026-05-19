@@ -135,7 +135,7 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
 		if (btbcm_set_bdaddr_from_efi(hdev) != 0) {
 			bt_dev_info(hdev, "BCM: Using default device address (%pMR)",
 				    &bda->bdaddr);
-			hci_set_quirk(hdev, HCI_QUIRK_INVALID_BDADDR);
+			set_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks);
 		}
 	}
 
@@ -223,7 +223,7 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
 		err = PTR_ERR(skb);
 		bt_dev_err(hdev, "BCM: Download Minidrv command failed (%d)",
 			   err);
-		return err;
+		goto done;
 	}
 	kfree_skb(skb);
 
@@ -242,7 +242,8 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
 
 		if (fw_size < cmd->plen) {
 			bt_dev_err(hdev, "BCM: Patch is corrupted");
-			return -EINVAL;
+			err = -EINVAL;
+			goto done;
 		}
 
 		cmd_param = fw_ptr;
@@ -257,7 +258,7 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
 			err = PTR_ERR(skb);
 			bt_dev_err(hdev, "BCM: Patch command %04x failed (%d)",
 				   opcode, err);
-			return err;
+			goto done;
 		}
 		kfree_skb(skb);
 	}
@@ -265,7 +266,8 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
 	/* 250 msec delay after Launch Ram completes */
 	msleep(250);
 
-	return 0;
+done:
+	return err;
 }
 EXPORT_SYMBOL(btbcm_patchram);
 
@@ -465,7 +467,7 @@ static int btbcm_print_controller_features(struct hci_dev *hdev)
 
 	/* Read DMI and disable broken Read LE Min/Max Tx Power */
 	if (dmi_first_match(disable_broken_read_transmit_power))
-		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER);
+		set_bit(HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER, &hdev->quirks);
 
 	return 0;
 }
@@ -505,7 +507,6 @@ static const struct bcm_subver_table bcm_uart_subver_table[] = {
 	{ 0x6119, "BCM4345C0"	},	/* 003.001.025 */
 	{ 0x6606, "BCM4345C5"	},	/* 003.006.006 */
 	{ 0x230f, "BCM4356A2"	},	/* 001.003.015 */
-	{ 0x2310, "BCM4343A2"	},	/* 001.003.016 */
 	{ 0x220e, "BCM20702A1"  },	/* 001.002.014 */
 	{ 0x420d, "BCM4349B1"	},	/* 002.002.013 */
 	{ 0x420e, "BCM4349B1"	},	/* 002.002.014 */
@@ -641,9 +642,7 @@ int btbcm_initialize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud
 		snprintf(postfix, sizeof(postfix), "-%4.4x-%4.4x", vid, pid);
 	}
 
-	fw_name = kmalloc_array(BCM_FW_NAME_COUNT_MAX,
-		sizeof(*fw_name),
-		GFP_KERNEL);
+	fw_name = kmalloc(BCM_FW_NAME_COUNT_MAX * BCM_FW_NAME_LEN, GFP_KERNEL);
 	if (!fw_name)
 		return -ENOMEM;
 
@@ -707,7 +706,7 @@ int btbcm_finalize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud_m
 
 	btbcm_check_bdaddr(hdev);
 
-	hci_set_quirk(hdev, HCI_QUIRK_STRICT_DUPLICATE_FILTER);
+	set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
 
 	return 0;
 }
@@ -770,7 +769,7 @@ int btbcm_setup_apple(struct hci_dev *hdev)
 		kfree_skb(skb);
 	}
 
-	hci_set_quirk(hdev, HCI_QUIRK_STRICT_DUPLICATE_FILTER);
+	set_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks);
 
 	return 0;
 }

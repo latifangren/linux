@@ -486,7 +486,6 @@ static int lbs_add_wps_enrollee_tlv(u8 *tlv, const u8 *ie, size_t ie_len)
  */
 
 static int lbs_cfg_set_monitor_channel(struct wiphy *wiphy,
-				       struct net_device *dev,
 				       struct cfg80211_chan_def *chandef)
 {
 	struct lbs_private *priv = wiphy_priv(wiphy);
@@ -1507,7 +1506,7 @@ static int lbs_cfg_set_default_key(struct wiphy *wiphy,
 }
 
 
-static int lbs_cfg_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
+static int lbs_cfg_add_key(struct wiphy *wiphy, struct net_device *netdev,
 			   int link_id, u8 idx, bool pairwise,
 			   const u8 *mac_addr, struct key_params *params)
 {
@@ -1516,7 +1515,7 @@ static int lbs_cfg_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 	u16 key_type;
 	int ret = 0;
 
-	if (wdev->netdev == priv->mesh_dev)
+	if (netdev == priv->mesh_dev)
 		return -EOPNOTSUPP;
 
 	lbs_deb_assoc("add_key: cipher 0x%x, mac_addr %pM\n",
@@ -1568,7 +1567,7 @@ static int lbs_cfg_add_key(struct wiphy *wiphy, struct wireless_dev *wdev,
 }
 
 
-static int lbs_cfg_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
+static int lbs_cfg_del_key(struct wiphy *wiphy, struct net_device *netdev,
 			   int link_id, u8 key_index, bool pairwise,
 			   const u8 *mac_addr)
 {
@@ -1607,7 +1606,7 @@ static int lbs_cfg_del_key(struct wiphy *wiphy, struct wireless_dev *wdev,
  * Get station
  */
 
-static int lbs_cfg_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
+static int lbs_cfg_get_station(struct wiphy *wiphy, struct net_device *dev,
 			       const u8 *mac, struct station_info *sinfo)
 {
 	struct lbs_private *priv = wiphy_priv(wiphy);
@@ -2094,7 +2093,7 @@ struct wireless_dev *lbs_cfg_alloc(struct device *dev)
 	int ret = 0;
 	struct wireless_dev *wdev;
 
-	wdev = kzalloc_obj(struct wireless_dev);
+	wdev = kzalloc(sizeof(struct wireless_dev), GFP_KERNEL);
 	if (!wdev)
 		return ERR_PTR(-ENOMEM);
 
@@ -2149,8 +2148,8 @@ static void lbs_reg_notifier(struct wiphy *wiphy,
 }
 
 /*
- * This function gets called after lbs_setup_firmware() determined the
- * firmware capabilities. So we can setup the wiphy according to our
+ * This function get's called after lbs_setup_firmware() determined the
+ * firmware capabities. So we can setup the wiphy according to our
  * hardware/firmware.
  */
 int lbs_cfg_register(struct lbs_private *priv)

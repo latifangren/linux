@@ -26,8 +26,7 @@
 
 #include <asm/irq_regs.h>
 
-static int armpmu_count_irq_users(const struct cpumask *affinity,
-				  const int irq);
+static int armpmu_count_irq_users(const int irq);
 
 struct pmu_irq_ops {
 	void (*enable_pmuirq)(unsigned int irq);
@@ -65,9 +64,7 @@ static void armpmu_enable_percpu_pmuirq(unsigned int irq)
 static void armpmu_free_percpu_pmuirq(unsigned int irq, int cpu,
 				   void __percpu *devid)
 {
-	struct arm_pmu *armpmu = *per_cpu_ptr((void * __percpu *)devid, cpu);
-
-	if (armpmu_count_irq_users(&armpmu->supported_cpus, irq) == 1)
+	if (armpmu_count_irq_users(irq) == 1)
 		free_percpu_irq(irq, devid);
 }
 
@@ -92,9 +89,7 @@ static void armpmu_disable_percpu_pmunmi(unsigned int irq)
 static void armpmu_free_percpu_pmunmi(unsigned int irq, int cpu,
 				      void __percpu *devid)
 {
-	struct arm_pmu *armpmu = *per_cpu_ptr((void * __percpu *)devid, cpu);
-
-	if (armpmu_count_irq_users(&armpmu->supported_cpus, irq) == 1)
+	if (armpmu_count_irq_users(irq) == 1)
 		free_percpu_nmi(irq, devid);
 }
 
@@ -104,6 +99,7 @@ static const struct pmu_irq_ops percpu_pmunmi_ops = {
 	.free_pmuirq = armpmu_free_percpu_pmunmi
 };
 
+static DEFINE_PER_CPU(struct arm_pmu *, cpu_armpmu);
 static DEFINE_PER_CPU(int, cpu_irq);
 static DEFINE_PER_CPU(const struct pmu_irq_ops *, cpu_irq_ops);
 
@@ -322,12 +318,6 @@ armpmu_del(struct perf_event *event, int flags)
 	int idx = hwc->idx;
 
 	armpmu_stop(event, PERF_EF_UPDATE);
-
-	if (has_branch_stack(event)) {
-		hw_events->branch_users--;
-		perf_sched_cb_dec(event->pmu);
-	}
-
 	hw_events->events[idx] = NULL;
 	armpmu->clear_event_idx(hw_events, event);
 	perf_event_update_userpage(event);
@@ -354,11 +344,6 @@ armpmu_add(struct perf_event *event, int flags)
 
 	/* The newly-allocated counter should be empty */
 	WARN_ON_ONCE(hw_events->events[idx]);
-
-	if (has_branch_stack(event)) {
-		hw_events->branch_users++;
-		perf_sched_cb_inc(event->pmu);
-	}
 
 	event->hw.idx = idx;
 	hw_events->events[idx] = event;
@@ -524,7 +509,8 @@ static int armpmu_event_init(struct perf_event *event)
 		!cpumask_test_cpu(event->cpu, &armpmu->supported_cpus))
 		return -ENOENT;
 
-	if (has_branch_stack(event) && !armpmu->reg_brbidr)
+	/* does not support taken branch sampling */
+	if (has_branch_stack(event))
 		return -EOPNOTSUPP;
 
 	return __hw_perf_event_init(event);
@@ -584,11 +570,11 @@ static const struct attribute_group armpmu_common_attr_group = {
 	.attrs = armpmu_common_attrs,
 };
 
-static int armpmu_count_irq_users(const struct cpumask *affinity, const int irq)
+static int armpmu_count_irq_users(const int irq)
 {
 	int cpu, count = 0;
 
-	for_each_cpu(cpu, affinity) {
+	for_each_possible_cpu(cpu) {
 		if (per_cpu(cpu_irq, cpu) == irq)
 			count++;
 	}
@@ -596,13 +582,12 @@ static int armpmu_count_irq_users(const struct cpumask *affinity, const int irq)
 	return count;
 }
 
-static const struct pmu_irq_ops *
-armpmu_find_irq_ops(const struct cpumask *affinity, int irq)
+static const struct pmu_irq_ops *armpmu_find_irq_ops(int irq)
 {
 	const struct pmu_irq_ops *ops = NULL;
 	int cpu;
 
-	for_each_cpu(cpu, affinity) {
+	for_each_possible_cpu(cpu) {
 		if (per_cpu(cpu_irq, cpu) != irq)
 			continue;
 
@@ -614,25 +599,22 @@ armpmu_find_irq_ops(const struct cpumask *affinity, int irq)
 	return ops;
 }
 
-void armpmu_free_irq(struct arm_pmu * __percpu *armpmu, int irq, int cpu)
+void armpmu_free_irq(int irq, int cpu)
 {
 	if (per_cpu(cpu_irq, cpu) == 0)
 		return;
 	if (WARN_ON(irq != per_cpu(cpu_irq, cpu)))
 		return;
 
-	per_cpu(cpu_irq_ops, cpu)->free_pmuirq(irq, cpu, armpmu);
+	per_cpu(cpu_irq_ops, cpu)->free_pmuirq(irq, cpu, &cpu_armpmu);
 
 	per_cpu(cpu_irq, cpu) = 0;
 	per_cpu(cpu_irq_ops, cpu) = NULL;
 }
 
-int armpmu_request_irq(struct arm_pmu * __percpu *pcpu_armpmu, int irq, int cpu)
+int armpmu_request_irq(int irq, int cpu)
 {
 	int err = 0;
-	struct arm_pmu **armpmu = per_cpu_ptr(pcpu_armpmu, cpu);
-	const struct cpumask *affinity = *armpmu ? &(*armpmu)->supported_cpus :
-						   cpu_possible_mask; /* ACPI */
 	const irq_handler_t handler = armpmu_dispatch_irq;
 	const struct pmu_irq_ops *irq_ops;
 
@@ -654,24 +636,25 @@ int armpmu_request_irq(struct arm_pmu * __percpu *pcpu_armpmu, int irq, int cpu)
 			    IRQF_NOBALANCING | IRQF_NO_AUTOEN |
 			    IRQF_NO_THREAD;
 
-		err = request_nmi(irq, handler, irq_flags, "arm-pmu", armpmu);
+		err = request_nmi(irq, handler, irq_flags, "arm-pmu",
+				  per_cpu_ptr(&cpu_armpmu, cpu));
 
 		/* If cannot get an NMI, get a normal interrupt */
 		if (err) {
 			err = request_irq(irq, handler, irq_flags, "arm-pmu",
-					  armpmu);
+					  per_cpu_ptr(&cpu_armpmu, cpu));
 			irq_ops = &pmuirq_ops;
 		} else {
 			has_nmi = true;
 			irq_ops = &pmunmi_ops;
 		}
-	} else if (armpmu_count_irq_users(affinity, irq) == 0) {
-		err = request_percpu_nmi(irq, handler, "arm-pmu", affinity, pcpu_armpmu);
+	} else if (armpmu_count_irq_users(irq) == 0) {
+		err = request_percpu_nmi(irq, handler, "arm-pmu", &cpu_armpmu);
 
 		/* If cannot get an NMI, get a normal interrupt */
 		if (err) {
-			err = request_percpu_irq_affinity(irq, handler, "arm-pmu",
-							  affinity, pcpu_armpmu);
+			err = request_percpu_irq(irq, handler, "arm-pmu",
+						 &cpu_armpmu);
 			irq_ops = &percpu_pmuirq_ops;
 		} else {
 			has_nmi = true;
@@ -679,7 +662,7 @@ int armpmu_request_irq(struct arm_pmu * __percpu *pcpu_armpmu, int irq, int cpu)
 		}
 	} else {
 		/* Per cpudevid irq was already requested by another CPU */
-		irq_ops = armpmu_find_irq_ops(affinity, irq);
+		irq_ops = armpmu_find_irq_ops(irq);
 
 		if (WARN_ON(!irq_ops))
 			err = -EINVAL;
@@ -724,6 +707,8 @@ static int arm_perf_starting_cpu(unsigned int cpu, struct hlist_node *node)
 	if (pmu->reset)
 		pmu->reset(pmu);
 
+	per_cpu(cpu_armpmu, cpu) = pmu;
+
 	irq = armpmu_get_cpu_irq(pmu, cpu);
 	if (irq)
 		per_cpu(cpu_irq_ops, cpu)->enable_pmuirq(irq);
@@ -742,6 +727,8 @@ static int arm_perf_teardown_cpu(unsigned int cpu, struct hlist_node *node)
 	irq = armpmu_get_cpu_irq(pmu, cpu);
 	if (irq)
 		per_cpu(cpu_irq_ops, cpu)->disable_pmuirq(irq);
+
+	per_cpu(cpu_armpmu, cpu) = NULL;
 
 	return 0;
 }
@@ -864,7 +851,7 @@ struct arm_pmu *armpmu_alloc(void)
 	struct arm_pmu *pmu;
 	int cpu;
 
-	pmu = kzalloc_obj(*pmu);
+	pmu = kzalloc(sizeof(*pmu), GFP_KERNEL);
 	if (!pmu)
 		goto out;
 
@@ -927,12 +914,6 @@ int armpmu_register(struct arm_pmu *pmu)
 	ret = cpu_pmu_init(pmu);
 	if (ret)
 		return ret;
-
-	/*
-	 * By this stage we know our supported CPUs on either DT/ACPI platforms,
-	 * detect the SMT implementation.
-	 */
-	pmu->has_smt = topology_core_has_smt(cpumask_first(&pmu->supported_cpus));
 
 	if (!pmu->set_event_filter)
 		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;

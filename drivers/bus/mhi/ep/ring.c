@@ -205,8 +205,7 @@ int mhi_ep_ring_start(struct mhi_ep_cntrl *mhi_cntrl, struct mhi_ep_ring *ring,
 	ring->wr_offset = mhi_ep_ring_addr2offset(ring, le64_to_cpu(val));
 
 	/* Allocate ring cache memory for holding the copy of host ring */
-	ring->ring_cache = kzalloc_objs(struct mhi_ring_element,
-					ring->ring_size);
+	ring->ring_cache = kcalloc(ring->ring_size, sizeof(struct mhi_ring_element), GFP_KERNEL);
 	if (!ring->ring_cache)
 		return -ENOMEM;
 

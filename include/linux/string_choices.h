@@ -17,12 +17,6 @@
 
 #include <linux/types.h>
 
-static inline const char *str_assert_deassert(bool v)
-{
-	return v ? "assert" : "deassert";
-}
-#define str_deassert_assert(v)		str_assert_deassert(!(v))
-
 static inline const char *str_enable_disable(bool v)
 {
 	return v ? "enable" : "disable";
@@ -47,11 +41,11 @@ static inline const char *str_high_low(bool v)
 }
 #define str_low_high(v)		str_high_low(!(v))
 
-static inline const char *str_input_output(bool v)
+static inline const char *str_read_write(bool v)
 {
-	return v ? "input" : "output";
+	return v ? "read" : "write";
 }
-#define str_output_input(v)	str_input_output(!(v))
+#define str_write_read(v)		str_read_write(!(v))
 
 static inline const char *str_on_off(bool v)
 {
@@ -59,17 +53,11 @@ static inline const char *str_on_off(bool v)
 }
 #define str_off_on(v)		str_on_off(!(v))
 
-static inline const char *str_read_write(bool v)
+static inline const char *str_yes_no(bool v)
 {
-	return v ? "read" : "write";
+	return v ? "yes" : "no";
 }
-#define str_write_read(v)		str_read_write(!(v))
-
-static inline const char *str_true_false(bool v)
-{
-	return v ? "true" : "false";
-}
-#define str_false_true(v)		str_true_false(!(v))
+#define str_no_yes(v)		str_yes_no(!(v))
 
 static inline const char *str_up_down(bool v)
 {
@@ -77,11 +65,11 @@ static inline const char *str_up_down(bool v)
 }
 #define str_down_up(v)		str_up_down(!(v))
 
-static inline const char *str_yes_no(bool v)
+static inline const char *str_true_false(bool v)
 {
-	return v ? "yes" : "no";
+	return v ? "true" : "false";
 }
-#define str_no_yes(v)		str_yes_no(!(v))
+#define str_false_true(v)		str_true_false(!(v))
 
 /**
  * str_plural - Return the simple pluralization based on English counts

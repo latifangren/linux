@@ -116,7 +116,7 @@ static int rx51_battery_read_temperature(struct rx51_device_info *di)
 		int mid = (max + min) / 2;
 		if (rx51_temp_table2[mid] <= raw)
 			min = mid;
-		else
+		else if (rx51_temp_table2[mid] > raw)
 			max = mid;
 		if (rx51_temp_table2[mid] == raw)
 			break;

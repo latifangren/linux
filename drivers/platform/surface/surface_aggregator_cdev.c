@@ -154,7 +154,7 @@ static int ssam_cdev_notifier_register(struct ssam_cdev_client *client, u8 tc, i
 	}
 
 	/* Allocate new notifier. */
-	nf = kzalloc_obj(*nf);
+	nf = kzalloc(sizeof(*nf), GFP_KERNEL);
 	if (!nf) {
 		mutex_unlock(&client->notifier_lock);
 		return -ENOMEM;
@@ -685,7 +685,7 @@ static int ssam_dbg_device_probe(struct platform_device *pdev)
 	if (IS_ERR(ctrl))
 		return PTR_ERR(ctrl) == -ENODEV ? -EPROBE_DEFER : PTR_ERR(ctrl);
 
-	cdev = kzalloc_obj(*cdev);
+	cdev = kzalloc(sizeof(*cdev), GFP_KERNEL);
 	if (!cdev)
 		return -ENOMEM;
 
@@ -762,7 +762,7 @@ static struct platform_device *ssam_cdev_device;
 
 static struct platform_driver ssam_cdev_driver = {
 	.probe = ssam_dbg_device_probe,
-	.remove = ssam_dbg_device_remove,
+	.remove_new = ssam_dbg_device_remove,
 	.driver = {
 		.name = SSAM_CDEV_DEVICE_NAME,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,

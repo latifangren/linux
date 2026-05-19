@@ -167,6 +167,7 @@ struct ath11k_mon_data {
 	struct ath11k_pdev_mon_stats rx_mon_stats;
 	/* lock for monitor data */
 	spinlock_t mon_lock;
+	struct sk_buff_head rx_status_q;
 };
 
 struct ath11k_pdev_dp {
@@ -199,6 +200,7 @@ struct ath11k_pdev_dp {
 #define DP_BA_WIN_SZ_MAX	256
 
 #define DP_TCL_NUM_RING_MAX	3
+#define DP_TCL_NUM_RING_MAX_QCA6390	1
 
 #define DP_IDLE_SCATTER_BUFS_MAX 16
 

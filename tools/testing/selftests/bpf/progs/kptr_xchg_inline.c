@@ -25,14 +25,14 @@ __naked int kptr_xchg_inline(void)
 		"if r0 == 0 goto 1f;"
 		"r1 = r0;"
 		"r2 = 0;"
-		"call %[bpf_obj_drop];"
+		"call %[bpf_obj_drop_impl];"
 	"1:"
 		"r0 = 0;"
 		"exit;"
 		:
 		: __imm_addr(ptr),
 		  __imm(bpf_kptr_xchg),
-		  __imm(bpf_obj_drop)
+		  __imm(bpf_obj_drop_impl)
 		: __clobber_all
 	);
 }

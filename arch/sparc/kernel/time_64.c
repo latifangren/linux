@@ -544,7 +544,6 @@ static void mostek_write_byte(struct device *dev, u32 ofs, u8 val)
 static struct m48t59_plat_data m48t59_data = {
 	.read_byte	= mostek_read_byte,
 	.write_byte	= mostek_write_byte,
-	.yy_offset	= 68,
 };
 
 static struct platform_device m48t59_rtc = {
@@ -838,14 +837,14 @@ void __init time_init_early(void)
 	if (tlb_type == spitfire) {
 		if (is_hummingbird()) {
 			init_tick_ops(&hbtick_operations);
-			clocksource_tick.vdso_clock_mode = VDSO_CLOCKMODE_NONE;
+			clocksource_tick.archdata.vclock_mode = VCLOCK_NONE;
 		} else {
 			init_tick_ops(&tick_operations);
-			clocksource_tick.vdso_clock_mode = VDSO_CLOCKMODE_TICK;
+			clocksource_tick.archdata.vclock_mode = VCLOCK_TICK;
 		}
 	} else {
 		init_tick_ops(&stick_operations);
-		clocksource_tick.vdso_clock_mode = VDSO_CLOCKMODE_STICK;
+		clocksource_tick.archdata.vclock_mode = VCLOCK_STICK;
 	}
 }
 

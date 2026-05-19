@@ -11,3 +11,10 @@ OpenRISC Architecture
    todo
 
    features
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

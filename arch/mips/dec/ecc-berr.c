@@ -5,13 +5,12 @@
  *	5000/240 (KN03), 5000/260 (KN05) and DECsystem 5900 (KN03),
  *	5900/260 (KN05) systems.
  *
- *	Copyright (c) 2003, 2005, 2026  Maciej W. Rozycki
+ *	Copyright (c) 2003, 2005  Maciej W. Rozycki
  */
 
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
-#include <linux/ratelimit.h>
 #include <linux/sched.h>
 #include <linux/types.h>
 
@@ -52,10 +51,6 @@ static int dec_ecc_be_backend(struct pt_regs *regs, int is_fixup, int invoker)
 	static const char overstr[] = "overrun";
 	static const char eccstr[] = "ECC error";
 
-	static DEFINE_RATELIMIT_STATE(rs,
-				      DEFAULT_RATELIMIT_INTERVAL,
-				      DEFAULT_RATELIMIT_BURST);
-
 	const char *kind, *agent, *cycle, *event;
 	const char *status = "", *xbit = "", *fmt = "";
 	unsigned long address;
@@ -75,7 +70,7 @@ static int dec_ecc_be_backend(struct pt_regs *regs, int is_fixup, int invoker)
 
 	if (!(erraddr & KN0X_EAR_VALID)) {
 		/* No idea what happened. */
-		pr_alert_ratelimited("Unidentified bus error %s\n", kind);
+		printk(KERN_ALERT "Unidentified bus error %s\n", kind);
 		return action;
 	}
 
@@ -185,13 +180,12 @@ static int dec_ecc_be_backend(struct pt_regs *regs, int is_fixup, int invoker)
 		}
 	}
 
-	if (action != MIPS_BE_FIXUP && __ratelimit(&rs)) {
+	if (action != MIPS_BE_FIXUP)
 		printk(KERN_ALERT "Bus error %s: %s %s %s at %#010lx\n",
 			kind, agent, cycle, event, address);
 
-		if (erraddr & KN0X_EAR_ECCERR)
-			printk(fmt, "  ECC syndrome ", syn, status, xbit, i);
-	}
+	if (action != MIPS_BE_FIXUP && erraddr & KN0X_EAR_ECCERR)
+		printk(fmt, "  ECC syndrome ", syn, status, xbit, i);
 
 	return action;
 }

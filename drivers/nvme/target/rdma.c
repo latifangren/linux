@@ -222,7 +222,7 @@ nvmet_rdma_get_rsp(struct nvmet_rdma_queue *queue)
 	if (unlikely(!rsp)) {
 		int ret;
 
-		rsp = kzalloc_obj(*rsp);
+		rsp = kzalloc(sizeof(*rsp), GFP_KERNEL);
 		if (unlikely(!rsp))
 			return NULL;
 		ret = nvmet_rdma_alloc_rsp(queue->dev, rsp,
@@ -317,7 +317,7 @@ static int nvmet_rdma_alloc_cmd(struct nvmet_rdma_device *ndev,
 			struct nvmet_rdma_cmd *c, bool admin)
 {
 	/* NVMe command / RDMA RECV */
-	c->nvme_cmd = kmalloc_obj(*c->nvme_cmd);
+	c->nvme_cmd = kmalloc(sizeof(*c->nvme_cmd), GFP_KERNEL);
 	if (!c->nvme_cmd)
 		goto out;
 
@@ -367,7 +367,7 @@ nvmet_rdma_alloc_cmds(struct nvmet_rdma_device *ndev,
 	struct nvmet_rdma_cmd *cmds;
 	int ret = -EINVAL, i;
 
-	cmds = kvzalloc_objs(struct nvmet_rdma_cmd, nr_cmds);
+	cmds = kcalloc(nr_cmds, sizeof(struct nvmet_rdma_cmd), GFP_KERNEL);
 	if (!cmds)
 		goto out;
 
@@ -382,7 +382,7 @@ nvmet_rdma_alloc_cmds(struct nvmet_rdma_device *ndev,
 out_free:
 	while (--i >= 0)
 		nvmet_rdma_free_cmd(ndev, cmds + i, admin);
-	kvfree(cmds);
+	kfree(cmds);
 out:
 	return ERR_PTR(ret);
 }
@@ -394,14 +394,14 @@ static void nvmet_rdma_free_cmds(struct nvmet_rdma_device *ndev,
 
 	for (i = 0; i < nr_cmds; i++)
 		nvmet_rdma_free_cmd(ndev, cmds + i, admin);
-	kvfree(cmds);
+	kfree(cmds);
 }
 
 static int nvmet_rdma_alloc_rsp(struct nvmet_rdma_device *ndev,
 		struct nvmet_rdma_rsp *r, int tag)
 {
 	/* NVMe CQE / RDMA SEND */
-	r->req.cqe = kmalloc_obj(*r->req.cqe);
+	r->req.cqe = kmalloc(sizeof(*r->req.cqe), GFP_KERNEL);
 	if (!r->req.cqe)
 		goto out;
 
@@ -455,7 +455,8 @@ nvmet_rdma_alloc_rsps(struct nvmet_rdma_queue *queue)
 			NUMA_NO_NODE, false, true))
 		goto out;
 
-	queue->rsps = kvzalloc_objs(struct nvmet_rdma_rsp, nr_rsps);
+	queue->rsps = kcalloc(nr_rsps, sizeof(struct nvmet_rdma_rsp),
+			GFP_KERNEL);
 	if (!queue->rsps)
 		goto out_free_sbitmap;
 
@@ -472,7 +473,7 @@ nvmet_rdma_alloc_rsps(struct nvmet_rdma_queue *queue)
 out_free:
 	while (--i >= 0)
 		nvmet_rdma_free_rsp(ndev, &queue->rsps[i]);
-	kvfree(queue->rsps);
+	kfree(queue->rsps);
 out_free_sbitmap:
 	sbitmap_free(&queue->rsp_tags);
 out:
@@ -486,7 +487,7 @@ static void nvmet_rdma_free_rsps(struct nvmet_rdma_queue *queue)
 
 	for (i = 0; i < nr_rsps; i++)
 		nvmet_rdma_free_rsp(ndev, &queue->rsps[i]);
-	kvfree(queue->rsps);
+	kfree(queue->rsps);
 	sbitmap_free(&queue->rsp_tags);
 }
 
@@ -975,7 +976,8 @@ static void nvmet_rdma_handle_command(struct nvmet_rdma_queue *queue,
 		cmd->send_sge.addr, cmd->send_sge.length,
 		DMA_TO_DEVICE);
 
-	if (!nvmet_req_init(&cmd->req, &queue->nvme_sq, &nvmet_rdma_ops))
+	if (!nvmet_req_init(&cmd->req, &queue->nvme_cq,
+			&queue->nvme_sq, &nvmet_rdma_ops))
 		return;
 
 	status = nvmet_rdma_map_sgl(cmd);
@@ -1095,7 +1097,7 @@ nvmet_rdma_init_srq(struct nvmet_rdma_device *ndev)
 	struct ib_srq *srq;
 	int ret, i;
 
-	nsrq = kzalloc_obj(*nsrq);
+	nsrq = kzalloc(sizeof(*nsrq), GFP_KERNEL);
 	if (!nsrq)
 		return ERR_PTR(-ENOMEM);
 
@@ -1154,7 +1156,7 @@ static int nvmet_rdma_init_srqs(struct nvmet_rdma_device *ndev)
 	ndev->srq_count = min(ndev->device->num_comp_vectors,
 			      ndev->device->attrs.max_srq);
 
-	ndev->srqs = kzalloc_objs(*ndev->srqs, ndev->srq_count);
+	ndev->srqs = kcalloc(ndev->srq_count, sizeof(*ndev->srqs), GFP_KERNEL);
 	if (!ndev->srqs)
 		return -ENOMEM;
 
@@ -1207,7 +1209,7 @@ nvmet_rdma_find_get_device(struct rdma_cm_id *cm_id)
 			goto out_unlock;
 	}
 
-	ndev = kzalloc_obj(*ndev);
+	ndev = kzalloc(sizeof(*ndev), GFP_KERNEL);
 	if (!ndev)
 		goto out_err;
 
@@ -1351,7 +1353,6 @@ static void nvmet_rdma_free_queue(struct nvmet_rdma_queue *queue)
 	pr_debug("freeing queue %d\n", queue->idx);
 
 	nvmet_sq_destroy(&queue->nvme_sq);
-	nvmet_cq_put(&queue->nvme_cq);
 
 	nvmet_rdma_destroy_queue_ib(queue);
 	if (!queue->nsrq) {
@@ -1429,14 +1430,13 @@ nvmet_rdma_alloc_queue(struct nvmet_rdma_device *ndev,
 	struct nvmet_rdma_queue *queue;
 	int ret;
 
-	queue = kzalloc_obj(*queue);
+	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
 	if (!queue) {
 		ret = NVME_RDMA_CM_NO_RSC;
 		goto out_reject;
 	}
 
-	nvmet_cq_init(&queue->nvme_cq);
-	ret = nvmet_sq_init(&queue->nvme_sq, &queue->nvme_cq);
+	ret = nvmet_sq_init(&queue->nvme_sq);
 	if (ret) {
 		ret = NVME_RDMA_CM_NO_RSC;
 		goto out_free_queue;
@@ -1517,7 +1517,6 @@ out_ida_remove:
 out_destroy_sq:
 	nvmet_sq_destroy(&queue->nvme_sq);
 out_free_queue:
-	nvmet_cq_put(&queue->nvme_cq);
 	kfree(queue);
 out_reject:
 	nvmet_rdma_cm_reject(cm_id, ret);
@@ -1730,7 +1729,7 @@ static void nvmet_rdma_queue_connect_fail(struct rdma_cm_id *cm_id,
  * We registered an ib_client to handle device removal for queues,
  * so we only need to handle the listening port cm_ids. In this case
  * we nullify the priv to prevent double cm_id destruction and destroying
- * the cm_id implicitly by returning a non-zero rc to the callout.
+ * the cm_id implicitely by returning a non-zero rc to the callout.
  */
 static int nvmet_rdma_device_removal(struct rdma_cm_id *cm_id,
 		struct nvmet_rdma_queue *queue)
@@ -1741,7 +1740,7 @@ static int nvmet_rdma_device_removal(struct rdma_cm_id *cm_id,
 		/*
 		 * This is a queue cm_id. we have registered
 		 * an ib_client to handle queues removal
-		 * so don't interfere and just return.
+		 * so don't interfear and just return.
 		 */
 		return 0;
 	}
@@ -1759,7 +1758,7 @@ static int nvmet_rdma_device_removal(struct rdma_cm_id *cm_id,
 
 	/*
 	 * We need to return 1 so that the core will destroy
-	 * its own ID.  What a great API design..
+	 * it's own ID.  What a great API design..
 	 */
 	return 1;
 }
@@ -1923,7 +1922,7 @@ static int nvmet_rdma_add_port(struct nvmet_port *nport)
 	__kernel_sa_family_t af;
 	int ret;
 
-	port = kzalloc_obj(*port);
+	port = kzalloc(sizeof(*port), GFP_KERNEL);
 	if (!port)
 		return -ENOMEM;
 
@@ -2000,7 +1999,7 @@ static void nvmet_rdma_disc_port_addr(struct nvmet_req *req,
 	struct nvmet_rdma_port *port = nport->priv;
 	struct rdma_cm_id *cm_id = port->cm_id;
 
-	if (inet_addr_is_any(&cm_id->route.addr.src_addr)) {
+	if (inet_addr_is_any((struct sockaddr *)&cm_id->route.addr.src_addr)) {
 		struct nvmet_rdma_rsp *rsp =
 			container_of(req, struct nvmet_rdma_rsp, req);
 		struct rdma_cm_id *req_cm_id = rsp->queue->cm_id;

@@ -132,10 +132,10 @@ static void rtl_btc_alloc_variable(struct rtl_priv *rtlpriv, bool wifi_only)
 {
 	if (wifi_only)
 		rtlpriv->btcoexist.wifi_only_context =
-			kzalloc_obj(struct wifi_only_cfg);
+			kzalloc(sizeof(struct wifi_only_cfg), GFP_KERNEL);
 	else
 		rtlpriv->btcoexist.btc_context =
-			kzalloc_obj(struct btc_coexist);
+			kzalloc(sizeof(struct btc_coexist), GFP_KERNEL);
 }
 
 static void rtl_btc_free_variable(struct rtl_priv *rtlpriv)
@@ -519,3 +519,16 @@ MODULE_AUTHOR("Realtek WlanFAE	<wlanfae@realtek.com>");
 MODULE_AUTHOR("Larry Finger	<Larry.FInger@lwfinger.net>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Realtek 802.11n PCI wireless core");
+
+static int __init rtl_btcoexist_module_init(void)
+{
+	return 0;
+}
+
+static void __exit rtl_btcoexist_module_exit(void)
+{
+	return;
+}
+
+module_init(rtl_btcoexist_module_init);
+module_exit(rtl_btcoexist_module_exit);

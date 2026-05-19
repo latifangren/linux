@@ -9,9 +9,6 @@
  * Copyright (C) 2019 Texas Instruments Incorporated - http://www.ti.com/
  *	Andrew F. Davis <afd@ti.com>
  */
-
-#define pr_fmt(fmt) "cma_heap: " fmt
-
 #include <linux/cma.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
@@ -21,13 +18,10 @@
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/module.h>
-#include <linux/of.h>
-#include <linux/of_reserved_mem.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
-#define DEFAULT_CMA_NAME "default_cma_region"
 
 struct cma_heap {
 	struct dma_heap *heap;
@@ -60,7 +54,7 @@ static int cma_heap_attach(struct dma_buf *dmabuf,
 	struct dma_heap_attachment *a;
 	int ret;
 
-	a = kzalloc_obj(*a);
+	a = kzalloc(sizeof(*a), GFP_KERNEL);
 	if (!a)
 		return -ENOMEM;
 
@@ -294,7 +288,7 @@ static struct dma_buf *cma_heap_allocate(struct dma_heap *heap,
 	int ret = -ENOMEM;
 	pgoff_t pg;
 
-	buffer = kzalloc_obj(*buffer);
+	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
 		return ERR_PTR(-ENOMEM);
 
@@ -315,10 +309,13 @@ static struct dma_buf *cma_heap_allocate(struct dma_heap *heap,
 		struct page *page = cma_pages;
 
 		while (nr_clear_pages > 0) {
-			clear_highpage(page);
+			void *vaddr = kmap_atomic(page);
+
+			memset(vaddr, 0, PAGE_SIZE);
+			kunmap_atomic(vaddr);
 			/*
 			 * Avoid wasting time zeroing memory if the process
-			 * has been killed by SIGKILL.
+			 * has been killed by by SIGKILL
 			 */
 			if (fatal_signal_pending(current))
 				goto free_cma;
@@ -326,10 +323,10 @@ static struct dma_buf *cma_heap_allocate(struct dma_heap *heap,
 			nr_clear_pages--;
 		}
 	} else {
-		clear_pages(page_address(cma_pages), pagecount);
+		memset(page_address(cma_pages), 0, size);
 	}
 
-	buffer->pages = kmalloc_objs(*buffer->pages, pagecount);
+	buffer->pages = kmalloc_array(pagecount, sizeof(*buffer->pages), GFP_KERNEL);
 	if (!buffer->pages) {
 		ret = -ENOMEM;
 		goto free_cma;
@@ -369,17 +366,17 @@ static const struct dma_heap_ops cma_heap_ops = {
 	.allocate = cma_heap_allocate,
 };
 
-static int __init __add_cma_heap(struct cma *cma, const char *name)
+static int __add_cma_heap(struct cma *cma, void *data)
 {
-	struct dma_heap_export_info exp_info;
 	struct cma_heap *cma_heap;
+	struct dma_heap_export_info exp_info;
 
-	cma_heap = kzalloc_obj(*cma_heap);
+	cma_heap = kzalloc(sizeof(*cma_heap), GFP_KERNEL);
 	if (!cma_heap)
 		return -ENOMEM;
 	cma_heap->cma = cma;
 
-	exp_info.name = name;
+	exp_info.name = cma_get_name(cma);
 	exp_info.ops = &cma_heap_ops;
 	exp_info.priv = cma_heap;
 
@@ -394,29 +391,15 @@ static int __init __add_cma_heap(struct cma *cma, const char *name)
 	return 0;
 }
 
-static int __init add_cma_heaps(void)
+static int add_default_cma_heap(void)
 {
 	struct cma *default_cma = dev_get_cma_area(NULL);
-	struct cma *cma;
-	unsigned int i;
-	int ret;
+	int ret = 0;
 
-	if (default_cma) {
-		ret = __add_cma_heap(default_cma, DEFAULT_CMA_NAME);
-		if (ret)
-			return ret;
-	}
+	if (default_cma)
+		ret = __add_cma_heap(default_cma, NULL);
 
-	for (i = 0; (cma = dma_contiguous_get_area_by_idx(i)) != NULL; i++) {
-		ret = __add_cma_heap(cma, cma_get_name(cma));
-		if (ret) {
-			pr_warn("Failed to add CMA heap %s", cma_get_name(cma));
-			continue;
-		}
-
-	}
-
-	return 0;
+	return ret;
 }
-module_init(add_cma_heaps);
+module_init(add_default_cma_heap);
 MODULE_DESCRIPTION("DMA-BUF CMA Heap");

@@ -445,8 +445,8 @@ static int uapi_finalize(struct uverbs_api *uapi)
 	uapi->notsupp_method.handler = ib_uverbs_notsupp;
 	uapi->num_write = max_write + 1;
 	uapi->num_write_ex = max_write_ex + 1;
-	data = kmalloc_objs(*uapi->write_methods,
-			    uapi->num_write + uapi->num_write_ex);
+	data = kmalloc_array(uapi->num_write + uapi->num_write_ex,
+			     sizeof(*uapi->write_methods), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -631,8 +631,6 @@ static const struct uapi_definition uverbs_core_api[] = {
 	UAPI_DEF_CHAIN(uverbs_def_obj_cq),
 	UAPI_DEF_CHAIN(uverbs_def_obj_device),
 	UAPI_DEF_CHAIN(uverbs_def_obj_dm),
-	UAPI_DEF_CHAIN(uverbs_def_obj_dmabuf),
-	UAPI_DEF_CHAIN(uverbs_def_obj_dmah),
 	UAPI_DEF_CHAIN(uverbs_def_obj_flow_action),
 	UAPI_DEF_CHAIN(uverbs_def_obj_intf),
 	UAPI_DEF_CHAIN(uverbs_def_obj_mr),
@@ -648,7 +646,7 @@ struct uverbs_api *uverbs_alloc_api(struct ib_device *ibdev)
 	struct uverbs_api *uapi;
 	int rc;
 
-	uapi = kzalloc_obj(*uapi);
+	uapi = kzalloc(sizeof(*uapi), GFP_KERNEL);
 	if (!uapi)
 		return ERR_PTR(-ENOMEM);
 

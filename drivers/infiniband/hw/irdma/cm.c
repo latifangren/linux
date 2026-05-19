@@ -234,7 +234,7 @@ static struct irdma_cm_event *irdma_create_event(struct irdma_cm_node *cm_node,
 	if (!cm_node->cm_id)
 		return NULL;
 
-	event = kzalloc_obj(*event, GFP_ATOMIC);
+	event = kzalloc(sizeof(*event), GFP_ATOMIC);
 
 	if (!event)
 		return NULL;
@@ -1136,7 +1136,7 @@ int irdma_schedule_cm_timer(struct irdma_cm_node *cm_node,
 	u32 was_timer_set;
 	unsigned long flags;
 
-	new_send = kzalloc_obj(*new_send, GFP_ATOMIC);
+	new_send = kzalloc(sizeof(*new_send), GFP_ATOMIC);
 	if (!new_send) {
 		if (type != IRDMA_TIMER_TYPE_CLOSE)
 			irdma_free_sqbuf(vsi, sqbuf);
@@ -1263,8 +1263,7 @@ static void irdma_cm_timer_tick(struct timer_list *t)
 	struct irdma_timer_entry *send_entry, *close_entry;
 	struct list_head *list_core_temp;
 	struct list_head *list_node;
-	struct irdma_cm_core *cm_core = timer_container_of(cm_core, t,
-							   tcp_timer);
+	struct irdma_cm_core *cm_core = from_timer(cm_core, t, tcp_timer);
 	struct irdma_sc_vsi *vsi;
 	u32 settimer = 0;
 	unsigned long timetosend;
@@ -1683,7 +1682,7 @@ static int irdma_add_mqh_6(struct irdma_device *iwdev,
 			ibdev_dbg(&iwdev->ibdev, "CM: IP=%pI6, vlan_id=%d, MAC=%pM\n",
 				  &ifp->addr, rdma_vlan_dev_vlan_id(ip_dev),
 				  ip_dev->dev_addr);
-			child_listen_node = kzalloc_obj(*child_listen_node);
+			child_listen_node = kzalloc(sizeof(*child_listen_node), GFP_KERNEL);
 			ibdev_dbg(&iwdev->ibdev, "CM: Allocating child listener %p\n",
 				  child_listen_node);
 			if (!child_listen_node) {
@@ -1771,7 +1770,7 @@ static int irdma_add_mqh_4(struct irdma_device *iwdev,
 				  "CM: Allocating child CM Listener forIP=%pI4, vlan_id=%d, MAC=%pM\n",
 				  &ifa->ifa_address, rdma_vlan_dev_vlan_id(ip_dev),
 				  ip_dev->dev_addr);
-			child_listen_node = kzalloc_obj(*child_listen_node);
+			child_listen_node = kzalloc(sizeof(*child_listen_node), GFP_KERNEL);
 			cm_parent_listen_node->cm_core->stats_listen_nodes_created++;
 			ibdev_dbg(&iwdev->ibdev, "CM: Allocating child listener %p\n",
 				  child_listen_node);
@@ -2244,7 +2243,7 @@ irdma_make_cm_node(struct irdma_cm_core *cm_core, struct irdma_device *iwdev,
 	int ret;
 
 	/* create an hte and cm_node for this instance */
-	cm_node = kzalloc_obj(*cm_node, GFP_ATOMIC);
+	cm_node = kzalloc(sizeof(*cm_node), GFP_ATOMIC);
 	if (!cm_node)
 		return ERR_PTR(-ENOMEM);
 
@@ -2970,7 +2969,7 @@ irdma_make_listen_node(struct irdma_cm_core *cm_core,
 		/* create a CM listen node
 		 * 1/2 node to compare incoming traffic to
 		 */
-		listener = kzalloc_obj(*listener);
+		listener = kzalloc(sizeof(*listener), GFP_KERNEL);
 		if (!listener)
 			return NULL;
 		cm_core->stats_listen_nodes_created++;
@@ -3307,7 +3306,7 @@ void irdma_cleanup_cm_core(struct irdma_cm_core *cm_core)
 	if (!cm_core)
 		return;
 
-	timer_delete_sync(&cm_core->tcp_timer);
+	del_timer_sync(&cm_core->tcp_timer);
 
 	destroy_workqueue(cm_core->event_wq);
 	cm_core->dev->ws_reset(&cm_core->iwdev->vsi);
@@ -3447,7 +3446,7 @@ void irdma_cm_disconn(struct irdma_qp *iwqp)
 	struct disconn_work *work;
 	unsigned long flags;
 
-	work = kzalloc_obj(*work, GFP_ATOMIC);
+	work = kzalloc(sizeof(*work), GFP_ATOMIC);
 	if (!work)
 		return;
 

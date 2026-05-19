@@ -738,7 +738,8 @@ static int mt8195_etdm_clk_src_sel_put(struct snd_kcontrol *kcontrol,
 static int mt8195_etdm_clk_src_sel_get(struct snd_kcontrol *kcontrol,
 				       struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *component =
+		snd_soc_kcontrol_component(kcontrol);
 	struct mtk_base_afe *afe = snd_soc_component_get_drvdata(component);
 	unsigned int value = 0;
 	unsigned int reg = 0;
@@ -2651,9 +2652,14 @@ static void mt8195_dai_etdm_parse_of(struct mtk_base_afe *afe)
 
 		etdm_data = afe_priv->dai_priv[dai_id];
 
-		scnprintf(prop, sizeof(prop),
-			    "mediatek,%s-mclk-always-on-rate",
-			    of_afe_etdms[i].name);
+		ret = snprintf(prop, sizeof(prop),
+			       "mediatek,%s-mclk-always-on-rate",
+			       of_afe_etdms[i].name);
+		if (ret < 0) {
+			dev_info(afe->dev, "%s snprintf err=%d\n",
+				 __func__, ret);
+			return;
+		}
 		ret = of_property_read_u32(of_node, prop, &sel);
 		if (ret == 0) {
 			etdm_data->mclk_dir = SND_SOC_CLOCK_OUT;
@@ -2662,14 +2668,24 @@ static void mt8195_dai_etdm_parse_of(struct mtk_base_afe *afe)
 					 __func__, sel);
 		}
 
-		scnprintf(prop, sizeof(prop),
-			    "mediatek,%s-multi-pin-mode",
-			    of_afe_etdms[i].name);
+		ret = snprintf(prop, sizeof(prop),
+			       "mediatek,%s-multi-pin-mode",
+			       of_afe_etdms[i].name);
+		if (ret < 0) {
+			dev_info(afe->dev, "%s snprintf err=%d\n",
+				 __func__, ret);
+			return;
+		}
 		etdm_data->data_mode = of_property_read_bool(of_node, prop);
 
-		scnprintf(prop, sizeof(prop),
-			    "mediatek,%s-cowork-source",
-			    of_afe_etdms[i].name);
+		ret = snprintf(prop, sizeof(prop),
+			       "mediatek,%s-cowork-source",
+			       of_afe_etdms[i].name);
+		if (ret < 0) {
+			dev_info(afe->dev, "%s snprintf err=%d\n",
+				 __func__, ret);
+			return;
+		}
 		ret = of_property_read_u32(of_node, prop, &sel);
 		if (ret == 0) {
 			if (sel >= MT8195_AFE_IO_ETDM_NUM) {
@@ -2691,9 +2707,14 @@ static void mt8195_dai_etdm_parse_of(struct mtk_base_afe *afe)
 		dai_id = ETDM_TO_DAI_ID(i);
 		etdm_data = afe_priv->dai_priv[dai_id];
 
-		scnprintf(prop, sizeof(prop),
-			    "mediatek,%s-chn-disabled",
-			    of_afe_etdms[i].name);
+		ret = snprintf(prop, sizeof(prop),
+			       "mediatek,%s-chn-disabled",
+			       of_afe_etdms[i].name);
+		if (ret < 0) {
+			dev_info(afe->dev, "%s snprintf err=%d\n",
+				 __func__, ret);
+			return;
+		}
 		ret = of_property_read_variable_u8_array(of_node, prop,
 							 disable_chn,
 							 1, max_chn);

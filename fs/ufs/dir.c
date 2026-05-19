@@ -19,7 +19,6 @@
 
 #include <linux/time.h>
 #include <linux/fs.h>
-#include <linux/filelock.h>
 #include <linux/swap.h>
 #include <linux/iversion.h>
 
@@ -49,7 +48,7 @@ static void ufs_commit_chunk(struct folio *folio, loff_t pos, unsigned len)
 	struct inode *dir = mapping->host;
 
 	inode_inc_iversion(dir);
-	block_write_end(pos, len, len, folio);
+	block_write_end(NULL, mapping, pos, len, len, folio, NULL);
 	if (pos+len > dir->i_size) {
 		i_size_write(dir, pos+len);
 		mark_inode_dirty(dir);
@@ -82,9 +81,10 @@ ino_t ufs_inode_by_name(struct inode *dir, const struct qstr *qstr)
 }
 
 
-int ufs_set_link(struct inode *dir, struct ufs_dir_entry *de,
-		 struct folio *folio, struct inode *inode,
-		 bool update_times)
+/* Releases the page */
+void ufs_set_link(struct inode *dir, struct ufs_dir_entry *de,
+		  struct folio *folio, struct inode *inode,
+		  bool update_times)
 {
 	loff_t pos = folio_pos(folio) + offset_in_folio(folio, de);
 	unsigned len = fs16_to_cpu(dir->i_sb, de->d_reclen);
@@ -92,19 +92,17 @@ int ufs_set_link(struct inode *dir, struct ufs_dir_entry *de,
 
 	folio_lock(folio);
 	err = ufs_prepare_chunk(folio, pos, len);
-	if (unlikely(err)) {
-		folio_unlock(folio);
-		return err;
-	}
+	BUG_ON(err);
 
 	de->d_ino = cpu_to_fs32(dir->i_sb, inode->i_ino);
 	ufs_set_de_type(dir->i_sb, de, inode->i_mode);
 
 	ufs_commit_chunk(folio, pos, len);
+	folio_release_kmap(folio, de);
 	if (update_times)
 		inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
 	mark_inode_dirty(dir);
-	return ufs_handle_dirsync(dir);
+	ufs_handle_dirsync(dir);
 }
 
 static bool ufs_check_folio(struct folio *folio, char *kaddr)
@@ -150,7 +148,7 @@ out:
 
 Ebadsize:
 	ufs_error(sb, __func__,
-		  "size of directory #%llu is not a multiple of chunk size",
+		  "size of directory #%lu is not a multiple of chunk size",
 		  dir->i_ino
 	);
 	goto fail;
@@ -169,7 +167,7 @@ Espan:
 Einumber:
 	error = "inode out of bounds";
 bad_entry:
-	ufs_error(sb, __func__, "bad entry in directory #%llu: %s - "
+	ufs_error(sb, __func__, "bad entry in directory #%lu: %s - "
 		   "offset=%llu, rec_len=%d, name_len=%d",
 		   dir->i_ino, error, folio_pos(folio) + offs,
 		   rec_len, ufs_get_de_namlen(sb, p));
@@ -177,7 +175,7 @@ bad_entry:
 Eend:
 	p = (struct ufs_dir_entry *)(kaddr + offs);
 	ufs_error(sb, __func__,
-		   "entry in directory #%llu spans the page boundary"
+		   "entry in directory #%lu spans the page boundary"
 		   "offset=%llu",
 		   dir->i_ino, folio_pos(folio) + offs);
 fail:
@@ -258,7 +256,7 @@ struct ufs_dir_entry *ufs_find_entry(struct inode *dir, const struct qstr *qstr,
 	struct ufs_inode_info *ui = UFS_I(dir);
 	struct ufs_dir_entry *de;
 
-	UFSD("ENTER, dir_ino %llu, name %s, namlen %u\n", dir->i_ino, name, namelen);
+	UFSD("ENTER, dir_ino %lu, name %s, namlen %u\n", dir->i_ino, name, namelen);
 
 	if (npages == 0 || namelen > UFS_MAXNAMLEN)
 		goto out;
@@ -434,7 +432,7 @@ ufs_readdir(struct file *file, struct dir_context *ctx)
 
 		if (IS_ERR(kaddr)) {
 			ufs_error(sb, __func__,
-				  "bad page in #%llu",
+				  "bad page in #%lu",
 				  inode->i_ino);
 			ctx->pos += PAGE_SIZE - offset;
 			return PTR_ERR(kaddr);
@@ -507,7 +505,8 @@ int ufs_delete_entry(struct inode *inode, struct ufs_dir_entry *dir,
 		if (de->d_reclen == 0) {
 			ufs_error(inode->i_sb, __func__,
 				  "zero-length directory entry");
-			return -EIO;
+			err = -EIO;
+			goto out;
 		}
 		pde = de;
 		de = ufs_next_entry(sb, de);
@@ -517,17 +516,18 @@ int ufs_delete_entry(struct inode *inode, struct ufs_dir_entry *dir,
 	pos = folio_pos(folio) + from;
 	folio_lock(folio);
 	err = ufs_prepare_chunk(folio, pos, to - from);
-	if (unlikely(err)) {
-		folio_unlock(folio);
-		return err;
-	}
+	BUG_ON(err);
 	if (pde)
 		pde->d_reclen = cpu_to_fs16(sb, to - from);
 	dir->d_ino = 0;
 	ufs_commit_chunk(folio, pos, to - from);
 	inode_set_mtime_to_ts(inode, inode_set_ctime_current(inode));
 	mark_inode_dirty(inode);
-	return ufs_handle_dirsync(inode);
+	err = ufs_handle_dirsync(inode);
+out:
+	folio_release_kmap(folio, kaddr);
+	UFSD("EXIT\n");
+	return err;
 }
 
 int ufs_make_empty(struct inode * inode, struct inode *dir)
@@ -652,7 +652,6 @@ const struct file_operations ufs_dir_operations = {
 	.release	= ufs_dir_release,
 	.read		= generic_read_dir,
 	.iterate_shared	= ufs_readdir,
-	.fsync		= simple_fsync,
+	.fsync		= generic_file_fsync,
 	.llseek		= ufs_dir_llseek,
-	.setlease	= generic_setlease,
 };

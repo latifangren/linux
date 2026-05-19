@@ -21,10 +21,6 @@ static int mpi3mr_check_op_admin_proc(struct mpi3mr_ioc *mrioc);
 static int poll_queues;
 module_param(poll_queues, int, 0444);
 MODULE_PARM_DESC(poll_queues, "Number of queues for io_uring poll mode. (Range 1 - 126)");
-static bool threaded_isr_poll = true;
-module_param(threaded_isr_poll, bool, 0444);
-MODULE_PARM_DESC(threaded_isr_poll,
-			"Enablement of IRQ polling thread (default=true)");
 
 #if defined(writeq) && defined(CONFIG_64BIT)
 static inline void mpi3mr_writeq(__u64 b, void __iomem *addr,
@@ -458,12 +454,9 @@ int mpi3mr_process_admin_reply_q(struct mpi3mr_ioc *mrioc)
 	u16 threshold_comps = 0;
 	struct mpi3_default_reply_descriptor *reply_desc;
 
-	if (!atomic_add_unless(&mrioc->admin_reply_q_in_use, 1, 1)) {
-		atomic_inc(&mrioc->admin_pend_isr);
+	if (!atomic_add_unless(&mrioc->admin_reply_q_in_use, 1, 1))
 		return 0;
-	}
 
-	atomic_set(&mrioc->admin_pend_isr, 0);
 	reply_desc = (struct mpi3_default_reply_descriptor *)mrioc->admin_reply_base +
 	    admin_reply_ci;
 
@@ -599,8 +592,7 @@ int mpi3mr_process_op_reply_q(struct mpi3mr_ioc *mrioc,
 		 * Exit completion loop to avoid CPU lockup
 		 * Ensure remaining completion happens from threaded ISR.
 		 */
-		if ((num_op_reply > mrioc->max_host_ios) &&
-			(threaded_isr_poll == true)) {
+		if (num_op_reply > mrioc->max_host_ios) {
 			op_reply_q->enable_irq_poll = true;
 			break;
 		}
@@ -697,7 +689,7 @@ static irqreturn_t mpi3mr_isr(int irq, void *privdata)
 	 * If more IOs are expected, schedule IRQ polling thread.
 	 * Otherwise exit from ISR.
 	 */
-	if ((threaded_isr_poll == false) || !intr_info->op_reply_q)
+	if (!intr_info->op_reply_q)
 		return ret;
 
 	if (!intr_info->op_reply_q->enable_irq_poll ||
@@ -776,8 +768,8 @@ static inline int mpi3mr_request_irq(struct mpi3mr_ioc *mrioc, u16 index)
 	intr_info->msix_index = index;
 	intr_info->op_reply_q = NULL;
 
-	scnprintf(intr_info->name, MPI3MR_NAME_LENGTH,
-	    "%.32s%d-msix%u", mrioc->driver_name, mrioc->id, index);
+	snprintf(intr_info->name, MPI3MR_NAME_LENGTH, "%s%d-msix%d",
+	    mrioc->driver_name, mrioc->id, index);
 
 #ifndef CONFIG_PREEMPT_RT
 	retval = request_threaded_irq(pci_irq_vector(pdev, index), mpi3mr_isr,
@@ -996,7 +988,6 @@ static const struct {
 	{ MPI3MR_RESET_FROM_FIRMWARE, "firmware asynchronous reset" },
 	{ MPI3MR_RESET_FROM_CFG_REQ_TIMEOUT, "configuration request timeout"},
 	{ MPI3MR_RESET_FROM_SAS_TRANSPORT_TIMEOUT, "timeout of a SAS transport layer request" },
-	{ MPI3MR_RESET_FROM_INVALID_COMPLETION, "invalid cmd completion" },
 };
 
 /**
@@ -1106,31 +1097,6 @@ void mpi3mr_print_fault_info(struct mpi3mr_ioc *mrioc)
 		ioc_info(mrioc,
 		    "fault code(0x%08X): Additional code: (0x%08X:0x%08X:0x%08X)\n",
 		    code, code1, code2, code3);
-	}
-}
-
-/**
- * mpi3mr_save_fault_info - Save fault information
- * @mrioc: Adapter instance reference
- *
- * Save the controller fault information if there is a
- * controller fault.
- *
- * Return: Nothing.
- */
-static void mpi3mr_save_fault_info(struct mpi3mr_ioc *mrioc)
-{
-	u32 ioc_status, i;
-
-	ioc_status = readl(&mrioc->sysif_regs->ioc_status);
-
-	if (ioc_status & MPI3_SYSIF_IOC_STATUS_FAULT) {
-		mrioc->saved_fault_code = readl(&mrioc->sysif_regs->fault) &
-		    MPI3_SYSIF_FAULT_CODE_MASK;
-		for (i = 0; i < 3; i++) {
-			mrioc->saved_fault_info[i] =
-			readl(&mrioc->sysif_regs->fault_info[i]);
-		}
 	}
 }
 
@@ -1276,60 +1242,6 @@ out_failed:
 }
 
 /**
- * mpi3mr_fault_uevent_emit - Emit uevent for any controller
- * fault
- * @mrioc: Pointer to the mpi3mr_ioc structure for the controller instance
- *
- * This function is invoked when the controller undergoes any
- * type of fault.
- */
-
-static void mpi3mr_fault_uevent_emit(struct mpi3mr_ioc *mrioc)
-{
-	struct kobj_uevent_env *env;
-	int ret;
-
-	env = kzalloc_obj(*env);
-	if (!env)
-		return;
-
-	ret = add_uevent_var(env, "DRIVER=%s", mrioc->driver_name);
-	if (ret)
-		goto out_free;
-
-	ret = add_uevent_var(env, "IOC_ID=%u", mrioc->id);
-	if (ret)
-		goto out_free;
-
-	ret = add_uevent_var(env, "FAULT_CODE=0x%08x",
-			    mrioc->saved_fault_code);
-	if (ret)
-		goto out_free;
-
-	ret = add_uevent_var(env, "FAULT_INFO0=0x%08x",
-			     mrioc->saved_fault_info[0]);
-	if (ret)
-		goto out_free;
-
-	ret = add_uevent_var(env, "FAULT_INFO1=0x%08x",
-			    mrioc->saved_fault_info[1]);
-	if (ret)
-		goto out_free;
-
-	ret = add_uevent_var(env, "FAULT_INFO2=0x%08x",
-			    mrioc->saved_fault_info[2]);
-	if (ret)
-		goto out_free;
-
-	kobject_uevent_env(&mrioc->shost->shost_gendev.kobj,
-			KOBJ_CHANGE, env->envp);
-
-out_free:
-	kfree(env);
-
-}
-
-/**
  * mpi3mr_clear_reset_history - clear reset history
  * @mrioc: Adapter instance reference
  *
@@ -1398,7 +1310,7 @@ static int mpi3mr_issue_and_process_mur(struct mpi3mr_ioc *mrioc,
 	      (ioc_config & MPI3_SYSIF_IOC_CONFIG_ENABLE_IOC)))
 		retval = 0;
 
-	ioc_info(mrioc, "Base IOC Sts/Config after %s MUR is (0x%08x)/(0x%08x)\n",
+	ioc_info(mrioc, "Base IOC Sts/Config after %s MUR is (0x%x)/(0x%x)\n",
 	    (!retval) ? "successful" : "failed", ioc_status, ioc_config);
 	return retval;
 }
@@ -1450,19 +1362,6 @@ mpi3mr_revalidate_factsdata(struct mpi3mr_ioc *mrioc)
 		    "critical error: multipath capability is enabled at the\n"
 		    "\tcontroller while sas transport support is enabled at the\n"
 		    "\tdriver, please reboot the system or reload the driver\n");
-
-	if (mrioc->seg_tb_support) {
-		if (!(mrioc->facts.ioc_capabilities &
-		     MPI3_IOCFACTS_CAPABILITY_SEG_DIAG_TRACE_SUPPORTED)) {
-			ioc_err(mrioc,
-			    "critical error: previously enabled segmented trace\n"
-			    " buffer capability is disabled after reset. Please\n"
-			    " update the firmware or reboot the system or\n"
-			    " reload the driver to enable trace diag buffer\n");
-			mrioc->diag_buffers[0].disabled_after_reset = true;
-		} else
-			mrioc->diag_buffers[0].disabled_after_reset = false;
-	}
 
 	if (mrioc->facts.max_devhandle > mrioc->dev_handle_bitmap_bits) {
 		removepend_bitmap = bitmap_zalloc(mrioc->facts.max_devhandle,
@@ -1560,10 +1459,6 @@ retry_bring_ioc_ready:
 		if (ioc_state == MRIOC_STATE_FAULT) {
 			timeout = MPI3_SYSIF_DIAG_SAVE_TIMEOUT * 10;
 			mpi3mr_print_fault_info(mrioc);
-			mpi3mr_save_fault_info(mrioc);
-			mrioc->fault_during_init = 1;
-			mrioc->fwfault_counter++;
-
 			do {
 				host_diagnostic =
 					readl(&mrioc->sysif_regs->host_diagnostic);
@@ -1800,9 +1695,7 @@ static int mpi3mr_issue_reset(struct mpi3mr_ioc *mrioc, u16 reset_type,
 	scratch_pad0 = ((MPI3MR_RESET_REASON_OSTYPE_LINUX <<
 	    MPI3MR_RESET_REASON_OSTYPE_SHIFT) | (mrioc->facts.ioc_num <<
 	    MPI3MR_RESET_REASON_IOCNUM_SHIFT) | reset_reason);
-	writel(scratch_pad0, &mrioc->sysif_regs->scratchpad[0]);
-	if (reset_type == MPI3_SYSIF_HOST_DIAG_RESET_ACTION_DIAG_FAULT)
-		mpi3mr_set_diagsave(mrioc);
+	writel(reset_reason, &mrioc->sysif_regs->scratchpad[0]);
 	writel(host_diagnostic | reset_type,
 	    &mrioc->sysif_regs->host_diagnostic);
 	switch (reset_type) {
@@ -1842,7 +1735,7 @@ static int mpi3mr_issue_reset(struct mpi3mr_ioc *mrioc, u16 reset_type,
 	ioc_config = readl(&mrioc->sysif_regs->ioc_configuration);
 	ioc_status = readl(&mrioc->sysif_regs->ioc_status);
 	ioc_info(mrioc,
-	    "ioc_status/ioc_config after %s reset is (0x%08x)/(0x%08x)\n",
+	    "ioc_status/ioc_onfig after %s reset is (0x%x)/(0x%x)\n",
 	    (!retval)?"successful":"failed", ioc_status,
 	    ioc_config);
 	if (retval)
@@ -2121,8 +2014,8 @@ static int mpi3mr_alloc_op_reply_q_segments(struct mpi3mr_ioc *mrioc, u16 qidx)
 	op_reply_q->num_segments = DIV_ROUND_UP(op_reply_q->num_replies,
 	    op_reply_q->segment_qd);
 
-	op_reply_q->q_segments = kzalloc_objs(struct segments,
-					      op_reply_q->num_segments);
+	op_reply_q->q_segments = kcalloc(op_reply_q->num_segments,
+	    sizeof(struct segments), GFP_KERNEL);
 	if (!op_reply_q->q_segments)
 		return -ENOMEM;
 
@@ -2179,8 +2072,8 @@ static int mpi3mr_alloc_op_req_q_segments(struct mpi3mr_ioc *mrioc, u16 qidx)
 	op_req_q->num_segments = DIV_ROUND_UP(op_req_q->num_requests,
 	    op_req_q->segment_qd);
 
-	op_req_q->q_segments = kzalloc_objs(struct segments,
-					    op_req_q->num_segments);
+	op_req_q->q_segments = kcalloc(op_req_q->num_segments,
+	    sizeof(struct segments), GFP_KERNEL);
 	if (!op_req_q->q_segments)
 		return -ENOMEM;
 
@@ -2372,9 +2265,6 @@ static int mpi3mr_create_op_req_q(struct mpi3mr_ioc *mrioc, u16 idx,
 	op_req_q->ci = 0;
 	op_req_q->pi = 0;
 	op_req_q->reply_qid = reply_qid;
-	op_req_q->last_full_host_tag =  MPI3MR_HOSTTAG_INVALID;
-	op_req_q->qfull_io_count =  0;
-	op_req_q->qfull_instances =  0;
 	spin_lock_init(&op_req_q->q_lock);
 
 	if (!op_req_q->q_segments) {
@@ -2477,7 +2367,8 @@ static int mpi3mr_create_op_queues(struct mpi3mr_ioc *mrioc)
 	    num_queues);
 
 	if (!mrioc->req_qinfo) {
-		mrioc->req_qinfo = kzalloc_objs(struct op_req_qinfo, num_queues);
+		mrioc->req_qinfo = kcalloc(num_queues,
+		    sizeof(struct op_req_qinfo), GFP_KERNEL);
 		if (!mrioc->req_qinfo) {
 			retval = -1;
 			goto out_failed;
@@ -2561,8 +2452,6 @@ int mpi3mr_op_request_post(struct mpi3mr_ioc *mrioc,
 	u16 req_sz = mrioc->facts.op_req_sz;
 	struct segments *segments = op_req_q->q_segments;
 	struct op_reply_qinfo *op_reply_q = NULL;
-	struct mpi3_scsi_io_request *scsiio_req =
-		(struct mpi3_scsi_io_request *)req;
 
 	reply_qidx = op_req_q->reply_qid - 1;
 	op_reply_q = mrioc->op_reply_qinfo + reply_qidx;
@@ -2580,20 +2469,10 @@ int mpi3mr_op_request_post(struct mpi3mr_ioc *mrioc,
 		mpi3mr_process_op_reply_q(mrioc, mrioc->intr_info[midx].op_reply_q);
 
 		if (mpi3mr_check_req_qfull(op_req_q)) {
-
-			if (op_req_q->last_full_host_tag ==
-			    MPI3MR_HOSTTAG_INVALID)
-				op_req_q->qfull_instances++;
-
-			op_req_q->last_full_host_tag = scsiio_req->host_tag;
-			op_req_q->qfull_io_count++;
 			retval = -EAGAIN;
 			goto out;
 		}
 	}
-
-	if (op_req_q->last_full_host_tag != MPI3MR_HOSTTAG_INVALID)
-		op_req_q->last_full_host_tag = MPI3MR_HOSTTAG_INVALID;
 
 	if (mrioc->reset_in_progress) {
 		ioc_err(mrioc, "OpReqQ submit reset in progress\n");
@@ -2685,9 +2564,6 @@ void mpi3mr_check_rh_fault_ioc(struct mpi3mr_ioc *mrioc, u32 reason_code)
 		mpi3mr_set_trigger_data_in_all_hdb(mrioc,
 		    MPI3MR_HDB_TRIGGER_TYPE_FAULT, &trigger_data, 0);
 		mpi3mr_print_fault_info(mrioc);
-		mpi3mr_save_fault_info(mrioc);
-		mrioc->fault_during_init = 1;
-		mrioc->fwfault_counter++;
 		return;
 	}
 
@@ -2705,17 +2581,13 @@ void mpi3mr_check_rh_fault_ioc(struct mpi3mr_ioc *mrioc, u32 reason_code)
 			break;
 		msleep(100);
 	} while (--timeout);
-
-	mpi3mr_save_fault_info(mrioc);
-	mrioc->fault_during_init = 1;
-	mrioc->fwfault_counter++;
 }
 
 /**
  * mpi3mr_sync_timestamp - Issue time stamp sync request
  * @mrioc: Adapter reference
  *
- * Issue IO unit control MPI request to synchronize firmware
+ * Issue IO unit control MPI request to synchornize firmware
  * timestamp with host time.
  *
  * Return: 0 on success, non-zero on failure.
@@ -2885,11 +2757,6 @@ static void mpi3mr_watchdog_work(struct work_struct *work)
 	union mpi3mr_trigger_data trigger_data;
 	u16 reset_reason = MPI3MR_RESET_FROM_FAULT_WATCH;
 
-	if (mrioc->fault_during_init) {
-		mpi3mr_fault_uevent_emit(mrioc);
-		mrioc->fault_during_init = 0;
-	}
-
 	if (mrioc->reset_in_progress || mrioc->pci_err_recovery)
 		return;
 
@@ -2903,17 +2770,6 @@ static void mpi3mr_watchdog_work(struct work_struct *work)
 		    "flush pending commands for unrecoverable controller\n");
 		mpi3mr_flush_cmds_for_unrecovered_controller(mrioc);
 		return;
-	}
-
-	if (mrioc->invalid_io_comp) {
-		mpi3mr_soft_reset_handler(mrioc, MPI3MR_RESET_FROM_INVALID_COMPLETION, 1);
-		return;
-	}
-
-	if (atomic_read(&mrioc->admin_pend_isr)) {
-		ioc_err(mrioc, "Unprocessed admin ISR instance found\n"
-				"flush admin replies\n");
-		mpi3mr_process_admin_reply_q(mrioc);
 	}
 
 	if (!(mrioc->facts.ioc_capabilities &
@@ -2967,10 +2823,6 @@ static void mpi3mr_watchdog_work(struct work_struct *work)
 		goto schedule_work;
 	}
 
-	mpi3mr_save_fault_info(mrioc);
-	mpi3mr_fault_uevent_emit(mrioc);
-	mrioc->fwfault_counter++;
-
 	switch (trigger_data.fault) {
 	case MPI3_SYSIF_FAULT_CODE_COMPLETE_RESET_NEEDED:
 	case MPI3_SYSIF_FAULT_CODE_POWER_CYCLE_REQUIRED:
@@ -3014,8 +2866,11 @@ void mpi3mr_start_watchdog(struct mpi3mr_ioc *mrioc)
 		return;
 
 	INIT_DELAYED_WORK(&mrioc->watchdog_work, mpi3mr_watchdog_work);
+	snprintf(mrioc->watchdog_work_q_name,
+	    sizeof(mrioc->watchdog_work_q_name), "watchdog_%s%d", mrioc->name,
+	    mrioc->id);
 	mrioc->watchdog_work_q = alloc_ordered_workqueue(
-		"watchdog_%s%d", WQ_MEM_RECLAIM, mrioc->name, mrioc->id);
+		"%s", WQ_MEM_RECLAIM, mrioc->watchdog_work_q_name);
 	if (!mrioc->watchdog_work_q) {
 		ioc_err(mrioc, "%s: failed (line=%d)\n", __func__, __LINE__);
 		return;
@@ -3077,7 +2932,6 @@ static int mpi3mr_setup_admin_qpair(struct mpi3mr_ioc *mrioc)
 	mrioc->admin_reply_ci = 0;
 	mrioc->admin_reply_ephase = 1;
 	atomic_set(&mrioc->admin_reply_q_in_use, 0);
-	atomic_set(&mrioc->admin_pend_isr, 0);
 
 	if (!mrioc->admin_req_base) {
 		mrioc->admin_req_base = dma_alloc_coherent(&mrioc->pdev->dev,
@@ -4419,10 +4273,6 @@ retry_init:
 	if (mrioc->facts.max_req_limit)
 		mrioc->prevent_reply_qfull = true;
 
-	if (mrioc->facts.ioc_capabilities &
-		MPI3_IOCFACTS_CAPABILITY_SEG_DIAG_TRACE_SUPPORTED)
-		mrioc->seg_tb_support = true;
-
 	mrioc->reply_sz = mrioc->facts.reply_sz;
 
 	retval = mpi3mr_check_reset_dma_mask(mrioc);
@@ -4810,7 +4660,6 @@ void mpi3mr_memset_buffers(struct mpi3mr_ioc *mrioc)
 	if (mrioc->admin_reply_base)
 		memset(mrioc->admin_reply_base, 0, mrioc->admin_reply_q_sz);
 	atomic_set(&mrioc->admin_reply_q_in_use, 0);
-	atomic_set(&mrioc->admin_pend_isr, 0);
 
 	if (mrioc->init_cmds.reply) {
 		memset(mrioc->init_cmds.reply, 0, sizeof(*mrioc->init_cmds.reply));
@@ -4855,7 +4704,6 @@ void mpi3mr_memset_buffers(struct mpi3mr_ioc *mrioc)
 			mrioc->req_qinfo[i].qid = 0;
 			mrioc->req_qinfo[i].reply_qid = 0;
 			spin_lock_init(&mrioc->req_qinfo[i].q_lock);
-			mrioc->req_qinfo[i].last_full_host_tag = 0;
 			mpi3mr_memset_op_req_q_buffers(mrioc, i);
 		}
 	}
@@ -4887,7 +4735,7 @@ void mpi3mr_memset_buffers(struct mpi3mr_ioc *mrioc)
  */
 void mpi3mr_free_mem(struct mpi3mr_ioc *mrioc)
 {
-	u16 i, j;
+	u16 i;
 	struct mpi3mr_intr_info *intr_info;
 	struct diag_buffer_desc *diag_buffer;
 
@@ -5022,26 +4870,6 @@ void mpi3mr_free_mem(struct mpi3mr_ioc *mrioc)
 
 	for (i = 0; i < MPI3MR_MAX_NUM_HDB; i++) {
 		diag_buffer = &mrioc->diag_buffers[i];
-		if ((i == 0) && mrioc->seg_tb_support) {
-			if (mrioc->trace_buf_pool) {
-				for (j = 0; j < mrioc->num_tb_segs; j++) {
-					if (mrioc->trace_buf[j].segment) {
-						dma_pool_free(mrioc->trace_buf_pool,
-						    mrioc->trace_buf[j].segment,
-						    mrioc->trace_buf[j].segment_dma);
-						mrioc->trace_buf[j].segment = NULL;
-					}
-
-					mrioc->trace_buf[j].segment = NULL;
-				}
-				dma_pool_destroy(mrioc->trace_buf_pool);
-				mrioc->trace_buf_pool = NULL;
-			}
-
-			kfree(mrioc->trace_buf);
-			mrioc->trace_buf = NULL;
-			diag_buffer->size = sizeof(u64) * mrioc->num_tb_segs;
-		}
 		if (diag_buffer->addr) {
 			dma_free_coherent(&mrioc->pdev->dev,
 			    diag_buffer->size, diag_buffer->addr,
@@ -5072,9 +4900,9 @@ void mpi3mr_free_mem(struct mpi3mr_ioc *mrioc)
  */
 static void mpi3mr_issue_ioc_shutdown(struct mpi3mr_ioc *mrioc)
 {
-	u32 ioc_config, ioc_status, shutdown_action;
-	u8 retval = 1, retry = 0;
-	u32 timeout = MPI3MR_DEFAULT_SHUTDOWN_TIME * 10, timeout_remaining = 0;
+	u32 ioc_config, ioc_status;
+	u8 retval = 1;
+	u32 timeout = MPI3MR_DEFAULT_SHUTDOWN_TIME * 10;
 
 	ioc_info(mrioc, "Issuing shutdown Notification\n");
 	if (mrioc->unrecoverable) {
@@ -5089,16 +4917,14 @@ static void mpi3mr_issue_ioc_shutdown(struct mpi3mr_ioc *mrioc)
 		return;
 	}
 
-	shutdown_action = MPI3_SYSIF_IOC_CONFIG_SHUTDOWN_NORMAL |
-	    MPI3_SYSIF_IOC_CONFIG_DEVICE_SHUTDOWN_SEND_REQ;
 	ioc_config = readl(&mrioc->sysif_regs->ioc_configuration);
-	ioc_config |= shutdown_action;
+	ioc_config |= MPI3_SYSIF_IOC_CONFIG_SHUTDOWN_NORMAL;
+	ioc_config |= MPI3_SYSIF_IOC_CONFIG_DEVICE_SHUTDOWN_SEND_REQ;
 
 	writel(ioc_config, &mrioc->sysif_regs->ioc_configuration);
 
 	if (mrioc->facts.shutdown_timeout)
 		timeout = mrioc->facts.shutdown_timeout * 10;
-	timeout_remaining = timeout;
 
 	do {
 		ioc_status = readl(&mrioc->sysif_regs->ioc_status);
@@ -5107,26 +4933,8 @@ static void mpi3mr_issue_ioc_shutdown(struct mpi3mr_ioc *mrioc)
 			retval = 0;
 			break;
 		}
-		if (mrioc->unrecoverable)
-			break;
-		if (ioc_status & MPI3_SYSIF_IOC_STATUS_FAULT) {
-			mpi3mr_print_fault_info(mrioc);
-			if (retry >= MPI3MR_MAX_SHUTDOWN_RETRY_COUNT)
-				break;
-			if (mpi3mr_issue_reset(mrioc,
-			    MPI3_SYSIF_HOST_DIAG_RESET_ACTION_SOFT_RESET,
-			    MPI3MR_RESET_FROM_CTLR_CLEANUP))
-				break;
-			ioc_config =
-			    readl(&mrioc->sysif_regs->ioc_configuration);
-			ioc_config |= shutdown_action;
-			writel(ioc_config,
-			    &mrioc->sysif_regs->ioc_configuration);
-			timeout_remaining = timeout;
-			retry++;
-		}
 		msleep(100);
-	} while (--timeout_remaining);
+	} while (--timeout);
 
 	ioc_status = readl(&mrioc->sysif_regs->ioc_status);
 	ioc_config = readl(&mrioc->sysif_regs->ioc_configuration);
@@ -5139,7 +4947,7 @@ static void mpi3mr_issue_ioc_shutdown(struct mpi3mr_ioc *mrioc)
 	}
 
 	ioc_info(mrioc,
-	    "Base IOC Sts/Config after %s shutdown is (0x%08x)/(0x%08x)\n",
+	    "Base IOC Sts/Config after %s shutdown is (0x%x)/(0x%x)\n",
 	    (!retval) ? "successful" : "failed", ioc_status,
 	    ioc_config);
 }
@@ -5559,7 +5367,6 @@ int mpi3mr_soft_reset_handler(struct mpi3mr_ioc *mrioc,
 {
 	int retval = 0, i;
 	unsigned long flags;
-	enum mpi3mr_iocstate ioc_state;
 	u32 host_diagnostic, timeout = MPI3_SYSIF_DIAG_SAVE_TIMEOUT * 10;
 	union mpi3mr_trigger_data trigger_data;
 
@@ -5618,6 +5425,7 @@ int mpi3mr_soft_reset_handler(struct mpi3mr_ioc *mrioc,
 	mrioc->io_admin_reset_sync = 1;
 
 	if (snapdump) {
+		mpi3mr_set_diagsave(mrioc);
 		retval = mpi3mr_issue_reset(mrioc,
 		    MPI3_SYSIF_HOST_DIAG_RESET_ACTION_DIAG_FAULT, reset_reason);
 		if (!retval) {
@@ -5631,10 +5439,6 @@ int mpi3mr_soft_reset_handler(struct mpi3mr_ioc *mrioc,
 					break;
 				msleep(100);
 			} while (--timeout);
-
-			mpi3mr_save_fault_info(mrioc);
-			mpi3mr_fault_uevent_emit(mrioc);
-			mrioc->fwfault_counter++;
 			mpi3mr_set_trigger_data_in_all_hdb(mrioc,
 			    MPI3MR_HDB_TRIGGER_TYPE_FAULT, &trigger_data, 0);
 		}
@@ -5700,7 +5504,6 @@ int mpi3mr_soft_reset_handler(struct mpi3mr_ioc *mrioc,
 	ssleep(MPI3MR_RESET_TOPOLOGY_SETTLE_TIME);
 
 out:
-	mrioc->invalid_io_comp = 0;
 	if (!retval) {
 		mrioc->diagsave_timeout = 0;
 		mrioc->reset_in_progress = 0;
@@ -5724,13 +5527,8 @@ out:
 		if (mrioc->pel_enabled)
 			atomic64_inc(&event_counter);
 	} else {
-		dprint_reset(mrioc,
-			"soft_reset_handler failed, marking controller as unrecoverable\n");
-		ioc_state = mpi3mr_get_iocstate(mrioc);
-
-		if (ioc_state != MRIOC_STATE_FAULT)
-			mpi3mr_issue_reset(mrioc,
-				MPI3_SYSIF_HOST_DIAG_RESET_ACTION_DIAG_FAULT, reset_reason);
+		mpi3mr_issue_reset(mrioc,
+		    MPI3_SYSIF_HOST_DIAG_RESET_ACTION_DIAG_FAULT, reset_reason);
 		mrioc->device_refresh_on = 0;
 		mrioc->unrecoverable = 1;
 		mrioc->reset_in_progress = 0;

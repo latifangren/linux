@@ -151,16 +151,11 @@ EXPORT_SYMBOL_GPL(tcp_vegas_state);
  */
 void tcp_vegas_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 {
-	if (event == CA_EVENT_CWND_RESTART)
+	if (event == CA_EVENT_CWND_RESTART ||
+	    event == CA_EVENT_TX_START)
 		tcp_vegas_init(sk);
 }
 EXPORT_SYMBOL_GPL(tcp_vegas_cwnd_event);
-
-void tcp_vegas_cwnd_event_tx_start(struct sock *sk)
-{
-	tcp_vegas_init(sk);
-}
-EXPORT_SYMBOL_GPL(tcp_vegas_cwnd_event_tx_start);
 
 static inline u32 tcp_vegas_ssthresh(struct tcp_sock *tp)
 {
@@ -319,7 +314,6 @@ static struct tcp_congestion_ops tcp_vegas __read_mostly = {
 	.pkts_acked	= tcp_vegas_pkts_acked,
 	.set_state	= tcp_vegas_state,
 	.cwnd_event	= tcp_vegas_cwnd_event,
-	.cwnd_event_tx_start = tcp_vegas_cwnd_event_tx_start,
 	.get_info	= tcp_vegas_get_info,
 
 	.owner		= THIS_MODULE,

@@ -217,28 +217,6 @@ static void pegasus_init(struct work_struct *work)
 			error);
 }
 
-static int __pegasus_open(struct pegasus *pegasus)
-{
-	int error;
-
-	guard(mutex)(&pegasus->pm_mutex);
-
-	pegasus->irq->dev = pegasus->usbdev;
-	if (usb_submit_urb(pegasus->irq, GFP_KERNEL))
-		return -EIO;
-
-	error = pegasus_set_mode(pegasus, PEN_MODE_XY, NOTETAKER_LED_MOUSE);
-	if (error) {
-		usb_kill_urb(pegasus->irq);
-		cancel_work_sync(&pegasus->init);
-		return error;
-	}
-
-	pegasus->is_open = true;
-
-	return 0;
-}
-
 static int pegasus_open(struct input_dev *dev)
 {
 	struct pegasus *pegasus = input_get_drvdata(dev);
@@ -248,25 +226,39 @@ static int pegasus_open(struct input_dev *dev)
 	if (error)
 		return error;
 
-	error = __pegasus_open(pegasus);
-	if (error) {
-		usb_autopm_put_interface(pegasus->intf);
-		return error;
+	mutex_lock(&pegasus->pm_mutex);
+	pegasus->irq->dev = pegasus->usbdev;
+	if (usb_submit_urb(pegasus->irq, GFP_KERNEL)) {
+		error = -EIO;
+		goto err_autopm_put;
 	}
 
+	error = pegasus_set_mode(pegasus, PEN_MODE_XY, NOTETAKER_LED_MOUSE);
+	if (error)
+		goto err_kill_urb;
+
+	pegasus->is_open = true;
+	mutex_unlock(&pegasus->pm_mutex);
 	return 0;
+
+err_kill_urb:
+	usb_kill_urb(pegasus->irq);
+	cancel_work_sync(&pegasus->init);
+err_autopm_put:
+	mutex_unlock(&pegasus->pm_mutex);
+	usb_autopm_put_interface(pegasus->intf);
+	return error;
 }
 
 static void pegasus_close(struct input_dev *dev)
 {
 	struct pegasus *pegasus = input_get_drvdata(dev);
 
-	scoped_guard(mutex, &pegasus->pm_mutex) {
-		usb_kill_urb(pegasus->irq);
-		cancel_work_sync(&pegasus->init);
-
-		pegasus->is_open = false;
-	}
+	mutex_lock(&pegasus->pm_mutex);
+	usb_kill_urb(pegasus->irq);
+	cancel_work_sync(&pegasus->init);
+	pegasus->is_open = false;
+	mutex_unlock(&pegasus->pm_mutex);
 
 	usb_autopm_put_interface(pegasus->intf);
 }
@@ -293,7 +285,7 @@ static int pegasus_probe(struct usb_interface *intf,
 
 	endpoint = &intf->cur_altsetting->endpoint[0].desc;
 
-	pegasus = kzalloc_obj(*pegasus);
+	pegasus = kzalloc(sizeof(*pegasus), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!pegasus || !input_dev) {
 		error = -ENOMEM;
@@ -428,10 +420,10 @@ static int pegasus_suspend(struct usb_interface *intf, pm_message_t message)
 {
 	struct pegasus *pegasus = usb_get_intfdata(intf);
 
-	guard(mutex)(&pegasus->pm_mutex);
-
+	mutex_lock(&pegasus->pm_mutex);
 	usb_kill_urb(pegasus->irq);
 	cancel_work_sync(&pegasus->init);
+	mutex_unlock(&pegasus->pm_mutex);
 
 	return 0;
 }
@@ -439,33 +431,31 @@ static int pegasus_suspend(struct usb_interface *intf, pm_message_t message)
 static int pegasus_resume(struct usb_interface *intf)
 {
 	struct pegasus *pegasus = usb_get_intfdata(intf);
+	int retval = 0;
 
-	guard(mutex)(&pegasus->pm_mutex);
-
+	mutex_lock(&pegasus->pm_mutex);
 	if (pegasus->is_open && usb_submit_urb(pegasus->irq, GFP_NOIO) < 0)
-		return -EIO;
+		retval = -EIO;
+	mutex_unlock(&pegasus->pm_mutex);
 
-	return 0;
+	return retval;
 }
 
 static int pegasus_reset_resume(struct usb_interface *intf)
 {
 	struct pegasus *pegasus = usb_get_intfdata(intf);
-	int error;
+	int retval = 0;
 
-	guard(mutex)(&pegasus->pm_mutex);
-
+	mutex_lock(&pegasus->pm_mutex);
 	if (pegasus->is_open) {
-		error = pegasus_set_mode(pegasus, PEN_MODE_XY,
+		retval = pegasus_set_mode(pegasus, PEN_MODE_XY,
 					  NOTETAKER_LED_MOUSE);
-		if (error)
-			return error;
-
-		if (usb_submit_urb(pegasus->irq, GFP_NOIO) < 0)
-			return -EIO;
+		if (!retval && usb_submit_urb(pegasus->irq, GFP_NOIO) < 0)
+			retval = -EIO;
 	}
+	mutex_unlock(&pegasus->pm_mutex);
 
-	return 0;
+	return retval;
 }
 
 static const struct usb_device_id pegasus_ids[] = {

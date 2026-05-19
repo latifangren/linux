@@ -30,7 +30,8 @@
  *
  */
 
-#define pr_fmt(fmt) "IPVS: " fmt
+#define KMSG_COMPONENT "IPVS"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/ip.h>
 #include <linux/slab.h>
@@ -153,7 +154,7 @@ static int ip_vs_dh_init_svc(struct ip_vs_service *svc)
 	struct ip_vs_dh_state *s;
 
 	/* allocate the DH table for this service */
-	s = kzalloc_obj(struct ip_vs_dh_state);
+	s = kzalloc(sizeof(struct ip_vs_dh_state), GFP_KERNEL);
 	if (s == NULL)
 		return -ENOMEM;
 

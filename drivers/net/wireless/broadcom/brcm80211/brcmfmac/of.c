@@ -66,6 +66,36 @@ static int brcmf_of_get_country_codes(struct device *dev,
 	return 0;
 }
 
+/* TODO: FIXME: Use DT */
+static void brcmf_of_probe_cc(struct device *dev,
+			      struct brcmf_mp_device *settings)
+{
+	static struct brcmfmac_pd_cc_entry netgear_r8000_cc_ent[] = {
+		{ "JP", "JP", 78 },
+		{ "US", "Q2", 86 },
+	};
+	struct brcmfmac_pd_cc_entry *cc_ent = NULL;
+	int table_size = 0;
+
+	if (of_machine_is_compatible("netgear,r8000")) {
+		cc_ent = netgear_r8000_cc_ent;
+		table_size = ARRAY_SIZE(netgear_r8000_cc_ent);
+	}
+
+	if (cc_ent && table_size) {
+		struct brcmfmac_pd_cc *cc;
+		size_t memsize;
+
+		memsize = table_size * sizeof(struct brcmfmac_pd_cc_entry);
+		cc = devm_kzalloc(dev, sizeof(*cc) + memsize, GFP_KERNEL);
+		if (!cc)
+			return;
+		cc->table_size = table_size;
+		memcpy(cc->table, cc_ent, memsize);
+		settings->country_codes = cc;
+	}
+}
+
 int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 		   struct brcmf_mp_device *settings)
 {
@@ -115,11 +145,14 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 	}
 	of_node_put(root);
 
-	clk = devm_clk_get_optional_enabled_with_rate(dev, "lpo", 32768);
+	brcmf_of_probe_cc(dev, settings);
+
+	clk = devm_clk_get_optional_enabled(dev, "lpo");
 	if (IS_ERR(clk))
 		return PTR_ERR(clk);
 
 	brcmf_dbg(INFO, "%s LPO clock\n", clk ? "enable" : "no");
+	clk_set_rate(clk, 32768);
 
 	if (!np || !of_device_is_compatible(np, "brcm,bcm4329-fmac"))
 		return 0;
@@ -128,9 +161,7 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
 	if (err)
 		brcmf_err("failed to get OF country code map (err=%d)\n", err);
 
-	err = of_get_mac_address(np, settings->mac);
-	if (err == -EPROBE_DEFER)
-		return err;
+	of_get_mac_address(np, settings->mac);
 
 	if (bus_type != BRCMF_BUSTYPE_SDIO)
 		return 0;

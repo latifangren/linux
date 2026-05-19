@@ -2,9 +2,8 @@
 
 #include <linux/ethtool.h>
 #include <linux/phy.h>
-
-#include "common.h"
 #include "netlink.h"
+#include "common.h"
 
 struct strset_info {
 	bool per_dev;
@@ -76,11 +75,6 @@ static const struct strset_info info_template[] = {
 		.count		= __HWTSTAMP_FILTER_CNT,
 		.strings	= ts_rx_filter_names,
 	},
-	[ETH_SS_TS_FLAGS] = {
-		.per_dev	= false,
-		.count		= __HWTSTAMP_FLAG_CNT,
-		.strings	= ts_flags_names,
-	},
 	[ETH_SS_UDP_TUNNEL_TYPES] = {
 		.per_dev	= false,
 		.count		= __ETHTOOL_UDP_TUNNEL_TYPE_CNT,
@@ -110,11 +104,6 @@ static const struct strset_info info_template[] = {
 		.per_dev	= false,
 		.count		= __ETHTOOL_A_STATS_RMON_CNT,
 		.strings	= stats_rmon_names,
-	},
-	[ETH_SS_STATS_PHY] = {
-		.per_dev	= false,
-		.count		= __ETHTOOL_A_STATS_PHY_CNT,
-		.strings	= stats_phy_names,
 	},
 };
 
@@ -190,7 +179,6 @@ static const struct nla_policy strset_stringsets_policy[] = {
 };
 
 static int strset_parse_request(struct ethnl_req_info *req_base,
-				const struct genl_info *info,
 				struct nlattr **tb,
 				struct netlink_ext_ack *extack)
 {
@@ -443,8 +431,7 @@ static int strset_fill_set(struct sk_buff *skb,
 			if (strset_fill_string(skb, set_info, i) < 0)
 				goto nla_put_failure;
 		}
-		if (nla_nest_end_safe(skb, strings_attr) < 0)
-			goto nla_put_failure;
+		nla_nest_end(skb, strings_attr);
 	}
 
 	nla_nest_end(skb, stringset_attr);

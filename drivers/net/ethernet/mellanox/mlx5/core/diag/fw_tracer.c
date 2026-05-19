@@ -55,7 +55,7 @@ static int mlx5_query_mtrc_caps(struct mlx5_fw_tracer *tracer)
 
 	if (!MLX5_GET(mtrc_cap, out, trace_to_memory)) {
 		mlx5_core_dbg(dev, "FWTracer: Device does not support logging traces to memory\n");
-		return -EOPNOTSUPP;
+		return -ENOTSUPP;
 	}
 
 	tracer->trc_ver = MLX5_GET(mtrc_cap, out, trc_ver);
@@ -412,7 +412,7 @@ static struct tracer_string_format *mlx5_tracer_message_insert(struct mlx5_fw_tr
 		&tracer->hash[mlx5_tracer_message_hash(tracer_event->string_event.tmsn)];
 	struct tracer_string_format *cur_string;
 
-	cur_string = kzalloc_obj(*cur_string);
+	cur_string = kzalloc(sizeof(*cur_string), GFP_KERNEL);
 	if (!cur_string)
 		return NULL;
 
@@ -1023,7 +1023,7 @@ struct mlx5_fw_tracer *mlx5_fw_tracer_create(struct mlx5_core_dev *dev)
 		return NULL;
 	}
 
-	tracer = kvzalloc_obj(*tracer);
+	tracer = kvzalloc(sizeof(*tracer), GFP_KERNEL);
 	if (!tracer)
 		return ERR_PTR(-ENOMEM);
 

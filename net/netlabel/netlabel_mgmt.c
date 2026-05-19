@@ -84,7 +84,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 	struct calipso_doi *calipso = NULL;
 #endif
 	u32 tmp_val;
-	struct netlbl_dom_map *entry = kzalloc_obj(*entry);
+	struct netlbl_dom_map *entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 
 	if (!entry)
 		return -ENOMEM;
@@ -107,9 +107,11 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 
 	switch (entry->def.type) {
 	case NETLBL_NLTYPE_UNLABELED:
-		entry->family =
-			nla_get_u16_default(info->attrs[NLBL_MGMT_A_FAMILY],
-					    AF_UNSPEC);
+		if (info->attrs[NLBL_MGMT_A_FAMILY])
+			entry->family =
+				nla_get_u16(info->attrs[NLBL_MGMT_A_FAMILY]);
+		else
+			entry->family = AF_UNSPEC;
 		break;
 	case NETLBL_NLTYPE_CIPSOV4:
 		if (!info->attrs[NLBL_MGMT_A_CV4DOI])
@@ -148,7 +150,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		struct in_addr *mask;
 		struct netlbl_domaddr4_map *map;
 
-		addrmap = kzalloc_obj(*addrmap);
+		addrmap = kzalloc(sizeof(*addrmap), GFP_KERNEL);
 		if (addrmap == NULL) {
 			ret_val = -ENOMEM;
 			goto add_doi_put_def;
@@ -169,7 +171,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		addr = nla_data(info->attrs[NLBL_MGMT_A_IPV4ADDR]);
 		mask = nla_data(info->attrs[NLBL_MGMT_A_IPV4MASK]);
 
-		map = kzalloc_obj(*map);
+		map = kzalloc(sizeof(*map), GFP_KERNEL);
 		if (map == NULL) {
 			ret_val = -ENOMEM;
 			goto add_free_addrmap;
@@ -195,7 +197,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		struct in6_addr *mask;
 		struct netlbl_domaddr6_map *map;
 
-		addrmap = kzalloc_obj(*addrmap);
+		addrmap = kzalloc(sizeof(*addrmap), GFP_KERNEL);
 		if (addrmap == NULL) {
 			ret_val = -ENOMEM;
 			goto add_doi_put_def;
@@ -216,7 +218,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 		addr = nla_data(info->attrs[NLBL_MGMT_A_IPV6ADDR]);
 		mask = nla_data(info->attrs[NLBL_MGMT_A_IPV6MASK]);
 
-		map = kzalloc_obj(*map);
+		map = kzalloc(sizeof(*map), GFP_KERNEL);
 		if (map == NULL) {
 			ret_val = -ENOMEM;
 			goto add_free_addrmap;
@@ -599,7 +601,10 @@ static int netlbl_mgmt_listdef(struct sk_buff *skb, struct genl_info *info)
 	struct netlbl_dom_map *entry;
 	u16 family;
 
-	family = nla_get_u16_default(info->attrs[NLBL_MGMT_A_FAMILY], AF_INET);
+	if (info->attrs[NLBL_MGMT_A_FAMILY])
+		family = nla_get_u16(info->attrs[NLBL_MGMT_A_FAMILY]);
+	else
+		family = AF_INET;
 
 	ans_skb = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 	if (ans_skb == NULL)

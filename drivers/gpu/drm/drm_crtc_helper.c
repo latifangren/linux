@@ -334,6 +334,7 @@ bool drm_crtc_helper_set_mode(struct drm_crtc *crtc,
 		if (!encoder_funcs)
 			continue;
 
+		encoder_funcs = encoder->helper_private;
 		if (encoder_funcs->mode_fixup) {
 			if (!(ret = encoder_funcs->mode_fixup(encoder, mode,
 							      adjusted_mode))) {
@@ -602,13 +603,13 @@ int drm_crtc_helper_set_config(struct drm_mode_set *set,
 	 * Allocate space for the backup of all (non-pointer) encoder and
 	 * connector data.
 	 */
-	save_encoder_crtcs = kzalloc_objs(struct drm_crtc *,
-					  dev->mode_config.num_encoder);
+	save_encoder_crtcs = kcalloc(dev->mode_config.num_encoder,
+				sizeof(struct drm_crtc *), GFP_KERNEL);
 	if (!save_encoder_crtcs)
 		return -ENOMEM;
 
-	save_connector_encoders = kzalloc_objs(struct drm_encoder *,
-					       dev->mode_config.num_connector);
+	save_connector_encoders = kcalloc(dev->mode_config.num_connector,
+				sizeof(struct drm_encoder *), GFP_KERNEL);
 	if (!save_connector_encoders) {
 		kfree(save_encoder_crtcs);
 		return -ENOMEM;

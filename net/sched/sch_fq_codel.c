@@ -168,7 +168,6 @@ static unsigned int fq_codel_drop(struct Qdisc *sch, unsigned int max_packets,
 		skb = dequeue_head(flow);
 		len += qdisc_pkt_len(skb);
 		mem += get_codel_cb(skb)->mem_usage;
-		tcf_set_qdisc_drop_reason(skb, QDISC_DROP_OVERLIMIT);
 		__qdisc_drop(skb, to_free);
 	} while (++i < max_packets && len < threshold);
 
@@ -275,7 +274,7 @@ static void drop_func(struct sk_buff *skb, void *ctx)
 {
 	struct Qdisc *sch = ctx;
 
-	qdisc_dequeue_drop(sch, skb, QDISC_DROP_CONGESTED);
+	kfree_skb(skb);
 	qdisc_qstats_drop(sch);
 }
 
@@ -366,7 +365,6 @@ static const struct nla_policy fq_codel_policy[TCA_FQ_CODEL_MAX + 1] = {
 static int fq_codel_change(struct Qdisc *sch, struct nlattr *opt,
 			   struct netlink_ext_ack *extack)
 {
-	unsigned int dropped_pkts = 0, dropped_bytes = 0;
 	struct fq_codel_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_FQ_CODEL_MAX + 1];
 	u32 quantum = 0;
@@ -444,14 +442,13 @@ static int fq_codel_change(struct Qdisc *sch, struct nlattr *opt,
 	       q->memory_usage > q->memory_limit) {
 		struct sk_buff *skb = qdisc_dequeue_internal(sch, false);
 
-		if (!skb)
-			break;
-
-		dropped_pkts++;
-		dropped_bytes += qdisc_pkt_len(skb);
+		q->cstats.drop_len += qdisc_pkt_len(skb);
 		rtnl_kfree_skbs(skb, skb);
+		q->cstats.drop_count++;
 	}
-	qdisc_tree_reduce_backlog(sch, dropped_pkts, dropped_bytes);
+	qdisc_tree_reduce_backlog(sch, q->cstats.drop_count, q->cstats.drop_len);
+	q->cstats.drop_count = 0;
+	q->cstats.drop_len = 0;
 
 	sch_tree_unlock(sch);
 	return 0;
@@ -475,7 +472,11 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt,
 
 	sch->limit = 10*1024;
 	q->flows_cnt = 1024;
+#ifdef CONFIG_X86_64
 	q->memory_limit = 32 << 20; /* 32 MBytes */
+#else
+	q->memory_limit = 4 << 20; /* 4 MBytes */
+#endif
 	q->drop_batch_size = 64;
 	q->quantum = psched_mtu(qdisc_dev(sch));
 	INIT_LIST_HEAD(&q->new_flows);
@@ -496,7 +497,9 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt,
 		goto init_failure;
 
 	if (!q->flows) {
-		q->flows = kvzalloc_objs(struct fq_codel_flow, q->flows_cnt);
+		q->flows = kvcalloc(q->flows_cnt,
+				    sizeof(struct fq_codel_flow),
+				    GFP_KERNEL);
 		if (!q->flows) {
 			err = -ENOMEM;
 			goto init_failure;
@@ -517,9 +520,6 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt,
 		sch->flags |= TCQ_F_CAN_BYPASS;
 	else
 		sch->flags &= ~TCQ_F_CAN_BYPASS;
-
-	sch->flags |= TCQ_F_DEQUEUE_DROPS;
-
 	return 0;
 
 alloc_failure:

@@ -243,7 +243,7 @@ static int snd_pcm_ioctl_hw_params_compat(struct snd_pcm_substream *substream,
 		return -ENOTTY;
 
 	struct snd_pcm_hw_params *data __free(kfree) =
-		kmalloc_obj(*data);
+		kmalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -378,10 +378,12 @@ struct snd_pcm_mmap_status_x32 {
 	s32 pad1;
 	u32 hw_ptr;
 	u32 pad2; /* alignment */
-	struct __snd_timespec64 tstamp;
+	s64 tstamp_sec;
+	s64 tstamp_nsec;
 	snd_pcm_state_t suspended_state;
 	s32 pad3;
-	struct __snd_timespec64 audio_tstamp;
+	s64 audio_tstamp_sec;
+	s64 audio_tstamp_nsec;
 } __packed;
 
 struct snd_pcm_mmap_control_x32 {
@@ -417,7 +419,9 @@ static int snd_pcm_ioctl_sync_ptr_x32(struct snd_pcm_substream *substream,
 	if (snd_BUG_ON(!runtime))
 		return -EINVAL;
 
-	if (snd_pcm_sync_ptr_get_user(sflags, scontrol, src))
+	if (get_user(sflags, &src->flags) ||
+	    get_user(scontrol.appl_ptr, &src->c.control.appl_ptr) ||
+	    get_user(scontrol.avail_min, &src->c.control.avail_min))
 		return -EFAULT;
 	if (sflags & SNDRV_PCM_SYNC_PTR_HWSYNC) {
 		err = snd_pcm_hwsync(substream);
@@ -430,13 +434,11 @@ static int snd_pcm_ioctl_sync_ptr_x32(struct snd_pcm_substream *substream,
 	if (!boundary)
 		boundary = 0x7fffffff;
 	scoped_guard(pcm_stream_lock_irq, substream) {
-		if (!(sflags & SNDRV_PCM_SYNC_PTR_APPL)) {
-			err = pcm_lib_apply_appl_ptr(substream, scontrol.appl_ptr);
-			if (err < 0)
-				return err;
-		} else {
+		/* FIXME: we should consider the boundary for the sync from app */
+		if (!(sflags & SNDRV_PCM_SYNC_PTR_APPL))
+			control->appl_ptr = scontrol.appl_ptr;
+		else
 			scontrol.appl_ptr = control->appl_ptr % boundary;
-		}
 		if (!(sflags & SNDRV_PCM_SYNC_PTR_AVAIL_MIN))
 			control->avail_min = scontrol.avail_min;
 		else
@@ -449,7 +451,15 @@ static int snd_pcm_ioctl_sync_ptr_x32(struct snd_pcm_substream *substream,
 	}
 	if (!(sflags & SNDRV_PCM_SYNC_PTR_APPL))
 		snd_pcm_dma_buffer_sync(substream, SNDRV_DMA_SYNC_DEVICE);
-	if (snd_pcm_sync_ptr_put_user(sstatus, scontrol, src))
+	if (put_user(sstatus.state, &src->s.status.state) ||
+	    put_user(sstatus.hw_ptr, &src->s.status.hw_ptr) ||
+	    put_user(sstatus.tstamp.tv_sec, &src->s.status.tstamp_sec) ||
+	    put_user(sstatus.tstamp.tv_nsec, &src->s.status.tstamp_nsec) ||
+	    put_user(sstatus.suspended_state, &src->s.status.suspended_state) ||
+	    put_user(sstatus.audio_tstamp.tv_sec, &src->s.status.audio_tstamp_sec) ||
+	    put_user(sstatus.audio_tstamp.tv_nsec, &src->s.status.audio_tstamp_nsec) ||
+	    put_user(scontrol.appl_ptr, &src->c.control.appl_ptr) ||
+	    put_user(scontrol.avail_min, &src->c.control.avail_min))
 		return -EFAULT;
 
 	return 0;

@@ -70,7 +70,6 @@ static int add_hist_entries(struct evlist *evlist,
 			};
 			struct hists *hists = evsel__hists(evsel);
 
-			sample.evsel = evsel;
 			/* make sure it has no filter at first */
 			hists->thread_filter = NULL;
 			hists->dso_filter = NULL;
@@ -132,6 +131,10 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 		goto out;
 	err = TEST_FAIL;
 
+	/* default sort order (comm,dso,sym) will be used */
+	if (setup_sorting(NULL) < 0)
+		goto out;
+
 	machines__init(&machines);
 
 	/* setup threads/dso/map/symbols also */
@@ -141,10 +144,6 @@ static int test__hists_filter(struct test_suite *test __maybe_unused, int subtes
 
 	if (verbose > 1)
 		machine__fprintf(machine, stderr);
-
-	/* default sort order (comm,dso,sym) will be used */
-	if (setup_sorting(evlist, machine->env) < 0)
-		goto out;
 
 	/* process sample events */
 	err = add_hist_entries(evlist, machine);

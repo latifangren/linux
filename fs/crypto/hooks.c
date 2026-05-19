@@ -5,8 +5,6 @@
  * Encryption hooks for higher-level filesystem operations.
  */
 
-#include <linux/export.h>
-
 #include "fscrypt_private.h"
 
 /**
@@ -62,7 +60,7 @@ int fscrypt_file_open(struct inode *inode, struct file *filp)
 	dentry_parent = dget_parent(dentry);
 	if (!fscrypt_has_permitted_context(d_inode(dentry_parent), inode)) {
 		fscrypt_warn(inode,
-			     "Inconsistent encryption context (parent directory: %llu)",
+			     "Inconsistent encryption context (parent directory: %lu)",
 			     d_inode(dentry_parent)->i_ino);
 		err = -EPERM;
 	}
@@ -199,13 +197,13 @@ int fscrypt_prepare_setflags(struct inode *inode,
 		err = fscrypt_require_key(inode);
 		if (err)
 			return err;
-		ci = fscrypt_get_inode_info_raw(inode);
+		ci = inode->i_crypt_info;
 		if (ci->ci_policy.version != FSCRYPT_POLICY_V2)
 			return -EINVAL;
 		mk = ci->ci_master_key;
 		down_read(&mk->mk_sem);
 		if (mk->mk_present)
-			fscrypt_derive_dirhash_key(ci, mk);
+			err = fscrypt_derive_dirhash_key(ci, mk);
 		else
 			err = -ENOKEY;
 		up_read(&mk->mk_sem);

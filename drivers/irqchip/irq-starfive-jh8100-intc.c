@@ -114,16 +114,15 @@ static void starfive_intc_irq_handler(struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
-static int starfive_intc_probe(struct platform_device *pdev, struct device_node *parent)
+static int starfive_intc_init(struct device_node *intc, struct device_node *parent)
 {
-	struct device_node *intc = pdev->dev.of_node;
 	struct starfive_irq_chip *irqc;
 	struct reset_control *rst;
 	struct clk *clk;
 	int parent_irq;
 	int ret;
 
-	irqc = kzalloc_obj(*irqc);
+	irqc = kzalloc(sizeof(*irqc), GFP_KERNEL);
 	if (!irqc)
 		return -ENOMEM;
 
@@ -158,8 +157,8 @@ static int starfive_intc_probe(struct platform_device *pdev, struct device_node 
 
 	raw_spin_lock_init(&irqc->lock);
 
-	irqc->domain = irq_domain_create_linear(of_fwnode_handle(intc), STARFIVE_INTC_SRC_IRQ_NUM,
-						&starfive_intc_domain_ops, irqc);
+	irqc->domain = irq_domain_add_linear(intc, STARFIVE_INTC_SRC_IRQ_NUM,
+					     &starfive_intc_domain_ops, irqc);
 	if (!irqc->domain) {
 		pr_err("Unable to create IRQ domain\n");
 		ret = -EINVAL;
@@ -199,7 +198,7 @@ err_free:
 }
 
 IRQCHIP_PLATFORM_DRIVER_BEGIN(starfive_intc)
-IRQCHIP_MATCH("starfive,jh8100-intc", starfive_intc_probe)
+IRQCHIP_MATCH("starfive,jh8100-intc", starfive_intc_init)
 IRQCHIP_PLATFORM_DRIVER_END(starfive_intc)
 
 MODULE_DESCRIPTION("StarFive JH8100 External Interrupt Controller");

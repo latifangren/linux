@@ -18,70 +18,52 @@
 		#size-cells = <2>;
 		ranges;
 
-		apahb_gate: clock-controller@20210000 {
+		ap_ahb_regs: syscon@20210000 {
+			compatible = "syscon";
 			reg = <0 0x20210000 0 0x10000>;
-			compatible = "sprd,sc9860-apahb-gate";
-			clocks = <&aon_prediv 0>;
-			#clock-cells = <1>;
 		};
 
-		pmu_gate: clock-controller@402b0000 {
+		pmu_regs: syscon@402b0000 {
+			compatible = "syscon";
 			reg = <0 0x402b0000 0 0x10000>;
-			compatible = "sprd,sc9860-pmu-gate";
-			clocks = <&ext_26m>;
-			#clock-cells = <1>;
 		};
 
-		aon_gate: clock-controller@402e0000 {
+		aon_regs: syscon@402e0000 {
+			compatible = "syscon";
 			reg = <0 0x402e0000 0 0x10000>;
-			compatible = "sprd,sc9860-aon-gate";
-			clocks = <&aon_prediv 0>;
-			#clock-cells = <1>;
 		};
 
-		pll: clock-controller@40400000 {
+		ana_regs: syscon@40400000 {
+			compatible = "syscon";
 			reg = <0 0x40400000 0 0x10000>;
-			compatible = "sprd,sc9860-pll";
-			clocks = <&pmu_gate 0>;
-			#clock-cells = <1>;
 		};
 
-		agcp_gate: clock-controller@415e0000 {
+		agcp_regs: syscon@415e0000 {
+			compatible = "syscon";
 			reg = <0 0x415e0000 0 0x1000000>;
-			compatible = "sprd,sc9860-agcp-gate";
-			clocks = <&aon_prediv 0>;
-			#clock-cells = <1>;
 		};
 
-		vsp_gate: clock-controller@61100000 {
+		vsp_regs: syscon@61100000 {
+			compatible = "syscon";
 			reg = <0 0x61100000 0 0x10000>;
-			compatible = "sprd,sc9860-vsp-gate";
-			clocks = <&vsp_clk 0>;
-			#clock-cells = <1>;
 		};
 
-		cam_gate: clock-controller@62100000 {
+		cam_regs: syscon@62100000 {
+			compatible = "syscon";
 			reg = <0 0x62100000 0 0x10000>;
-			compatible = "sprd,sc9860-cam-gate";
-			clocks = <&cam_clk 0>;
-			#clock-cells = <1>;
 		};
 
-		disp_gate: clock-controller@63100000 {
+		disp_regs: syscon@63100000 {
+			compatible = "syscon";
 			reg = <0 0x63100000 0 0x10000>;
-			compatible = "sprd,sc9860-disp-gate";
-			clocks = <&disp_clk 0>;
-			#clock-cells = <1>;
 		};
 
-		apapb_gate: clock-controller@70b00000 {
+		ap_apb_regs: syscon@70b00000 {
+			compatible = "syscon";
 			reg = <0 0x70b00000 0 0x40000>;
-			compatible = "sprd,sc9860-apapb-gate";
-			clocks = <&ap_clk 0>;
-			#clock-cells = <1>;
 		};
 
-		apb@70000000 {
+		ap-apb@70000000 {
 			compatible = "simple-bus";
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -136,7 +118,7 @@
 			};
 		};
 
-		ahb {
+		ap-ahb {
 			compatible = "simple-bus";
 			#address-cells = <2>;
 			#size-cells = <2>;
@@ -183,7 +165,7 @@
 			};
 		};
 
-		aon-bus {
+		aon {
 			compatible = "simple-bus";
 			#address-cells = <2>;
 			#size-cells = <2>;
@@ -285,7 +267,7 @@
 			};
 		};
 
-		agcp-bus {
+		agcp {
 			compatible = "simple-bus";
 			#address-cells = <2>;
 			#size-cells = <2>;

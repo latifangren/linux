@@ -822,7 +822,8 @@ int usbhs_pipe_probe(struct usbhs_priv *priv)
 		return -EINVAL;
 	}
 
-	info->pipe = kzalloc_objs(struct usbhs_pipe, pipe_size);
+	info->pipe = kcalloc(pipe_size, sizeof(struct usbhs_pipe),
+			     GFP_KERNEL);
 	if (!info->pipe)
 		return -ENOMEM;
 

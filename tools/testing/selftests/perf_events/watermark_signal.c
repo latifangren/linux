@@ -15,7 +15,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "kselftest_harness.h"
+#include "../kselftest_harness.h"
+
+#define __maybe_unused __attribute__((__unused__))
 
 static int sigio_count;
 
@@ -73,7 +75,7 @@ TEST(watermark_signal)
 	if (waitpid(child, &child_status, WSTOPPED) != child ||
 	    !(WIFSTOPPED(child_status) && WSTOPSIG(child_status) == SIGSTOP)) {
 		fprintf(stderr,
-			"failed to synchronize with child errno=%d status=%x\n",
+			"failed to sycnhronize with child errno=%d status=%x\n",
 			errno,
 			child_status);
 		goto cleanup;

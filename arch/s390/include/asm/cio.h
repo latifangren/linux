@@ -18,8 +18,6 @@
 
 #include <asm/scsw.h>
 
-#define CCW_MAX_BYTE_COUNT 65535
-
 /**
  * struct ccw1 - channel command word
  * @cmd_code: command code

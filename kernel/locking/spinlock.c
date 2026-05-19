@@ -64,9 +64,8 @@ EXPORT_PER_CPU_SYMBOL(__mmiowb_state);
  * time (making _this_ CPU preemptible if possible), and we also signal
  * towards that other CPU that it should break the lock ASAP.
  */
-#define BUILD_LOCK_OPS(op, locktype, lock_ctx_op)			\
-static void __lockfunc __raw_##op##_lock(locktype##_t *lock)		\
-	lock_ctx_op(lock)						\
+#define BUILD_LOCK_OPS(op, locktype)					\
+void __lockfunc __raw_##op##_lock(locktype##_t *lock)			\
 {									\
 	for (;;) {							\
 		preempt_disable();					\
@@ -78,8 +77,7 @@ static void __lockfunc __raw_##op##_lock(locktype##_t *lock)		\
 	}								\
 }									\
 									\
-static unsigned long __lockfunc __raw_##op##_lock_irqsave(locktype##_t *lock) \
-	lock_ctx_op(lock)						\
+unsigned long __lockfunc __raw_##op##_lock_irqsave(locktype##_t *lock)	\
 {									\
 	unsigned long flags;						\
 									\
@@ -97,14 +95,12 @@ static unsigned long __lockfunc __raw_##op##_lock_irqsave(locktype##_t *lock) \
 	return flags;							\
 }									\
 									\
-static void __lockfunc __raw_##op##_lock_irq(locktype##_t *lock)	\
-	lock_ctx_op(lock)						\
+void __lockfunc __raw_##op##_lock_irq(locktype##_t *lock)		\
 {									\
 	_raw_##op##_lock_irqsave(lock);					\
 }									\
 									\
-static void __lockfunc __raw_##op##_lock_bh(locktype##_t *lock)		\
-	lock_ctx_op(lock)						\
+void __lockfunc __raw_##op##_lock_bh(locktype##_t *lock)		\
 {									\
 	unsigned long flags;						\
 									\
@@ -127,11 +123,11 @@ static void __lockfunc __raw_##op##_lock_bh(locktype##_t *lock)		\
  *         __[spin|read|write]_lock_irqsave()
  *         __[spin|read|write]_lock_bh()
  */
-BUILD_LOCK_OPS(spin, raw_spinlock, __acquires);
+BUILD_LOCK_OPS(spin, raw_spinlock);
 
 #ifndef CONFIG_PREEMPT_RT
-BUILD_LOCK_OPS(read, rwlock, __acquires_shared);
-BUILD_LOCK_OPS(write, rwlock, __acquires);
+BUILD_LOCK_OPS(read, rwlock);
+BUILD_LOCK_OPS(write, rwlock);
 #endif
 
 #endif

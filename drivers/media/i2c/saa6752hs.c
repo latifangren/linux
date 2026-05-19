@@ -6,7 +6,7 @@
 
     AC-3 support:
 
-    Copyright (C) 2008 Hans Verkuil <hverkuil@kernel.org>
+    Copyright (C) 2008 Hans Verkuil <hverkuil@xs4all.nl>
 
   */
 

@@ -11,7 +11,7 @@ allOf:
   - $ref: ethernet-controller.yaml#
 
 maintainers:
-  - Linus Walleij <linusw@kernel.org>
+  - Linus Walleij <linus.walleij@linaro.org>
 
 description: |
   The Intel IXP4xx ethernet makes use of the IXP4xx NPE (Network
@@ -46,8 +46,6 @@ properties:
   phy-mode: true
 
   phy-handle: true
-
-  fixed-link: true
 
   intel,npe-handle:
     $ref: /schemas/types.yaml#/definitions/phandle-array

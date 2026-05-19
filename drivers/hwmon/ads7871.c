@@ -104,14 +104,10 @@ static ssize_t voltage_show(struct device *dev, struct device_attribute *da,
 	 */
 	/*MUX_M3_BM forces single ended*/
 	/*This is also where the gain of the PGA would be set*/
-	ret = ads7871_write_reg8(spi, REG_GAIN_MUX,
-				 (MUX_CNV_BM | MUX_M3_BM | channel));
-	if (ret < 0)
-		return ret;
+	ads7871_write_reg8(spi, REG_GAIN_MUX,
+		(MUX_CNV_BM | MUX_M3_BM | channel));
 
 	ret = ads7871_read_reg8(spi, REG_GAIN_MUX);
-	if (ret < 0)
-		return ret;
 	mux_cnv = ((ret & MUX_CNV_BM) >> MUX_CNV_BV);
 	/*
 	 * on 400MHz arm9 platform the conversion
@@ -120,22 +116,18 @@ static ssize_t voltage_show(struct device *dev, struct device_attribute *da,
 	while ((i < 2) && mux_cnv) {
 		i++;
 		ret = ads7871_read_reg8(spi, REG_GAIN_MUX);
-		if (ret < 0)
-			return ret;
 		mux_cnv = ((ret & MUX_CNV_BM) >> MUX_CNV_BV);
 		msleep_interruptible(1);
 	}
 
 	if (mux_cnv == 0) {
 		val = ads7871_read_reg16(spi, REG_LS_BYTE);
-		if (val < 0)
-			return val;
 		/*result in volts*10000 = (val/8192)*2.5*10000*/
 		val = ((val >> 2) * 25000) / 8192;
-		return sysfs_emit(buf, "%d\n", val);
+		return sprintf(buf, "%d\n", val);
+	} else {
+		return -1;
 	}
-
-	return -ETIMEDOUT;
 }
 
 static SENSOR_DEVICE_ATTR_RO(in0_input, voltage, 0);

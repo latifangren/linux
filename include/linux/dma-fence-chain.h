@@ -46,6 +46,7 @@ struct dma_fence_chain {
 		 */
 		struct irq_work work;
 	};
+	spinlock_t lock;
 };
 
 
@@ -90,7 +91,7 @@ dma_fence_chain_contained(struct dma_fence *fence)
  * intentional to enforce typesafety.
  */
 #define dma_fence_chain_alloc()	\
-		kmalloc_obj(struct dma_fence_chain)
+		((struct dma_fence_chain *)kmalloc(sizeof(struct dma_fence_chain), GFP_KERNEL))
 
 /**
  * dma_fence_chain_free

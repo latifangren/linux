@@ -36,7 +36,7 @@ dummy_ops_init_args(const union bpf_attr *kattr, unsigned int nr)
 	if (size_in != sizeof(u64) * nr)
 		return ERR_PTR(-EINVAL);
 
-	args = kzalloc_obj(*args);
+	args = kzalloc(sizeof(*args), GFP_KERNEL);
 	if (!args)
 		return ERR_PTR(-ENOMEM);
 
@@ -158,21 +158,20 @@ int bpf_struct_ops_test_run(struct bpf_prog *prog, const union bpf_attr *kattr,
 	if (err)
 		goto out;
 
-	tlinks = kzalloc_objs(*tlinks, BPF_TRAMP_MAX);
+	tlinks = kcalloc(BPF_TRAMP_MAX, sizeof(*tlinks), GFP_KERNEL);
 	if (!tlinks) {
 		err = -ENOMEM;
 		goto out;
 	}
 
-	link = kzalloc_obj(*link, GFP_USER);
+	link = kzalloc(sizeof(*link), GFP_USER);
 	if (!link) {
 		err = -ENOMEM;
 		goto out;
 	}
 	/* prog doesn't take the ownership of the reference from caller */
 	bpf_prog_inc(prog);
-	bpf_link_init(&link->link, BPF_LINK_TYPE_STRUCT_OPS, &bpf_struct_ops_link_lops, prog,
-		      prog->expected_attach_type);
+	bpf_link_init(&link->link, BPF_LINK_TYPE_STRUCT_OPS, &bpf_struct_ops_link_lops, prog);
 
 	op_idx = prog->expected_attach_type;
 	err = bpf_struct_ops_prepare_trampoline(tlinks, link,

@@ -444,6 +444,7 @@ static int load_timings_from_dt(struct tegra_clk_emc *tegra,
 				u32 ram_code)
 {
 	struct emc_timing *timings_ptr;
+	struct device_node *child;
 	int child_count = of_get_child_count(node);
 	int i = 0, err;
 	size_t size;
@@ -457,11 +458,12 @@ static int load_timings_from_dt(struct tegra_clk_emc *tegra,
 	timings_ptr = tegra->timings + tegra->num_timings;
 	tegra->num_timings += child_count;
 
-	for_each_child_of_node_scoped(node, child) {
+	for_each_child_of_node(node, child) {
 		struct emc_timing *timing = timings_ptr + (i++);
 
 		err = load_one_timing_from_dt(tegra, timing, child);
 		if (err) {
+			of_node_put(child);
 			kfree(tegra->timings);
 			return err;
 		}
@@ -492,7 +494,7 @@ struct clk *tegra124_clk_register_emc(void __iomem *base, struct device_node *np
 	struct clk *clk;
 	int err;
 
-	tegra = kzalloc_objs(*tegra, 1);
+	tegra = kcalloc(1, sizeof(*tegra), GFP_KERNEL);
 	if (!tegra)
 		return ERR_PTR(-ENOMEM);
 

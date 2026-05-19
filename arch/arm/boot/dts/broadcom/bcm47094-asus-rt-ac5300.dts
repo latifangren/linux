@@ -127,9 +127,6 @@
 	ports {
 		port@0 {
 			label = "wan";
-
-			nvmem-cells = <&et1macaddr 1>;
-			nvmem-cell-names = "mac-address";
 		};
 
 		port@1 {

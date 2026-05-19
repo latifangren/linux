@@ -101,7 +101,6 @@
  */
 
 #include <linux/aperture.h>
-#include <linux/export.h>
 #include <linux/version.h>
 
 #include "matroxfb_base.h"
@@ -2073,7 +2072,7 @@ static int matroxfb_probe(struct pci_dev* pdev, const struct pci_device_id* dumm
 		return -1;
 	}
 
-	minfo = kzalloc_obj(*minfo);
+	minfo = kzalloc(sizeof(*minfo), GFP_KERNEL);
 	if (!minfo)
 		return -ENOMEM;
 

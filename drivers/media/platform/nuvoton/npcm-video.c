@@ -411,7 +411,7 @@ static unsigned int npcm_video_add_rect(struct npcm_video *video,
 	struct rect_list *list = NULL;
 	struct v4l2_rect *r;
 
-	list = kzalloc_obj(*list);
+	list = kzalloc(sizeof(*list), GFP_KERNEL);
 	if (!list)
 		return 0;
 
@@ -466,7 +466,7 @@ static struct rect_list *npcm_video_new_rect(struct npcm_video *video,
 	struct rect_list *list = NULL;
 	struct v4l2_rect *r;
 
-	list = kzalloc_obj(*list);
+	list = kzalloc(sizeof(*list), GFP_KERNEL);
 	if (!list)
 		return NULL;
 
@@ -578,7 +578,7 @@ static unsigned int npcm_video_hres(struct npcm_video *video)
 	regmap_read(gfxi, HVCNTL, &hvcntl);
 	apb_hor_res = (((hvcnth & HVCNTH_MASK) << 8) + (hvcntl & HVCNTL_MASK) + 1);
 
-	return (apb_hor_res > MAX_WIDTH) ? MAX_WIDTH : apb_hor_res;
+	return apb_hor_res;
 }
 
 static unsigned int npcm_video_vres(struct npcm_video *video)
@@ -591,7 +591,7 @@ static unsigned int npcm_video_vres(struct npcm_video *video)
 
 	apb_ver_res = (((vvcnth & VVCNTH_MASK) << 8) + (vvcntl & VVCNTL_MASK));
 
-	return (apb_ver_res > MAX_HEIGHT) ? MAX_HEIGHT : apb_ver_res;
+	return apb_ver_res;
 }
 
 static int npcm_video_capres(struct npcm_video *video, unsigned int hor_res,
@@ -863,6 +863,7 @@ static void npcm_video_detect_resolution(struct npcm_video *video)
 	struct regmap *gfxi = video->gfx_regmap;
 	unsigned int dispst;
 
+	video->v4l2_input_status = V4L2_IN_ST_NO_SIGNAL;
 	det->width = npcm_video_hres(video);
 	det->height = npcm_video_vres(video);
 
@@ -891,16 +892,12 @@ static void npcm_video_detect_resolution(struct npcm_video *video)
 		clear_bit(VIDEO_RES_CHANGING, &video->flags);
 	}
 
-	if (det->width && det->height) {
+	if (det->width && det->height)
 		video->v4l2_input_status = 0;
-		dev_dbg(video->dev, "Got resolution[%dx%d] -> [%dx%d], status %d\n",
-			act->width, act->height, det->width, det->height,
-			video->v4l2_input_status);
-	} else {
-		video->v4l2_input_status = V4L2_IN_ST_NO_SIGNAL;
-		dev_err(video->dev, "Got invalid resolution[%dx%d]\n", det->width,
-			det->height);
-	}
+
+	dev_dbg(video->dev, "Got resolution[%dx%d] -> [%dx%d], status %d\n",
+		act->width, act->height, det->width, det->height,
+		video->v4l2_input_status);
 }
 
 static int npcm_video_set_resolution(struct npcm_video *video,
@@ -1561,6 +1558,8 @@ static const struct regmap_config npcm_video_ece_regmap_cfg = {
 
 static const struct vb2_ops npcm_video_vb2_ops = {
 	.queue_setup = npcm_video_queue_setup,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
 	.buf_prepare = npcm_video_buf_prepare,
 	.buf_finish = npcm_video_buf_finish,
 	.start_streaming = npcm_video_start_streaming,
@@ -1733,7 +1732,7 @@ static int npcm_video_init(struct npcm_video *video)
 
 static int npcm_video_probe(struct platform_device *pdev)
 {
-	struct npcm_video *video = kzalloc_obj(*video);
+	struct npcm_video *video = kzalloc(sizeof(*video), GFP_KERNEL);
 	int rc;
 	void __iomem *regs;
 

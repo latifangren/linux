@@ -216,15 +216,8 @@ static int snd_find_free_minor(int type, struct snd_card *card, int dev)
 	case SNDRV_DEVICE_TYPE_RAWMIDI:
 	case SNDRV_DEVICE_TYPE_PCM_PLAYBACK:
 	case SNDRV_DEVICE_TYPE_PCM_CAPTURE:
-		if (snd_BUG_ON(!card))
-			return -EINVAL;
-		minor = SNDRV_MINOR(card->number, type + dev);
-		break;
 	case SNDRV_DEVICE_TYPE_COMPRESS:
 		if (snd_BUG_ON(!card))
-			return -EINVAL;
-		if (dev < 0 ||
-		    dev >= SNDRV_MINOR_HWDEP - SNDRV_MINOR_COMPRESS)
 			return -EINVAL;
 		minor = SNDRV_MINOR(card->number, type + dev);
 		break;
@@ -264,7 +257,7 @@ int snd_register_device(int type, struct snd_card *card, int dev,
 	if (snd_BUG_ON(!device))
 		return -EINVAL;
 
-	preg = kmalloc_obj(*preg);
+	preg = kmalloc(sizeof *preg, GFP_KERNEL);
 	if (preg == NULL)
 		return -ENOMEM;
 	preg->type = type;

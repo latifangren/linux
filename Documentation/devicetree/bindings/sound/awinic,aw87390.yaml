@@ -15,15 +15,12 @@ description:
   sound quallity, which is a new high efficiency, low
   noise, constant large volume, 6th Smart K audio amplifier.
 
+allOf:
+  - $ref: dai-common.yaml#
+
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - awinic,aw87390
-      - items:
-          - enum:
-              - anbernic,rgds-amp
-          - const: awinic,aw87391
+    const: awinic,aw87390
 
   reg:
     maxItems: 1
@@ -43,30 +40,9 @@ required:
   - compatible
   - reg
   - "#sound-dai-cells"
+  - awinic,audio-channel
 
 unevaluatedProperties: false
-
-allOf:
-  - $ref: dai-common.yaml#
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - awinic,aw87390
-    then:
-      required:
-        - awinic,audio-channel
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - anbernic,rgds-amp
-    then:
-      properties:
-        vdd-supply: true
 
 examples:
   - |

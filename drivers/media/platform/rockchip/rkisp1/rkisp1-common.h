@@ -227,7 +227,6 @@ struct rkisp1_isp {
 	struct media_pad pads[RKISP1_ISP_PAD_MAX];
 	const struct rkisp1_mbus_info *sink_fmt;
 	__u32 frame_sequence;
-	bool frame_active;
 };
 
 /*
@@ -420,8 +419,6 @@ struct rkisp1_params {
 
 	spinlock_t config_lock; /* locks the buffers list 'params' */
 	struct list_head params;
-
-	struct v4l2_ctrl_handler ctrls;
 
 	const struct v4l2_meta_format *metafmt;
 

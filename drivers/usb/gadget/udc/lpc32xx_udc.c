@@ -1629,7 +1629,7 @@ static int lpc32xx_ep_enable(struct usb_ep *_ep,
 		return -ESHUTDOWN;
 	}
 
-	tmp = usb_endpoint_type(desc);
+	tmp = desc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
 	switch (tmp) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		return -EINVAL;
@@ -1705,7 +1705,7 @@ static struct usb_request *lpc32xx_ep_alloc_request(struct usb_ep *_ep,
 {
 	struct lpc32xx_request *req;
 
-	req = kzalloc_obj(struct lpc32xx_request, gfp_flags);
+	req = kzalloc(sizeof(struct lpc32xx_request), gfp_flags);
 	if (!req)
 		return NULL;
 
@@ -3084,7 +3084,7 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	if (!udc->udca_v_base) {
 		dev_err(udc->dev, "error getting UDCA region\n");
 		retval = -ENOMEM;
-		goto err_disable_clk;
+		goto i2c_fail;
 	}
 	udc->udca_p_base = dma_handle;
 	dev_dbg(udc->dev, "DMA buffer(0x%x bytes), P:0x%08x, V:0x%p\n",
@@ -3097,7 +3097,7 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	if (!udc->dd_cache) {
 		dev_err(udc->dev, "error getting DD DMA region\n");
 		retval = -ENOMEM;
-		goto err_free_dma;
+		goto dma_alloc_fail;
 	}
 
 	/* Clear USB peripheral and initialize gadget endpoints */
@@ -3111,14 +3111,14 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	if (retval < 0) {
 		dev_err(udc->dev, "LP request irq %d failed\n",
 			udc->udp_irq[IRQ_USB_LP]);
-		goto err_destroy_pool;
+		goto irq_req_fail;
 	}
 	retval = devm_request_irq(dev, udc->udp_irq[IRQ_USB_HP],
 				  lpc32xx_usb_hp_irq, 0, "udc_hp", udc);
 	if (retval < 0) {
 		dev_err(udc->dev, "HP request irq %d failed\n",
 			udc->udp_irq[IRQ_USB_HP]);
-		goto err_destroy_pool;
+		goto irq_req_fail;
 	}
 
 	retval = devm_request_irq(dev, udc->udp_irq[IRQ_USB_DEVDMA],
@@ -3126,7 +3126,7 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	if (retval < 0) {
 		dev_err(udc->dev, "DEV request irq %d failed\n",
 			udc->udp_irq[IRQ_USB_DEVDMA]);
-		goto err_destroy_pool;
+		goto irq_req_fail;
 	}
 
 	/* The transceiver interrupt is used for VBUS detection and will
@@ -3137,7 +3137,7 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	if (retval < 0) {
 		dev_err(udc->dev, "VBUS request irq %d failed\n",
 			udc->udp_irq[IRQ_USB_ATX]);
-		goto err_destroy_pool;
+		goto irq_req_fail;
 	}
 
 	/* Initialize wait queue */
@@ -3146,7 +3146,7 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 
 	retval = usb_add_gadget_udc(dev, &udc->gadget);
 	if (retval < 0)
-		goto err_destroy_pool;
+		goto add_gadget_fail;
 
 	dev_set_drvdata(dev, udc);
 	device_init_wakeup(dev, 1);
@@ -3158,12 +3158,13 @@ static int lpc32xx_udc_probe(struct platform_device *pdev)
 	dev_info(udc->dev, "%s version %s\n", driver_name, DRIVER_VERSION);
 	return 0;
 
-err_destroy_pool:
+add_gadget_fail:
+irq_req_fail:
 	dma_pool_destroy(udc->dd_cache);
-err_free_dma:
+dma_alloc_fail:
 	dma_free_coherent(&pdev->dev, UDCA_BUFF_SIZE,
 			  udc->udca_v_base, udc->udca_p_base);
-err_disable_clk:
+i2c_fail:
 	clk_disable_unprepare(udc->usb_slv_clk);
 err_put_client:
 	put_device(&udc->isp1301_i2c_client->dev);

@@ -196,22 +196,9 @@ static void hisi_spi_flush_fifo(struct hisi_spi *hs)
 	unsigned long limit = loops_per_jiffy << 1;
 
 	do {
-		unsigned long inner_limit = loops_per_jiffy;
-
-		while (hisi_spi_rx_not_empty(hs) && --inner_limit) {
+		while (hisi_spi_rx_not_empty(hs))
 			readl(hs->regs + HISI_SPI_DOUT);
-			cpu_relax();
-		}
-
-		if (!inner_limit) {
-			dev_warn_ratelimited(hs->dev, "RX FIFO flush timeout\n");
-			break;
-		}
-
-	} while (hisi_spi_busy(hs) && --limit);
-
-	if (!limit)
-		dev_warn_ratelimited(hs->dev, "SPI busy timeout\n");
+	} while (hisi_spi_busy(hs) && limit--);
 }
 
 /* Disable the controller and all interrupts */
@@ -439,7 +426,7 @@ static int hisi_spi_setup(struct spi_device *spi)
 	/* Only alloc on first setup */
 	chip = spi_get_ctldata(spi);
 	if (!chip) {
-		chip = kzalloc_obj(*chip);
+		chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 		if (!chip)
 			return -ENOMEM;
 		spi_set_ctldata(spi, chip);
@@ -508,6 +495,7 @@ static int hisi_spi_probe(struct platform_device *pdev)
 	host->cleanup = hisi_spi_cleanup;
 	host->transfer_one = hisi_spi_transfer_one;
 	host->handle_err = hisi_spi_handle_err;
+	host->dev.fwnode = dev->fwnode;
 	host->min_speed_hz = DIV_ROUND_UP(host->max_speed_hz, CLK_DIV_MAX);
 
 	hisi_spi_hw_init(hs);

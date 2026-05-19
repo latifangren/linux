@@ -103,7 +103,7 @@ int mlx5_vxlan_add_port(struct mlx5_vxlan *vxlan, u16 port)
 	struct mlx5_vxlan_port *vxlanp;
 	int ret;
 
-	vxlanp = kzalloc_obj(*vxlanp);
+	vxlanp = kzalloc(sizeof(*vxlanp), GFP_KERNEL);
 	if (!vxlanp)
 		return -ENOMEM;
 	vxlanp->udp_port = port;
@@ -149,9 +149,9 @@ struct mlx5_vxlan *mlx5_vxlan_create(struct mlx5_core_dev *mdev)
 	struct mlx5_vxlan *vxlan;
 
 	if (!MLX5_CAP_ETH(mdev, tunnel_stateless_vxlan) || !mlx5_core_is_pf(mdev))
-		return ERR_PTR(-EOPNOTSUPP);
+		return ERR_PTR(-ENOTSUPP);
 
-	vxlan = kzalloc_obj(*vxlan);
+	vxlan = kzalloc(sizeof(*vxlan), GFP_KERNEL);
 	if (!vxlan)
 		return ERR_PTR(-ENOMEM);
 

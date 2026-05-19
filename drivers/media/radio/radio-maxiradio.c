@@ -122,7 +122,7 @@ static int maxiradio_probe(struct pci_dev *pdev,
 	struct v4l2_device *v4l2_dev;
 	int retval = -ENOMEM;
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (dev == NULL) {
 		dev_err(&pdev->dev, "not enough memory\n");
 		return -ENOMEM;

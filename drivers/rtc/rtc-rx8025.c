@@ -565,6 +565,8 @@ static int rx8025_probe(struct i2c_client *client)
 			clear_bit(RTC_FEATURE_ALARM, rx8025->rtc->features);
 	}
 
+	rx8025->rtc->max_user_freq = 1;
+
 	set_bit(RTC_FEATURE_ALARM_RES_MINUTE, rx8025->rtc->features);
 	clear_bit(RTC_FEATURE_UPDATE_INTERRUPT, rx8025->rtc->features);
 

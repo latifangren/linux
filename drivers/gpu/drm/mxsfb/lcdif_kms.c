@@ -26,7 +26,6 @@
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_plane.h>
-#include <drm/drm_print.h>
 #include <drm/drm_vblank.h>
 
 #include "lcdif_drv.h"
@@ -434,6 +433,7 @@ static int lcdif_crtc_atomic_check(struct drm_crtc *crtc,
 	struct drm_connector *connector;
 	struct drm_encoder *encoder;
 	struct drm_bridge_state *bridge_state;
+	struct drm_bridge *bridge;
 	u32 bus_format, bus_flags;
 	bool format_set = false, flags_set = false;
 	int ret, i;
@@ -453,8 +453,7 @@ static int lcdif_crtc_atomic_check(struct drm_crtc *crtc,
 
 		encoder = connector_state->best_encoder;
 
-		struct drm_bridge *bridge __free(drm_bridge_put) =
-			drm_bridge_chain_get_first_bridge(encoder);
+		bridge = drm_bridge_chain_get_first_bridge(encoder);
 		if (!bridge)
 			continue;
 
@@ -595,7 +594,7 @@ static void lcdif_crtc_reset(struct drm_crtc *crtc)
 
 	crtc->state = NULL;
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (state)
 		__drm_atomic_helper_crtc_reset(crtc, &state->base);
 }
@@ -609,7 +608,7 @@ lcdif_crtc_atomic_duplicate_state(struct drm_crtc *crtc)
 	if (WARN_ON(!crtc->state))
 		return NULL;
 
-	new = kzalloc_obj(*new);
+	new = kzalloc(sizeof(*new), GFP_KERNEL);
 	if (!new)
 		return NULL;
 

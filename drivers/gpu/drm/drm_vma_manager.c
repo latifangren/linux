@@ -23,7 +23,6 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/export.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/rbtree.h>
@@ -253,7 +252,7 @@ static int vma_node_allow(struct drm_vma_offset_node *node,
 	 * unlikely that an open-file is added twice to a single node so we
 	 * don't optimize for this case. OOM is checked below only if the entry
 	 * is actually used. */
-	new = kmalloc_obj(*entry);
+	new = kmalloc(sizeof(*entry), GFP_KERNEL);
 
 	write_lock(&node->vm_lock);
 

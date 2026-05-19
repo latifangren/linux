@@ -12,7 +12,6 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/firmware.h>
@@ -357,7 +356,7 @@ static int sst_acpi_probe(struct platform_device *pdev)
 
 	/* Fill sst platform data */
 	ctx->pdata = pdata;
-	strscpy(ctx->firmware_name, mach->fw_filename);
+	strcpy(ctx->firmware_name, mach->fw_filename);
 
 	ret = sst_platform_get_resources(ctx);
 	if (ret)

@@ -105,8 +105,8 @@ long asihpi_hpi_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	if (cmd != HPI_IOCTL_LINUX)
 		return -EINVAL;
 
-	hm = kmalloc_obj(*hm);
-	hr = kzalloc_obj(*hr);
+	hm = kmalloc(sizeof(*hm), GFP_KERNEL);
+	hr = kzalloc(sizeof(*hr), GFP_KERNEL);
 	if (!hm || !hr) {
 		err = -ENOMEM;
 		goto out;

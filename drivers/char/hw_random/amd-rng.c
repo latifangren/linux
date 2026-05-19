@@ -154,7 +154,7 @@ found:
 		goto put_dev;
 	}
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		err = -ENOMEM;
 		goto put_dev;

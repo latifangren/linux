@@ -15,6 +15,21 @@
 		reg = <0x00000000 0x40000000 0 0x40000000>;
 	};
 
+	/* e-MMC IO, needed for HS modes */
+	reg_vcc1v8: regulator-vcc1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "TQMA8MXNL_VCC1V8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+
+	reg_vcc3v3: regulator-vcc3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "TQMA8MXNL_VCC3V3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
 	reg_usdhc2_vqmmc: regulator-usdhc2-vqmmc {
 		compatible = "regulator-gpio";
 		pinctrl-names = "default";
@@ -51,10 +66,6 @@
 	cpu-supply = <&buck2_reg>;
 };
 
-&easrc {
-	status = "okay";
-};
-
 &flexspi {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_flexspi>;
@@ -66,7 +77,6 @@
 		spi-max-frequency = <84000000>;
 		spi-tx-bus-width = <1>;
 		spi-rx-bus-width = <4>;
-		vcc-supply = <&buck5_reg>;
 
 		partitions {
 			compatible = "fixed-partitions";
@@ -216,14 +226,14 @@
 		read-only;
 		reg = <0x53>;
 		pagesize = <16>;
-		vcc-supply = <&buck4_reg>;
+		vcc-supply = <&reg_vcc3v3>;
 	};
 
 	eeprom0: eeprom@57 {
 		compatible = "atmel,24c64";
 		reg = <0x57>;
 		pagesize = <32>;
-		vcc-supply = <&buck4_reg>;
+		vcc-supply = <&reg_vcc3v3>;
 	};
 };
 
@@ -245,8 +255,8 @@
 	non-removable;
 	no-sd;
 	no-sdio;
-	vmmc-supply = <&buck4_reg>;
-	vqmmc-supply = <&buck5_reg>;
+	vmmc-supply = <&reg_vcc3v3>;
+	vqmmc-supply = <&reg_vcc1v8>;
 	status = "okay";
 };
 

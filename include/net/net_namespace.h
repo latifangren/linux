@@ -37,7 +37,6 @@
 #include <net/netns/smc.h>
 #include <net/netns/bpf.h>
 #include <net/netns/mctp.h>
-#include <net/netns/vsock.h>
 #include <net/net_trackers.h>
 #include <linux/ns_common.h>
 #include <linux/idr.h>
@@ -84,9 +83,6 @@ struct net {
 	struct llist_node	defer_free_list;
 	struct llist_node	cleanup_list;	/* namespaces on death row */
 
-	struct list_head ptype_all;
-	struct list_head ptype_specific;
-
 #ifdef CONFIG_KEYS
 	struct key_tag		*key_domain;	/* Key domain of operation tag */
 #endif
@@ -121,7 +117,6 @@ struct net {
 	 * it is critical that it is on a read_mostly cache line.
 	 */
 	u32			hash_mix;
-	bool			is_dying;
 
 	struct net_device       *loopback_dev;          /* The loopback */
 
@@ -194,13 +189,6 @@ struct net {
 #if IS_ENABLED(CONFIG_SMC)
 	struct netns_smc	smc;
 #endif
-#ifdef CONFIG_DEBUG_NET_SMALL_RTNL
-	/* Move to a better place when the config guard is removed. */
-	struct mutex		rtnl_mutex;
-#endif
-#if IS_ENABLED(CONFIG_VSOCKETS)
-	struct netns_vsock	vsock;
-#endif
 } __randomize_layout;
 
 #include <linux/seq_file_net.h>
@@ -209,7 +197,7 @@ struct net {
 extern struct net init_net;
 
 #ifdef CONFIG_NET_NS
-struct net *copy_net_ns(u64 flags, struct user_namespace *user_ns,
+struct net *copy_net_ns(unsigned long flags, struct user_namespace *user_ns,
 			struct net *old_net);
 
 void net_ns_get_ownership(const struct net *net, kuid_t *uid, kgid_t *gid);
@@ -218,12 +206,10 @@ void net_ns_barrier(void);
 
 struct ns_common *get_net_ns(struct ns_common *ns);
 struct net *get_net_ns_by_fd(int fd);
-extern struct task_struct *cleanup_net_task;
-
 #else /* CONFIG_NET_NS */
 #include <linux/sched.h>
 #include <linux/nsproxy.h>
-static inline struct net *copy_net_ns(u64 flags,
+static inline struct net *copy_net_ns(unsigned long flags,
 	struct user_namespace *user_ns, struct net *old_net)
 {
 	if (flags & CLONE_NEWNET)
@@ -264,18 +250,13 @@ void ipx_unregister_sysctl(void);
 #define ipx_unregister_sysctl()
 #endif
 
-static inline struct net *to_net_ns(struct ns_common *ns)
-{
-	return container_of(ns, struct net, ns);
-}
-
 #ifdef CONFIG_NET_NS
 void __put_net(struct net *net);
 
 /* Try using get_net_track() instead */
 static inline struct net *get_net(struct net *net)
 {
-	ns_ref_inc(net);
+	refcount_inc(&net->ns.count);
 	return net;
 }
 
@@ -286,7 +267,7 @@ static inline struct net *maybe_get_net(struct net *net)
 	 * exists.  If the reference count is zero this
 	 * function fails and returns NULL.
 	 */
-	if (!ns_ref_get(net))
+	if (!refcount_inc_not_zero(&net->ns.count))
 		net = NULL;
 	return net;
 }
@@ -294,7 +275,7 @@ static inline struct net *maybe_get_net(struct net *net)
 /* Try using put_net_track() instead */
 static inline void put_net(struct net *net)
 {
-	if (ns_ref_put(net))
+	if (refcount_dec_and_test(&net->ns.count))
 		__put_net(net);
 }
 
@@ -306,10 +287,10 @@ int net_eq(const struct net *net1, const struct net *net2)
 
 static inline int check_net(const struct net *net)
 {
-	return ns_ref_read(net) != 0;
+	return refcount_read(&net->ns.count) != 0;
 }
 
-void net_drop_ns(struct ns_common *);
+void net_drop_ns(void *);
 void net_passive_dec(struct net *net);
 
 #else
@@ -485,8 +466,8 @@ struct pernet_operations {
 	void (*exit)(struct net *net);
 	void (*exit_batch)(struct list_head *net_exit_list);
 	/* Following method is called with RTNL held. */
-	void (*exit_rtnl)(struct net *net,
-			  struct list_head *dev_kill_list);
+	void (*exit_batch_rtnl)(struct list_head *net_exit_list,
+				struct list_head *dev_kill_list);
 	unsigned int * const id;
 	const size_t size;
 };

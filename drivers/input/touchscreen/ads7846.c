@@ -331,7 +331,7 @@ struct ser_req {
 	u8			ref_off;
 	u16			scratch;
 	struct spi_message	msg;
-	struct spi_transfer	xfer[8];
+	struct spi_transfer	xfer[6];
 	/*
 	 * DMA (thus cache coherency maintenance) requires the
 	 * transfer buffers to live in their own cache lines.
@@ -357,7 +357,7 @@ static int ads7846_read12_ser(struct device *dev, unsigned command)
 	struct ser_req *req;
 	int status;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof *req, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
@@ -405,18 +405,8 @@ static int ads7846_read12_ser(struct device *dev, unsigned command)
 
 	req->xfer[5].rx_buf = &req->scratch;
 	req->xfer[5].len = 2;
+	CS_CHANGE(req->xfer[5]);
 	spi_message_add_tail(&req->xfer[5], &req->msg);
-
-	/* clear the command register */
-	req->scratch = 0;
-	req->xfer[6].tx_buf = &req->scratch;
-	req->xfer[6].len = 1;
-	spi_message_add_tail(&req->xfer[6], &req->msg);
-
-	req->xfer[7].rx_buf = &req->scratch;
-	req->xfer[7].len = 2;
-	CS_CHANGE(req->xfer[7]);
-	spi_message_add_tail(&req->xfer[7], &req->msg);
 
 	mutex_lock(&ts->lock);
 	ads7846_stop(ts);
@@ -442,7 +432,7 @@ static int ads7845_read12_ser(struct device *dev, unsigned command)
 	struct ads7845_ser_req *req;
 	int status;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof *req, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 

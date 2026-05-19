@@ -8,17 +8,13 @@
  * Author: Shyam Sundar S K <Shyam-sundar.S-k@amd.com>
  */
 
-#include <linux/array_size.h>
-#include <linux/cleanup.h>
+#include <asm/amd_nb.h>
 #include <linux/debugfs.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
-#include <linux/string.h>
-#include <asm/amd/node.h>
 #include "pmf.h"
 
 /* PMF-SMU communication registers */
@@ -56,12 +52,6 @@ MODULE_PARM_DESC(metrics_table_loop_ms, "Metrics Table sample size time (default
 static bool force_load;
 module_param(force_load, bool, 0444);
 MODULE_PARM_DESC(force_load, "Force load this driver on supported older platforms (experimental)");
-
-static bool smart_pc_support = true;
-module_param(smart_pc_support, bool, 0444);
-MODULE_PARM_DESC(smart_pc_support, "Smart PC Support (default = true)");
-
-static struct device *pmf_device;
 
 static int amd_pmf_pwr_src_notify_call(struct notifier_block *nb, unsigned long event, void *data)
 {
@@ -137,11 +127,10 @@ static void amd_pmf_get_metrics(struct work_struct *work)
 	ktime_t time_elapsed_ms;
 	int socket_power;
 
-	guard(mutex)(&dev->update_mutex);
-
+	mutex_lock(&dev->update_mutex);
 	/* Transfer table contents */
 	memset(dev->buf, 0, sizeof(dev->m_table));
-	amd_pmf_send_cmd(dev, SET_TRANSFER_TABLE, SET_CMD, METRICS_TABLE_ID, NULL);
+	amd_pmf_send_cmd(dev, SET_TRANSFER_TABLE, 0, 7, NULL);
 	memcpy(&dev->m_table, dev->buf, sizeof(dev->m_table));
 
 	time_elapsed_ms = ktime_to_ms(ktime_get()) - dev->start_time;
@@ -160,6 +149,7 @@ static void amd_pmf_get_metrics(struct work_struct *work)
 
 	dev->start_time = ktime_to_ms(ktime_get());
 	schedule_delayed_work(&dev->work_buffer, msecs_to_jiffies(metrics_table_loop_ms));
+	mutex_unlock(&dev->update_mutex);
 }
 
 static inline u32 amd_pmf_reg_read(struct amd_pmf_dev *dev, int reg_offset)
@@ -205,7 +195,7 @@ int amd_pmf_send_cmd(struct amd_pmf_dev *dev, u8 message, bool get, u32 arg, u32
 	int rc;
 	u32 val;
 
-	guard(mutex)(&dev->lock);
+	mutex_lock(&dev->lock);
 
 	/* Wait until we get a valid response */
 	rc = readx_poll_timeout(ioread32, dev->regbase + AMD_PMF_REGISTER_RESPONSE,
@@ -213,7 +203,7 @@ int amd_pmf_send_cmd(struct amd_pmf_dev *dev, u8 message, bool get, u32 arg, u32
 				PMF_MSG_DELAY_MIN_US * RESPONSE_REGISTER_LOOP_MAX);
 	if (rc) {
 		dev_err(dev->dev, "failed to talk to SMU\n");
-		return rc;
+		goto out_unlock;
 	}
 
 	/* Write zero to response register */
@@ -231,7 +221,7 @@ int amd_pmf_send_cmd(struct amd_pmf_dev *dev, u8 message, bool get, u32 arg, u32
 				PMF_MSG_DELAY_MIN_US * RESPONSE_REGISTER_LOOP_MAX);
 	if (rc) {
 		dev_err(dev->dev, "SMU response timed out\n");
-		return rc;
+		goto out_unlock;
 	}
 
 	switch (val) {
@@ -245,19 +235,21 @@ int amd_pmf_send_cmd(struct amd_pmf_dev *dev, u8 message, bool get, u32 arg, u32
 	case AMD_PMF_RESULT_CMD_REJECT_BUSY:
 		dev_err(dev->dev, "SMU not ready. err: 0x%x\n", val);
 		rc = -EBUSY;
-		break;
+		goto out_unlock;
 	case AMD_PMF_RESULT_CMD_UNKNOWN:
 		dev_err(dev->dev, "SMU cmd unknown. err: 0x%x\n", val);
 		rc = -EINVAL;
-		break;
+		goto out_unlock;
 	case AMD_PMF_RESULT_CMD_REJECT_PREREQ:
 	case AMD_PMF_RESULT_FAILED:
 	default:
 		dev_err(dev->dev, "SMU cmd failed. err: 0x%x\n", val);
 		rc = -EIO;
-		break;
+		goto out_unlock;
 	}
 
+out_unlock:
+	mutex_unlock(&dev->lock);
 	amd_pmf_dump_registers(dev);
 	return rc;
 }
@@ -290,7 +282,7 @@ int amd_pmf_set_dram_addr(struct amd_pmf_dev *dev, bool alloc_buffer)
 			dev_err(dev->dev, "Invalid CPU id: 0x%x", dev->cpu_id);
 		}
 
-		dev->buf = devm_kzalloc(dev->dev, dev->mtable_size, GFP_KERNEL);
+		dev->buf = kzalloc(dev->mtable_size, GFP_KERNEL);
 		if (!dev->buf)
 			return -ENOMEM;
 	}
@@ -299,8 +291,8 @@ int amd_pmf_set_dram_addr(struct amd_pmf_dev *dev, bool alloc_buffer)
 	hi = phys_addr >> 32;
 	low = phys_addr & GENMASK(31, 0);
 
-	amd_pmf_send_cmd(dev, SET_DRAM_ADDR_HIGH, SET_CMD, hi, NULL);
-	amd_pmf_send_cmd(dev, SET_DRAM_ADDR_LOW, SET_CMD, low, NULL);
+	amd_pmf_send_cmd(dev, SET_DRAM_ADDR_HIGH, 0, hi, NULL);
+	amd_pmf_send_cmd(dev, SET_DRAM_ADDR_LOW, 0, low, NULL);
 
 	return 0;
 }
@@ -323,71 +315,6 @@ int amd_pmf_init_metrics_table(struct amd_pmf_dev *dev)
 
 	return 0;
 }
-
-static int is_npu_metrics_supported(struct amd_pmf_dev *pdev)
-{
-	switch (pdev->cpu_id) {
-	case PCI_DEVICE_ID_AMD_1AH_M20H_ROOT:
-	case PCI_DEVICE_ID_AMD_1AH_M60H_ROOT:
-		return 0;
-	default:
-		return -EOPNOTSUPP;
-	}
-}
-
-static int amd_pmf_get_smu_metrics(struct amd_pmf_dev *dev, struct amd_pmf_npu_metrics *data)
-{
-	int ret, i;
-
-	guard(mutex)(&dev->metrics_mutex);
-
-	ret = is_npu_metrics_supported(dev);
-	if (ret)
-		return ret;
-
-	ret = amd_pmf_set_dram_addr(dev, true);
-	if (ret)
-		return ret;
-
-	memset(dev->buf, 0, dev->mtable_size);
-
-	/* Send SMU command to get NPU metrics */
-	ret = amd_pmf_send_cmd(dev, SET_TRANSFER_TABLE, SET_CMD, METRICS_TABLE_ID, NULL);
-	if (ret) {
-		dev_err(dev->dev, "SMU command failed to get NPU metrics: %d\n", ret);
-		return ret;
-	}
-
-	memcpy(&dev->m_table_v2, dev->buf, dev->mtable_size);
-
-	data->npuclk_freq = dev->m_table_v2.npuclk_freq;
-	for (i = 0; i < ARRAY_SIZE(data->npu_busy); i++)
-		data->npu_busy[i] = dev->m_table_v2.npu_busy[i];
-	data->npu_power = dev->m_table_v2.npu_power;
-	data->mpnpuclk_freq = dev->m_table_v2.mpnpuclk_freq;
-	data->npu_reads = dev->m_table_v2.npu_reads;
-	data->npu_writes = dev->m_table_v2.npu_writes;
-
-	return 0;
-}
-
-int amd_pmf_get_npu_data(struct amd_pmf_npu_metrics *info)
-{
-	struct amd_pmf_dev *pdev;
-
-	if (!info)
-		return -EINVAL;
-
-	if (!pmf_device)
-		return -ENODEV;
-
-	pdev = dev_get_drvdata(pmf_device);
-	if (!pdev)
-		return -ENODEV;
-
-	return amd_pmf_get_smu_metrics(pdev, info);
-}
-EXPORT_SYMBOL_NS_GPL(amd_pmf_get_npu_data, "AMD_PMF");
 
 static int amd_pmf_reinit_ta(struct amd_pmf_dev *pdev)
 {
@@ -497,15 +424,11 @@ static void amd_pmf_init_features(struct amd_pmf_dev *dev)
 		dev_dbg(dev->dev, "SPS enabled and Platform Profiles registered\n");
 	}
 
-	if (smart_pc_support) {
-		amd_pmf_init_smart_pc(dev);
-		if (dev->smart_pc_enabled) {
-			dev_dbg(dev->dev, "Smart PC Solution Enabled\n");
-			/* If Smart PC is enabled, no need to check for other features */
-			return;
-		}
-	} else {
-		dev->smart_pc_enabled = false;
+	amd_pmf_init_smart_pc(dev);
+	if (dev->smart_pc_enabled) {
+		dev_dbg(dev->dev, "Smart PC Solution Enabled\n");
+		/* If Smart PC is enabled, no need to check for other features */
+		return;
 	}
 
 	if (is_apmf_func_supported(dev, APMF_FUNC_AUTO_MODE)) {
@@ -524,6 +447,7 @@ static void amd_pmf_deinit_features(struct amd_pmf_dev *dev)
 	if (is_apmf_func_supported(dev, APMF_FUNC_STATIC_SLIDER_GRANULAR) ||
 	    is_apmf_func_supported(dev, APMF_FUNC_OS_POWER_SLIDER_UPDATE)) {
 		power_supply_unreg_notifier(&dev->pwr_src_notifier);
+		amd_pmf_deinit_sps(dev);
 	}
 
 	if (dev->smart_pc_enabled) {
@@ -581,18 +505,18 @@ static int amd_pmf_probe(struct platform_device *pdev)
 
 	err = amd_smn_read(0, AMD_PMF_BASE_ADDR_LO, &val);
 	if (err) {
+		dev_err(dev->dev, "error in reading from 0x%x\n", AMD_PMF_BASE_ADDR_LO);
 		pci_dev_put(rdev);
-		return dev_err_probe(dev->dev, pcibios_err_to_errno(err),
-				     "error in reading from 0x%x\n", AMD_PMF_BASE_ADDR_LO);
+		return pcibios_err_to_errno(err);
 	}
 
 	base_addr_lo = val & AMD_PMF_BASE_ADDR_HI_MASK;
 
 	err = amd_smn_read(0, AMD_PMF_BASE_ADDR_HI, &val);
 	if (err) {
+		dev_err(dev->dev, "error in reading from 0x%x\n", AMD_PMF_BASE_ADDR_HI);
 		pci_dev_put(rdev);
-		return dev_err_probe(dev->dev, pcibios_err_to_errno(err),
-				     "error in reading from 0x%x\n", AMD_PMF_BASE_ADDR_HI);
+		return pcibios_err_to_errno(err);
 	}
 
 	base_addr_hi = val & AMD_PMF_BASE_ADDR_LO_MASK;
@@ -604,26 +528,10 @@ static int amd_pmf_probe(struct platform_device *pdev)
 	if (!dev->regbase)
 		return -ENOMEM;
 
-	err = devm_mutex_init(dev->dev, &dev->lock);
-	if (err)
-		return err;
+	mutex_init(&dev->lock);
+	mutex_init(&dev->update_mutex);
 
-	err = devm_mutex_init(dev->dev, &dev->update_mutex);
-	if (err)
-		return err;
-
-	err = devm_mutex_init(dev->dev, &dev->cb_mutex);
-	if (err)
-		return err;
-
-	err = devm_mutex_init(dev->dev, &dev->cbi_mutex);
-	if (err)
-		return err;
-
-	err = devm_mutex_init(dev->dev, &dev->metrics_mutex);
-	if (err)
-		return err;
-
+	amd_pmf_quirks_init(dev);
 	apmf_acpi_init(dev);
 	platform_set_drvdata(pdev, dev);
 	amd_pmf_dbgfs_register(dev);
@@ -631,8 +539,6 @@ static int amd_pmf_probe(struct platform_device *pdev)
 	apmf_install_handler(dev);
 	if (is_apmf_func_supported(dev, APMF_FUNC_SBIOS_HEARTBEAT_V2))
 		amd_pmf_notify_sbios_heartbeat_event_v2(dev, ON_LOAD);
-
-	pmf_device = dev->dev;
 
 	dev_info(dev->dev, "registered PMF device successfully\n");
 
@@ -648,6 +554,9 @@ static void amd_pmf_remove(struct platform_device *pdev)
 		amd_pmf_notify_sbios_heartbeat_event_v2(dev, ON_UNLOAD);
 	apmf_acpi_deinit(dev);
 	amd_pmf_dbgfs_unregister(dev);
+	mutex_destroy(&dev->lock);
+	mutex_destroy(&dev->update_mutex);
+	kfree(dev->buf);
 }
 
 static const struct attribute_group *amd_pmf_driver_groups[] = {
@@ -663,7 +572,7 @@ static struct platform_driver amd_pmf_driver = {
 		.pm = pm_sleep_ptr(&amd_pmf_pm),
 	},
 	.probe = amd_pmf_probe,
-	.remove = amd_pmf_remove,
+	.remove_new = amd_pmf_remove,
 };
 module_platform_driver(amd_pmf_driver);
 

@@ -26,8 +26,8 @@ static unsigned long ti_composite_recalc_rate(struct clk_hw *hw,
 	return ti_clk_divider_ops.recalc_rate(hw, parent_rate);
 }
 
-static int ti_composite_determine_rate(struct clk_hw *hw,
-				       struct clk_rate_request *req)
+static long ti_composite_round_rate(struct clk_hw *hw, unsigned long rate,
+				    unsigned long *prate)
 {
 	return -EINVAL;
 }
@@ -40,7 +40,7 @@ static int ti_composite_set_rate(struct clk_hw *hw, unsigned long rate,
 
 static const struct clk_ops ti_composite_divider_ops = {
 	.recalc_rate	= &ti_composite_recalc_rate,
-	.determine_rate	= &ti_composite_determine_rate,
+	.round_rate	= &ti_composite_round_rate,
 	.set_rate	= &ti_composite_set_rate,
 };
 
@@ -211,7 +211,7 @@ static void __init of_ti_composite_clk_setup(struct device_node *node)
 		return;
 	}
 
-	cclk = kzalloc_obj(*cclk);
+	cclk = kzalloc(sizeof(*cclk), GFP_KERNEL);
 	if (!cclk)
 		return;
 
@@ -253,7 +253,7 @@ int __init ti_clk_add_component(struct device_node *node, struct clk_hw *hw,
 
 	of_clk_parent_fill(node, parent_names, num_parents);
 
-	clk = kzalloc_obj(*clk);
+	clk = kzalloc(sizeof(*clk), GFP_KERNEL);
 	if (!clk) {
 		kfree(parent_names);
 		return -ENOMEM;

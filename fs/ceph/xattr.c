@@ -249,7 +249,8 @@ static ssize_t ceph_vxattrcb_dir_rbytes(struct ceph_inode_info *ci, char *val,
 static ssize_t ceph_vxattrcb_dir_rctime(struct ceph_inode_info *ci, char *val,
 					size_t size)
 {
-	return ceph_fmt_xattr(val, size, "%ptSp", &ci->i_rctime);
+	return ceph_fmt_xattr(val, size, "%lld.%09ld", ci->i_rctime.tv_sec,
+				ci->i_rctime.tv_nsec);
 }
 
 /* dir pin */
@@ -306,7 +307,8 @@ static bool ceph_vxattrcb_snap_btime_exists(struct ceph_inode_info *ci)
 static ssize_t ceph_vxattrcb_snap_btime(struct ceph_inode_info *ci, char *val,
 					size_t size)
 {
-	return ceph_fmt_xattr(val, size, "%ptSp", &ci->i_snap_btime);
+	return ceph_fmt_xattr(val, size, "%lld.%09ld", ci->i_snap_btime.tv_sec,
+				ci->i_snap_btime.tv_nsec);
 }
 
 static ssize_t ceph_vxattrcb_cluster_fsid(struct ceph_inode_info *ci,
@@ -819,15 +821,15 @@ start:
 		xattr_version = ci->i_xattrs.version;
 		spin_unlock(&ci->i_ceph_lock);
 
-		xattrs = kzalloc_objs(struct ceph_inode_xattr *, numattr,
-				      GFP_NOFS);
+		xattrs = kcalloc(numattr, sizeof(struct ceph_inode_xattr *),
+				 GFP_NOFS);
 		err = -ENOMEM;
 		if (!xattrs)
 			goto bad_lock;
 
 		for (i = 0; i < numattr; i++) {
-			xattrs[i] = kmalloc_obj(struct ceph_inode_xattr,
-						GFP_NOFS);
+			xattrs[i] = kmalloc(sizeof(struct ceph_inode_xattr),
+					    GFP_NOFS);
 			if (!xattrs[i])
 				goto bad_lock;
 		}
@@ -897,7 +899,7 @@ static int __get_required_blob_size(struct ceph_inode_info *ci, int name_size,
 }
 
 /*
- * If there are dirty xattrs, re-encode xattrs into the prealloc_blob
+ * If there are dirty xattrs, reencode xattrs into the prealloc_blob
  * and swap into place.  It returns the old i_xattrs.blob (or NULL) so
  * that it can be freed by the caller as the i_ceph_lock is likely to be
  * held.
@@ -1220,7 +1222,7 @@ int __ceph_setxattr(struct inode *inode, const char *name,
 			goto out;
 	}
 
-	xattr = kmalloc_obj(struct ceph_inode_xattr, GFP_NOFS);
+	xattr = kmalloc(sizeof(struct ceph_inode_xattr), GFP_NOFS);
 	if (!xattr)
 		goto out;
 
@@ -1381,7 +1383,8 @@ int ceph_security_init_secctx(struct dentry *dentry, umode_t mode,
 	int err;
 
 	err = security_dentry_init_security(dentry, mode, &dentry->d_name,
-					    &name, &as_ctx->lsmctx);
+					    &name, &as_ctx->sec_ctx,
+					    &as_ctx->sec_ctxlen);
 	if (err < 0) {
 		WARN_ON_ONCE(err != -EOPNOTSUPP);
 		err = 0; /* do nothing */
@@ -1406,7 +1409,7 @@ int ceph_security_init_secctx(struct dentry *dentry, umode_t mode,
 	 */
 	name_len = strlen(name);
 	err = ceph_pagelist_reserve(pagelist,
-				    4 * 2 + name_len + as_ctx->lsmctx.len);
+				    4 * 2 + name_len + as_ctx->sec_ctxlen);
 	if (err)
 		goto out;
 
@@ -1429,9 +1432,8 @@ int ceph_security_init_secctx(struct dentry *dentry, umode_t mode,
 	ceph_pagelist_encode_32(pagelist, name_len);
 	ceph_pagelist_append(pagelist, name, name_len);
 
-	ceph_pagelist_encode_32(pagelist, as_ctx->lsmctx.len);
-	ceph_pagelist_append(pagelist, as_ctx->lsmctx.context,
-			     as_ctx->lsmctx.len);
+	ceph_pagelist_encode_32(pagelist, as_ctx->sec_ctxlen);
+	ceph_pagelist_append(pagelist, as_ctx->sec_ctx, as_ctx->sec_ctxlen);
 
 	err = 0;
 out:
@@ -1449,7 +1451,7 @@ void ceph_release_acl_sec_ctx(struct ceph_acl_sec_ctx *as_ctx)
 	posix_acl_release(as_ctx->default_acl);
 #endif
 #ifdef CONFIG_CEPH_FS_SECURITY_LABEL
-	security_release_secctx(&as_ctx->lsmctx);
+	security_release_secctx(as_ctx->sec_ctx, as_ctx->sec_ctxlen);
 #endif
 #ifdef CONFIG_FS_ENCRYPTION
 	kfree(as_ctx->fscrypt_auth);

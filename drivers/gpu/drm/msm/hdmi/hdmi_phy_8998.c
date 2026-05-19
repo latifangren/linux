@@ -157,8 +157,9 @@ static inline u32 pll_get_pll_cmp(u64 fdata, unsigned long ref_clk)
 #define HDMI_MHZ_TO_HZ ((u64)1000000)
 static int pll_get_post_div(struct hdmi_8998_post_divider *pd, u64 bclk)
 {
-	static const u32 ratio_list[] = {1, 2, 3, 4, 5, 6, 9, 10, 12, 15, 25};
-	static const u32 band_list[] = {0, 1, 2, 3};
+	u32 const ratio_list[] = {1, 2, 3, 4, 5, 6,
+				     9, 10, 12, 15, 25};
+	u32 const band_list[] = {0, 1, 2, 3};
 	u32 const sz_ratio = ARRAY_SIZE(ratio_list);
 	u32 const sz_band = ARRAY_SIZE(band_list);
 	u32 const cmp_cnt = 1024;
@@ -269,7 +270,7 @@ find_optimal_index:
 	case 25:
 		found_hsclk_divsel = 14;
 		break;
-	}
+	};
 
 	pd->vco_freq = found_vco_freq;
 	pd->tx_band_sel = found_tx_band_sel;
@@ -646,12 +647,16 @@ static int hdmi_8998_pll_prepare(struct clk_hw *hw)
 	return 0;
 }
 
-static int hdmi_8998_pll_determine_rate(struct clk_hw *hw,
-					struct clk_rate_request *req)
+static long hdmi_8998_pll_round_rate(struct clk_hw *hw,
+				     unsigned long rate,
+				     unsigned long *parent_rate)
 {
-	req->rate = clamp_t(unsigned long, req->rate, HDMI_PCLK_MIN_FREQ, HDMI_PCLK_MAX_FREQ);
-
-	return 0;
+	if (rate < HDMI_PCLK_MIN_FREQ)
+		return HDMI_PCLK_MIN_FREQ;
+	else if (rate > HDMI_PCLK_MAX_FREQ)
+		return HDMI_PCLK_MAX_FREQ;
+	else
+		return rate;
 }
 
 static unsigned long hdmi_8998_pll_recalc_rate(struct clk_hw *hw,
@@ -684,7 +689,7 @@ static int hdmi_8998_pll_is_enabled(struct clk_hw *hw)
 
 static const struct clk_ops hdmi_8998_pll_ops = {
 	.set_rate = hdmi_8998_pll_set_clk_rate,
-	.determine_rate = hdmi_8998_pll_determine_rate,
+	.round_rate = hdmi_8998_pll_round_rate,
 	.recalc_rate = hdmi_8998_pll_recalc_rate,
 	.prepare = hdmi_8998_pll_prepare,
 	.unprepare = hdmi_8998_pll_unprepare,

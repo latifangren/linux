@@ -8,6 +8,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/gpio/consumer.h>
 #include <linux/power_supply.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
@@ -103,7 +104,7 @@ struct bq25980_device {
 	int watchdog_timer;
 };
 
-static const struct reg_default bq25980_reg_defs[] = {
+static struct reg_default bq25980_reg_defs[] = {
 	{BQ25980_BATOVP, 0x5A},
 	{BQ25980_BATOVP_ALM, 0x46},
 	{BQ25980_BATOCP, 0x51},
@@ -158,7 +159,7 @@ static const struct reg_default bq25980_reg_defs[] = {
 	{BQ25980_CHRGR_CTRL_6, 0x0},
 };
 
-static const struct reg_default bq25975_reg_defs[] = {
+static struct reg_default bq25975_reg_defs[] = {
 	{BQ25980_BATOVP, 0x5A},
 	{BQ25980_BATOVP_ALM, 0x46},
 	{BQ25980_BATOCP, 0x51},
@@ -213,7 +214,7 @@ static const struct reg_default bq25975_reg_defs[] = {
 	{BQ25980_CHRGR_CTRL_6, 0x0},
 };
 
-static const struct reg_default bq25960_reg_defs[] = {
+static struct reg_default bq25960_reg_defs[] = {
 	{BQ25980_BATOVP, 0x5A},
 	{BQ25980_BATOVP_ALM, 0x46},
 	{BQ25980_BATOCP, 0x51},
@@ -931,7 +932,7 @@ static const struct regmap_config bq25980_regmap_config = {
 	.max_register = BQ25980_CHRGR_CTRL_6,
 	.reg_defaults	= bq25980_reg_defs,
 	.num_reg_defaults = ARRAY_SIZE(bq25980_reg_defs),
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = bq25980_is_volatile_reg,
 };
 
@@ -942,7 +943,7 @@ static const struct regmap_config bq25975_regmap_config = {
 	.max_register = BQ25980_CHRGR_CTRL_6,
 	.reg_defaults	= bq25975_reg_defs,
 	.num_reg_defaults = ARRAY_SIZE(bq25975_reg_defs),
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = bq25980_is_volatile_reg,
 };
 
@@ -953,7 +954,7 @@ static const struct regmap_config bq25960_regmap_config = {
 	.max_register = BQ25980_CHRGR_CTRL_6,
 	.reg_defaults	= bq25960_reg_defs,
 	.num_reg_defaults = ARRAY_SIZE(bq25960_reg_defs),
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 	.volatile_reg = bq25980_is_volatile_reg,
 };
 
@@ -1056,7 +1057,7 @@ static int bq25980_power_supply_init(struct bq25980_device *bq,
 							struct device *dev)
 {
 	struct power_supply_config psy_cfg = { .drv_data = bq,
-						.fwnode = dev_fwnode(dev), };
+						.of_node = dev->of_node, };
 
 	psy_cfg.supplied_to = bq25980_charger_supplied_to;
 	psy_cfg.num_supplicants = ARRAY_SIZE(bq25980_charger_supplied_to);

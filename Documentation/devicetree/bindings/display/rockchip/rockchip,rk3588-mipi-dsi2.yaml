@@ -12,7 +12,6 @@ maintainers:
 properties:
   compatible:
     enum:
-      - rockchip,rk3576-mipi-dsi2
       - rockchip,rk3588-mipi-dsi2
 
   reg:

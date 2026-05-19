@@ -395,28 +395,25 @@ static unsigned long recalc_stm_pll3200c32(struct clk_hw *hw,
 	return rate;
 }
 
-static int stm_pll3200c32_determine_rate(struct clk_hw *hw,
-					 struct clk_rate_request *req)
+static long round_rate_stm_pll3200c32(struct clk_hw *hw, unsigned long rate,
+		unsigned long *prate)
 {
 	struct stm_pll params;
 
-	if (!clk_pll3200c32_get_params(req->best_parent_rate, req->rate, &params))
-		clk_pll3200c32_get_rate(req->best_parent_rate, &params,
-					&req->rate);
+	if (!clk_pll3200c32_get_params(*prate, rate, &params))
+		clk_pll3200c32_get_rate(*prate, &params, &rate);
 	else {
 		pr_debug("%s: %s rate %ld Invalid\n", __func__,
-			 __clk_get_name(hw->clk), req->rate);
-		req->rate = 0;
-
+			 __clk_get_name(hw->clk), rate);
 		return 0;
 	}
 
 	pr_debug("%s: %s new rate %ld [ndiv=%u] [idf=%u]\n",
 		 __func__, __clk_get_name(hw->clk),
-		 req->rate, (unsigned int)params.ndiv,
+		 rate, (unsigned int)params.ndiv,
 		 (unsigned int)params.idf);
 
-	return 0;
+	return rate;
 }
 
 static int set_rate_stm_pll3200c32(struct clk_hw *hw, unsigned long rate,
@@ -552,28 +549,25 @@ static unsigned long recalc_stm_pll4600c28(struct clk_hw *hw,
 	return rate;
 }
 
-static int stm_pll4600c28_determine_rate(struct clk_hw *hw,
-					 struct clk_rate_request *req)
+static long round_rate_stm_pll4600c28(struct clk_hw *hw, unsigned long rate,
+				      unsigned long *prate)
 {
 	struct stm_pll params;
 
-	if (!clk_pll4600c28_get_params(req->best_parent_rate, req->rate, &params)) {
-		clk_pll4600c28_get_rate(req->best_parent_rate, &params,
-					&req->rate);
+	if (!clk_pll4600c28_get_params(*prate, rate, &params)) {
+		clk_pll4600c28_get_rate(*prate, &params, &rate);
 	} else {
 		pr_debug("%s: %s rate %ld Invalid\n", __func__,
-			 __clk_get_name(hw->clk), req->rate);
-		req->rate = 0;
-
+			 __clk_get_name(hw->clk), rate);
 		return 0;
 	}
 
 	pr_debug("%s: %s new rate %ld [ndiv=%u] [idf=%u]\n",
 		 __func__, __clk_get_name(hw->clk),
-		 req->rate, (unsigned int)params.ndiv,
+		 rate, (unsigned int)params.ndiv,
 		 (unsigned int)params.idf);
 
-	return 0;
+	return rate;
 }
 
 static int set_rate_stm_pll4600c28(struct clk_hw *hw, unsigned long rate,
@@ -634,7 +628,7 @@ static const struct clk_ops stm_pll3200c32_a9_ops = {
 	.disable	= clkgen_pll_disable,
 	.is_enabled	= clkgen_pll_is_enabled,
 	.recalc_rate	= recalc_stm_pll3200c32,
-	.determine_rate = stm_pll3200c32_determine_rate,
+	.round_rate	= round_rate_stm_pll3200c32,
 	.set_rate	= set_rate_stm_pll3200c32,
 };
 
@@ -643,7 +637,7 @@ static const struct clk_ops stm_pll4600c28_ops = {
 	.disable	= clkgen_pll_disable,
 	.is_enabled	= clkgen_pll_is_enabled,
 	.recalc_rate	= recalc_stm_pll4600c28,
-	.determine_rate = stm_pll4600c28_determine_rate,
+	.round_rate	= round_rate_stm_pll4600c28,
 	.set_rate	= set_rate_stm_pll4600c28,
 };
 
@@ -656,7 +650,7 @@ static struct clk * __init clkgen_pll_register(const char *parent_name,
 	struct clk *clk;
 	struct clk_init_data init;
 
-	pll = kzalloc_obj(*pll);
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
 	if (!pll)
 		return ERR_PTR(-ENOMEM);
 
@@ -716,7 +710,7 @@ static struct clk * __init clkgen_odf_register(const char *parent_name,
 
 	flags = pll_flags | CLK_GET_RATE_NOCACHE | CLK_SET_RATE_PARENT;
 
-	gate = kzalloc_obj(*gate);
+	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
 	if (!gate)
 		return ERR_PTR(-ENOMEM);
 
@@ -725,7 +719,7 @@ static struct clk * __init clkgen_odf_register(const char *parent_name,
 	gate->bit_idx = pll_data->odf_gate[odf].shift;
 	gate->lock = odf_lock;
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div) {
 		kfree(gate);
 		return ERR_PTR(-ENOMEM);
@@ -783,12 +777,13 @@ static void __init clkgen_c32_pll_setup(struct device_node *np,
 
 	num_odfs = datac->data->num_odfs;
 
-	clk_data = kzalloc_obj(*clk_data);
+	clk_data = kzalloc(sizeof(*clk_data), GFP_KERNEL);
 	if (!clk_data)
 		return;
 
 	clk_data->clk_num = num_odfs;
-	clk_data->clks = kzalloc_objs(struct clk *, clk_data->clk_num);
+	clk_data->clks = kcalloc(clk_data->clk_num, sizeof(struct clk *),
+				 GFP_KERNEL);
 
 	if (!clk_data->clks)
 		goto err;

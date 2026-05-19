@@ -25,6 +25,11 @@ struct pcap_adc_request {
 	void *data;
 };
 
+struct pcap_adc_sync_request {
+	u16 res[2];
+	struct completion completion;
+};
+
 struct pcap_chip {
 	struct spi_device *spi;
 
@@ -302,7 +307,7 @@ int pcap_adc_async(struct pcap_chip *pcap, u8 bank, u32 flags, u8 ch[],
 	unsigned long irq_flags;
 
 	/* This will be freed after we have a result */
-	req = kmalloc_obj(struct pcap_adc_request);
+	req = kmalloc(sizeof(struct pcap_adc_request), GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
@@ -329,6 +334,34 @@ int pcap_adc_async(struct pcap_chip *pcap, u8 bank, u32 flags, u8 ch[],
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pcap_adc_async);
+
+static void pcap_adc_sync_cb(void *param, u16 res[])
+{
+	struct pcap_adc_sync_request *req = param;
+
+	req->res[0] = res[0];
+	req->res[1] = res[1];
+	complete(&req->completion);
+}
+
+int pcap_adc_sync(struct pcap_chip *pcap, u8 bank, u32 flags, u8 ch[],
+								u16 res[])
+{
+	struct pcap_adc_sync_request sync_data;
+	int ret;
+
+	init_completion(&sync_data.completion);
+	ret = pcap_adc_async(pcap, bank, flags, ch, pcap_adc_sync_cb,
+								&sync_data);
+	if (ret)
+		return ret;
+	wait_for_completion(&sync_data.completion);
+	res[0] = sync_data.res[0];
+	res[1] = sync_data.res[1];
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(pcap_adc_sync);
 
 /* subdevs */
 static int pcap_remove_subdev(struct device *dev, void *unused)
@@ -375,6 +408,8 @@ static void ezx_pcap_remove(struct spi_device *spi)
 	/* cleanup irqchip */
 	for (i = pcap->irq_base; i < (pcap->irq_base + PCAP_NIRQS); i++)
 		irq_set_chip_and_handler(i, NULL, NULL);
+
+	destroy_workqueue(pcap->workqueue);
 }
 
 static int ezx_pcap_probe(struct spi_device *spi)
@@ -382,15 +417,17 @@ static int ezx_pcap_probe(struct spi_device *spi)
 	struct pcap_platform_data *pdata = dev_get_platdata(&spi->dev);
 	struct pcap_chip *pcap;
 	int i, adc_irq;
-	int ret;
+	int ret = -ENODEV;
 
 	/* platform data is required */
 	if (!pdata)
-		return -ENODEV;
+		goto ret;
 
 	pcap = devm_kzalloc(&spi->dev, sizeof(*pcap), GFP_KERNEL);
-	if (!pcap)
-		return -ENOMEM;
+	if (!pcap) {
+		ret = -ENOMEM;
+		goto ret;
+	}
 
 	spin_lock_init(&pcap->io_lock);
 	spin_lock_init(&pcap->adc_lock);
@@ -403,15 +440,18 @@ static int ezx_pcap_probe(struct spi_device *spi)
 	spi->mode = SPI_MODE_0 | (pdata->config & PCAP_CS_AH ? SPI_CS_HIGH : 0);
 	ret = spi_setup(spi);
 	if (ret)
-		return ret;
+		goto ret;
 
 	pcap->spi = spi;
 
 	/* setup irq */
 	pcap->irq_base = pdata->irq_base;
-	pcap->workqueue = devm_alloc_ordered_workqueue(&spi->dev, "pcapd", 0);
-	if (!pcap->workqueue)
-		return -ENOMEM;
+	pcap->workqueue = create_singlethread_workqueue("pcapd");
+	if (!pcap->workqueue) {
+		ret = -ENOMEM;
+		dev_err(&spi->dev, "can't create pcap thread\n");
+		goto ret;
+	}
 
 	/* redirect interrupts to AP, except adcdone2 */
 	if (!(pdata->config & PCAP_SECOND_PORT))
@@ -461,7 +501,9 @@ remove_subdevs:
 free_irqchip:
 	for (i = pcap->irq_base; i < (pcap->irq_base + PCAP_NIRQS); i++)
 		irq_set_chip_and_handler(i, NULL, NULL);
-
+/* destroy_workqueue: */
+	destroy_workqueue(pcap->workqueue);
+ret:
 	return ret;
 }
 

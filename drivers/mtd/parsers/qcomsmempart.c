@@ -123,7 +123,7 @@ static int parse_qcomsmem_part(struct mtd_info *mtd,
 			numparts++;
 	}
 
-	parts = kzalloc_objs(*parts, numparts);
+	parts = kcalloc(numparts, sizeof(*parts), GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
 

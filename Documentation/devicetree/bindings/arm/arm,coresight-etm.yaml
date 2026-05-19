@@ -85,10 +85,6 @@ properties:
       CPU powers down the coresight component also powers down and loses its
       context.
 
-  label:
-    description:
-      Description of a coresight device.
-
   arm,cp14:
     type: boolean
     description:
@@ -117,9 +113,6 @@ properties:
       port:
         description: Output connection from the ETM to CoreSight Trace bus.
         $ref: /schemas/graph.yaml#/properties/port
-
-  access-controllers:
-    maxItems: 1
 
 required:
   - compatible

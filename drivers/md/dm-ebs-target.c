@@ -257,7 +257,7 @@ static int ebs_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		return -EINVAL;
 	}
 
-	ec = ti->private = kzalloc_obj(*ec);
+	ec = ti->private = kzalloc(sizeof(*ec), GFP_KERNEL);
 	if (!ec) {
 		ti->error = "Cannot allocate ebs context";
 		return -ENOMEM;
@@ -415,8 +415,7 @@ static void ebs_status(struct dm_target *ti, status_type_t type,
 	}
 }
 
-static int ebs_prepare_ioctl(struct dm_target *ti, struct block_device **bdev,
-			     unsigned int cmd, unsigned long arg, bool *forward)
+static int ebs_prepare_ioctl(struct dm_target *ti, struct block_device **bdev)
 {
 	struct ebs_c *ec = ti->private;
 	struct dm_dev *dev = ec->dev;

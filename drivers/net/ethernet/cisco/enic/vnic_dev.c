@@ -77,9 +77,6 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
 		u32 count = ioread32(&r->count);
 		u32 len;
 
-		vdev_dbg(vdev, "res type %u bar %u offset 0x%x count %u\n",
-			 type, bar_num, bar_offset, count);
-
 		r++;
 
 		if (bar_num >= num_bars)
@@ -93,9 +90,6 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
 		case RES_TYPE_RQ:
 		case RES_TYPE_CQ:
 		case RES_TYPE_INTR_CTRL:
-		case RES_TYPE_ADMIN_WQ:
-		case RES_TYPE_ADMIN_RQ:
-		case RES_TYPE_ADMIN_CQ:
 			/* each count is stride bytes long */
 			len = count * VNIC_RES_STRIDE;
 			if (len + bar_offset > bar[bar_num].len) {
@@ -108,7 +102,6 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
 		case RES_TYPE_INTR_PBA_LEGACY:
 		case RES_TYPE_DEVCMD:
 		case RES_TYPE_DEVCMD2:
-		case RES_TYPE_SRIOV_INTR:
 			len = count;
 			break;
 		default:
@@ -142,9 +135,6 @@ void __iomem *vnic_dev_get_res(struct vnic_dev *vdev, enum vnic_res_type type,
 	case RES_TYPE_RQ:
 	case RES_TYPE_CQ:
 	case RES_TYPE_INTR_CTRL:
-	case RES_TYPE_ADMIN_WQ:
-	case RES_TYPE_ADMIN_RQ:
-	case RES_TYPE_ADMIN_CQ:
 		return (char __iomem *)vdev->res[type].vaddr +
 			index * VNIC_RES_STRIDE;
 	default:
@@ -381,7 +371,7 @@ static int vnic_dev_init_devcmd2(struct vnic_dev *vdev)
 	if (vdev->devcmd2)
 		return 0;
 
-	vdev->devcmd2 = kzalloc_obj(*vdev->devcmd2);
+	vdev->devcmd2 = kzalloc(sizeof(*vdev->devcmd2), GFP_KERNEL);
 	if (!vdev->devcmd2)
 		return -ENOMEM;
 
@@ -1063,7 +1053,7 @@ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
 	unsigned int num_bars)
 {
 	if (!vdev) {
-		vdev = kzalloc_obj(struct vnic_dev);
+		vdev = kzalloc(sizeof(struct vnic_dev), GFP_KERNEL);
 		if (!vdev)
 			return NULL;
 	}

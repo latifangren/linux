@@ -20,23 +20,14 @@
 #include <linux/platform_device.h>
 #include <linux/pm_clock.h>
 #include <linux/pm_domain.h>
-#include <linux/reboot.h>
 #include <linux/slab.h>
 #include <linux/soc/renesas/r9a06g032-sysctrl.h>
 #include <linux/spinlock.h>
 #include <dt-bindings/clock/r9a06g032-sysctrl.h>
 
 #define R9A06G032_SYSCTRL_USB    0x00
-#define R9A06G032_SYSCTRL_USB_H2MODE BIT(1)
+#define R9A06G032_SYSCTRL_USB_H2MODE  (1<<1)
 #define R9A06G032_SYSCTRL_DMAMUX 0xA0
-
-#define R9A06G032_SYSCTRL_RSTEN 0x120
-#define R9A06G032_SYSCTRL_RSTEN_MRESET_EN BIT(0)
-#define R9A06G032_SYSCTRL_RSTCTRL 0x198
-/* These work for both reset registers */
-#define R9A06G032_SYSCTRL_SWRST BIT(6)
-#define R9A06G032_SYSCTRL_WDA7RST_1 BIT(2)
-#define R9A06G032_SYSCTRL_WDA7RST_0 BIT(1)
 
 /**
  * struct regbit - describe one bit in a register
@@ -891,7 +882,7 @@ r9a06g032_register_gate(struct r9a06g032_priv *clocks,
 	struct r9a06g032_clk_gate *g;
 	struct clk_init_data init = {};
 
-	g = kzalloc_obj(*g);
+	g = kzalloc(sizeof(*g), GFP_KERNEL);
 	if (!g)
 		return NULL;
 
@@ -1063,7 +1054,7 @@ r9a06g032_register_div(struct r9a06g032_priv *clocks,
 	struct clk_init_data init = {};
 	unsigned int i;
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div)
 		return NULL;
 
@@ -1149,7 +1140,7 @@ r9a06g032_register_bitsel(struct r9a06g032_priv *clocks,
 	const char *names[2];
 
 	/* allocate the gate */
-	g = kzalloc_obj(*g);
+	g = kzalloc(sizeof(*g), GFP_KERNEL);
 	if (!g)
 		return NULL;
 
@@ -1239,7 +1230,7 @@ r9a06g032_register_dualgate(struct r9a06g032_priv *clocks,
 	struct clk_init_data init = {};
 
 	/* allocate the gate */
-	g = kzalloc_obj(*g);
+	g = kzalloc(sizeof(*g), GFP_KERNEL);
 	if (!g)
 		return NULL;
 	g->clocks = clocks;
@@ -1277,12 +1268,6 @@ r9a06g032_register_dualgate(struct r9a06g032_priv *clocks,
 static void r9a06g032_clocks_del_clk_provider(void *data)
 {
 	of_clk_del_provider(data);
-}
-
-static int r9a06g032_restart_handler(struct sys_off_data *data)
-{
-	writel(R9A06G032_SYSCTRL_SWRST, sysctrl_priv->reg + R9A06G032_SYSCTRL_RSTCTRL);
-	return NOTIFY_DONE;
 }
 
 static void __init r9a06g032_init_h2mode(struct r9a06g032_priv *clocks)
@@ -1338,19 +1323,6 @@ static int __init r9a06g032_clocks_probe(struct platform_device *pdev)
 		return PTR_ERR(clocks->reg);
 
 	r9a06g032_init_h2mode(clocks);
-
-	/* Clear potentially pending resets */
-	writel(R9A06G032_SYSCTRL_WDA7RST_0 | R9A06G032_SYSCTRL_WDA7RST_1,
-	       clocks->reg + R9A06G032_SYSCTRL_RSTCTRL);
-	/* Allow watchdog and software resets */
-	writel(R9A06G032_SYSCTRL_WDA7RST_0 | R9A06G032_SYSCTRL_WDA7RST_1 |
-	       R9A06G032_SYSCTRL_SWRST | R9A06G032_SYSCTRL_RSTEN_MRESET_EN,
-	       clocks->reg + R9A06G032_SYSCTRL_RSTEN);
-
-	error = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART, SYS_OFF_PRIO_HIGH,
-					      r9a06g032_restart_handler, NULL);
-	if (error)
-		dev_warn(dev, "couldn't register restart handler (%d)\n", error);
 
 	for (i = 0; i < ARRAY_SIZE(r9a06g032_clocks); ++i) {
 		const struct r9a06g032_clkdesc *d = &r9a06g032_clocks[i];

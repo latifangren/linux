@@ -4,9 +4,6 @@
  *	Dong Aisheng <aisheng.dong@nxp.com>
  */
 
-/delete-node/ &adma_pwm;
-/delete-node/ &adma_pwm_lpcg;
-
 &dma_subsys {
 	uart4_lpcg: clock-controller@5a4a0000 {
 		compatible = "fsl,imx8qxp-lpcg";
@@ -99,8 +96,7 @@
 		     <GIC_SPI 440 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 441 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 442 IRQ_TYPE_LEVEL_HIGH>,
-		     <GIC_SPI 443 IRQ_TYPE_LEVEL_HIGH>,
-		     <GIC_SPI 67 IRQ_TYPE_LEVEL_HIGH>;
+		     <GIC_SPI 443 IRQ_TYPE_LEVEL_HIGH>;
 	power-domains = <&pd IMX_SC_R_DMA_0_CH0>,
 			<&pd IMX_SC_R_DMA_0_CH1>,
 			<&pd IMX_SC_R_DMA_0_CH2>,

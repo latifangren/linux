@@ -18,4 +18,3 @@ $(obj)/ksmbd_spnego_negtokeninit.asn1.o: $(obj)/ksmbd_spnego_negtokeninit.asn1.c
 $(obj)/ksmbd_spnego_negtokentarg.asn1.o: $(obj)/ksmbd_spnego_negtokentarg.asn1.c $(obj)/ksmbd_spnego_negtokentarg.asn1.h
 
 ksmbd-$(CONFIG_SMB_SERVER_SMBDIRECT) += transport_rdma.o
-ksmbd-$(CONFIG_PROC_FS) += proc.o

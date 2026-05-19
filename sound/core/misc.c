@@ -127,30 +127,35 @@ int snd_fasync_helper(int fd, struct file *file, int on,
 		INIT_LIST_HEAD(&fasync->list);
 	}
 
-	scoped_guard(spinlock_irq, &snd_fasync_lock) {
-		if (*fasyncp) {
-			kfree(fasync);
-			fasync = *fasyncp;
-		} else {
-			if (!fasync)
-				return 0;
-			*fasyncp = fasync;
+	spin_lock_irq(&snd_fasync_lock);
+	if (*fasyncp) {
+		kfree(fasync);
+		fasync = *fasyncp;
+	} else {
+		if (!fasync) {
+			spin_unlock_irq(&snd_fasync_lock);
+			return 0;
 		}
-		fasync->on = on;
+		*fasyncp = fasync;
 	}
+	fasync->on = on;
+	spin_unlock_irq(&snd_fasync_lock);
 	return fasync_helper(fd, file, on, &fasync->fasync);
 }
 EXPORT_SYMBOL_GPL(snd_fasync_helper);
 
 void snd_kill_fasync(struct snd_fasync *fasync, int signal, int poll)
 {
+	unsigned long flags;
+
 	if (!fasync || !fasync->on)
 		return;
-	guard(spinlock_irqsave)(&snd_fasync_lock);
+	spin_lock_irqsave(&snd_fasync_lock, flags);
 	fasync->signal = signal;
 	fasync->poll = poll;
 	list_move(&fasync->list, &snd_fasync_list);
 	schedule_work(&snd_fasync_work);
+	spin_unlock_irqrestore(&snd_fasync_lock, flags);
 }
 EXPORT_SYMBOL_GPL(snd_kill_fasync);
 

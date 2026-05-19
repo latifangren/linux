@@ -688,7 +688,7 @@ static struct usb_serial *create_serial(struct usb_device *dev,
 {
 	struct usb_serial *serial;
 
-	serial = kzalloc_obj(*serial);
+	serial = kzalloc(sizeof(*serial), GFP_KERNEL);
 	if (!serial)
 		return NULL;
 	serial->dev = usb_get_dev(dev);
@@ -706,12 +706,14 @@ static const struct usb_device_id *match_dynamic_id(struct usb_interface *intf,
 {
 	struct usb_dynid *dynid;
 
-	guard(mutex)(&usb_dynids_lock);
+	spin_lock(&drv->dynids.lock);
 	list_for_each_entry(dynid, &drv->dynids.list, node) {
 		if (usb_match_one_id(intf, &dynid->id)) {
+			spin_unlock(&drv->dynids.lock);
 			return &dynid->id;
 		}
 	}
+	spin_unlock(&drv->dynids.lock);
 	return NULL;
 }
 
@@ -1005,7 +1007,7 @@ static int usb_serial_probe(struct usb_interface *interface,
 	}
 
 	/* descriptor matches, let's find the endpoints needed */
-	epds = kzalloc_obj(*epds);
+	epds = kzalloc(sizeof(*epds), GFP_KERNEL);
 	if (!epds) {
 		retval = -ENOMEM;
 		goto err_release_sibling;
@@ -1059,7 +1061,7 @@ static int usb_serial_probe(struct usb_interface *interface,
 
 	dev_dbg(ddev, "setting up %d port structure(s)\n", max_endpoints);
 	for (i = 0; i < max_endpoints; ++i) {
-		port = kzalloc_obj(struct usb_serial_port);
+		port = kzalloc(sizeof(struct usb_serial_port), GFP_KERNEL);
 		if (!port) {
 			retval = -ENOMEM;
 			goto err_free_epds;
@@ -1482,7 +1484,7 @@ int __usb_serial_register_drivers(struct usb_serial_driver *const serial_drivers
 	 * Suspend/resume support is implemented in the usb-serial core,
 	 * so fill in the PM-related fields in udriver.
 	 */
-	udriver = kzalloc_obj(*udriver);
+	udriver = kzalloc(sizeof(*udriver), GFP_KERNEL);
 	if (!udriver)
 		return -ENOMEM;
 

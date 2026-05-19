@@ -7,7 +7,10 @@
 #ifndef _ASMARM_PAGE_H
 #define _ASMARM_PAGE_H
 
-#include <vdso/page.h>
+/* PAGE_SHIFT determines the page size */
+#define PAGE_SHIFT		CONFIG_PAGE_SHIFT
+#define PAGE_SIZE		(_AC(1,UL) << PAGE_SHIFT)
+#define PAGE_MASK		(~((1 << PAGE_SHIFT) - 1))
 
 #ifndef __ASSEMBLY__
 
@@ -184,7 +187,7 @@ extern int pfn_valid(unsigned long);
 
 #include <asm/memory.h>
 
-#define VMA_DATA_DEFAULT_FLAGS	VMA_DATA_FLAGS_TSK_EXEC
+#define VM_DATA_DEFAULT_FLAGS	VM_DATA_FLAGS_TSK_EXEC
 
 #include <asm-generic/getorder.h>
 #include <asm-generic/memory_model.h>

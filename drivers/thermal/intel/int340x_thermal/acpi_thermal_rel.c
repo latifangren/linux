@@ -89,7 +89,7 @@ int acpi_parse_trt(acpi_handle handle, int *trt_count, struct trt **trtp,
 	}
 
 	*trt_count = p->package.count;
-	trts = kzalloc_objs(struct trt, *trt_count);
+	trts = kcalloc(*trt_count, sizeof(struct trt), GFP_KERNEL);
 	if (!trts) {
 		result = -ENOMEM;
 		goto end;
@@ -165,7 +165,7 @@ int acpi_parse_art(acpi_handle handle, int *art_count, struct art **artp,
 
 	/* ignore p->package.elements[0], as this is _ART Revision field */
 	*art_count = p->package.count - 1;
-	arts = kzalloc_objs(struct art, *art_count);
+	arts = kcalloc(*art_count, sizeof(struct art), GFP_KERNEL);
 	if (!arts) {
 		result = -ENOMEM;
 		goto end;
@@ -220,6 +220,9 @@ static int acpi_parse_psvt(acpi_handle handle, int *psvt_count, struct psvt **ps
 	int i, result = 0;
 	struct psvt *psvts;
 
+	if (!acpi_has_method(handle, "PSVT"))
+		return -ENODEV;
+
 	status = acpi_evaluate_object(handle, "PSVT", NULL, &buffer);
 	if (ACPI_FAILURE(status))
 		return -ENODEV;
@@ -253,7 +256,7 @@ static int acpi_parse_psvt(acpi_handle handle, int *psvt_count, struct psvt **ps
 		goto end;
 	}
 
-	psvts = kzalloc_objs(*psvts, *psvt_count);
+	psvts = kcalloc(*psvt_count, sizeof(*psvts), GFP_KERNEL);
 	if (!psvts) {
 		result = -ENOMEM;
 		goto end;

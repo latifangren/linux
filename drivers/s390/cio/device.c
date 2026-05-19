@@ -8,7 +8,8 @@
  *		 Martin Schwidefsky (schwidefsky@de.ibm.com)
  */
 
-#define pr_fmt(fmt) "cio: " fmt
+#define KMSG_COMPONENT "cio"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/export.h>
 #include <linux/init.h>
@@ -200,9 +201,10 @@ devtype_show (struct device *dev, struct device_attribute *attr, char *buf)
 	struct ccw_device_id *id = &(cdev->id);
 
 	if (id->dev_type != 0)
-		return sysfs_emit(buf, "%04x/%02x\n", id->dev_type, id->dev_model);
+		return sprintf(buf, "%04x/%02x\n",
+				id->dev_type, id->dev_model);
 	else
-		return sysfs_emit(buf, "n/a\n");
+		return sprintf(buf, "n/a\n");
 }
 
 static ssize_t
@@ -211,7 +213,8 @@ cutype_show (struct device *dev, struct device_attribute *attr, char *buf)
 	struct ccw_device *cdev = to_ccwdev(dev);
 	struct ccw_device_id *id = &(cdev->id);
 
-	return sysfs_emit(buf, "%04x/%02x\n", id->cu_type, id->cu_model);
+	return sprintf(buf, "%04x/%02x\n",
+		       id->cu_type, id->cu_model);
 }
 
 static ssize_t
@@ -231,7 +234,7 @@ online_show (struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct ccw_device *cdev = to_ccwdev(dev);
 
-	return sysfs_emit(buf, cdev->online ? "1\n" : "0\n");
+	return sprintf(buf, cdev->online ? "1\n" : "0\n");
 }
 
 int ccw_device_is_orphan(struct ccw_device *cdev)
@@ -543,21 +546,21 @@ available_show (struct device *dev, struct device_attribute *attr, char *buf)
 	struct subchannel *sch;
 
 	if (ccw_device_is_orphan(cdev))
-		return sysfs_emit(buf, "no device\n");
+		return sprintf(buf, "no device\n");
 	switch (cdev->private->state) {
 	case DEV_STATE_BOXED:
-		return sysfs_emit(buf, "boxed\n");
+		return sprintf(buf, "boxed\n");
 	case DEV_STATE_DISCONNECTED:
 	case DEV_STATE_DISCONNECTED_SENSE_ID:
 	case DEV_STATE_NOT_OPER:
 		sch = to_subchannel(dev->parent);
 		if (!sch->lpm)
-			return sysfs_emit(buf, "no path\n");
+			return sprintf(buf, "no path\n");
 		else
-			return sysfs_emit(buf, "no device\n");
+			return sprintf(buf, "no device\n");
 	default:
 		/* All other states considered fine. */
-		return sysfs_emit(buf, "good\n");
+		return sprintf(buf, "good\n");
 	}
 }
 
@@ -584,7 +587,7 @@ static ssize_t vpm_show(struct device *dev, struct device_attribute *attr,
 {
 	struct subchannel *sch = to_subchannel(dev);
 
-	return sysfs_emit(buf, "%02x\n", sch->vpm);
+	return sprintf(buf, "%02x\n", sch->vpm);
 }
 
 static DEVICE_ATTR_RO(devtype);
@@ -686,13 +689,13 @@ static struct ccw_device * io_subchannel_allocate_dev(struct subchannel *sch)
 	struct gen_pool *dma_pool;
 	int ret;
 
-	cdev = kzalloc_obj(*cdev);
+	cdev  = kzalloc(sizeof(*cdev), GFP_KERNEL);
 	if (!cdev) {
 		ret = -ENOMEM;
 		goto err_cdev;
 	}
-	cdev->private = kzalloc_obj(struct ccw_device_private,
-				    GFP_KERNEL | GFP_DMA);
+	cdev->private = kzalloc(sizeof(struct ccw_device_private),
+				GFP_KERNEL | GFP_DMA);
 	if (!cdev->private) {
 		ret = -ENOMEM;
 		goto err_priv;
@@ -1060,7 +1063,7 @@ static int io_subchannel_probe(struct subchannel *sch)
 	if (rc)
 		goto out_schedule;
 	/* Allocate I/O subchannel private data. */
-	io_priv = kzalloc_obj(*io_priv, GFP_KERNEL | GFP_DMA);
+	io_priv = kzalloc(sizeof(*io_priv), GFP_KERNEL | GFP_DMA);
 	if (!io_priv)
 		goto out_schedule;
 
@@ -1644,7 +1647,7 @@ struct ccw_device * __init ccw_device_create_console(struct ccw_driver *drv)
 	if (IS_ERR(sch))
 		return ERR_CAST(sch);
 
-	io_priv = kzalloc_obj(*io_priv, GFP_KERNEL | GFP_DMA);
+	io_priv = kzalloc(sizeof(*io_priv), GFP_KERNEL | GFP_DMA);
 	if (!io_priv)
 		goto err_priv;
 	io_priv->dma_area = dma_alloc_coherent(&sch->dev,

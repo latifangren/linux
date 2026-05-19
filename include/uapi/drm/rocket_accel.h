@@ -26,27 +26,20 @@ extern "C" {
  *
  */
 struct drm_rocket_create_bo {
-	/**
-	 * @size: Input: Size of the requested BO.
-	 */
+	/** Input: Size of the requested BO. */
 	__u32 size;
 
-	/**
-	 * @handle: Output: GEM handle for the BO.
-	 */
+	/** Output: GEM handle for the BO. */
 	__u32 handle;
 
 	/**
-	 * @dma_address: Output: DMA address for the BO in the NPU address
-	 * space.  This address is private to the DRM fd and is valid for
-	 * the lifetime of the GEM handle.
+	 * Output: DMA address for the BO in the NPU address space.  This address
+	 * is private to the DRM fd and is valid for the lifetime of the GEM
+	 * handle.
 	 */
 	__u64 dma_address;
 
-	/**
-	 * @offset: Output: Offset into the drm node to use for subsequent
-	 * mmap call.
-	 */
+	/** Output: Offset into the drm node to use for subsequent mmap call. */
 	__u64 offset;
 };
 
@@ -57,19 +50,13 @@ struct drm_rocket_create_bo {
  * synchronization.
  */
 struct drm_rocket_prep_bo {
-	/**
-	 * @handle: Input: GEM handle of the buffer object.
-	 */
+	/** Input: GEM handle of the buffer object. */
 	__u32 handle;
 
-	/**
-	 * @reserved: Reserved, must be zero.
-	 */
+	/** Reserved, must be zero. */
 	__u32 reserved;
 
-	/**
-	 * @timeout_ns: Input: Amount of time to wait for NPU jobs.
-	 */
+	/** Input: Amount of time to wait for NPU jobs. */
 	__s64 timeout_ns;
 };
 
@@ -79,14 +66,10 @@ struct drm_rocket_prep_bo {
  * Synchronize caches for NPU access.
  */
 struct drm_rocket_fini_bo {
-	/**
-	 * @handle: Input: GEM handle of the buffer object.
-	 */
+	/** Input: GEM handle of the buffer object. */
 	__u32 handle;
 
-	/**
-	 * @reserved: Reserved, must be zero.
-	 */
+	/** Reserved, must be zero. */
 	__u32 reserved;
 };
 
@@ -96,15 +79,10 @@ struct drm_rocket_fini_bo {
  * A task is the smallest unit of work that can be run on the NPU.
  */
 struct drm_rocket_task {
-	/**
-	 * @regcmd: Input: DMA address to NPU mapping of register command buffer
-	 */
+	/** Input: DMA address to NPU mapping of register command buffer */
 	__u32 regcmd;
 
-	/**
-	 * @regcmd_count: Input: Number of commands in the register command
-	 * buffer
-	 */
+	/** Input: Number of commands in the register command buffer */
 	__u32 regcmd_count;
 };
 
@@ -116,44 +94,25 @@ struct drm_rocket_task {
  * sequentially on the same core, to benefit from memory residency in SRAM.
  */
 struct drm_rocket_job {
-	/**
-	 * @tasks: Input: Pointer to an array of struct drm_rocket_task.
-	 */
+	/** Input: Pointer to an array of struct drm_rocket_task. */
 	__u64 tasks;
 
-	/**
-	 * @in_bo_handles: Input: Pointer to a u32 array of the BOs that
-	 * are read by the job.
-	 */
+	/** Input: Pointer to a u32 array of the BOs that are read by the job. */
 	__u64 in_bo_handles;
 
-	/**
-	 * @out_bo_handles: Input: Pointer to a u32 array of the BOs that
-	 * are written to by the job.
-	 */
+	/** Input: Pointer to a u32 array of the BOs that are written to by the job. */
 	__u64 out_bo_handles;
 
-	/**
-	 * @task_count: Input: Number of tasks passed in.
-	 */
+	/** Input: Number of tasks passed in. */
 	__u32 task_count;
 
-	/**
-	 * @task_struct_size: Input: Size in bytes of the structs in the
-	 * @tasks field.
-	 */
+	/** Input: Size in bytes of the structs in the @tasks field. */
 	__u32 task_struct_size;
 
-	/**
-	 * @in_bo_handle_count: Input: Number of input BO handles passed in
-	 * (size is that times 4).
-	 */
+	/** Input: Number of input BO handles passed in (size is that times 4). */
 	__u32 in_bo_handle_count;
 
-	/**
-	 * @out_bo_handle_count: Input: Number of output BO handles passed in
-	 * (size is that times 4).
-	 */
+	/** Input: Number of output BO handles passed in (size is that times 4). */
 	__u32 out_bo_handle_count;
 };
 
@@ -163,25 +122,16 @@ struct drm_rocket_job {
  * The kernel will schedule the execution of these jobs in dependency order.
  */
 struct drm_rocket_submit {
-	/**
-	 * @jobs: Input: Pointer to an array of struct drm_rocket_job.
-	 */
+	/** Input: Pointer to an array of struct drm_rocket_job. */
 	__u64 jobs;
 
-	/**
-	 * @job_count: Input: Number of jobs passed in.
-	 */
+	/** Input: Number of jobs passed in. */
 	__u32 job_count;
 
-	/**
-	 * @job_struct_size: Input: Size in bytes of the structs in the
-	 * @jobs field.
-	 */
+	/** Input: Size in bytes of the structs in the @jobs field. */
 	__u32 job_struct_size;
 
-	/**
-	 * @reserved: Reserved, must be zero.
-	 */
+	/** Reserved, must be zero. */
 	__u64 reserved;
 };
 

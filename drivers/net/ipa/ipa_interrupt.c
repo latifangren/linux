@@ -149,6 +149,7 @@ static irqreturn_t ipa_isr_thread(int irq, void *dev_id)
 		iowrite32(pending, ipa->reg_virt + reg_offset(reg));
 	}
 out_power_put:
+	pm_runtime_mark_last_busy(dev);
 	(void)pm_runtime_put_autosuspend(dev);
 
 	return IRQ_HANDLED;
@@ -329,7 +330,7 @@ struct ipa_interrupt *ipa_interrupt_init(struct platform_device *pdev)
 	if (irq <= 0)
 		return ERR_PTR(irq ? : -EINVAL);
 
-	interrupt = kzalloc_obj(*interrupt);
+	interrupt = kzalloc(sizeof(*interrupt), GFP_KERNEL);
 	if (!interrupt)
 		return ERR_PTR(-ENOMEM);
 	interrupt->irq = irq;

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-3-Clause-Clear
+# SPDX-License-Identifier: ISC
 config MT7921_COMMON
 	tristate
 	select MT792x_LIB

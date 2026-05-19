@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-2.0
  */
 #include <linux/irq.h>
-#include <linux/kvm_types.h>
 #include <asm/apic.h>
 
 #include "local.h"
@@ -26,7 +25,7 @@ u32 default_cpu_present_to_apicid(int mps_cpu)
 	else
 		return BAD_APICID;
 }
-EXPORT_SYMBOL_FOR_KVM(default_cpu_present_to_apicid);
+EXPORT_SYMBOL_GPL(default_cpu_present_to_apicid);
 
 /*
  * Set up the logical destination ID when the APIC operates in logical

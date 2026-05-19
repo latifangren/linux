@@ -33,7 +33,6 @@
 #include <linux/types.h>
 #include <linux/completion.h>
 #include <linux/idr.h>
-#include <linux/xarray.h>
 
 #include <uapi/drm/drm.h>
 
@@ -208,13 +207,6 @@ struct drm_file {
 	bool writeback_connectors;
 
 	/**
-	 * @plane_color_pipeline:
-	 *
-	 * True if client understands plane color pipelines
-	 */
-	bool plane_color_pipeline;
-
-	/**
 	 * @was_master:
 	 *
 	 * This client has or had, master capability. Protected by struct
@@ -317,8 +309,10 @@ struct drm_file {
 	/** @table_lock: Protects @object_idr. */
 	spinlock_t table_lock;
 
-	/** @syncobj_xa: Mapping of sync object handles to object pointers. */
-	struct xarray syncobj_xa;
+	/** @syncobj_idr: Mapping of sync object handles to object pointers. */
+	struct idr syncobj_idr;
+	/** @syncobj_table_lock: Protects @syncobj_idr. */
+	spinlock_t syncobj_table_lock;
 
 	/** @filp: Pointer to the core file structure. */
 	struct file *filp;
@@ -397,25 +391,6 @@ struct drm_file {
 	 * Per-file buffer caches used by the PRIME buffer sharing code.
 	 */
 	struct drm_prime_file_private prime;
-
-	/**
-	 * @client_name:
-	 *
-	 * Userspace-provided name; useful for accounting and debugging.
-	 */
-	const char *client_name;
-
-	/**
-	 * @client_name_lock: Protects @client_name.
-	 */
-	struct mutex client_name_lock;
-
-	/**
-	 * @debugfs_client:
-	 *
-	 * debugfs directory for each client under a drm node.
-	 */
-	struct dentry *debugfs_client;
 };
 
 /**
@@ -461,9 +436,6 @@ static inline bool drm_is_accel_client(const struct drm_file *file_priv)
 {
 	return file_priv->minor->type == DRM_MINOR_ACCEL;
 }
-
-__printf(2, 3)
-void drm_file_err(struct drm_file *file_priv, const char *fmt, ...);
 
 void drm_file_update_pid(struct drm_file *);
 
@@ -513,12 +485,6 @@ struct drm_memory_stats {
 
 enum drm_gem_object_status;
 
-int drm_memory_stats_is_zero(const struct drm_memory_stats *stats);
-void drm_fdinfo_print_size(struct drm_printer *p,
-			   const char *prefix,
-			   const char *stat,
-			   const char *region,
-			   u64 sz);
 void drm_print_memory_stats(struct drm_printer *p,
 			    const struct drm_memory_stats *stats,
 			    enum drm_gem_object_status supported_status,

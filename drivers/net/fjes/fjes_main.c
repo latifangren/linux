@@ -111,6 +111,56 @@ fjes_get_acpi_resource(struct acpi_resource *acpi_res, void *data)
 	return AE_OK;
 }
 
+static struct resource fjes_resource[] = {
+	DEFINE_RES_MEM(0, 1),
+	DEFINE_RES_IRQ(0)
+};
+
+static int fjes_acpi_add(struct acpi_device *device)
+{
+	struct platform_device *plat_dev;
+	acpi_status status;
+
+	if (!is_extended_socket_device(device))
+		return -ENODEV;
+
+	if (acpi_check_extended_socket_status(device))
+		return -ENODEV;
+
+	status = acpi_walk_resources(device->handle, METHOD_NAME__CRS,
+				     fjes_get_acpi_resource, fjes_resource);
+	if (ACPI_FAILURE(status))
+		return -ENODEV;
+
+	/* create platform_device */
+	plat_dev = platform_device_register_simple(DRV_NAME, 0, fjes_resource,
+						   ARRAY_SIZE(fjes_resource));
+	if (IS_ERR(plat_dev))
+		return PTR_ERR(plat_dev);
+
+	device->driver_data = plat_dev;
+
+	return 0;
+}
+
+static void fjes_acpi_remove(struct acpi_device *device)
+{
+	struct platform_device *plat_dev;
+
+	plat_dev = (struct platform_device *)acpi_driver_data(device);
+	platform_device_unregister(plat_dev);
+}
+
+static struct acpi_driver fjes_acpi_driver = {
+	.name = DRV_NAME,
+	.class = DRV_NAME,
+	.ids = fjes_acpi_ids,
+	.ops = {
+		.add = fjes_acpi_add,
+		.remove = fjes_acpi_remove,
+	},
+};
+
 static int fjes_setup_resources(struct fjes_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
@@ -1314,15 +1364,14 @@ static int fjes_probe(struct platform_device *plat_dev)
 	adapter->force_reset = false;
 	adapter->open_guard = false;
 
-	adapter->txrx_wq = alloc_workqueue(DRV_NAME "/txrx",
-					   WQ_MEM_RECLAIM | WQ_PERCPU, 0);
+	adapter->txrx_wq = alloc_workqueue(DRV_NAME "/txrx", WQ_MEM_RECLAIM, 0);
 	if (unlikely(!adapter->txrx_wq)) {
 		err = -ENOMEM;
 		goto err_free_netdev;
 	}
 
 	adapter->control_wq = alloc_workqueue(DRV_NAME "/control",
-					      WQ_MEM_RECLAIM | WQ_PERCPU, 0);
+					      WQ_MEM_RECLAIM, 0);
 	if (unlikely(!adapter->control_wq)) {
 		err = -ENOMEM;
 		goto err_free_txrx_wq;
@@ -1417,83 +1466,45 @@ static struct platform_driver fjes_driver = {
 		.name = DRV_NAME,
 	},
 	.probe = fjes_probe,
-	.remove = fjes_remove,
-};
-
-struct fjes_acpi_walk_context {
-	struct acpi_device *adev;
-	struct resource resources[2];
+	.remove_new = fjes_remove,
 };
 
 static acpi_status
 acpi_find_extended_socket_device(acpi_handle obj_handle, u32 level,
 				 void *context, void **return_value)
 {
-	struct fjes_acpi_walk_context *fjes_context = context;
 	struct acpi_device *device;
-	acpi_status status;
+	bool *found = context;
 
-	device = acpi_get_acpi_dev(obj_handle);
+	device = acpi_fetch_acpi_dev(obj_handle);
 	if (!device)
 		return AE_OK;
 
 	if (strcmp(acpi_device_hid(device), ACPI_MOTHERBOARD_RESOURCE_HID))
-		goto skip;
+		return AE_OK;
 
 	if (!is_extended_socket_device(device))
-		goto skip;
+		return AE_OK;
 
 	if (acpi_check_extended_socket_status(device))
-		goto skip;
+		return AE_OK;
 
-	status = acpi_walk_resources(obj_handle, METHOD_NAME__CRS,
-				     fjes_get_acpi_resource, fjes_context->resources);
-	if (ACPI_FAILURE(status))
-		goto skip;
-
-	fjes_context->adev = device;
-
+	*found = true;
 	return AE_CTRL_TERMINATE;
-
-skip:
-	acpi_dev_put(device);
-	return AE_OK;
 }
-
-static struct platform_device *fjes_plat_dev;
 
 /* fjes_init_module - Driver Registration Routine */
 static int __init fjes_init_module(void)
 {
-	struct fjes_acpi_walk_context fjes_context = {
-		.adev = NULL,
-		.resources = {
-			DEFINE_RES_MEM(0, 1),
-			DEFINE_RES_IRQ(0)
-		}
-	};
-	struct platform_device_info pdevinfo;
+	bool found = false;
 	int result;
 
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT, ACPI_UINT32_MAX,
-			    acpi_find_extended_socket_device, NULL, &fjes_context,
+			    acpi_find_extended_socket_device, NULL, &found,
 			    NULL);
-	if (!fjes_context.adev)
+
+	if (!found)
 		return -ENODEV;
-
-	memset(&pdevinfo, 0, sizeof(pdevinfo));
-
-	pdevinfo.name = DRV_NAME;
-	pdevinfo.res = fjes_context.resources;
-	pdevinfo.num_res = ARRAY_SIZE(fjes_context.resources);
-	pdevinfo.fwnode = acpi_fwnode_handle(fjes_context.adev);
-
-	fjes_plat_dev = platform_device_register_full(&pdevinfo);
-
-	acpi_dev_put(fjes_context.adev);
-
-	if (IS_ERR(fjes_plat_dev))
-		return PTR_ERR(fjes_plat_dev);
 
 	pr_info("%s - version %s - %s\n",
 		fjes_driver_string, fjes_driver_version, fjes_copyright);
@@ -1503,11 +1514,19 @@ static int __init fjes_init_module(void)
 	result = platform_driver_register(&fjes_driver);
 	if (result < 0) {
 		fjes_dbg_exit();
-		platform_device_unregister(fjes_plat_dev);
 		return result;
 	}
 
+	result = acpi_bus_register_driver(&fjes_acpi_driver);
+	if (result < 0)
+		goto fail_acpi_driver;
+
 	return 0;
+
+fail_acpi_driver:
+	platform_driver_unregister(&fjes_driver);
+	fjes_dbg_exit();
+	return result;
 }
 
 module_init(fjes_init_module);
@@ -1515,9 +1534,9 @@ module_init(fjes_init_module);
 /* fjes_exit_module - Driver Exit Cleanup Routine */
 static void __exit fjes_exit_module(void)
 {
+	acpi_bus_unregister_driver(&fjes_acpi_driver);
 	platform_driver_unregister(&fjes_driver);
 	fjes_dbg_exit();
-	platform_device_unregister(fjes_plat_dev);
 }
 
 module_exit(fjes_exit_module);

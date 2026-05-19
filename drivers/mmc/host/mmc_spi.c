@@ -566,7 +566,7 @@ mmc_spi_setup_data_message(struct mmc_spi_host *host, bool multiple, bool write)
 	if (write) {
 		t = &host->early_status;
 		memset(t, 0, sizeof(*t));
-		t->len = sizeof(scratch->status);
+		t->len = write ? sizeof(scratch->status) : 1;
 		t->tx_buf = host->ones;
 		t->rx_buf = scratch->status;
 		t->cs_change = 1;
@@ -1185,7 +1185,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 		goto nomem;
 	memset(ones, 0xff, MMC_SPI_BLOCKSIZE);
 
-	mmc = devm_mmc_alloc_host(&spi->dev, sizeof(*host));
+	mmc = mmc_alloc_host(sizeof(*host), &spi->dev);
 	if (!mmc)
 		goto nomem;
 
@@ -1236,7 +1236,7 @@ static int mmc_spi_probe(struct spi_device *spi)
 	}
 
 	/* Preallocate buffers */
-	host->data = kmalloc_obj(*host->data);
+	host->data = kmalloc(sizeof(*host->data), GFP_KERNEL);
 	if (!host->data)
 		goto fail_nobuf1;
 
@@ -1305,6 +1305,7 @@ fail_glue_init:
 	kfree(host->data);
 fail_nobuf1:
 	mmc_spi_put_pdata(spi);
+	mmc_free_host(mmc);
 nomem:
 	kfree(ones);
 	return status;
@@ -1327,6 +1328,7 @@ static void mmc_spi_remove(struct spi_device *spi)
 
 	spi->max_speed_hz = mmc->f_max;
 	mmc_spi_put_pdata(spi);
+	mmc_free_host(mmc);
 }
 
 static const struct spi_device_id mmc_spi_dev_ids[] = {

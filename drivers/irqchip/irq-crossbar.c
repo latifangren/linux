@@ -199,7 +199,7 @@ static int __init crossbar_of_init(struct device_node *node)
 	const __be32 *irqsr;
 	int ret = -ENOMEM;
 
-	cb = kzalloc_obj(*cb);
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
 
 	if (!cb)
 		return ret;
@@ -268,7 +268,7 @@ static int __init crossbar_of_init(struct device_node *node)
 	}
 
 
-	cb->register_offsets = kzalloc_objs(int, max);
+	cb->register_offsets = kcalloc(max, sizeof(int), GFP_KERNEL);
 	if (!cb->register_offsets)
 		goto err_irq_map;
 
@@ -351,8 +351,10 @@ static int __init irqcrossbar_init(struct device_node *node,
 	if (err)
 		return err;
 
-	domain = irq_domain_create_hierarchy(parent_domain, 0, cb->max_crossbar_sources,
-					     of_fwnode_handle(node), &crossbar_domain_ops, NULL);
+	domain = irq_domain_add_hierarchy(parent_domain, 0,
+					  cb->max_crossbar_sources,
+					  node, &crossbar_domain_ops,
+					  NULL);
 	if (!domain) {
 		pr_err("%pOF: failed to allocated domain\n", node);
 		return -ENOMEM;

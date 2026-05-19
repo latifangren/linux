@@ -204,7 +204,8 @@ int __init qdio_thinint_init(void)
 {
 	int rc;
 
-	q_indicators = kzalloc_objs(struct indicator_t, TIQDIO_NR_INDICATORS);
+	q_indicators = kcalloc(TIQDIO_NR_INDICATORS, sizeof(struct indicator_t),
+			       GFP_KERNEL);
 	if (!q_indicators)
 		return -ENOMEM;
 

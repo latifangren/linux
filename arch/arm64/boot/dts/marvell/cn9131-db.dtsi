@@ -31,7 +31,6 @@
 
 	cp1_usb3_0_phy0: usb-phy-3 {
 		compatible = "usb-nop-xceiv";
-		#phy-cells = <0>;
 		vcc-supply = <&cp1_reg_usb3_vbus0>;
 	};
 
@@ -128,7 +127,6 @@
 	sata-port@1 {
 		/* Generic PHY, providing serdes lanes */
 		phys = <&cp1_comphy5 1>;
-		status = "okay";
 	};
 };
 

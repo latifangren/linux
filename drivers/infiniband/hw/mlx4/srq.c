@@ -111,9 +111,8 @@ int mlx4_ib_create_srq(struct ib_srq *ib_srq,
 	if (udata) {
 		struct mlx4_ib_create_srq ucmd;
 
-		err = ib_copy_validate_udata_in(udata, ucmd, db_addr);
-		if (err)
-			return err;
+		if (ib_copy_from_udata(&ucmd, udata, sizeof(ucmd)))
+			return -EFAULT;
 
 		srq->umem =
 			ib_umem_get(ib_srq->device, ucmd.buf_addr, buf_size, 0);

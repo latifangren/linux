@@ -394,7 +394,7 @@ static const struct mtk_dp_efuse_fmt mt8195_dp_efuse_fmt[MTK_DP_CAL_MAX] = {
 	},
 };
 
-static const struct regmap_config mtk_dp_regmap_config = {
+static struct regmap_config mtk_dp_regmap_config = {
 	.reg_bits = 32,
 	.val_bits = 32,
 	.reg_stride = 4,
@@ -1138,18 +1138,6 @@ static void mtk_dp_digital_sw_reset(struct mtk_dp *mtk_dp)
 			   0, DP_TX_TRANSMITTER_4P_RESET_SW_DP_TRANS_P0);
 }
 
-static void mtk_dp_sdp_path_reset(struct mtk_dp *mtk_dp)
-{
-	mtk_dp_update_bits(mtk_dp, MTK_DP_ENC0_P0_3004,
-			   SDP_RESET_SW_DP_ENC0_P0,
-			   SDP_RESET_SW_DP_ENC0_P0);
-
-	/* Wait for sdp path reset to complete */
-	usleep_range(1000, 5000);
-	mtk_dp_update_bits(mtk_dp, MTK_DP_ENC0_P0_3004,
-			   0, SDP_RESET_SW_DP_ENC0_P0);
-}
-
 static void mtk_dp_set_lanes(struct mtk_dp *mtk_dp, int lanes)
 {
 	mtk_dp_update_bits(mtk_dp, MTK_DP_TRANS_P0_35F0,
@@ -1180,25 +1168,17 @@ static void mtk_dp_get_calibration_data(struct mtk_dp *mtk_dp)
 	buf = (u32 *)nvmem_cell_read(cell, &len);
 	nvmem_cell_put(cell);
 
-	if (IS_ERR(buf)) {
+	if (IS_ERR(buf) || ((len / sizeof(u32)) != 4)) {
 		dev_warn(dev, "Failed to read nvmem_cell_read\n");
+
+		if (!IS_ERR(buf))
+			kfree(buf);
+
 		goto use_default_val;
 	}
 
-	/* The cell length is in bytes. Convert it to be compatible with u32 buffer. */
-	len /= sizeof(u32);
-
 	for (i = 0; i < MTK_DP_CAL_MAX; i++) {
 		fmt = &mtk_dp->data->efuse_fmt[i];
-
-		if (fmt->idx >= len) {
-			dev_warn(mtk_dp->dev,
-				 "Out-of-bound efuse data access, fmt idx = %d, buf len = %zu\n",
-				 fmt->idx, len);
-			kfree(buf);
-			goto use_default_val;
-		}
-
 		cal_data[i] = (buf[fmt->idx] >> fmt->shift) & fmt->mask;
 
 		if (cal_data[i] < fmt->min_val || cal_data[i] > fmt->max_val) {
@@ -1976,7 +1956,6 @@ static irqreturn_t mtk_dp_hpd_event_thread(int hpd, void *dev)
 	struct mtk_dp *mtk_dp = dev;
 	unsigned long flags;
 	u32 status;
-	int ret;
 
 	if (mtk_dp->need_debounce && mtk_dp->train_info.cable_plugged_in)
 		msleep(100);
@@ -1995,28 +1974,9 @@ static irqreturn_t mtk_dp_hpd_event_thread(int hpd, void *dev)
 			memset(&mtk_dp->info.audio_cur_cfg, 0,
 			       sizeof(mtk_dp->info.audio_cur_cfg));
 
-			mtk_dp->enabled = false;
-			/* power off aux */
-			mtk_dp_update_bits(mtk_dp, MTK_DP_TOP_PWR_STATE,
-					   DP_PWR_STATE_BANDGAP_TPLL,
-					   DP_PWR_STATE_MASK);
-
 			mtk_dp->need_debounce = false;
 			mod_timer(&mtk_dp->debounce_timer,
 				  jiffies + msecs_to_jiffies(100) - 1);
-		} else {
-			mtk_dp_aux_panel_poweron(mtk_dp, true);
-
-			ret = mtk_dp_parse_capabilities(mtk_dp);
-			if (ret)
-				drm_err(mtk_dp->drm_dev, "Can't parse capabilities\n");
-
-			/* Training */
-			ret = mtk_dp_training(mtk_dp);
-			if (ret)
-				drm_err(mtk_dp->drm_dev, "Training failed, %d\n", ret);
-
-			mtk_dp->enabled = true;
 		}
 	}
 
@@ -2139,8 +2099,7 @@ static void mtk_dp_update_plugged_status(struct mtk_dp *mtk_dp)
 	mutex_unlock(&mtk_dp->update_plugged_status_lock);
 }
 
-static enum drm_connector_status
-mtk_dp_bdg_detect(struct drm_bridge *bridge, struct drm_connector *connector)
+static enum drm_connector_status mtk_dp_bdg_detect(struct drm_bridge *bridge)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
 	enum drm_connector_status ret = connector_status_disconnected;
@@ -2188,8 +2147,7 @@ static const struct drm_edid *mtk_dp_edid_read(struct drm_bridge *bridge,
 	 * Parse capability here to let atomic_get_input_bus_fmts and
 	 * mode_valid use the capability to calculate sink bitrates.
 	 */
-	if (mtk_dp->bridge.type == DRM_MODE_CONNECTOR_eDP &&
-	    mtk_dp_parse_capabilities(mtk_dp)) {
+	if (mtk_dp_parse_capabilities(mtk_dp)) {
 		drm_err(mtk_dp->drm_dev, "Can't parse capabilities\n");
 		drm_edid_free(drm_edid);
 		drm_edid = NULL;
@@ -2310,7 +2268,6 @@ static void mtk_dp_poweroff(struct mtk_dp *mtk_dp)
 }
 
 static int mtk_dp_bridge_attach(struct drm_bridge *bridge,
-				struct drm_encoder *encoder,
 				enum drm_bridge_attach_flags flags)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
@@ -2334,7 +2291,7 @@ static int mtk_dp_bridge_attach(struct drm_bridge *bridge,
 		goto err_aux_register;
 
 	if (mtk_dp->next_bridge) {
-		ret = drm_bridge_attach(encoder, mtk_dp->next_bridge,
+		ret = drm_bridge_attach(bridge->encoder, mtk_dp->next_bridge,
 					&mtk_dp->bridge, flags);
 		if (ret) {
 			drm_warn(mtk_dp->drm_dev,
@@ -2374,12 +2331,12 @@ static void mtk_dp_bridge_detach(struct drm_bridge *bridge)
 }
 
 static void mtk_dp_bridge_atomic_enable(struct drm_bridge *bridge,
-					struct drm_atomic_state *state)
+					struct drm_bridge_state *old_state)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
 	int ret;
 
-	mtk_dp->conn = drm_atomic_get_new_connector_for_encoder(state,
+	mtk_dp->conn = drm_atomic_get_new_connector_for_encoder(old_state->base.state,
 								bridge->encoder);
 	if (!mtk_dp->conn) {
 		drm_err(mtk_dp->drm_dev,
@@ -2387,15 +2344,13 @@ static void mtk_dp_bridge_atomic_enable(struct drm_bridge *bridge,
 		return;
 	}
 
-	if (mtk_dp->data->bridge_type == DRM_MODE_CONNECTOR_eDP) {
-		mtk_dp_aux_panel_poweron(mtk_dp, true);
+	mtk_dp_aux_panel_poweron(mtk_dp, true);
 
-		/* Training */
-		ret = mtk_dp_training(mtk_dp);
-		if (ret) {
-			drm_err(mtk_dp->drm_dev, "Training failed, %d\n", ret);
-			goto power_off_aux;
-		}
+	/* Training */
+	ret = mtk_dp_training(mtk_dp);
+	if (ret) {
+		drm_err(mtk_dp->drm_dev, "Training failed, %d\n", ret);
+		goto power_off_aux;
 	}
 
 	ret = mtk_dp_video_config(mtk_dp);
@@ -2415,9 +2370,7 @@ static void mtk_dp_bridge_atomic_enable(struct drm_bridge *bridge,
 		       sizeof(mtk_dp->info.audio_cur_cfg));
 	}
 
-	if (mtk_dp->data->bridge_type == DRM_MODE_CONNECTOR_eDP)
-		mtk_dp->enabled = true;
-
+	mtk_dp->enabled = true;
 	mtk_dp_update_plugged_status(mtk_dp);
 
 	return;
@@ -2428,21 +2381,24 @@ power_off_aux:
 }
 
 static void mtk_dp_bridge_atomic_disable(struct drm_bridge *bridge,
-					 struct drm_atomic_state *state)
+					 struct drm_bridge_state *old_state)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
 
-	if (mtk_dp->data->bridge_type == DRM_MODE_CONNECTOR_eDP) {
-		mtk_dp->enabled = false;
-		mtk_dp_aux_panel_poweron(mtk_dp, false);
-	}
-
+	mtk_dp->enabled = false;
 	mtk_dp_update_plugged_status(mtk_dp);
 	mtk_dp_video_enable(mtk_dp, false);
 	mtk_dp_audio_mute(mtk_dp, true);
 
-	/* SDP path reset sw*/
-	mtk_dp_sdp_path_reset(mtk_dp);
+	if (mtk_dp->train_info.cable_plugged_in) {
+		drm_dp_dpcd_writeb(&mtk_dp->aux, DP_SET_POWER, DP_SET_POWER_D3);
+		usleep_range(2000, 3000);
+	}
+
+	/* power off aux */
+	mtk_dp_update_bits(mtk_dp, MTK_DP_TOP_PWR_STATE,
+			   DP_PWR_STATE_BANDGAP_TPLL,
+			   DP_PWR_STATE_MASK);
 
 	/* Ensure the sink is muted */
 	msleep(20);
@@ -2454,7 +2410,7 @@ mtk_dp_bridge_mode_valid(struct drm_bridge *bridge,
 			 const struct drm_display_mode *mode)
 {
 	struct mtk_dp *mtk_dp = mtk_dp_from_bridge(bridge);
-	u32 bpp = info->color_formats & BIT(DRM_OUTPUT_COLOR_FORMAT_YCBCR422) ? 16 : 24;
+	u32 bpp = info->color_formats & DRM_COLOR_FORMAT_YCBCR422 ? 16 : 24;
 	u32 lane_count_min = mtk_dp->train_info.lane_count;
 	u32 rate = drm_dp_bw_code_to_link_rate(mtk_dp->train_info.link_rate) *
 		   lane_count_min;
@@ -2482,7 +2438,7 @@ static u32 *mtk_dp_bridge_atomic_get_output_bus_fmts(struct drm_bridge *bridge,
 	u32 *output_fmts;
 
 	*num_output_fmts = 0;
-	output_fmts = kmalloc_obj(*output_fmts);
+	output_fmts = kmalloc(sizeof(*output_fmts), GFP_KERNEL);
 	if (!output_fmts)
 		return NULL;
 	*num_output_fmts = 1;
@@ -2521,7 +2477,7 @@ static u32 *mtk_dp_bridge_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 	 */
 	if (((rate * 97 / 100) < (mode->clock * 24 / 8)) &&
 	    ((rate * 97 / 100) > (mode->clock * 16 / 8)) &&
-	    (display_info->color_formats & BIT(DRM_OUTPUT_COLOR_FORMAT_YCBCR422))) {
+	    (display_info->color_formats & DRM_COLOR_FORMAT_YCBCR422)) {
 		input_fmts = kcalloc(1, sizeof(*input_fmts), GFP_KERNEL);
 		if (!input_fmts)
 			return NULL;
@@ -2590,7 +2546,7 @@ static const struct drm_bridge_funcs mtk_dp_bridge_funcs = {
 
 static void mtk_dp_debounce_timer(struct timer_list *t)
 {
-	struct mtk_dp *mtk_dp = timer_container_of(mtk_dp, t, debounce_timer);
+	struct mtk_dp *mtk_dp = from_timer(mtk_dp, t, debounce_timer);
 
 	mtk_dp->need_debounce = true;
 }
@@ -2668,6 +2624,7 @@ static const struct hdmi_codec_ops mtk_dp_audio_codec_ops = {
 	.audio_shutdown = mtk_dp_audio_shutdown,
 	.get_eld = mtk_dp_audio_get_eld,
 	.hook_plugged_cb = mtk_dp_audio_hook_plugged_cb,
+	.no_capture_mute = 1,
 };
 
 static int mtk_dp_register_audio_driver(struct device *dev)
@@ -2678,7 +2635,6 @@ static int mtk_dp_register_audio_driver(struct device *dev)
 		.max_i2s_channels = 8,
 		.i2s = 1,
 		.data = mtk_dp,
-		.no_capture_mute = 1,
 	};
 
 	mtk_dp->audio_pdev = platform_device_register_data(dev,
@@ -2746,10 +2702,9 @@ static int mtk_dp_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int ret;
 
-	mtk_dp = devm_drm_bridge_alloc(dev, struct mtk_dp, bridge,
-				       &mtk_dp_bridge_funcs);
-	if (IS_ERR(mtk_dp))
-		return PTR_ERR(mtk_dp);
+	mtk_dp = devm_kzalloc(dev, sizeof(*mtk_dp), GFP_KERNEL);
+	if (!mtk_dp)
+		return -ENOMEM;
 
 	mtk_dp->dev = dev;
 	mtk_dp->data = (struct mtk_dp_data *)of_device_get_match_data(dev);
@@ -2807,6 +2762,7 @@ static int mtk_dp_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	mtk_dp->bridge.funcs = &mtk_dp_bridge_funcs;
 	mtk_dp->bridge.of_node = dev->of_node;
 	mtk_dp->bridge.type = mtk_dp->data->bridge_type;
 
@@ -2869,7 +2825,7 @@ static void mtk_dp_remove(struct platform_device *pdev)
 	pm_runtime_put(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	if (mtk_dp->data->bridge_type != DRM_MODE_CONNECTOR_eDP)
-		timer_delete_sync(&mtk_dp->debounce_timer);
+		del_timer_sync(&mtk_dp->debounce_timer);
 	platform_device_unregister(mtk_dp->phy_dev);
 	if (mtk_dp->audio_pdev)
 		platform_device_unregister(mtk_dp->audio_pdev);
@@ -2952,7 +2908,7 @@ MODULE_DEVICE_TABLE(of, mtk_dp_of_match);
 
 static struct platform_driver mtk_dp_driver = {
 	.probe = mtk_dp_probe,
-	.remove = mtk_dp_remove,
+	.remove_new = mtk_dp_remove,
 	.driver = {
 		.name = "mediatek-drm-dp",
 		.of_match_table = mtk_dp_of_match,

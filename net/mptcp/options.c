@@ -409,7 +409,7 @@ bool mptcp_syn_options(struct sock *sk, const struct sk_buff *skb,
 	subflow->snd_isn = TCP_SKB_CB(skb)->end_seq;
 	if (subflow->request_mptcp) {
 		if (unlikely(subflow_simultaneous_connect(sk))) {
-			WARN_ON_ONCE(!mptcp_try_fallback(sk, MPTCP_MIB_SIMULTCONNFALLBACK));
+			WARN_ON_ONCE(!mptcp_try_fallback(sk));
 
 			/* Ensure mptcp_finish_connect() will not process the
 			 * MPC handshake.
@@ -442,6 +442,7 @@ static void clear_3rdack_retransmission(struct sock *sk)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
 	sk_stop_timer(sk, &icsk->icsk_delack_timer);
+	icsk->icsk_ack.timeout = 0;
 	icsk->icsk_ack.ato = 0;
 	icsk->icsk_ack.pending &= ~(ICSK_ACK_SCHED | ICSK_ACK_TIMER);
 }
@@ -991,10 +992,9 @@ static bool check_fully_established(struct mptcp_sock *msk, struct sock *ssk,
 		if (subflow->mp_join)
 			goto reset;
 		subflow->mp_capable = 0;
-		if (!mptcp_try_fallback(ssk, MPTCP_MIB_MPCAPABLEDATAFALLBACK)) {
-			MPTCP_INC_STATS(sock_net(ssk), MPTCP_MIB_FALLBACKFAILED);
+		if (!mptcp_try_fallback(ssk))
 			goto reset;
-		}
+		pr_fallback(msk);
 		return false;
 	}
 
@@ -1076,7 +1076,6 @@ static void rwin_update(struct mptcp_sock *msk, struct sock *ssk,
 	 * resync.
 	 */
 	tp->rcv_wnd += mptcp_rcv_wnd - subflow->rcv_wnd_sent;
-	tcp_update_max_rcv_wnd_seq(tp);
 	subflow->rcv_wnd_sent = mptcp_rcv_wnd;
 }
 
@@ -1339,9 +1338,8 @@ raise_win:
 		 */
 		rcv_wnd_new = rcv_wnd_old;
 		win = rcv_wnd_old - ack_seq;
-		new_win = min_t(u64, win, U32_MAX);
-		tp->rcv_wnd = new_win;
-		tcp_update_max_rcv_wnd_seq(tp);
+		tp->rcv_wnd = min_t(u64, win, U32_MAX);
+		new_win = tp->rcv_wnd;
 
 		/* Make sure we do not exceed the maximum possible
 		 * scaled window.

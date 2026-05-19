@@ -5,8 +5,6 @@
  */
 #include <linux/types.h>
 #include <linux/of.h>
-#include <linux/secure_boot.h>
-#include <linux/string_choices.h>
 #include <asm/secure_boot.h>
 
 static struct device_node *get_ppc_fw_sb_node(void)
@@ -40,14 +38,9 @@ bool is_ppc_secureboot_enabled(void)
 	of_node_put(node);
 
 out:
-	pr_info("Secure boot mode %s\n", str_enabled_disabled(enabled));
+	pr_info("Secure boot mode %s\n", enabled ? "enabled" : "disabled");
 
 	return enabled;
-}
-
-bool arch_get_secureboot(void)
-{
-	return is_ppc_secureboot_enabled();
 }
 
 bool is_ppc_trustedboot_enabled(void)
@@ -69,7 +62,7 @@ bool is_ppc_trustedboot_enabled(void)
 	of_node_put(node);
 
 out:
-	pr_info("Trusted boot mode %s\n", str_enabled_disabled(enabled));
+	pr_info("Trusted boot mode %s\n", enabled ? "enabled" : "disabled");
 
 	return enabled;
 }

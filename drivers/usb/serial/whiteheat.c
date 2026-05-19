@@ -278,7 +278,8 @@ static int whiteheat_attach(struct usb_serial *serial)
 		 serial->type->description,
 		 hw_info->sw_major_rev, hw_info->sw_minor_rev);
 
-	command_info = kmalloc_obj(struct whiteheat_command_private);
+	command_info = kmalloc(sizeof(struct whiteheat_command_private),
+								GFP_KERNEL);
 	if (!command_info)
 		goto no_command_private;
 
@@ -329,7 +330,7 @@ static int whiteheat_port_probe(struct usb_serial_port *port)
 {
 	struct whiteheat_private *info;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 

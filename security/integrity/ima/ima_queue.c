@@ -16,7 +16,6 @@
  */
 
 #include <linux/rculist.h>
-#include <linux/reboot.h>
 #include <linux/slab.h>
 #include "ima.h"
 
@@ -44,12 +43,6 @@ struct ima_h_table ima_htable = {
  * long (and the tpm driver uses a mutex), we can't use the spinlock.
  */
 static DEFINE_MUTEX(ima_extend_list_mutex);
-
-/*
- * Used internally by the kernel to suspend measurements.
- * Protected by ima_extend_list_mutex.
- */
-static bool ima_measurements_suspended;
 
 /* lookup up the digest value in the hash table, and return the entry */
 static struct ima_queue_entry *ima_lookup_digest_entry(u8 *digest_value,
@@ -103,7 +96,7 @@ static int ima_add_digest_entry(struct ima_template_entry *entry,
 	struct ima_queue_entry *qe;
 	unsigned int key;
 
-	qe = kmalloc_obj(*qe);
+	qe = kmalloc(sizeof(*qe), GFP_KERNEL);
 	if (qe == NULL) {
 		pr_err("OUT OF MEMORY ERROR creating queue entry\n");
 		return -ENOMEM;
@@ -175,18 +168,6 @@ int ima_add_template_entry(struct ima_template_entry *entry, int violation,
 	int result = 0, tpmresult = 0;
 
 	mutex_lock(&ima_extend_list_mutex);
-
-	/*
-	 * Avoid appending to the measurement log when the TPM subsystem has
-	 * been shut down while preparing for system reboot.
-	 */
-	if (ima_measurements_suspended) {
-		audit_cause = "measurements_suspended";
-		audit_info = 0;
-		result = -ENODEV;
-		goto out;
-	}
-
 	if (!violation && !IS_ENABLED(CONFIG_IMA_DISABLE_HTABLE)) {
 		if (ima_lookup_digest_entry(digest, entry->pcr)) {
 			audit_cause = "hash_exists";
@@ -230,36 +211,6 @@ int ima_restore_measurement_entry(struct ima_template_entry *entry)
 	return result;
 }
 
-static void ima_measurements_suspend(void)
-{
-	mutex_lock(&ima_extend_list_mutex);
-	ima_measurements_suspended = true;
-	mutex_unlock(&ima_extend_list_mutex);
-}
-
-static int ima_reboot_notifier(struct notifier_block *nb,
-			       unsigned long action,
-			       void *data)
-{
-#ifdef CONFIG_IMA_KEXEC
-	if (action == SYS_RESTART && data && !strcmp(data, "kexec reboot"))
-		ima_measure_kexec_event("kexec_execute");
-#endif
-
-	ima_measurements_suspend();
-
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block ima_reboot_nb = {
-	.notifier_call = ima_reboot_notifier,
-};
-
-void __init ima_init_reboot_notifier(void)
-{
-	register_reboot_notifier(&ima_reboot_nb);
-}
-
 int __init ima_init_digests(void)
 {
 	u16 digest_size;
@@ -269,8 +220,8 @@ int __init ima_init_digests(void)
 	if (!ima_tpm_chip)
 		return 0;
 
-	digests = kzalloc_objs(*digests, ima_tpm_chip->nr_allocated_banks,
-			       GFP_NOFS);
+	digests = kcalloc(ima_tpm_chip->nr_allocated_banks, sizeof(*digests),
+			  GFP_NOFS);
 	if (!digests)
 		return -ENOMEM;
 

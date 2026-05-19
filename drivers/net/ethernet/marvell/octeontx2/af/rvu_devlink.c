@@ -11,7 +11,6 @@
 #include "rvu_reg.h"
 #include "rvu_struct.h"
 #include "rvu_npc_hash.h"
-#include "cn20k/npc.h"
 
 #define DRV_NAME "octeontx2-af"
 
@@ -495,20 +494,18 @@ static int rvu_nix_register_reporters(struct rvu_devlink *rvu_dl)
 	struct rvu_nix_event_ctx *nix_event_context;
 	struct rvu *rvu = rvu_dl->rvu;
 
-	rvu_reporters = kzalloc_obj(*rvu_reporters);
+	rvu_reporters = kzalloc(sizeof(*rvu_reporters), GFP_KERNEL);
 	if (!rvu_reporters)
 		return -ENOMEM;
 
 	rvu_dl->rvu_nix_health_reporter = rvu_reporters;
-	nix_event_context = kzalloc_obj(*nix_event_context);
+	nix_event_context = kzalloc(sizeof(*nix_event_context), GFP_KERNEL);
 	if (!nix_event_context)
 		return -ENOMEM;
 
 	rvu_reporters->nix_event_ctx = nix_event_context;
 	rvu_reporters->rvu_hw_nix_intr_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_nix_intr_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_nix_intr_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_nix_intr_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_nix_intr reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_nix_intr_reporter));
@@ -516,9 +513,7 @@ static int rvu_nix_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_nix_gen_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_nix_gen_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_nix_gen_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_nix_gen_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_nix_gen reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_nix_gen_reporter));
@@ -526,9 +521,7 @@ static int rvu_nix_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_nix_err_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_nix_err_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_nix_err_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_nix_err_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_nix_err reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_nix_err_reporter));
@@ -536,9 +529,7 @@ static int rvu_nix_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_nix_ras_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_nix_ras_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_nix_ras_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_nix_ras_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_nix_ras reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_nix_ras_reporter));
@@ -1049,20 +1040,18 @@ static int rvu_npa_register_reporters(struct rvu_devlink *rvu_dl)
 	struct rvu_npa_event_ctx *npa_event_context;
 	struct rvu *rvu = rvu_dl->rvu;
 
-	rvu_reporters = kzalloc_obj(*rvu_reporters);
+	rvu_reporters = kzalloc(sizeof(*rvu_reporters), GFP_KERNEL);
 	if (!rvu_reporters)
 		return -ENOMEM;
 
 	rvu_dl->rvu_npa_health_reporter = rvu_reporters;
-	npa_event_context = kzalloc_obj(*npa_event_context);
+	npa_event_context = kzalloc(sizeof(*npa_event_context), GFP_KERNEL);
 	if (!npa_event_context)
 		return -ENOMEM;
 
 	rvu_reporters->npa_event_ctx = npa_event_context;
 	rvu_reporters->rvu_hw_npa_intr_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_npa_intr_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_npa_intr_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_npa_intr_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_npa_intr reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_npa_intr_reporter));
@@ -1070,9 +1059,7 @@ static int rvu_npa_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_npa_gen_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_npa_gen_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_npa_gen_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_npa_gen_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_npa_gen reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_npa_gen_reporter));
@@ -1080,9 +1067,7 @@ static int rvu_npa_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_npa_err_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_npa_err_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_npa_err_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_npa_err_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_npa_err reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_npa_err_reporter));
@@ -1090,9 +1075,7 @@ static int rvu_npa_register_reporters(struct rvu_devlink *rvu_dl)
 	}
 
 	rvu_reporters->rvu_hw_npa_ras_reporter =
-		devlink_health_reporter_create(rvu_dl->dl,
-					       &rvu_hw_npa_ras_reporter_ops,
-					       rvu);
+		devlink_health_reporter_create(rvu_dl->dl, &rvu_hw_npa_ras_reporter_ops, 0, rvu);
 	if (IS_ERR(rvu_reporters->rvu_hw_npa_ras_reporter)) {
 		dev_warn(rvu->dev, "Failed to create hw_npa_ras reporter, err=%ld\n",
 			 PTR_ERR(rvu_reporters->rvu_hw_npa_ras_reporter));
@@ -1234,8 +1217,7 @@ static int rvu_af_dl_dwrr_mtu_set(struct devlink *devlink, u32 id,
 }
 
 static int rvu_af_dl_dwrr_mtu_get(struct devlink *devlink, u32 id,
-				  struct devlink_param_gset_ctx *ctx,
-				  struct netlink_ext_ack *extack)
+				  struct devlink_param_gset_ctx *ctx)
 {
 	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
 	struct rvu *rvu = rvu_dl->rvu;
@@ -1256,75 +1238,11 @@ enum rvu_af_dl_param_id {
 	RVU_AF_DEVLINK_PARAM_ID_DWRR_MTU,
 	RVU_AF_DEVLINK_PARAM_ID_NPC_MCAM_ZONE_PERCENT,
 	RVU_AF_DEVLINK_PARAM_ID_NPC_EXACT_FEATURE_DISABLE,
-	RVU_AF_DEVLINK_PARAM_ID_NPC_DEF_RULE_CNTR_ENABLE,
-	RVU_AF_DEVLINK_PARAM_ID_NPC_DEFRAG,
 	RVU_AF_DEVLINK_PARAM_ID_NIX_MAXLF,
 };
 
-static int rvu_af_npc_defrag_feature_get(struct devlink *devlink, u32 id,
-					 struct devlink_param_gset_ctx *ctx,
-					 struct netlink_ext_ack *extack)
-{
-	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
-	struct rvu *rvu = rvu_dl->rvu;
-	bool enabled;
-
-	enabled = is_cn20k(rvu->pdev);
-
-	snprintf(ctx->val.vstr, sizeof(ctx->val.vstr), "%s",
-		 enabled ? "enabled" : "disabled");
-
-	return 0;
-}
-
-static int rvu_af_npc_defrag(struct devlink *devlink, u32 id,
-			     struct devlink_param_gset_ctx *ctx,
-			     struct netlink_ext_ack *extack)
-{
-	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
-	struct rvu *rvu = rvu_dl->rvu;
-
-	/* It is hard to roll back if defrag process fails.
-	 * print a error message and return fault.
-	 */
-	if (npc_cn20k_defrag(rvu)) {
-		dev_err(rvu->dev, "Defrag process failed\n");
-		return -EFAULT;
-	}
-	return 0;
-}
-
-static int rvu_af_npc_defrag_feature_validate(struct devlink *devlink, u32 id,
-					      union devlink_param_value val,
-					      struct netlink_ext_ack *extack)
-{
-	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
-	struct rvu *rvu = rvu_dl->rvu;
-	u64 enable;
-
-	if (kstrtoull(val.vstr, 10, &enable)) {
-		NL_SET_ERR_MSG_MOD(extack,
-				   "Only 1 value is supported");
-		return -EINVAL;
-	}
-
-	if (enable != 1) {
-		NL_SET_ERR_MSG_MOD(extack,
-				   "Only initiating defrag is supported");
-		return -EINVAL;
-	}
-
-	if (is_cn20k(rvu->pdev))
-		return 0;
-
-	NL_SET_ERR_MSG_MOD(extack,
-			   "Can defrag NPC only in cn20k silicon");
-	return -EFAULT;
-}
-
 static int rvu_af_npc_exact_feature_get(struct devlink *devlink, u32 id,
-					struct devlink_param_gset_ctx *ctx,
-					struct netlink_ext_ack *extack)
+					struct devlink_param_gset_ctx *ctx)
 {
 	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
 	struct rvu *rvu = rvu_dl->rvu;
@@ -1379,8 +1297,7 @@ static int rvu_af_npc_exact_feature_validate(struct devlink *devlink, u32 id,
 }
 
 static int rvu_af_dl_npc_mcam_high_zone_percent_get(struct devlink *devlink, u32 id,
-						    struct devlink_param_gset_ctx *ctx,
-						    struct netlink_ext_ack *extack)
+						    struct devlink_param_gset_ctx *ctx)
 {
 	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
 	struct rvu *rvu = rvu_dl->rvu;
@@ -1441,36 +1358,8 @@ static int rvu_af_dl_npc_mcam_high_zone_percent_validate(struct devlink *devlink
 	return 0;
 }
 
-static int rvu_af_dl_npc_def_rule_cntr_get(struct devlink *devlink, u32 id,
-					   struct devlink_param_gset_ctx *ctx,
-					   struct netlink_ext_ack *extack)
-{
-	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
-	struct rvu *rvu = rvu_dl->rvu;
-
-	ctx->val.vbool = rvu->def_rule_cntr_en;
-
-	return 0;
-}
-
-static int rvu_af_dl_npc_def_rule_cntr_set(struct devlink *devlink, u32 id,
-					   struct devlink_param_gset_ctx *ctx,
-					   struct netlink_ext_ack *extack)
-{
-	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
-	struct rvu *rvu = rvu_dl->rvu;
-	int err;
-
-	err = npc_config_cntr_default_entries(rvu, ctx->val.vbool);
-	if (!err)
-		rvu->def_rule_cntr_en = ctx->val.vbool;
-
-	return err;
-}
-
 static int rvu_af_dl_nix_maxlf_get(struct devlink *devlink, u32 id,
-				   struct devlink_param_gset_ctx *ctx,
-				   struct netlink_ext_ack *extack)
+				   struct devlink_param_gset_ctx *ctx)
 {
 	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
 	struct rvu *rvu = rvu_dl->rvu;
@@ -1555,11 +1444,6 @@ static const struct devlink_param rvu_af_dl_params[] = {
 			     rvu_af_dl_npc_mcam_high_zone_percent_get,
 			     rvu_af_dl_npc_mcam_high_zone_percent_set,
 			     rvu_af_dl_npc_mcam_high_zone_percent_validate),
-	DEVLINK_PARAM_DRIVER(RVU_AF_DEVLINK_PARAM_ID_NPC_DEF_RULE_CNTR_ENABLE,
-			     "npc_def_rule_cntr", DEVLINK_PARAM_TYPE_BOOL,
-			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),
-			     rvu_af_dl_npc_def_rule_cntr_get,
-			     rvu_af_dl_npc_def_rule_cntr_set, NULL),
 	DEVLINK_PARAM_DRIVER(RVU_AF_DEVLINK_PARAM_ID_NIX_MAXLF,
 			     "nix_maxlf", DEVLINK_PARAM_TYPE_U16,
 			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),
@@ -1583,9 +1467,6 @@ static int rvu_devlink_eswitch_mode_get(struct devlink *devlink, u16 *mode)
 	struct rvu_devlink *rvu_dl = devlink_priv(devlink);
 	struct rvu *rvu = rvu_dl->rvu;
 	struct rvu_switch *rswitch;
-
-	if (rvu->rep_mode)
-		return -EOPNOTSUPP;
 
 	rswitch = &rvu->rswitch;
 	*mode = rswitch->mode;
@@ -1624,15 +1505,6 @@ static const struct devlink_ops rvu_devlink_ops = {
 	.eswitch_mode_set = rvu_devlink_eswitch_mode_set,
 };
 
-static const struct devlink_param rvu_af_dl_param_defrag[] = {
-	DEVLINK_PARAM_DRIVER(RVU_AF_DEVLINK_PARAM_ID_NPC_DEFRAG,
-			     "npc_defrag", DEVLINK_PARAM_TYPE_STRING,
-			     BIT(DEVLINK_PARAM_CMODE_RUNTIME),
-			     rvu_af_npc_defrag_feature_get,
-			     rvu_af_npc_defrag,
-			     rvu_af_npc_defrag_feature_validate),
-};
-
 int rvu_register_dl(struct rvu *rvu)
 {
 	struct rvu_devlink *rvu_dl;
@@ -1665,17 +1537,6 @@ int rvu_register_dl(struct rvu *rvu)
 		goto err_dl_health;
 	}
 
-	if (is_cn20k(rvu->pdev)) {
-		err = devlink_params_register(dl, rvu_af_dl_param_defrag,
-					      ARRAY_SIZE(rvu_af_dl_param_defrag));
-		if (err) {
-			dev_err(rvu->dev,
-				"devlink defrag params register failed with error %d",
-				err);
-			goto err_dl_defrag;
-		}
-	}
-
 	/* Register exact match devlink only for CN10K-B */
 	if (!rvu_npc_exact_has_match_table(rvu))
 		goto done;
@@ -1684,8 +1545,7 @@ int rvu_register_dl(struct rvu *rvu)
 				      ARRAY_SIZE(rvu_af_dl_param_exact_match));
 	if (err) {
 		dev_err(rvu->dev,
-			"devlink exact match params register failed with error %d",
-			err);
+			"devlink exact match params register failed with error %d", err);
 		goto err_dl_exact_match;
 	}
 
@@ -1694,11 +1554,6 @@ done:
 	return 0;
 
 err_dl_exact_match:
-	if (is_cn20k(rvu->pdev))
-		devlink_params_unregister(dl, rvu_af_dl_param_defrag,
-					  ARRAY_SIZE(rvu_af_dl_param_defrag));
-
-err_dl_defrag:
 	devlink_params_unregister(dl, rvu_af_dl_params, ARRAY_SIZE(rvu_af_dl_params));
 
 err_dl_health:
@@ -1715,10 +1570,6 @@ void rvu_unregister_dl(struct rvu *rvu)
 	devlink_unregister(dl);
 
 	devlink_params_unregister(dl, rvu_af_dl_params, ARRAY_SIZE(rvu_af_dl_params));
-
-	if (is_cn20k(rvu->pdev))
-		devlink_params_unregister(dl, rvu_af_dl_param_defrag,
-					  ARRAY_SIZE(rvu_af_dl_param_defrag));
 
 	/* Unregister exact match devlink only for CN10K-B */
 	if (rvu_npc_exact_has_match_table(rvu))

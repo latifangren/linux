@@ -173,14 +173,14 @@ DEFINE_EVENT(tmigr_cpugroup, tmigr_cpu_active,
 	TP_ARGS(tmc)
 );
 
-DEFINE_EVENT(tmigr_cpugroup, tmigr_cpu_available,
+DEFINE_EVENT(tmigr_cpugroup, tmigr_cpu_online,
 
 	TP_PROTO(struct tmigr_cpu *tmc),
 
 	TP_ARGS(tmc)
 );
 
-DEFINE_EVENT(tmigr_cpugroup, tmigr_cpu_unavailable,
+DEFINE_EVENT(tmigr_cpugroup, tmigr_cpu_offline,
 
 	TP_PROTO(struct tmigr_cpu *tmc),
 

@@ -1139,7 +1139,8 @@ static int pcmdevice_info_profile(
 	struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_info *uinfo)
 {
-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *codec
+		= snd_soc_kcontrol_component(kcontrol);
 	struct pcmdevice_priv *pcm_dev =
 		snd_soc_component_get_drvdata(codec);
 
@@ -1155,7 +1156,8 @@ static int pcmdevice_get_profile_id(
 	struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *codec
+		= snd_soc_kcontrol_component(kcontrol);
 	struct pcmdevice_priv *pcm_dev =
 		snd_soc_component_get_drvdata(codec);
 
@@ -1168,7 +1170,8 @@ static int pcmdevice_set_profile_id(
 	struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_component *codec = snd_kcontrol_chip(kcontrol);
+	struct snd_soc_component *codec
+		= snd_soc_kcontrol_component(kcontrol);
 	struct pcmdevice_priv *pcm_dev =
 		snd_soc_component_get_drvdata(codec);
 	int nr_profile = ucontrol->value.integer.value[0];
@@ -1234,7 +1237,7 @@ static struct pcmdevice_config_info *pcmdevice_add_config(void *ctxt,
 	struct pcmdevice_block_data **bk_da;
 	unsigned int config_offset = 0, i;
 
-	cfg_info = kzalloc_obj(struct pcmdevice_config_info);
+	cfg_info = kzalloc(sizeof(struct pcmdevice_config_info), GFP_KERNEL);
 	if (!cfg_info) {
 		*status = -ENOMEM;
 		goto out;
@@ -1261,8 +1264,8 @@ static struct pcmdevice_config_info *pcmdevice_add_config(void *ctxt,
 		get_unaligned_be32(&config_data[config_offset]);
 	config_offset += 4;
 
-	bk_da = cfg_info->blk_data = kzalloc_objs(struct pcmdevice_block_data *,
-						  cfg_info->nblocks);
+	bk_da = cfg_info->blk_data = kcalloc(cfg_info->nblocks,
+		sizeof(struct pcmdevice_block_data *), GFP_KERNEL);
 	if (!bk_da) {
 		*status = -ENOMEM;
 		goto out;
@@ -1276,7 +1279,8 @@ static struct pcmdevice_config_info *pcmdevice_add_config(void *ctxt,
 				__func__, i, cfg_info->nblocks);
 			break;
 		}
-		bk_da[i] = kzalloc_obj(struct pcmdevice_block_data);
+		bk_da[i] = kzalloc(sizeof(struct pcmdevice_block_data),
+			GFP_KERNEL);
 		if (!bk_da[i]) {
 			*status = -ENOMEM;
 			break;
@@ -1349,8 +1353,8 @@ static int pcmdev_gain_ctrl_add(struct pcmdevice_priv *pcm_dev,
 		return 0;
 	}
 
-	pcmdev_controls = devm_kcalloc(pcm_dev->dev, nr_chn,
-				       sizeof(struct snd_kcontrol_new), GFP_KERNEL);
+	pcmdev_controls = devm_kzalloc(pcm_dev->dev,
+		nr_chn * sizeof(struct snd_kcontrol_new), GFP_KERNEL);
 	if (!pcmdev_controls)
 		return -ENOMEM;
 
@@ -1548,7 +1552,7 @@ static int pcmdev_regbin_ready(const struct firmware *fmw, void *ctxt)
 		ret = -EINVAL;
 		goto out;
 	}
-	cfg_info = kzalloc_objs(*cfg_info, fw_hdr->nconfig);
+	cfg_info = kcalloc(fw_hdr->nconfig, sizeof(*cfg_info), GFP_KERNEL);
 	if (!cfg_info) {
 		pcm_dev->fw_state = PCMDEVICE_FW_LOAD_FAILED;
 		ret = -ENOMEM;
@@ -1638,7 +1642,8 @@ static int pcmdevice_comp_probe(struct snd_soc_component *comp)
 	}
 	ret = pcmdev_profile_ctrl_add(pcm_dev);
 out:
-	release_firmware(fw_entry);
+	if (fw_entry)
+		release_firmware(fw_entry);
 
 	mutex_unlock(&pcm_dev->codec_lock);
 	return ret;
@@ -2052,6 +2057,7 @@ static char *str_to_upper(char *str)
 
 static int pcmdevice_i2c_probe(struct i2c_client *i2c)
 {
+	const struct i2c_device_id *id = i2c_match_id(pcmdevice_i2c_id, i2c);
 	struct pcmdevice_priv *pcm_dev;
 	struct device_node *np;
 	unsigned int dev_addrs[PCMDEVICE_MAX_I2C_DEVICES];
@@ -2061,7 +2067,7 @@ static int pcmdevice_i2c_probe(struct i2c_client *i2c)
 	if (!pcm_dev)
 		return -ENOMEM;
 
-	pcm_dev->chip_id = (uintptr_t)i2c_get_match_data(i2c);
+	pcm_dev->chip_id = (id != NULL) ? id->driver_data : 0;
 
 	pcm_dev->dev = &i2c->dev;
 	pcm_dev->client = i2c;

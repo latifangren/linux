@@ -10,42 +10,17 @@ maintainers:
   - Uwe Kleine-König <u.kleine-koenig@pengutronix.de>
 
 allOf:
-  - $ref: nand-controller-legacy.yaml
+  - $ref: nand-controller.yaml
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - fsl,imx25-nand
-          - fsl,imx27-nand
-          - fsl,imx51-nand
-          - fsl,imx53-nand
-      - items:
-          - enum:
-              - fsl,imx35-nand
-          - const: fsl,imx25-nand
-      - items:
-          - enum:
-              - fsl,imx31-nand
-          - const: fsl,imx27-nand
+    const: fsl,imx27-nand
+
   reg:
-    minItems: 1
-    items:
-      - description: IP register space
-      - description: Nand flash internal buffer space
+    maxItems: 1
 
   interrupts:
     maxItems: 1
-
-  clocks:
-    maxItems: 1
-
-  dmas:
-    maxItems: 1
-
-  dma-names:
-    items:
-      - const: rx-tx
 
 required:
   - compatible

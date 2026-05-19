@@ -75,6 +75,7 @@ properties:
   DCVDD-supply:
     description: Digital core supply regulator for the DCVDD pin.
 
+
 required:
   - compatible
   - reg

@@ -8,6 +8,7 @@
 #include <linux/clk-provider.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
@@ -20,7 +21,6 @@
 #include "clk-regmap-divider.h"
 #include "common.h"
 #include "gdsc.h"
-#include "reset.h"
 
 enum {
 	DT_BI_TCXO,
@@ -952,10 +952,6 @@ static struct gdsc *dispcc_sm7150_gdscs[] = {
 	[MDSS_GDSC] = &mdss_gdsc,
 };
 
-static const struct qcom_reset_map dispcc_sm7150_resets[] = {
-	[DISPCC_MDSS_CORE_BCR] = { 0x2000 },
-};
-
 static const struct regmap_config dispcc_sm7150_regmap_config = {
 	.reg_bits	= 32,
 	.reg_stride	= 4,
@@ -970,8 +966,6 @@ static const struct qcom_cc_desc dispcc_sm7150_desc = {
 	.num_clks = ARRAY_SIZE(dispcc_sm7150_clocks),
 	.gdscs = dispcc_sm7150_gdscs,
 	.num_gdscs = ARRAY_SIZE(dispcc_sm7150_gdscs),
-	.resets = dispcc_sm7150_resets,
-	.num_resets = ARRAY_SIZE(dispcc_sm7150_resets),
 };
 
 static const struct of_device_id dispcc_sm7150_match_table[] = {

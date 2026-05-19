@@ -123,8 +123,7 @@ static bool valid_kwork_class_type(enum kwork_class_type type)
 static int setup_filters(struct perf_kwork *kwork)
 {
 	if (kwork->cpu_list) {
-		unsigned int idx;
-		int nr_cpus, fd;
+		int idx, nr_cpus, fd;
 		struct perf_cpu_map *map;
 		struct perf_cpu cpu;
 
@@ -256,7 +255,7 @@ static int add_work(struct perf_kwork *kwork, struct work_key *key,
 	bpf_trace = kwork_class_bpf_supported_list[type];
 	tmp.class = bpf_trace->class;
 
-	work = kwork->add_work(kwork, tmp.class, &tmp);
+	work = perf_kwork_add_work(kwork, tmp.class, &tmp);
 	if (!work)
 		return -1;
 

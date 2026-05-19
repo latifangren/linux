@@ -65,7 +65,8 @@ static int parser_trx_parse(struct mtd_info *mtd,
 	if (err != 0 && err != -EINVAL)
 		pr_err("failed to parse \"brcm,trx-magic\" DT attribute, using default: %d\n", err);
 
-	parts = kzalloc_objs(struct mtd_partition, TRX_PARSER_MAX_PARTS);
+	parts = kcalloc(TRX_PARSER_MAX_PARTS, sizeof(struct mtd_partition),
+			GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
 

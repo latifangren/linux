@@ -22,7 +22,6 @@
 #include <linux/seq_file.h>
 #include <linux/ftrace.h>
 #include <linux/irq.h>
-#include <linux/string_choices.h>
 
 #include <asm/ptrace.h>
 #include <asm/processor.h>
@@ -146,7 +145,9 @@ static int hv_irq_version;
  */
 static bool sun4v_cookie_only_virqs(void)
 {
-	return hv_irq_version >= 3;
+	if (hv_irq_version >= 3)
+		return true;
+	return false;
 }
 
 static void __init irq_init_hv(void)
@@ -169,7 +170,7 @@ static void __init irq_init_hv(void)
 
 	pr_info("SUN4V: Using IRQ API major %d, cookie only virqs %s\n",
 		hv_irq_version,
-		str_enabled_disabled(sun4v_cookie_only_virqs()));
+		sun4v_cookie_only_virqs() ? "enabled" : "disabled");
 }
 
 /* This function is for the timer interrupt.*/
@@ -303,9 +304,9 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 {
 	int j;
 
-	seq_printf(p, "NMI:");
+	seq_printf(p, "NMI: ");
 	for_each_online_cpu(j)
-		seq_put_decimal_ull_width(p, " ", cpu_data(j).__nmi_count, 10);
+		seq_printf(p, "%10u ", cpu_data(j).__nmi_count);
 	seq_printf(p, "     Non-maskable interrupts\n");
 	return 0;
 }
@@ -628,7 +629,7 @@ unsigned int build_irq(int inofixup, unsigned long iclr, unsigned long imap)
 	if (unlikely(handler_data))
 		goto out;
 
-	handler_data = kzalloc_obj(struct irq_handler_data, GFP_ATOMIC);
+	handler_data = kzalloc(sizeof(struct irq_handler_data), GFP_ATOMIC);
 	if (unlikely(!handler_data)) {
 		prom_printf("IRQ: kzalloc(irq_handler_data) failed.\n");
 		prom_halt();
@@ -654,7 +655,7 @@ static unsigned int sun4v_build_common(u32 devhandle, unsigned int devino,
 	if (!irq)
 		goto out;
 
-	data = kzalloc_obj(struct irq_handler_data, GFP_ATOMIC);
+	data = kzalloc(sizeof(struct irq_handler_data), GFP_ATOMIC);
 	if (unlikely(!data)) {
 		pr_err("IRQ handler data allocation failed.\n");
 		irq_free(irq);

@@ -6,7 +6,6 @@
 #include <sys/syscall.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <linux/compiler.h>
 #include <test_progs.h>
 #include <network_helpers.h>
 #include <bpf/btf.h>
@@ -106,11 +105,6 @@ static void kprobe_multi_link_api_subtest(void)
 	unsigned long long addrs[8];
 	__u64 cookies[8];
 
-	if (!env.has_testmod) {
-		test__skip();
-		return;
-	}
-
 	if (!ASSERT_OK(load_kallsyms(), "load_kallsyms"))
 		goto cleanup;
 
@@ -197,11 +191,6 @@ static void kprobe_multi_attach_api_subtest(void)
 		"bpf_fentry_test8",
 	};
 	__u64 cookies[8];
-
-	if (!env.has_testmod) {
-		test__skip();
-		return;
-	}
 
 	skel = kprobe_multi__open_and_load();
 	if (!ASSERT_OK_PTR(skel, "fentry_raw_skel_load"))
@@ -432,12 +421,11 @@ cleanup:
 	bpf_link__destroy(link3);
 }
 
-static void burn_cpu(long loops)
+static void burn_cpu(void)
 {
-	long j = 0;
+	volatile int j = 0;
 	cpu_set_t cpu_set;
-	long i;
-	int err;
+	int i, err;
 
 	/* generate some branches on cpu 0 */
 	CPU_ZERO(&cpu_set);
@@ -445,10 +433,9 @@ static void burn_cpu(long loops)
 	err = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set), &cpu_set);
 	ASSERT_OK(err, "set_thread_affinity");
 
-	for (i = 0; i < loops; ++i) {
+	/* spin the loop for a while (random high number) */
+	for (i = 0; i < 1000000; ++i)
 		++j;
-		barrier();
-	}
 }
 
 static void pe_subtest(struct test_bpf_cookie *skel)
@@ -464,7 +451,7 @@ static void pe_subtest(struct test_bpf_cookie *skel)
 	attr.type = PERF_TYPE_SOFTWARE;
 	attr.config = PERF_COUNT_SW_CPU_CLOCK;
 	attr.sample_period = 100000;
-	pfd = syscall(__NR_perf_event_open, &attr, 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
+	pfd = syscall(__NR_perf_event_open, &attr, -1, 0, -1, PERF_FLAG_FD_CLOEXEC);
 	if (!ASSERT_GE(pfd, 0, "perf_fd"))
 		goto cleanup;
 
@@ -473,7 +460,7 @@ static void pe_subtest(struct test_bpf_cookie *skel)
 	if (!ASSERT_OK_PTR(link, "link1"))
 		goto cleanup;
 
-	burn_cpu(100000000L); /* trigger BPF prog */
+	burn_cpu(); /* trigger BPF prog */
 
 	ASSERT_EQ(skel->bss->pe_res, 0x100000, "pe_res1");
 
@@ -492,7 +479,7 @@ static void pe_subtest(struct test_bpf_cookie *skel)
 	if (!ASSERT_OK_PTR(link, "link2"))
 		goto cleanup;
 
-	burn_cpu(100000000L); /* trigger BPF prog */
+	burn_cpu(); /* trigger BPF prog */
 
 	ASSERT_EQ(skel->bss->pe_res, 0x200000, "pe_res2");
 
@@ -501,28 +488,10 @@ cleanup:
 	bpf_link__destroy(link);
 }
 
-static int verify_tracing_link_info(int fd, u64 cookie)
-{
-	struct bpf_link_info info;
-	int err;
-	u32 len = sizeof(info);
-
-	err = bpf_link_get_info_by_fd(fd, &info, &len);
-	if (!ASSERT_OK(err, "get_link_info"))
-		return -1;
-
-	if (!ASSERT_EQ(info.type, BPF_LINK_TYPE_TRACING, "link_type"))
-		return -1;
-
-	ASSERT_EQ(info.tracing.cookie, cookie, "tracing_cookie");
-
-	return 0;
-}
-
 static void tracing_subtest(struct test_bpf_cookie *skel)
 {
 	__u64 cookie;
-	int prog_fd, err;
+	int prog_fd;
 	int fentry_fd = -1, fexit_fd = -1, fmod_ret_fd = -1;
 	LIBBPF_OPTS(bpf_test_run_opts, opts);
 	LIBBPF_OPTS(bpf_link_create_opts, link_opts);
@@ -535,10 +504,6 @@ static void tracing_subtest(struct test_bpf_cookie *skel)
 	link_opts.tracing.cookie = cookie;
 	fentry_fd = bpf_link_create(prog_fd, 0, BPF_TRACE_FENTRY, &link_opts);
 	if (!ASSERT_GE(fentry_fd, 0, "fentry.link_create"))
-		goto cleanup;
-
-	err = verify_tracing_link_info(fentry_fd, cookie);
-	if (!ASSERT_OK(err, "verify_tracing_link_info"))
 		goto cleanup;
 
 	cookie = 0x20000000000000L;
@@ -669,29 +634,10 @@ cleanup:
 	bpf_link__destroy(link);
 }
 
-static int verify_raw_tp_link_info(int fd, u64 cookie)
-{
-	struct bpf_link_info info;
-	int err;
-	u32 len = sizeof(info);
-
-	memset(&info, 0, sizeof(info));
-	err = bpf_link_get_info_by_fd(fd, &info, &len);
-	if (!ASSERT_OK(err, "get_link_info"))
-		return -1;
-
-	if (!ASSERT_EQ(info.type, BPF_LINK_TYPE_RAW_TRACEPOINT, "link_type"))
-		return -1;
-
-	ASSERT_EQ(info.raw_tracepoint.cookie, cookie, "raw_tp_cookie");
-
-	return 0;
-}
-
 static void raw_tp_subtest(struct test_bpf_cookie *skel)
 {
 	__u64 cookie;
-	int err, prog_fd, link_fd = -1;
+	int prog_fd, link_fd = -1;
 	struct bpf_link *link = NULL;
 	LIBBPF_OPTS(bpf_raw_tp_opts, raw_tp_opts);
 	LIBBPF_OPTS(bpf_raw_tracepoint_opts, opts);
@@ -709,11 +655,6 @@ static void raw_tp_subtest(struct test_bpf_cookie *skel)
 		goto cleanup;
 
 	usleep(1); /* trigger */
-
-	err = verify_raw_tp_link_info(link_fd, cookie);
-	if (!ASSERT_OK(err, "verify_raw_tp_link_info"))
-		goto cleanup;
-
 	close(link_fd); /* detach */
 	link_fd = -1;
 

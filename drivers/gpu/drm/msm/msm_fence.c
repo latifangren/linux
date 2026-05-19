@@ -46,7 +46,7 @@ msm_fence_context_alloc(struct drm_device *dev, volatile uint32_t *fenceptr,
 	struct msm_fence_context *fctx;
 	static int index = 0;
 
-	fctx = kzalloc_obj(*fctx);
+	fctx = kzalloc(sizeof(*fctx), GFP_KERNEL);
 	if (!fctx)
 		return ERR_PTR(-ENOMEM);
 
@@ -65,7 +65,8 @@ msm_fence_context_alloc(struct drm_device *dev, volatile uint32_t *fenceptr,
 	fctx->completed_fence = fctx->last_fence;
 	*fctx->fenceptr = fctx->last_fence;
 
-	hrtimer_setup(&fctx->deadline_timer, deadline_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+	hrtimer_init(&fctx->deadline_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+	fctx->deadline_timer.function = deadline_timer;
 
 	kthread_init_work(&fctx->deadline_work, deadline_work);
 
@@ -176,7 +177,7 @@ msm_fence_alloc(void)
 {
 	struct msm_fence *f;
 
-	f = kzalloc_obj(*f);
+	f = kzalloc(sizeof(*f), GFP_KERNEL);
 	if (!f)
 		return ERR_PTR(-ENOMEM);
 

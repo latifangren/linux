@@ -482,13 +482,13 @@ static int sabre_probe(struct platform_device *op)
 	}
 
 	err = -ENOMEM;
-	pbm = kzalloc_obj(*pbm);
+	pbm = kzalloc(sizeof(*pbm), GFP_KERNEL);
 	if (!pbm) {
 		printk(KERN_ERR PFX "Cannot allocate pci_pbm_info.\n");
 		goto out_err;
 	}
 
-	iommu = kzalloc_obj(*iommu);
+	iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
 	if (!iommu) {
 		printk(KERN_ERR PFX "Cannot allocate PBM iommu.\n");
 		goto out_free_controller;

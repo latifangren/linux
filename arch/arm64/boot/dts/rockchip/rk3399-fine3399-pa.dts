@@ -1,0 +1,138 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+
+/*
+ * 优化了被动散热情况下的热管理，禁用了暂时没用上的功能
+ * 1. CPU 降到最低频
+ * 2. 禁用 WiFi 和蓝牙
+ * 3. 禁用 PCIe
+ * 4. 禁用 crypto1
+ */
+
+/dts-v1/;
+
+#include "rk3399-fine3399.dts"
+
+/ {
+    model = "Fine3399 Passive";
+};
+
+/* 启用小核 (A53) 的低频挡位 */
+&cluster0_opp {
+    opp00 { status = "okay"; };
+    opp01 { status = "okay"; };
+    opp02 { status = "okay"; };
+};
+
+/* 启用大核 (A72) 的低频挡位 */
+&cluster1_opp {
+    opp00 { status = "okay"; }; //400MHz
+    // opp01 { status = "okay"; }; //600MHz
+    opp02 { status = "okay"; }; //800MHz
+};
+
+&cpu_thermal {
+    trips {
+        /* 原本是 55度 active (开风扇)，现在改为 passive (被动降频)*/
+        cpu_hot: cpu_hot {
+            hysteresis = <5000>;   /* 温度回落5度后停止降频 */
+            temperature = <65000>; /* 65摄氏度触发 */
+            type = "passive";      /* 改为被动模式 */
+        };
+
+        /* 添加一个危急关机温度，防止烧毁 */
+        cpu_crit: cpu_crit {
+            hysteresis = <2000>;
+            temperature = <85000>; /* 85度强制关机 */
+            type = "critical";
+        };
+    };
+
+    cooling-maps {
+        map2 {
+            /* 当触发 cpu_hot 时，控制 CPU 核心进行降频。
+             * THERMAL_NO_LIMIT 表示允许降到最低频。
+             */
+            trip = <&cpu_hot>;
+            cooling-device =
+                <&cpu_l0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+                <&cpu_b0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+        };
+    };
+};
+
+/* ============================================================
+ * 省电优化：禁用 AP6181 WiFi 和 Bluetooth
+ * ============================================================ */
+
+/* 禁用 SDIO 接口 (WiFi 数据通路) */
+&sdio0 {
+	status = "disabled";
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	/delete-property/ mmc-pwrseq;
+	/delete-property/ non-removable;
+	/delete-property/ keep-power-in-suspend;
+};
+
+/* 禁用 WiFi 电源序列管理 (不再尝试上电) */
+&sdio_pwrseq {
+	status = "disabled";
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+};
+
+/* 禁用 UART0 上的蓝牙节点 (防止日志报错 tx timeout) */
+&uart0 {
+	/delete-node/ bluetooth;
+};
+
+&gpio0 {
+    /* 强制拉低 WiFi 开关 (WL_REG_ON = GPIO0_PB2) */
+    wifi_power_off {
+        gpio-hog;
+        gpios = <RK_PB2 GPIO_ACTIVE_HIGH>;
+        output-low;
+        line-name = "wifi-kill-switch";
+    };
+
+    /* 强制拉低 蓝牙 开关 (BT_RST = GPIO0_PB1) */
+    bt_power_off {
+        gpio-hog;
+        gpios = <RK_PB1 GPIO_ACTIVE_HIGH>;
+        output-low;
+        line-name = "bt-kill-switch";
+    };
+};
+
+&leds {
+	user_led2 {
+		gpios = <&gpio2 RK_PD3 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* ==========================================================
+ * 禁用 PCIe 控制器
+ * ========================================================== */
+&pcie0 {
+	status = "disabled";
+};
+
+/* 关联的 PCIe PHY 也可以随之禁用以省电 */
+&pcie_phy {
+	status = "disabled";
+};
+
+/* ==========================================================
+ * 解决 Crypto1 vs RNG 地址冲突 (Error -16)
+ * ========================================================== */
+
+// 禁用 crypto1，因为它与 rng@ff8b8000 冲突
+// 保留 crypto0 (ff8b0000) 处理 AES/SHA 加密
+&crypto1 {
+    status = "disabled";
+};
+
+// 确保 rng 是启用的
+&rng {
+    status = "okay";
+};

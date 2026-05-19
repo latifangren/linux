@@ -13,13 +13,11 @@
  *
  */
 
-#include <linux/export.h>
 #include <linux/ctype.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#include <asm/machine.h>
 #include <asm/debug.h>
 #include <linux/uaccess.h>
 #include <asm/ipl.h>
@@ -236,7 +234,7 @@ static int __init dasd_parse_keyword(char *keyword)
 		return 0;
         }
 	if (strncmp("nopav", keyword, length) == 0) {
-		if (machine_is_vm())
+		if (MACHINE_IS_VM)
 			pr_info("'nopav' is not supported on z/VM\n");
 		else {
 			dasd_nopav = 1;
@@ -355,8 +353,7 @@ static int __init dasd_parse_range(const char *range)
 	/* each device in dasd= parameter should be set initially online */
 	features |= DASD_FEATURE_INITIAL_ONLINE;
 	while (from <= to) {
-		scnprintf(bus_id, sizeof(bus_id),
-			  "%01x.%01x.%04x", from_id0, from_id1, from++);
+		sprintf(bus_id, "%01x.%01x.%04x", from_id0, from_id1, from++);
 		devmap = dasd_add_busid(bus_id, features);
 		if (IS_ERR(devmap)) {
 			rc = PTR_ERR(devmap);
@@ -412,7 +409,7 @@ dasd_add_busid(const char *bus_id, int features)
 	struct dasd_devmap *devmap, *new, *tmp;
 	int hash;
 
-	new = kzalloc_obj(struct dasd_devmap);
+	new = kzalloc(sizeof(struct dasd_devmap), GFP_KERNEL);
 	if (!new)
 		return ERR_PTR(-ENOMEM);
 	spin_lock(&dasd_devmap_lock);
@@ -605,7 +602,7 @@ static int dasd_devmap_get_pprc_status(struct dasd_device *device,
 		dev_warn(&device->cdev->dev, "Unable to query copy relation status\n");
 		return -EOPNOTSUPP;
 	}
-	temp = kzalloc_obj(*temp);
+	temp = kzalloc(sizeof(*temp), GFP_KERNEL);
 	if (!temp)
 		return -ENOMEM;
 
@@ -858,7 +855,7 @@ dasd_delete_device(struct dasd_device *device)
 	dev_set_drvdata(&device->cdev->dev, NULL);
 	spin_unlock_irqrestore(get_ccwdev_lock(device->cdev), flags);
 
-	/* Remove copy relation */
+	/* Removve copy relation */
 	dasd_devmap_delete_copy_relation_device(device);
 	/*
 	 * Drop ref_count by 3, one for the devmap reference, one for
@@ -2274,7 +2271,7 @@ static ssize_t dasd_copy_pair_store(struct device *dev,
 	} else if (sec_devmap->copy) {
 		copy = sec_devmap->copy;
 	} else {
-		copy = kzalloc_obj(*copy);
+		copy = kzalloc(sizeof(*copy), GFP_KERNEL);
 		if (!copy)
 			return -ENOMEM;
 	}

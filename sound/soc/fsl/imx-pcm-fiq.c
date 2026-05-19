@@ -176,7 +176,7 @@ static int snd_imx_open(struct snd_soc_component *component,
 	struct imx_pcm_runtime_data *iprtd;
 	int ret;
 
-	iprtd = kzalloc_obj(*iprtd);
+	iprtd = kzalloc(sizeof(*iprtd), GFP_KERNEL);
 	if (iprtd == NULL)
 		return -ENOMEM;
 	runtime->private_data = iprtd;
@@ -185,7 +185,8 @@ static int snd_imx_open(struct snd_soc_component *component,
 
 	atomic_set(&iprtd->playing, 0);
 	atomic_set(&iprtd->capturing, 0);
-	hrtimer_setup(&iprtd->hrt, snd_hrtimer_callback, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&iprtd->hrt, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	iprtd->hrt.function = snd_hrtimer_callback;
 
 	ret = snd_pcm_hw_constraint_integer(substream->runtime,
 			SNDRV_PCM_HW_PARAM_PERIODS);
@@ -273,8 +274,8 @@ static const struct snd_soc_component_driver imx_soc_component_fiq = {
 	.prepare	= snd_imx_pcm_prepare,
 	.trigger	= snd_imx_pcm_trigger,
 	.pointer	= snd_imx_pcm_pointer,
-	.pcm_new	= snd_imx_pcm_new,
-	.pcm_free	= snd_imx_pcm_free,
+	.pcm_construct	= snd_imx_pcm_new,
+	.pcm_destruct	= snd_imx_pcm_free,
 };
 
 int imx_pcm_fiq_init(struct platform_device *pdev,

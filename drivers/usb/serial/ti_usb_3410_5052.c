@@ -519,7 +519,7 @@ static int ti_startup(struct usb_serial *serial)
 		dev->descriptor.bNumConfigurations,
 		dev->actconfig->desc.bConfigurationValue);
 
-	tdev = kzalloc_obj(struct ti_device);
+	tdev = kzalloc(sizeof(struct ti_device), GFP_KERNEL);
 	if (!tdev)
 		return -ENOMEM;
 
@@ -598,7 +598,7 @@ static int ti_port_probe(struct usb_serial_port *port)
 {
 	struct ti_port *tport;
 
-	tport = kzalloc_obj(*tport);
+	tport = kzalloc(sizeof(*tport), GFP_KERNEL);
 	if (!tport)
 		return -ENOMEM;
 
@@ -729,6 +729,11 @@ static int ti_open(struct tty_struct *tty, struct usb_serial_port *port)
 
 	/* start read urb */
 	urb = port->read_urb;
+	if (!urb) {
+		dev_err(&port->dev, "%s - no read urb\n", __func__);
+		status = -EINVAL;
+		goto unlink_int_urb;
+	}
 	tport->tp_read_urb_state = TI_READ_URB_RUNNING;
 	urb->context = tport;
 	status = usb_submit_urb(urb, GFP_KERNEL);
@@ -897,7 +902,7 @@ static void ti_set_termios(struct tty_struct *tty,
 	u16 wbaudrate;
 	u16 wflags = 0;
 
-	config = kmalloc_obj(*config);
+	config = kmalloc(sizeof(*config), GFP_KERNEL);
 	if (!config)
 		return;
 
@@ -1600,29 +1605,29 @@ static int ti_download_firmware(struct ti_device *tdev)
 		if (le16_to_cpu(dev->descriptor.idVendor) == MTS_VENDOR_ID) {
 			switch (le16_to_cpu(dev->descriptor.idProduct)) {
 			case MTS_CDMA_PRODUCT_ID:
-				strscpy(buf, "mts_cdma.fw");
+				strcpy(buf, "mts_cdma.fw");
 				break;
 			case MTS_GSM_PRODUCT_ID:
-				strscpy(buf, "mts_gsm.fw");
+				strcpy(buf, "mts_gsm.fw");
 				break;
 			case MTS_EDGE_PRODUCT_ID:
-				strscpy(buf, "mts_edge.fw");
+				strcpy(buf, "mts_edge.fw");
 				break;
 			case MTS_MT9234MU_PRODUCT_ID:
-				strscpy(buf, "mts_mt9234mu.fw");
+				strcpy(buf, "mts_mt9234mu.fw");
 				break;
 			case MTS_MT9234ZBA_PRODUCT_ID:
-				strscpy(buf, "mts_mt9234zba.fw");
+				strcpy(buf, "mts_mt9234zba.fw");
 				break;
 			case MTS_MT9234ZBAOLD_PRODUCT_ID:
-				strscpy(buf, "mts_mt9234zba.fw");
+				strcpy(buf, "mts_mt9234zba.fw");
 				break;			}
 		}
 		if (buf[0] == '\0') {
 			if (tdev->td_is_3410)
-				strscpy(buf, "ti_3410.fw");
+				strcpy(buf, "ti_3410.fw");
 			else
-				strscpy(buf, "ti_5052.fw");
+				strcpy(buf, "ti_5052.fw");
 		}
 		status = request_firmware(&fw_p, buf, &dev->dev);
 	}

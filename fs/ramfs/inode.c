@@ -110,7 +110,8 @@ ramfs_mknod(struct mnt_idmap *idmap, struct inode *dir,
 			goto out;
 		}
 
-		d_make_persistent(dentry, inode);
+		d_instantiate(dentry, inode);
+		dget(dentry);	/* Extra count - pin the dentry in core */
 		error = 0;
 		inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
 	}
@@ -118,13 +119,13 @@ out:
 	return error;
 }
 
-static struct dentry *ramfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-				 struct dentry *dentry, umode_t mode)
+static int ramfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+		       struct dentry *dentry, umode_t mode)
 {
 	int retval = ramfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFDIR, 0);
 	if (!retval)
 		inc_nlink(dir);
-	return ERR_PTR(retval);
+	return retval;
 }
 
 static int ramfs_create(struct mnt_idmap *idmap, struct inode *dir,
@@ -153,7 +154,8 @@ static int ramfs_symlink(struct mnt_idmap *idmap, struct inode *dir,
 
 		error = page_symlink(inode, symname, l);
 		if (!error) {
-			d_make_persistent(dentry, inode);
+			d_instantiate(dentry, inode);
+			dget(dentry);
 			inode_set_mtime_to_ts(dir,
 					      inode_set_ctime_current(dir));
 		} else
@@ -213,7 +215,7 @@ static int ramfs_show_options(struct seq_file *m, struct dentry *root)
 
 static const struct super_operations ramfs_ops = {
 	.statfs		= simple_statfs,
-	.drop_inode	= inode_just_drop,
+	.drop_inode	= generic_delete_inode,
 	.show_options	= ramfs_show_options,
 };
 
@@ -267,7 +269,6 @@ static int ramfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_blocksize_bits	= PAGE_SHIFT;
 	sb->s_magic		= RAMFS_MAGIC;
 	sb->s_op		= &ramfs_ops;
-	sb->s_d_flags		= DCACHE_DONTCACHE;
 	sb->s_time_gran		= 1;
 
 	inode = ramfs_get_inode(sb, NULL, S_IFDIR | fsi->mount_opts.mode, 0);
@@ -298,7 +299,7 @@ int ramfs_init_fs_context(struct fs_context *fc)
 {
 	struct ramfs_fs_info *fsi;
 
-	fsi = kzalloc_obj(*fsi);
+	fsi = kzalloc(sizeof(*fsi), GFP_KERNEL);
 	if (!fsi)
 		return -ENOMEM;
 
@@ -311,7 +312,7 @@ int ramfs_init_fs_context(struct fs_context *fc)
 void ramfs_kill_sb(struct super_block *sb)
 {
 	kfree(sb->s_fs_info);
-	kill_anon_super(sb);
+	kill_litter_super(sb);
 }
 
 static struct file_system_type ramfs_fs_type = {

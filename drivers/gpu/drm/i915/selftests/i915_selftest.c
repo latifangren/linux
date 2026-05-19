@@ -30,9 +30,8 @@
 
 #include "i915_driver.h"
 #include "i915_drv.h"
-#include "i915_jiffies.h"
 #include "i915_selftest.h"
-#include "i915_wait_util.h"
+
 #include "igt_flush_test.h"
 
 struct i915_selftest i915_selftest __read_mostly = {

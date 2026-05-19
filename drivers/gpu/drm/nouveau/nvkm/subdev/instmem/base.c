@@ -176,17 +176,15 @@ nvkm_instmem_boot(struct nvkm_instmem *imem)
 }
 
 static int
-nvkm_instmem_fini(struct nvkm_subdev *subdev, enum nvkm_suspend_state suspend)
+nvkm_instmem_fini(struct nvkm_subdev *subdev, bool suspend)
 {
 	struct nvkm_instmem *imem = nvkm_instmem(subdev);
 	int ret;
 
 	if (suspend) {
-		if (imem->func->suspend) {
-			ret = imem->func->suspend(imem);
-			if (ret)
-				return ret;
-		}
+		ret = imem->func->suspend(imem);
+		if (ret)
+			return ret;
 
 		imem->suspend = true;
 	}

@@ -15,7 +15,7 @@
 	compatible = "ti,am335x-pocketbeagle", "ti,am335x-bone", "ti,am33xx";
 
 	chosen {
-		stdout-path = "serial0:115200n8";
+		stdout-path = &uart0;
 	};
 
 	leds {

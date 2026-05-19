@@ -2133,8 +2133,6 @@ static const struct dsa_switch_ops rtl8365mb_switch_ops = {
 	.get_stats64 = rtl8365mb_get_stats64,
 	.port_change_mtu = rtl8365mb_port_change_mtu,
 	.port_max_mtu = rtl8365mb_port_max_mtu,
-	.port_hsr_join = dsa_port_simple_hsr_join,
-	.port_hsr_leave = dsa_port_simple_hsr_leave,
 };
 
 static const struct realtek_ops rtl8365mb_ops = {
@@ -2207,4 +2205,4 @@ module_exit(rtl8365mb_exit);
 MODULE_AUTHOR("Alvin Šipraga <alsi@bang-olufsen.dk>");
 MODULE_DESCRIPTION("Driver for RTL8365MB-VC ethernet switch");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("REALTEK_DSA");
+MODULE_IMPORT_NS(REALTEK_DSA);

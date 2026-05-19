@@ -28,7 +28,6 @@
 #include "session.h"
 #include "perf_regs.h"
 #include "string2.h"
-#include "dwarf-regs.h"
 
 /* 4096 - 2 ('\n' + '\0') */
 #define MAX_CMDLEN 4094
@@ -367,6 +366,25 @@ int probe_file__del_strlist(int fd, struct strlist *namelist)
 	return ret;
 }
 
+int probe_file__del_events(int fd, struct strfilter *filter)
+{
+	struct strlist *namelist;
+	int ret;
+
+	namelist = strlist__new(NULL, NULL);
+	if (!namelist)
+		return -ENOMEM;
+
+	ret = probe_file__get_events(fd, filter, namelist);
+	if (ret < 0)
+		goto out;
+
+	ret = probe_file__del_strlist(fd, namelist);
+out:
+	strlist__delete(namelist);
+	return ret;
+}
+
 /* Caller must ensure to remove this entry from list */
 static void probe_cache_entry__delete(struct probe_cache_entry *entry)
 {
@@ -414,7 +432,7 @@ int probe_cache_entry__get_event(struct probe_cache_entry *entry,
 	if (ret > probe_conf.max_probes)
 		return -E2BIG;
 
-	*tevs = calloc(ret, sizeof(*tev));
+	*tevs = zalloc(ret * sizeof(*tev));
 	if (!*tevs)
 		return -ENOMEM;
 
@@ -449,10 +467,10 @@ static int probe_cache__open(struct probe_cache *pcache, const char *target,
 	if (!target || !strcmp(target, DSO__NAME_KALLSYMS)) {
 		target = DSO__NAME_KALLSYMS;
 		is_kallsyms = true;
-		ret = sysfs__snprintf_build_id("/", sbuildid, sizeof(sbuildid));
+		ret = sysfs__sprintf_build_id("/", sbuildid);
 	} else {
 		nsinfo__mountns_enter(nsi, &nsc);
-		ret = filename__snprintf_build_id(target, sbuildid, sizeof(sbuildid));
+		ret = filename__sprintf_build_id(target, sbuildid);
 		nsinfo__mountns_exit(&nsc);
 	}
 
@@ -785,7 +803,7 @@ static int synthesize_sdt_probe_arg(struct strbuf *buf, int i, const char *arg)
 		op = desc;
 	}
 
-	ret = perf_sdt_arg_parse_op(EM_HOST, op, &new_op);
+	ret = arch_sdt_arg_parse_op(op, &new_op);
 
 	if (ret < 0)
 		goto error;

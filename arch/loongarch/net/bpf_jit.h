@@ -18,15 +18,12 @@ struct jit_ctx {
 	u32 *offset;
 	int num_exentries;
 	union loongarch_instruction *image;
-	union loongarch_instruction *ro_image;
 	u32 stack_size;
-	u64 arena_vm_start;
-	u64 user_vm_start;
 };
 
 struct jit_data {
 	struct bpf_binary_header *header;
-	struct bpf_binary_header *ro_header;
+	u8 *image;
 	struct jit_ctx ctx;
 };
 
@@ -336,9 +333,4 @@ static inline int emit_tailcall_jmp(struct jit_ctx *ctx, u8 cond, enum loongarch
 	}
 
 	return -EINVAL;
-}
-
-static inline void bpf_flush_icache(void *start, void *end)
-{
-	flush_icache_range((unsigned long)start, (unsigned long)end);
 }

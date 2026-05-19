@@ -311,7 +311,7 @@ static int synusb_probe(struct usb_interface *intf,
 	if (!ep)
 		return -ENODEV;
 
-	synusb = kzalloc_obj(*synusb);
+	synusb = kzalloc(sizeof(*synusb), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!synusb || !input_dev) {
 		error = -ENOMEM;

@@ -110,7 +110,8 @@ void agent_send_response(const struct ib_mad_hdr *mad_hdr, const struct ib_grh *
 	agent = port_priv->agent[qpn];
 	ah = ib_create_ah_from_wc(agent->qp->pd, wc, grh, port_num);
 	if (IS_ERR(ah)) {
-		dev_err(&device->dev, "ib_create_ah_from_wc error %pe\n", ah);
+		dev_err(&device->dev, "ib_create_ah_from_wc error %ld\n",
+			PTR_ERR(ah));
 		return;
 	}
 
@@ -162,7 +163,7 @@ int ib_agent_port_open(struct ib_device *device, int port_num)
 	int ret;
 
 	/* Create new device info */
-	port_priv = kzalloc_obj(*port_priv);
+	port_priv = kzalloc(sizeof *port_priv, GFP_KERNEL);
 	if (!port_priv) {
 		ret = -ENOMEM;
 		goto error1;

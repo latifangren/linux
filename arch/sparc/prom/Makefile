@@ -2,6 +2,7 @@
 # Makefile for the Sun Boot PROM interface library under
 # Linux.
 #
+asflags := -ansi
 
 lib-y                 := bootstr_$(BITS).o
 lib-y                 += init_$(BITS).o

@@ -422,7 +422,7 @@ static struct usb_function_instance *geth_alloc_inst(void)
 {
 	struct f_gether_opts *opts;
 
-	opts = kzalloc_obj(*opts);
+	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
 	if (!opts)
 		return ERR_PTR(-ENOMEM);
 	mutex_init(&opts->lock);
@@ -474,7 +474,7 @@ static struct usb_function *geth_alloc(struct usb_function_instance *fi)
 	int status;
 
 	/* allocate and initialize one new instance */
-	geth = kzalloc_obj(*geth);
+	geth = kzalloc(sizeof(*geth), GFP_KERNEL);
 	if (!geth)
 		return ERR_PTR(-ENOMEM);
 

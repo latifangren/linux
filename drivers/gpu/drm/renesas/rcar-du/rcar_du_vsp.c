@@ -20,7 +20,6 @@
 #include <drm/drm_vblank.h>
 
 #include <linux/bitops.h>
-#include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -405,7 +404,7 @@ rcar_du_vsp_plane_atomic_duplicate_state(struct drm_plane *plane)
 	if (WARN_ON(!plane->state))
 		return NULL;
 
-	copy = kzalloc_obj(*copy);
+	copy = kzalloc(sizeof(*copy), GFP_KERNEL);
 	if (copy == NULL)
 		return NULL;
 
@@ -430,7 +429,7 @@ static void rcar_du_vsp_plane_reset(struct drm_plane *plane)
 		plane->state = NULL;
 	}
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (state == NULL)
 		return;
 
@@ -459,9 +458,6 @@ static void rcar_du_vsp_cleanup(struct drm_device *dev, void *res)
 
 	kfree(vsp->planes);
 
-	if (vsp->link)
-		device_link_del(vsp->link);
-
 	put_device(vsp->vsp);
 }
 
@@ -486,25 +482,13 @@ int rcar_du_vsp_init(struct rcar_du_vsp *vsp, struct device_node *np,
 	if (ret < 0)
 		return ret;
 
-	/*
-	 * Enforce suspend/resume ordering between the DU (consumer) and the
-	 * VSP (supplier). The DU will be suspended before and resume after the
-	 * VSP.
-	 */
-	vsp->link = device_link_add(rcdu->dev, vsp->vsp, DL_FLAG_STATELESS);
-	if (!vsp->link) {
-		dev_err(rcdu->dev, "Failed to create device link to VSP %s\n",
-			dev_name(vsp->vsp));
-		return -EINVAL;
-	}
-
 	ret = vsp1_du_init(vsp->vsp);
 	if (ret < 0)
 		return ret;
 
 	num_planes = rcdu->info->num_rpf;
 
-	vsp->planes = kzalloc_objs(*vsp->planes, num_planes);
+	vsp->planes = kcalloc(num_planes, sizeof(*vsp->planes), GFP_KERNEL);
 	if (!vsp->planes)
 		return -ENOMEM;
 

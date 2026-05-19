@@ -8,7 +8,6 @@
 #include "header.h"
 #include "machine.h"
 #include "util/synthetic-events.h"
-#include "target.h"
 #include "tool.h"
 #include "tests.h"
 #include "debug.h"
@@ -82,8 +81,7 @@ static int test__event_update(struct test_suite *test __maybe_unused, int subtes
 {
 	struct evsel *evsel;
 	struct event_name tmp;
-	struct target target = {};
-	struct evlist *evlist = evlist__new_default(&target, /*sample_callchains=*/false);
+	struct evlist *evlist = evlist__new_default();
 
 	TEST_ASSERT_VAL("failed to get evlist", evlist);
 
@@ -111,8 +109,7 @@ static int test__event_update(struct test_suite *test __maybe_unused, int subtes
 	TEST_ASSERT_VAL("failed to synthesize attr update name",
 			!perf_event__synthesize_event_update_name(&tmp.tool, evsel, process_event_name));
 
-	perf_cpu_map__put(evsel->core.pmu_cpus);
-	evsel->core.pmu_cpus = perf_cpu_map__new("1,2,3");
+	evsel->core.own_cpus = perf_cpu_map__new("1,2,3");
 
 	TEST_ASSERT_VAL("failed to synthesize attr update cpus",
 			!perf_event__synthesize_event_update_cpus(&tmp.tool, evsel, process_event_cpus));

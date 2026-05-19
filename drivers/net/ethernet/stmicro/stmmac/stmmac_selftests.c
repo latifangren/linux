@@ -324,7 +324,7 @@ static int __stmmac_test_loopback(struct stmmac_priv *priv,
 	struct sk_buff *skb = NULL;
 	int ret = 0;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -382,14 +382,14 @@ static int stmmac_test_phy_loopback(struct stmmac_priv *priv)
 	if (!priv->dev->phydev)
 		return -EOPNOTSUPP;
 
-	ret = phy_loopback(priv->dev->phydev, true, 0);
+	ret = phy_loopback(priv->dev->phydev, true);
 	if (ret)
 		return ret;
 
 	attr.dst = priv->dev->dev_addr;
 	ret = __stmmac_test_loopback(priv, &attr);
 
-	phy_loopback(priv->dev->phydev, false, 0);
+	phy_loopback(priv->dev->phydev, false);
 	return ret;
 }
 
@@ -434,11 +434,11 @@ static int stmmac_test_eee(struct stmmac_priv *priv)
 	if (!priv->dma_cap.eee || !priv->eee_active)
 		return -EOPNOTSUPP;
 
-	initial = kzalloc_obj(*initial);
+	initial = kzalloc(sizeof(*initial), GFP_KERNEL);
 	if (!initial)
 		return -ENOMEM;
 
-	final = kzalloc_obj(*final);
+	final = kzalloc(sizeof(*final), GFP_KERNEL);
 	if (!final) {
 		ret = -ENOMEM;
 		goto out_free_initial;
@@ -744,7 +744,7 @@ static int stmmac_test_flowctrl(struct stmmac_priv *priv)
 	if (!phydev || (!phydev->pause && !phydev->asym_pause))
 		return -EOPNOTSUPP;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -898,7 +898,7 @@ static int __stmmac_test_vlanfilt(struct stmmac_priv *priv)
 	struct sk_buff *skb = NULL;
 	int ret = 0, i;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -991,7 +991,7 @@ static int __stmmac_test_dvlanfilt(struct stmmac_priv *priv)
 	struct sk_buff *skb = NULL;
 	int ret = 0, i;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -1095,23 +1095,23 @@ static int stmmac_test_rxp(struct stmmac_priv *priv)
 	if (!priv->dma_cap.frpsel)
 		return -EOPNOTSUPP;
 
-	sel = kzalloc_flex(*sel, keys, nk);
+	sel = kzalloc(struct_size(sel, keys, nk), GFP_KERNEL);
 	if (!sel)
 		return -ENOMEM;
 
-	exts = kzalloc_obj(*exts);
+	exts = kzalloc(sizeof(*exts), GFP_KERNEL);
 	if (!exts) {
 		ret = -ENOMEM;
 		goto cleanup_sel;
 	}
 
-	actions = kzalloc_objs(*actions, nk);
+	actions = kcalloc(nk, sizeof(*actions), GFP_KERNEL);
 	if (!actions) {
 		ret = -ENOMEM;
 		goto cleanup_exts;
 	}
 
-	gact = kzalloc_objs(*gact, nk);
+	gact = kcalloc(nk, sizeof(*gact), GFP_KERNEL);
 	if (!gact) {
 		ret = -ENOMEM;
 		goto cleanup_actions;
@@ -1266,7 +1266,7 @@ static int stmmac_test_vlanoff_common(struct stmmac_priv *priv, bool svlan)
 	if (!priv->dma_cap.vlins)
 		return -EOPNOTSUPP;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -1349,7 +1349,7 @@ static int __stmmac_test_l3filt(struct stmmac_priv *priv, u32 dst, u32 src,
 				     priv->plat->rx_queues_to_use);
 	}
 
-	dissector = kzalloc_obj(*dissector);
+	dissector = kzalloc(sizeof(*dissector), GFP_KERNEL);
 	if (!dissector) {
 		ret = -ENOMEM;
 		goto cleanup_rss;
@@ -1358,7 +1358,7 @@ static int __stmmac_test_l3filt(struct stmmac_priv *priv, u32 dst, u32 src,
 	dissector->used_keys |= (1ULL << FLOW_DISSECTOR_KEY_IPV4_ADDRS);
 	dissector->offset[FLOW_DISSECTOR_KEY_IPV4_ADDRS] = 0;
 
-	cls = kzalloc_obj(*cls);
+	cls = kzalloc(sizeof(*cls), GFP_KERNEL);
 	if (!cls) {
 		ret = -ENOMEM;
 		goto cleanup_dissector;
@@ -1368,7 +1368,7 @@ static int __stmmac_test_l3filt(struct stmmac_priv *priv, u32 dst, u32 src,
 	cls->command = FLOW_CLS_REPLACE;
 	cls->cookie = dummy_cookie;
 
-	rule = kzalloc_flex(*rule, action.entries, 1);
+	rule = kzalloc(struct_size(rule, action.entries, 1), GFP_KERNEL);
 	if (!rule) {
 		ret = -ENOMEM;
 		goto cleanup_cls;
@@ -1475,7 +1475,7 @@ static int __stmmac_test_l4filt(struct stmmac_priv *priv, u32 dst, u32 src,
 				     priv->plat->rx_queues_to_use);
 	}
 
-	dissector = kzalloc_obj(*dissector);
+	dissector = kzalloc(sizeof(*dissector), GFP_KERNEL);
 	if (!dissector) {
 		ret = -ENOMEM;
 		goto cleanup_rss;
@@ -1486,7 +1486,7 @@ static int __stmmac_test_l4filt(struct stmmac_priv *priv, u32 dst, u32 src,
 	dissector->offset[FLOW_DISSECTOR_KEY_BASIC] = 0;
 	dissector->offset[FLOW_DISSECTOR_KEY_PORTS] = offsetof(typeof(keys), key);
 
-	cls = kzalloc_obj(*cls);
+	cls = kzalloc(sizeof(*cls), GFP_KERNEL);
 	if (!cls) {
 		ret = -ENOMEM;
 		goto cleanup_dissector;
@@ -1496,7 +1496,7 @@ static int __stmmac_test_l4filt(struct stmmac_priv *priv, u32 dst, u32 src,
 	cls->command = FLOW_CLS_REPLACE;
 	cls->cookie = dummy_cookie;
 
-	rule = kzalloc_flex(*rule, action.entries, 1);
+	rule = kzalloc(struct_size(rule, action.entries, 1), GFP_KERNEL);
 	if (!rule) {
 		ret = -ENOMEM;
 		goto cleanup_cls;
@@ -1628,7 +1628,7 @@ static int stmmac_test_arpoffload(struct stmmac_priv *priv)
 	if (!priv->dma_cap.arpoffsel)
 		return -EOPNOTSUPP;
 
-	tpriv = kzalloc_obj(*tpriv);
+	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
 	if (!tpriv)
 		return -ENOMEM;
 
@@ -1721,7 +1721,7 @@ static int stmmac_test_sph(struct stmmac_priv *priv)
 	struct stmmac_packet_attrs attr = { };
 	int ret;
 
-	if (!priv->sph_active)
+	if (!priv->sph)
 		return -EOPNOTSUPP;
 
 	/* Check for UDP first */
@@ -1985,7 +1985,7 @@ void stmmac_selftest_run(struct net_device *dev,
 		case STMMAC_LOOPBACK_PHY:
 			ret = -EOPNOTSUPP;
 			if (dev->phydev)
-				ret = phy_loopback(dev->phydev, true, 0);
+				ret = phy_loopback(dev->phydev, true);
 			if (!ret)
 				break;
 			fallthrough;
@@ -2000,7 +2000,7 @@ void stmmac_selftest_run(struct net_device *dev,
 		}
 
 		/*
-		 * First tests will always be MAC / PHY loopback. If any of
+		 * First tests will always be MAC / PHY loobpack. If any of
 		 * them is not supported we abort earlier.
 		 */
 		if (ret) {
@@ -2018,7 +2018,7 @@ void stmmac_selftest_run(struct net_device *dev,
 		case STMMAC_LOOPBACK_PHY:
 			ret = -EOPNOTSUPP;
 			if (dev->phydev)
-				ret = phy_loopback(dev->phydev, false, 0);
+				ret = phy_loopback(dev->phydev, false);
 			if (!ret)
 				break;
 			fallthrough;

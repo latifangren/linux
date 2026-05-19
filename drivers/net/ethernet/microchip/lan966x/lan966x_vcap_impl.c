@@ -611,7 +611,7 @@ lan966x_vcap_admin_alloc(struct lan966x *lan966x, struct vcap_control *ctrl,
 {
 	struct vcap_admin *admin;
 
-	admin = kzalloc_obj(*admin);
+	admin = kzalloc(sizeof(*admin), GFP_KERNEL);
 	if (!admin)
 		return ERR_PTR(-ENOMEM);
 
@@ -712,7 +712,7 @@ int lan966x_vcap_init(struct lan966x *lan966x)
 	struct vcap_admin *admin;
 	struct dentry *dir;
 
-	ctrl = kzalloc_obj(*ctrl);
+	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
 	if (!ctrl)
 		return -ENOMEM;
 

@@ -9,12 +9,9 @@
 #include <linux/acpi.h>
 #include <acpi/video.h>
 
-#include <drm/drm_print.h>
-
+#include "i915_drv.h"
 #include "intel_acpi.h"
-#include "intel_display_core.h"
 #include "intel_display_types.h"
-#include "intel_display_utils.h"
 
 #define INTEL_DSM_REVISION_ID 1 /* For Calpella anyway... */
 #define INTEL_DSM_FN_PLATFORM_MUX_INFO 1 /* No args */

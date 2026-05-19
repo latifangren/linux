@@ -475,17 +475,9 @@ void rnbd_clt_remove_dev_symlink(struct rnbd_clt_dev *dev)
 	}
 }
 
-static void rnbd_dev_release(struct kobject *kobj)
-{
-	struct rnbd_clt_dev *dev = container_of(kobj, struct rnbd_clt_dev, kobj);
-
-	kfree(dev);
-}
-
 static const struct kobj_type rnbd_dev_ktype = {
 	.sysfs_ops      = &kobj_sysfs_ops,
 	.default_groups = rnbd_dev_groups,
-	.release	= rnbd_dev_release,
 };
 
 static int rnbd_clt_add_dev_kobj(struct rnbd_clt_dev *dev)
@@ -591,7 +583,7 @@ static ssize_t rnbd_clt_map_device_store(struct kobject *kobj,
 	opt.dest_port = &port_nr;
 	opt.access_mode = &access_mode;
 	opt.nr_poll_queues = &nr_poll_queues;
-	addrs = kzalloc_objs(*addrs, ARRAY_SIZE(paths) * 2);
+	addrs = kcalloc(ARRAY_SIZE(paths) * 2, sizeof(*addrs), GFP_KERNEL);
 	if (!addrs)
 		return -ENOMEM;
 

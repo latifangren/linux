@@ -110,7 +110,7 @@ static struct vhost_vdpa_as *vhost_vdpa_alloc_as(struct vhost_vdpa *v, u32 asid)
 	if (asid >= v->vdpa->nas)
 		return NULL;
 
-	as = kmalloc_obj(*as);
+	as = kmalloc(sizeof(*as), GFP_KERNEL);
 	if (!as)
 		return NULL;
 
@@ -212,11 +212,11 @@ static void vhost_vdpa_setup_vq_irq(struct vhost_vdpa *v, u16 qid)
 	if (!vq->call_ctx.ctx)
 		return;
 
-	ret = irq_bypass_register_producer(&vq->call_ctx.producer,
-					   vq->call_ctx.ctx, irq);
+	vq->call_ctx.producer.irq = irq;
+	ret = irq_bypass_register_producer(&vq->call_ctx.producer);
 	if (unlikely(ret))
-		dev_info(&v->dev, "vq %u, irq bypass producer (eventfd %p) registration fails, ret =  %d\n",
-			 qid, vq->call_ctx.ctx, ret);
+		dev_info(&v->dev, "vq %u, irq bypass producer (token %p) registration fails, ret =  %d\n",
+			 qid, vq->call_ctx.producer.token, ret);
 }
 
 static void vhost_vdpa_unsetup_vq_irq(struct vhost_vdpa *v, u16 qid)
@@ -682,8 +682,6 @@ static long vhost_vdpa_vring_ioctl(struct vhost_vdpa *v, unsigned int cmd,
 			return -EFAULT;
 		if (idx >= vdpa->ngroups || s.num >= vdpa->nas)
 			return -EINVAL;
-		if (ops->get_status(vdpa) & VIRTIO_CONFIG_S_DRIVER_OK)
-			return -EBUSY;
 		if (!ops->set_group_asid)
 			return -EOPNOTSUPP;
 		return ops->set_group_asid(vdpa, idx, s.num);
@@ -714,6 +712,7 @@ static long vhost_vdpa_vring_ioctl(struct vhost_vdpa *v, unsigned int cmd,
 			if (ops->get_status(vdpa) &
 			    VIRTIO_CONFIG_S_DRIVER_OK)
 				vhost_vdpa_unsetup_vq_irq(v, idx);
+			vq->call_ctx.producer.token = NULL;
 		}
 		break;
 	}
@@ -754,6 +753,7 @@ static long vhost_vdpa_vring_ioctl(struct vhost_vdpa *v, unsigned int cmd,
 			cb.callback = vhost_vdpa_virtqueue_cb;
 			cb.private = vq;
 			cb.trigger = vq->call_ctx.ctx;
+			vq->call_ctx.producer.token = vq->call_ctx.ctx;
 			if (ops->get_status(vdpa) &
 			    VIRTIO_CONFIG_S_DRIVER_OK)
 				vhost_vdpa_setup_vq_irq(v, idx);
@@ -1064,7 +1064,7 @@ static int vhost_vdpa_va_map(struct vhost_vdpa *v,
 			!(vma->vm_flags & (VM_IO | VM_PFNMAP))))
 			goto next;
 
-		map_file = kzalloc_obj(*map_file);
+		map_file = kzalloc(sizeof(*map_file), GFP_KERNEL);
 		if (!map_file) {
 			ret = -ENOMEM;
 			break;
@@ -1320,8 +1320,7 @@ static int vhost_vdpa_alloc_domain(struct vhost_vdpa *v)
 {
 	struct vdpa_device *vdpa = v->vdpa;
 	const struct vdpa_config_ops *ops = vdpa->config;
-	union virtio_map map = vdpa_get_map(vdpa);
-	struct device *dma_dev = map.dma_dev;
+	struct device *dma_dev = vdpa_get_dma_dev(vdpa);
 	int ret;
 
 	/* Device want to do DMA by itself */
@@ -1356,8 +1355,7 @@ err_attach:
 static void vhost_vdpa_free_domain(struct vhost_vdpa *v)
 {
 	struct vdpa_device *vdpa = v->vdpa;
-	union virtio_map map = vdpa_get_map(vdpa);
-	struct device *dma_dev = map.dma_dev;
+	struct device *dma_dev = vdpa_get_dma_dev(vdpa);
 
 	if (v->domain) {
 		iommu_detach_device(v->domain, dma_dev);
@@ -1420,7 +1418,7 @@ static int vhost_vdpa_open(struct inode *inode, struct file *filep)
 	if (r)
 		goto err;
 
-	vqs = kmalloc_objs(*vqs, nvqs);
+	vqs = kmalloc_array(nvqs, sizeof(*vqs), GFP_KERNEL);
 	if (!vqs) {
 		r = -ENOMEM;
 		goto err;
@@ -1572,7 +1570,7 @@ static int vhost_vdpa_probe(struct vdpa_device *vdpa)
 	    (vdpa->ngroups > 1 || vdpa->nas > 1))
 		return -EOPNOTSUPP;
 
-	v = kzalloc_obj(*v, GFP_KERNEL | __GFP_RETRY_MAYFAIL);
+	v = kzalloc(sizeof(*v), GFP_KERNEL | __GFP_RETRY_MAYFAIL);
 	if (!v)
 		return -ENOMEM;
 
@@ -1593,7 +1591,8 @@ static int vhost_vdpa_probe(struct vdpa_device *vdpa)
 	v->dev.release = vhost_vdpa_release_dev;
 	v->dev.parent = &vdpa->dev;
 	v->dev.devt = MKDEV(MAJOR(vhost_vdpa_major), minor);
-	v->vqs = kmalloc_objs(struct vhost_virtqueue, v->nvqs);
+	v->vqs = kmalloc_array(v->nvqs, sizeof(struct vhost_virtqueue),
+			       GFP_KERNEL);
 	if (!v->vqs) {
 		r = -ENOMEM;
 		goto err;

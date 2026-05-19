@@ -63,14 +63,12 @@ static void ext4_put_nojournal(handle_t *handle)
  */
 static int ext4_journal_check_start(struct super_block *sb)
 {
-	int ret;
 	journal_t *journal;
 
 	might_sleep();
 
-	ret = ext4_emergency_state(sb);
-	if (unlikely(ret))
-		return ret;
+	if (unlikely(ext4_forced_shutdown(sb)))
+		return -EIO;
 
 	if (WARN_ON_ONCE(sb_rdonly(sb)))
 		return -EROFS;
@@ -246,8 +244,7 @@ int __ext4_journal_get_write_access(const char *where, unsigned int line,
 		}
 	} else
 		ext4_check_bdev_write_error(sb);
-	if (trigger_type == EXT4_JTR_NONE ||
-	    !ext4_has_feature_metadata_csum(sb))
+	if (trigger_type == EXT4_JTR_NONE || !ext4_has_metadata_csum(sb))
 		return 0;
 	BUG_ON(trigger_type >= EXT4_JOURNAL_TRIGGER_COUNT);
 	jbd2_journal_set_triggers(bh,
@@ -341,8 +338,7 @@ int __ext4_journal_get_create_access(const char *where, unsigned int line,
 					  err);
 		return err;
 	}
-	if (trigger_type == EXT4_JTR_NONE ||
-	    !ext4_has_feature_metadata_csum(sb))
+	if (trigger_type == EXT4_JTR_NONE || !ext4_has_metadata_csum(sb))
 		return 0;
 	BUG_ON(trigger_type >= EXT4_JOURNAL_TRIGGER_COUNT);
 	jbd2_journal_set_triggers(bh,
@@ -390,8 +386,7 @@ int __ext4_handle_dirty_metadata(const char *where, unsigned int line,
 		}
 	} else {
 		if (inode)
-			mmb_mark_buffer_dirty(bh,
-					      &EXT4_I(inode)->i_metadata_bhs);
+			mark_buffer_dirty_inode(bh, inode);
 		else
 			mark_buffer_dirty(bh);
 		if (inode && inode_needs_sync(inode)) {

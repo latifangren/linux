@@ -60,18 +60,44 @@ Besides initializing the TDX module, a per-cpu initialization SEAMCALL
 must be done on one cpu before any other SEAMCALLs can be made on that
 cpu.
 
+The kernel provides two functions, tdx_enable() and tdx_cpu_enable() to
+allow the user of TDX to enable the TDX module and enable TDX on local
+cpu respectively.
+
+Making SEAMCALL requires VMXON has been done on that CPU.  Currently only
+KVM implements VMXON.  For now both tdx_enable() and tdx_cpu_enable()
+don't do VMXON internally (not trivial), but depends on the caller to
+guarantee that.
+
+To enable TDX, the caller of TDX should: 1) temporarily disable CPU
+hotplug; 2) do VMXON and tdx_enable_cpu() on all online cpus; 3) call
+tdx_enable().  For example::
+
+        cpus_read_lock();
+        on_each_cpu(vmxon_and_tdx_cpu_enable());
+        ret = tdx_enable();
+        cpus_read_unlock();
+        if (ret)
+                goto no_tdx;
+        // TDX is ready to use
+
+And the caller of TDX must guarantee the tdx_cpu_enable() has been
+successfully done on any cpu before it wants to run any other SEAMCALL.
+A typical usage is do both VMXON and tdx_cpu_enable() in CPU hotplug
+online callback, and refuse to online if tdx_cpu_enable() fails.
+
 User can consult dmesg to see whether the TDX module has been initialized.
 
 If the TDX module is initialized successfully, dmesg shows something
 like below::
 
   [..] virt/tdx: 262668 KBs allocated for PAMT
-  [..] virt/tdx: TDX-Module initialized
+  [..] virt/tdx: module initialized
 
 If the TDX module failed to initialize, dmesg also shows it failed to
 initialize::
 
-  [..] virt/tdx: TDX-Module initialization failed ...
+  [..] virt/tdx: module initialization failed ...
 
 TDX Interaction to Other Kernel Components
 ------------------------------------------
@@ -103,9 +129,9 @@ CPU Hotplug
 ~~~~~~~~~~~
 
 TDX module requires the per-cpu initialization SEAMCALL must be done on
-one cpu before any other SEAMCALLs can be made on that cpu.  The kernel,
-via the CPU hotplug framework, performs the necessary initialization when
-a CPU is first brought online.
+one cpu before any other SEAMCALLs can be made on that cpu.  The kernel
+provides tdx_cpu_enable() to let the user of TDX to do it when the user
+wants to use a new cpu for TDX task.
 
 TDX doesn't support physical (ACPI) CPU hotplug.  During machine boot,
 TDX verifies all boot-time present logical CPUs are TDX compatible before
@@ -115,6 +141,13 @@ but depends on the BIOS to behave correctly.
 
 Note TDX works with CPU logical online/offline, thus the kernel still
 allows to offline logical CPU and online it again.
+
+Kexec()
+~~~~~~~
+
+TDX host support currently lacks the ability to handle kexec.  For
+simplicity only one of them can be enabled in the Kconfig.  This will be
+fixed in the future.
 
 Erratum
 ~~~~~~~
@@ -137,13 +170,6 @@ software-triggered issue.  But in the end, this issue is hard to trigger.
 If the platform has such erratum, the kernel prints additional message in
 machine check handler to tell user the machine check may be caused by
 kernel bug on TDX private memory.
-
-Kexec
-~~~~~~~
-
-Currently kexec doesn't work on the TDX platforms with the aforementioned
-erratum.  It fails when loading the kexec kernel image.  Otherwise it
-works normally.
 
 Interaction vs S3 and deeper states
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

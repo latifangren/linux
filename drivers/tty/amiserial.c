@@ -438,7 +438,7 @@ static irqreturn_t ser_tx_int(int irq, void *dev_id)
  * ---------------------------------------------------------------
  */
 
-static int rs_startup(struct tty_struct *tty, struct serial_state *info)
+static int startup(struct tty_struct *tty, struct serial_state *info)
 {
 	struct tty_port *port = &info->tport;
 	unsigned long flags;
@@ -513,7 +513,7 @@ errout:
  * This routine will shutdown a serial port; interrupts are disabled, and
  * DTR is dropped if the hangup on close termio flag is on.
  */
-static void rs_shutdown(struct tty_struct *tty, struct serial_state *info)
+static void shutdown(struct tty_struct *tty, struct serial_state *info)
 {
 	unsigned long	flags;
 
@@ -975,7 +975,7 @@ check_and_exit:
 			change_speed(tty, state, NULL);
 		}
 	} else
-		retval = rs_startup(tty, state);
+		retval = startup(tty, state);
 	tty_unlock(tty);
 	return retval;
 }
@@ -1251,9 +1251,9 @@ static void rs_close(struct tty_struct *tty, struct file * filp)
 		 */
 		rs_wait_until_sent(tty, state->timeout);
 	}
-	rs_shutdown(tty, state);
+	shutdown(tty, state);
 	rs_flush_buffer(tty);
-
+		
 	tty_ldisc_flush(tty);
 	port->tty = NULL;
 
@@ -1325,7 +1325,7 @@ static void rs_hangup(struct tty_struct *tty)
 	struct serial_state *info = tty->driver_data;
 
 	rs_flush_buffer(tty);
-	rs_shutdown(tty, info);
+	shutdown(tty, info);
 	info->tport.count = 0;
 	tty_port_set_active(&info->tport, false);
 	info->tport.tty = NULL;
@@ -1349,7 +1349,7 @@ static int rs_open(struct tty_struct *tty, struct file * filp)
 	port->tty = tty;
 	tty->driver_data = info;
 
-	retval = rs_startup(tty, info);
+	retval = startup(tty, info);
 	if (retval) {
 		return retval;
 	}
@@ -1585,7 +1585,7 @@ static void __exit amiga_serial_remove(struct platform_device *pdev)
  * triggering a section mismatch warning.
  */
 static struct platform_driver amiga_serial_driver __refdata = {
-	.remove = __exit_p(amiga_serial_remove),
+	.remove_new = __exit_p(amiga_serial_remove),
 	.driver   = {
 		.name	= "amiga-serial",
 	},

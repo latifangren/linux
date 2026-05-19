@@ -286,7 +286,7 @@ static int ims_pcu_setup_gamepad(struct ims_pcu *pcu)
 	struct input_dev *input;
 	int error;
 
-	gamepad = kzalloc_obj(*gamepad);
+	gamepad = kzalloc(sizeof(*gamepad), GFP_KERNEL);
 	input = input_allocate_device();
 	if (!gamepad || !input) {
 		dev_err(pcu->dev,
@@ -739,7 +739,7 @@ static int ims_pcu_switch_to_bootloader(struct ims_pcu *pcu)
 {
 	int error;
 
-	/* Execute jump to the bootloader */
+	/* Execute jump to the bootoloader */
 	error = ims_pcu_execute_command(pcu, JUMP_TO_BTLDR, NULL, 0);
 	if (error) {
 		dev_err(pcu->dev,
@@ -1991,7 +1991,7 @@ static int ims_pcu_probe(struct usb_interface *intf,
 	struct ims_pcu *pcu;
 	int error;
 
-	pcu = kzalloc_obj(*pcu);
+	pcu = kzalloc(sizeof(*pcu), GFP_KERNEL);
 	if (!pcu)
 		return -ENOMEM;
 

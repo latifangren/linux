@@ -58,7 +58,7 @@ static void rdma_dim_init(struct ib_cq *cq)
 	    cq->poll_ctx == IB_POLL_DIRECT)
 		return;
 
-	dim = kzalloc_obj(struct dim);
+	dim = kzalloc(sizeof(struct dim), GFP_KERNEL);
 	if (!dim)
 		return;
 
@@ -220,9 +220,6 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 	struct ib_cq *cq;
 	int ret = -ENOMEM;
 
-	if (WARN_ON_ONCE(!nr_cqe))
-		return ERR_PTR(-EINVAL);
-
 	cq = rdma_zalloc_drv_obj(dev, ib_cq);
 	if (!cq)
 		return ERR_PTR(ret);
@@ -233,7 +230,7 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 	atomic_set(&cq->usecnt, 0);
 	cq->comp_vector = comp_vector;
 
-	cq->wc = kmalloc_objs(*cq->wc, IB_POLL_BATCH);
+	cq->wc = kmalloc_array(IB_POLL_BATCH, sizeof(*cq->wc), GFP_KERNEL);
 	if (!cq->wc)
 		goto out_free_cq;
 
@@ -320,17 +317,12 @@ EXPORT_SYMBOL(__ib_alloc_cq_any);
  */
 void ib_free_cq(struct ib_cq *cq)
 {
-	int ret = 0;
+	int ret;
 
 	if (WARN_ON_ONCE(atomic_read(&cq->usecnt)))
 		return;
 	if (WARN_ON_ONCE(cq->cqe_used))
 		return;
-
-	if (cq->device->ops.pre_destroy_cq) {
-		ret = cq->device->ops.pre_destroy_cq(cq);
-		WARN_ONCE(ret, "Disable of kernel CQ shouldn't fail");
-	}
 
 	switch (cq->poll_ctx) {
 	case IB_POLL_DIRECT:
@@ -348,10 +340,7 @@ void ib_free_cq(struct ib_cq *cq)
 
 	rdma_dim_destroy(cq);
 	trace_cq_free(cq);
-	if (cq->device->ops.post_destroy_cq)
-		cq->device->ops.post_destroy_cq(cq);
-	else
-		ret = cq->device->ops.destroy_cq(cq, NULL);
+	ret = cq->device->ops.destroy_cq(cq, NULL);
 	WARN_ONCE(ret, "Destroy of kernel CQ shouldn't fail");
 	rdma_restrack_del(&cq->res);
 	kfree(cq->wc);

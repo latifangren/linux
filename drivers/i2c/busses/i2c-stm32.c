@@ -27,8 +27,8 @@ struct stm32_i2c_dma *stm32_i2c_dma_request(struct device *dev,
 	if (IS_ERR(dma->chan_tx)) {
 		ret = PTR_ERR(dma->chan_tx);
 		if (ret != -ENODEV)
-			dev_err_probe(dev, ret, "can't request DMA tx channel\n");
-
+			ret = dev_err_probe(dev, ret,
+					    "can't request DMA tx channel\n");
 		goto fail_al;
 	}
 
@@ -48,7 +48,8 @@ struct stm32_i2c_dma *stm32_i2c_dma_request(struct device *dev,
 	if (IS_ERR(dma->chan_rx)) {
 		ret = PTR_ERR(dma->chan_rx);
 		if (ret != -ENODEV)
-			dev_err_probe(dev, ret, "can't request DMA rx channel\n");
+			ret = dev_err_probe(dev, ret,
+					    "can't request DMA rx channel\n");
 
 		goto fail_tx;
 	}

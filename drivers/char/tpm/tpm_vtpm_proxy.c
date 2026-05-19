@@ -321,14 +321,12 @@ static int vtpm_proxy_is_driver_command(struct tpm_chip *chip,
  *
  * @chip: tpm chip to use
  * @buf: send buffer
- * @bufsiz: size of the buffer
  * @count: bytes to send
  *
  * Return:
  *      0 in case of success, negative error value otherwise.
  */
-static int vtpm_proxy_tpm_op_send(struct tpm_chip *chip, u8 *buf, size_t bufsiz,
-				  size_t count)
+static int vtpm_proxy_tpm_op_send(struct tpm_chip *chip, u8 *buf, size_t count)
 {
 	struct proxy_dev *proxy_dev = dev_get_drvdata(&chip->dev);
 
@@ -491,7 +489,7 @@ static struct proxy_dev *vtpm_proxy_create_proxy_dev(void)
 	struct tpm_chip *chip;
 	int err;
 
-	proxy_dev = kzalloc_obj(*proxy_dev);
+	proxy_dev = kzalloc(sizeof(*proxy_dev), GFP_KERNEL);
 	if (proxy_dev == NULL)
 		return ERR_PTR(-ENOMEM);
 

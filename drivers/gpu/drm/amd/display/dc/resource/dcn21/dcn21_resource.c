@@ -57,7 +57,7 @@
 #include "dce/dce_clock_source.h"
 #include "dce/dce_audio.h"
 #include "dce/dce_hwseq.h"
-#include "dio/virtual/virtual_stream_encoder.h"
+#include "virtual/virtual_stream_encoder.h"
 #include "dml/display_mode_vba.h"
 #include "dcn20/dcn20_dccg.h"
 #include "dcn21/dcn21_dccg.h"
@@ -84,7 +84,6 @@
 #include "dce/dce_dmcu.h"
 #include "dce/dce_aux.h"
 #include "dce/dce_i2c.h"
-#include "dio/dcn10/dcn10_dio.h"
 #include "dcn21_resource.h"
 #include "vm_helper.h"
 #include "dcn20/dcn20_vmid.h"
@@ -330,25 +329,6 @@ static const struct dcn_hubbub_mask hubbub_mask = {
 		HUBBUB_MASK_SH_LIST_DCN21(_MASK)
 };
 
-static const struct dcn_dio_registers dio_regs = {
-		DIO_REG_LIST_DCN10()
-};
-
-static const struct dcn_dio_shift dio_shift = { 0 };
-
-static const struct dcn_dio_mask dio_mask = { 0 };
-
-static struct dio *dcn21_dio_create(struct dc_context *ctx)
-{
-	struct dcn10_dio *dio10 = kzalloc_obj(struct dcn10_dio);
-
-	if (!dio10)
-		return NULL;
-
-	dcn10_dio_construct(dio10, ctx, &dio_regs, &dio_shift, &dio_mask);
-
-	return &dio10->base;
-}
 
 #define vmid_regs(id)\
 [id] = {\
@@ -504,7 +484,7 @@ static struct input_pixel_processor *dcn21_ipp_create(
 	struct dc_context *ctx, uint32_t inst)
 {
 	struct dcn10_ipp *ipp =
-		kzalloc_obj(struct dcn10_ipp);
+		kzalloc(sizeof(struct dcn10_ipp), GFP_KERNEL);
 
 	if (!ipp) {
 		BREAK_TO_DEBUGGER();
@@ -521,7 +501,7 @@ static struct dpp *dcn21_dpp_create(
 	uint32_t inst)
 {
 	struct dcn20_dpp *dpp =
-		kzalloc_obj(struct dcn20_dpp);
+		kzalloc(sizeof(struct dcn20_dpp), GFP_KERNEL);
 
 	if (!dpp)
 		return NULL;
@@ -540,7 +520,7 @@ static struct dce_aux *dcn21_aux_engine_create(
 	uint32_t inst)
 {
 	struct aux_engine_dce110 *aux_engine =
-		kzalloc_obj(struct aux_engine_dce110);
+		kzalloc(sizeof(struct aux_engine_dce110), GFP_KERNEL);
 
 	if (!aux_engine)
 		return NULL;
@@ -577,7 +557,7 @@ static struct dce_i2c_hw *dcn21_i2c_hw_create(struct dc_context *ctx,
 					      uint32_t inst)
 {
 	struct dce_i2c_hw *dce_i2c_hw =
-		kzalloc_obj(struct dce_i2c_hw);
+		kzalloc(sizeof(struct dce_i2c_hw), GFP_KERNEL);
 
 	if (!dce_i2c_hw)
 		return NULL;
@@ -630,6 +610,7 @@ static const struct dc_plane_cap plane_cap = {
 static const struct dc_debug_options debug_defaults_drv = {
 		.disable_dmcu = false,
 		.force_abm_enable = false,
+		.timing_trace = false,
 		.clock_trace = true,
 		.disable_pplib_clock_request = true,
 		.min_disp_clk_khz = 100000,
@@ -646,11 +627,8 @@ static const struct dc_debug_options debug_defaults_drv = {
 		.usbc_combo_phy_reset_wa = true,
 		.dmub_command_table = true,
 		.use_max_lb = true,
-		.using_dml2 = false,
-};
-
-static const struct dc_check_config config_defaults = {
 		.enable_legacy_fast_update = true,
+		.using_dml2 = false,
 };
 
 static const struct dc_panel_config panel_config_defaults = {
@@ -697,12 +675,6 @@ static void dcn21_resource_destruct(struct dcn21_resource_pool *pool)
 		kfree(pool->base.hubbub);
 		pool->base.hubbub = NULL;
 	}
-
-	if (pool->base.dio != NULL) {
-		kfree(TO_DCN10_DIO(pool->base.dio));
-		pool->base.dio = NULL;
-	}
-
 	for (i = 0; i < pool->base.pipe_count; i++) {
 		if (pool->base.dpps[i] != NULL)
 			dcn20_dpp_destroy(&pool->base.dpps[i]);
@@ -798,8 +770,7 @@ bool dcn21_fast_validate_bw(struct dc *dc,
 			    int *pipe_cnt_out,
 			    int *pipe_split_from,
 			    int *vlevel_out,
-			    enum dc_validate_mode validate_mode,
-			    bool allow_self_refresh_only)
+			    bool fast_validate)
 {
 	bool out = false;
 	int split[MAX_PIPES] = { 0 };
@@ -812,7 +783,9 @@ bool dcn21_fast_validate_bw(struct dc *dc,
 
 	dcn20_merge_pipes_for_validate(dc, context);
 
-	pipe_cnt = dc->res_pool->funcs->populate_dml_pipes(dc, context, pipes, validate_mode);
+	DC_FP_START();
+	pipe_cnt = dc->res_pool->funcs->populate_dml_pipes(dc, context, pipes, fast_validate);
+	DC_FP_END();
 
 	*pipe_cnt_out = pipe_cnt;
 
@@ -830,23 +803,18 @@ bool dcn21_fast_validate_bw(struct dc *dc,
 	vlevel = dml_get_voltage_level(&context->bw_ctx.dml, pipes, pipe_cnt);
 
 	if (vlevel > context->bw_ctx.dml.soc.num_states) {
-
-		if (allow_self_refresh_only) {
-			/*
-			 * If mode is unsupported or there's still no p-state support then
-			 * fall back to favoring voltage.
-			 *
-			 * We don't actually support prefetch mode 2, so require that we
-			 * at least support prefetch mode 1.
-			 */
-			context->bw_ctx.dml.soc.allow_dram_self_refresh_or_dram_clock_change_in_vblank =
-						dm_allow_self_refresh;
-			vlevel = dml_get_voltage_level(&context->bw_ctx.dml, pipes, pipe_cnt);
-			if (vlevel > context->bw_ctx.dml.soc.num_states)
-				goto validate_fail;
-		} else {
+		/*
+		 * If mode is unsupported or there's still no p-state support then
+		 * fall back to favoring voltage.
+		 *
+		 * We don't actually support prefetch mode 2, so require that we
+		 * at least support prefetch mode 1.
+		 */
+		context->bw_ctx.dml.soc.allow_dram_self_refresh_or_dram_clock_change_in_vblank =
+					dm_allow_self_refresh;
+		vlevel = dml_get_voltage_level(&context->bw_ctx.dml, pipes, pipe_cnt);
+		if (vlevel > context->bw_ctx.dml.soc.num_states)
 			goto validate_fail;
-		}
 	}
 
 	vlevel = dcn20_validate_apply_pipe_split_flags(dc, context, vlevel, split, merge);
@@ -956,23 +924,22 @@ validate_out:
  * with DC_FP_START()/DC_FP_END(). Use the same approach as for
  * dcn20_validate_bandwidth in dcn20_resource.c.
  */
-static enum dc_status dcn21_validate_bandwidth(struct dc *dc, struct dc_state *context,
-		enum dc_validate_mode validate_mode)
+static bool dcn21_validate_bandwidth(struct dc *dc, struct dc_state *context,
+		bool fast_validate)
 {
 	bool voltage_supported;
 	display_e2e_pipe_params_st *pipes;
 
-	pipes = kzalloc_objs(display_e2e_pipe_params_st,
-			     dc->res_pool->pipe_count);
+	pipes = kcalloc(dc->res_pool->pipe_count, sizeof(display_e2e_pipe_params_st), GFP_KERNEL);
 	if (!pipes)
-		return DC_FAIL_BANDWIDTH_VALIDATE;
+		return false;
 
 	DC_FP_START();
-	voltage_supported = dcn21_validate_bandwidth_fp(dc, context, validate_mode, pipes);
+	voltage_supported = dcn21_validate_bandwidth_fp(dc, context, fast_validate, pipes);
 	DC_FP_END();
 
 	kfree(pipes);
-	return voltage_supported ? DC_OK : DC_NOT_SUPPORTED;
+	return voltage_supported;
 }
 
 static void dcn21_destroy_resource_pool(struct resource_pool **pool)
@@ -992,7 +959,7 @@ static struct clock_source *dcn21_clock_source_create(
 		bool dp_clk_src)
 {
 	struct dce110_clk_src *clk_src =
-		kzalloc_obj(struct dce110_clk_src);
+		kzalloc(sizeof(struct dce110_clk_src), GFP_KERNEL);
 
 	if (!clk_src)
 		return NULL;
@@ -1013,7 +980,7 @@ static struct hubp *dcn21_hubp_create(
 	uint32_t inst)
 {
 	struct dcn21_hubp *hubp21 =
-		kzalloc_obj(struct dcn21_hubp);
+		kzalloc(sizeof(struct dcn21_hubp), GFP_KERNEL);
 
 	if (!hubp21)
 		return NULL;
@@ -1031,7 +998,8 @@ static struct hubbub *dcn21_hubbub_create(struct dc_context *ctx)
 {
 	int i;
 
-	struct dcn20_hubbub *hubbub = kzalloc_obj(struct dcn20_hubbub);
+	struct dcn20_hubbub *hubbub = kzalloc(sizeof(struct dcn20_hubbub),
+					  GFP_KERNEL);
 
 	if (!hubbub)
 		return NULL;
@@ -1059,7 +1027,7 @@ static struct output_pixel_processor *dcn21_opp_create(struct dc_context *ctx,
 						       uint32_t inst)
 {
 	struct dcn20_opp *opp =
-		kzalloc_obj(struct dcn20_opp);
+		kzalloc(sizeof(struct dcn20_opp), GFP_KERNEL);
 
 	if (!opp) {
 		BREAK_TO_DEBUGGER();
@@ -1075,7 +1043,7 @@ static struct timing_generator *dcn21_timing_generator_create(struct dc_context 
 							      uint32_t instance)
 {
 	struct optc *tgn10 =
-		kzalloc_obj(struct optc);
+		kzalloc(sizeof(struct optc), GFP_KERNEL);
 
 	if (!tgn10)
 		return NULL;
@@ -1094,7 +1062,8 @@ static struct timing_generator *dcn21_timing_generator_create(struct dc_context 
 
 static struct mpc *dcn21_mpc_create(struct dc_context *ctx)
 {
-	struct dcn20_mpc *mpc20 = kzalloc_obj(struct dcn20_mpc);
+	struct dcn20_mpc *mpc20 = kzalloc(sizeof(struct dcn20_mpc),
+					  GFP_KERNEL);
 
 	if (!mpc20)
 		return NULL;
@@ -1122,7 +1091,7 @@ static struct display_stream_compressor *dcn21_dsc_create(struct dc_context *ctx
 							  uint32_t inst)
 {
 	struct dcn20_dsc *dsc =
-		kzalloc_obj(struct dcn20_dsc);
+		kzalloc(sizeof(struct dcn20_dsc), GFP_KERNEL);
 
 	if (!dsc) {
 		BREAK_TO_DEBUGGER();
@@ -1135,7 +1104,7 @@ static struct display_stream_compressor *dcn21_dsc_create(struct dc_context *ctx
 
 static struct pp_smu_funcs *dcn21_pp_smu_create(struct dc_context *ctx)
 {
-	struct pp_smu_funcs *pp_smu = kzalloc_obj(*pp_smu);
+	struct pp_smu_funcs *pp_smu = kzalloc(sizeof(*pp_smu), GFP_KERNEL);
 
 	if (!pp_smu)
 		return pp_smu;
@@ -1172,7 +1141,7 @@ static struct stream_encoder *dcn21_stream_encoder_create(enum engine_id eng_id,
 							  struct dc_context *ctx)
 {
 	struct dcn10_stream_encoder *enc1 =
-		kzalloc_obj(struct dcn10_stream_encoder);
+		kzalloc(sizeof(struct dcn10_stream_encoder), GFP_KERNEL);
 
 	if (!enc1)
 		return NULL;
@@ -1199,7 +1168,7 @@ static const struct dce_hwseq_mask hwseq_mask = {
 static struct dce_hwseq *dcn21_hwseq_create(
 	struct dc_context *ctx)
 {
-	struct dce_hwseq *hws = kzalloc_obj(struct dce_hwseq);
+	struct dce_hwseq *hws = kzalloc(sizeof(struct dce_hwseq), GFP_KERNEL);
 
 	if (hws) {
 		hws->ctx = ctx;
@@ -1325,9 +1294,8 @@ static struct link_encoder *dcn21_link_encoder_create(
 	struct dc_context *ctx,
 	const struct encoder_init_data *enc_init_data)
 {
-	(void)ctx;
 	struct dcn21_link_encoder *enc21 =
-		kzalloc_obj(struct dcn21_link_encoder);
+		kzalloc(sizeof(struct dcn21_link_encoder), GFP_KERNEL);
 	int link_regs_id;
 
 	if (!enc21 || enc_init_data->hpd_source >= ARRAY_SIZE(link_enc_hpd_regs))
@@ -1351,7 +1319,7 @@ static struct link_encoder *dcn21_link_encoder_create(
 static struct panel_cntl *dcn21_panel_cntl_create(const struct panel_cntl_init_data *init_data)
 {
 	struct dce_panel_cntl *panel_cntl =
-		kzalloc_obj(struct dce_panel_cntl);
+		kzalloc(sizeof(struct dce_panel_cntl), GFP_KERNEL);
 
 	if (!panel_cntl)
 		return NULL;
@@ -1411,8 +1379,6 @@ static const struct resource_funcs dcn21_res_pool_funcs = {
 	.find_first_free_match_stream_enc_for_link = dcn10_find_first_free_match_stream_enc_for_link,
 	.update_bw_bounding_box = dcn21_update_bw_bounding_box,
 	.get_panel_config_defaults = dcn21_get_panel_config_defaults,
-	.get_vstartup_for_pipe = dcn10_get_vstartup_for_pipe,
-	.get_default_tiling_info = dcn10_get_default_tiling_info
 };
 
 static bool dcn21_resource_construct(
@@ -1435,7 +1401,7 @@ static bool dcn21_resource_construct(
 	/*************************************************
 	 *  Resource + asic cap harcoding                *
 	 *************************************************/
-	pool->base.underlay_pipe_index = (unsigned int)NO_UNDERLAY_PIPE;
+	pool->base.underlay_pipe_index = NO_UNDERLAY_PIPE;
 
 	/* max pipe num for ASIC before check pipe fuses */
 	pool->base.pipe_count = pool->base.res_cap->num_timing_generator;
@@ -1447,9 +1413,9 @@ static bool dcn21_resource_construct(
 	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.dmdata_alloc_size = 2048;
 
-	dc->caps.max_slave_planes = 3;
-	dc->caps.max_slave_yuv_planes = 3;
-	dc->caps.max_slave_rgb_planes = 3;
+	dc->caps.max_slave_planes = 1;
+	dc->caps.max_slave_yuv_planes = 1;
+	dc->caps.max_slave_rgb_planes = 1;
 	dc->caps.post_blend_color_processing = true;
 	dc->caps.force_dp_tps4_for_cp2520 = true;
 	dc->caps.extended_aux_timeout_support = true;
@@ -1492,7 +1458,6 @@ static bool dcn21_resource_construct(
 	dc->caps.color.mpc.ocsc = 1;
 
 	dc->caps.dp_hdmi21_pcon_support = true;
-	dc->check_config = config_defaults;
 
 	if (dc->ctx->dce_environment == DCE_ENV_PRODUCTION_DRV)
 		dc->debug = debug_defaults_drv;
@@ -1688,14 +1653,6 @@ static bool dcn21_resource_construct(
 		goto create_fail;
 	}
 
-	/* DIO */
-	pool->base.dio = dcn21_dio_create(ctx);
-	if (pool->base.dio == NULL) {
-		BREAK_TO_DEBUGGER();
-		dm_error("DC: failed to create dio!\n");
-		goto create_fail;
-	}
-
 	for (i = 0; i < pool->base.res_cap->num_dsc; i++) {
 		pool->base.dscs[i] = dcn21_dsc_create(ctx, i);
 		if (pool->base.dscs[i] == NULL) {
@@ -1727,8 +1684,6 @@ static bool dcn21_resource_construct(
 	for (i = 0; i < dc->caps.max_planes; ++i)
 		dc->caps.planes[i] = plane_cap;
 
-	dc->caps.max_odm_combine_factor = 2;
-
 	dc->cap_funcs = cap_funcs;
 
 	return true;
@@ -1745,7 +1700,7 @@ struct resource_pool *dcn21_create_resource_pool(
 		struct dc *dc)
 {
 	struct dcn21_resource_pool *pool =
-		kzalloc_obj(struct dcn21_resource_pool);
+		kzalloc(sizeof(struct dcn21_resource_pool), GFP_KERNEL);
 
 	if (!pool)
 		return NULL;

@@ -5,15 +5,12 @@
 
 #include <linux/prime_numbers.h>
 
-#include <drm/drm_print.h>
-
 #include "gem/i915_gem_internal.h"
 #include "gem/i915_gem_pm.h"
 #include "gt/intel_engine_heartbeat.h"
 #include "gt/intel_reset.h"
 #include "gt/selftest_engine_heartbeat.h"
 
-#include "i915_jiffies.h"
 #include "i915_selftest.h"
 #include "selftests/i915_random.h"
 #include "selftests/igt_flush_test.h"
@@ -56,7 +53,7 @@ static int wait_for_submit(struct intel_engine_cs *engine,
 		if (i915_request_completed(rq)) /* that was quick! */
 			return 0;
 
-		/* Wait until the HW has acknowledged the submission (or err) */
+		/* Wait until the HW has acknowleged the submission (or err) */
 		intel_engine_flush_submission(engine);
 		if (!READ_ONCE(engine->execlists.pending[0]) && is_active(rq))
 			return 0;
@@ -1201,7 +1198,7 @@ static int live_timeslice_rewind(void *arg)
 		ENGINE_TRACE(engine, "forcing tasklet for rewind\n");
 		while (i915_request_is_active(rq[A2])) { /* semaphore yield! */
 			/* Wait for the timeslice to kick in */
-			timer_delete(&engine->execlists.timer);
+			del_timer(&engine->execlists.timer);
 			tasklet_hi_schedule(&engine->sched_engine->tasklet);
 			intel_engine_flush_submission(engine);
 		}
@@ -2360,7 +2357,7 @@ static int __cancel_fail(struct live_preempt_cancel *arg)
 	/* force preempt reset [failure] */
 	while (!engine->execlists.pending[0])
 		intel_engine_flush_submission(engine);
-	timer_delete_sync(&engine->execlists.preempt);
+	del_timer_sync(&engine->execlists.preempt);
 	intel_engine_flush_submission(engine);
 
 	cancel_reset_timeout(engine);
@@ -3564,7 +3561,7 @@ static int smoke_crescendo(struct preempt_smoke *smoke, unsigned int flags)
 	unsigned long count;
 	int err = 0;
 
-	arg = kmalloc_objs(*arg, I915_NUM_ENGINES);
+	arg = kmalloc_array(I915_NUM_ENGINES, sizeof(*arg), GFP_KERNEL);
 	if (!arg)
 		return -ENOMEM;
 
@@ -3577,7 +3574,7 @@ static int smoke_crescendo(struct preempt_smoke *smoke, unsigned int flags)
 			arg[id].batch = NULL;
 		arg[id].count = 0;
 
-		worker[id] = kthread_run_worker(0, "igt/smoke:%d", id);
+		worker[id] = kthread_create_worker(0, "igt/smoke:%d", id);
 		if (IS_ERR(worker[id])) {
 			err = PTR_ERR(worker[id]);
 			break;
@@ -3648,7 +3645,9 @@ static int live_preempt_smoke(void *arg)
 	u32 *cs;
 	int n;
 
-	smoke.contexts = kmalloc_objs(*smoke.contexts, smoke.ncontext);
+	smoke.contexts = kmalloc_array(smoke.ncontext,
+				       sizeof(*smoke.contexts),
+				       GFP_KERNEL);
 	if (!smoke.contexts)
 		return -ENOMEM;
 

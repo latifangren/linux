@@ -64,12 +64,9 @@
 	SR(DSCCLK1_DTO_PARAM),\
 	SR(DSCCLK2_DTO_PARAM),\
 	SR(DSCCLK_DTO_CTRL),\
-	SR(DCCG_GATE_DISABLE_CNTL),\
 	SR(DCCG_GATE_DISABLE_CNTL2),\
 	SR(DCCG_GATE_DISABLE_CNTL3),\
-	SR(HDMISTREAMCLK0_DTO_PARAM),\
-	SR(DC_MEM_GLOBAL_PWR_REQ_CNTL),\
-	SR(MICROSECOND_TIME_BASE_DIV)
+	SR(HDMISTREAMCLK0_DTO_PARAM)
 
 
 #define DCCG_MASK_SH_LIST_DCN31(mask_sh) \
@@ -238,7 +235,5 @@ void dccg31_set_dispclk_change_mode(
 void dccg31_disable_dscclk(struct dccg *dccg, int inst);
 
 void dccg31_enable_dscclk(struct dccg *dccg, int inst);
-
-void dccg31_read_reg_state(struct dccg *dccg, struct dcn_dccg_reg_state *dccg_reg_state);
 
 #endif //__DCN31_DCCG_H__

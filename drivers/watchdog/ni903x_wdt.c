@@ -8,7 +8,6 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/platform_device.h>
 #include <linux/watchdog.h>
 
 #define NIWD_CONTROL	0x01
@@ -178,9 +177,9 @@ static const struct watchdog_ops ni903x_wdd_ops = {
 	.get_timeleft = ni903x_wdd_get_timeleft,
 };
 
-static int ni903x_acpi_probe(struct platform_device *pdev)
+static int ni903x_acpi_add(struct acpi_device *device)
 {
-	struct device *dev = &pdev->dev;
+	struct device *dev = &device->dev;
 	struct watchdog_device *wdd;
 	struct ni903x_wdt *wdt;
 	acpi_status status;
@@ -190,10 +189,10 @@ static int ni903x_acpi_probe(struct platform_device *pdev)
 	if (!wdt)
 		return -ENOMEM;
 
-	platform_set_drvdata(pdev, wdt);
+	device->driver_data = wdt;
 	wdt->dev = dev;
 
-	status = acpi_walk_resources(ACPI_HANDLE(dev), METHOD_NAME__CRS,
+	status = acpi_walk_resources(device->handle, METHOD_NAME__CRS,
 				     ni903x_resources, wdt);
 	if (ACPI_FAILURE(status) || wdt->io_base == 0) {
 		dev_err(dev, "failed to get resources\n");
@@ -225,9 +224,9 @@ static int ni903x_acpi_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void ni903x_acpi_remove(struct platform_device *pdev)
+static void ni903x_acpi_remove(struct acpi_device *device)
 {
-	struct ni903x_wdt *wdt = platform_get_drvdata(pdev);
+	struct ni903x_wdt *wdt = acpi_driver_data(device);
 
 	ni903x_wdd_stop(&wdt->wdd);
 	watchdog_unregister_device(&wdt->wdd);
@@ -239,16 +238,16 @@ static const struct acpi_device_id ni903x_device_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, ni903x_device_ids);
 
-static struct platform_driver ni903x_acpi_driver = {
-	.probe = ni903x_acpi_probe,
-	.remove = ni903x_acpi_remove,
-	.driver = {
-		.name = NIWD_NAME,
-		.acpi_match_table = ni903x_device_ids,
+static struct acpi_driver ni903x_acpi_driver = {
+	.name = NIWD_NAME,
+	.ids = ni903x_device_ids,
+	.ops = {
+		.add = ni903x_acpi_add,
+		.remove = ni903x_acpi_remove,
 	},
 };
 
-module_platform_driver(ni903x_acpi_driver);
+module_acpi_driver(ni903x_acpi_driver);
 
 MODULE_DESCRIPTION("NI 903x Watchdog");
 MODULE_AUTHOR("Jeff Westfahl <jeff.westfahl@ni.com>");

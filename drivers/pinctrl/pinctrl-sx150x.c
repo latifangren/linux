@@ -432,25 +432,24 @@ static int sx150x_gpio_oscio_set(struct sx150x_pinctrl *pctl,
 			    (value ? 0x1f : 0x10));
 }
 
-static int sx150x_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			   int value)
+static void sx150x_gpio_set(struct gpio_chip *chip, unsigned int offset,
+			    int value)
 {
 	struct sx150x_pinctrl *pctl = gpiochip_get_data(chip);
 
 	if (sx150x_pin_is_oscio(pctl, offset))
-		return sx150x_gpio_oscio_set(pctl, value);
-
-	return __sx150x_gpio_set(pctl, offset, value);
+		sx150x_gpio_oscio_set(pctl, value);
+	else
+		__sx150x_gpio_set(pctl, offset, value);
 }
 
-static int sx150x_gpio_set_multiple(struct gpio_chip *chip,
-				    unsigned long *mask,
-				    unsigned long *bits)
+static void sx150x_gpio_set_multiple(struct gpio_chip *chip,
+				     unsigned long *mask,
+				     unsigned long *bits)
 {
 	struct sx150x_pinctrl *pctl = gpiochip_get_data(chip);
 
-	return regmap_write_bits(pctl->regmap, pctl->data->reg_data, *mask,
-				 *bits);
+	regmap_write_bits(pctl->regmap, pctl->data->reg_data, *mask, *bits);
 }
 
 static int sx150x_gpio_direction_input(struct gpio_chip *chip,
@@ -585,7 +584,7 @@ static void sx150x_irq_print_chip(struct irq_data *d, struct seq_file *p)
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
 	struct sx150x_pinctrl *pctl = gpiochip_get_data(gc);
 
-	seq_puts(p, pctl->client->name);
+	seq_printf(p, pctl->client->name);
 }
 
 static const struct irq_chip sx150x_irq_chip = {
@@ -611,7 +610,7 @@ static int sx150x_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
 	if (sx150x_pin_is_oscio(pctl, pin)) {
 		switch (param) {
 		case PIN_CONFIG_DRIVE_PUSH_PULL:
-		case PIN_CONFIG_LEVEL:
+		case PIN_CONFIG_OUTPUT:
 			ret = regmap_read(pctl->regmap,
 					  pctl->data->pri.x789.reg_clock,
 					  &data);
@@ -705,7 +704,7 @@ static int sx150x_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
 		}
 		break;
 
-	case PIN_CONFIG_LEVEL:
+	case PIN_CONFIG_OUTPUT:
 		ret = sx150x_gpio_get_direction(&pctl->gpio, pin);
 		if (ret < 0)
 			return ret;
@@ -744,7 +743,7 @@ static int sx150x_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
 		arg = pinconf_to_config_argument(configs[i]);
 
 		if (sx150x_pin_is_oscio(pctl, pin)) {
-			if (param == PIN_CONFIG_LEVEL) {
+			if (param == PIN_CONFIG_OUTPUT) {
 				ret = sx150x_gpio_direction_output(&pctl->gpio,
 								   pin, arg);
 				if (ret < 0)
@@ -816,7 +815,7 @@ static int sx150x_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
 
 			break;
 
-		case PIN_CONFIG_LEVEL:
+		case PIN_CONFIG_OUTPUT:
 			ret = sx150x_gpio_direction_output(&pctl->gpio,
 							   pin, arg);
 			if (ret < 0)
@@ -863,7 +862,6 @@ static const struct of_device_id sx150x_of_match[] = {
 	{ .compatible = "semtech,sx1509q", .data = &sx1509q_device_data },
 	{},
 };
-MODULE_DEVICE_TABLE(of, sx150x_of_match);
 
 static int sx150x_reset(struct sx150x_pinctrl *pctl)
 {
@@ -1107,7 +1105,7 @@ static const struct regmap_config sx150x_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 32,
 
-	.cache_type = REGCACHE_MAPLE,
+	.cache_type = REGCACHE_RBTREE,
 
 	.reg_read = sx150x_regmap_reg_read,
 	.reg_write = sx150x_regmap_reg_write,
@@ -1267,6 +1265,3 @@ static int __init sx150x_init(void)
 	return i2c_add_driver(&sx150x_driver);
 }
 subsys_initcall(sx150x_init);
-
-MODULE_DESCRIPTION("Semtech SX150x I2C GPIO expander pinctrl driver");
-MODULE_LICENSE("GPL");

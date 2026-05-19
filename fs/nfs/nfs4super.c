@@ -100,7 +100,7 @@ static int nfs_referral_loop_protect(void)
 	struct nfs_referral_count *p, *new;
 	int ret = -ENOMEM;
 
-	new = kmalloc_obj(*new);
+	new = kmalloc(sizeof(*new), GFP_KERNEL);
 	if (!new)
 		goto out;
 	new->task = current;
@@ -149,8 +149,20 @@ static int do_nfs4_mount(struct nfs_server *server,
 	struct fs_context *root_fc;
 	struct vfsmount *root_mnt;
 	struct dentry *dentry;
-	char *source;
+	size_t len;
 	int ret;
+
+	struct fs_parameter param = {
+		.key	= "source",
+		.type	= fs_value_is_string,
+		.dirfd	= -1,
+	};
+
+	struct fs_parameter param_fsc = {
+		.key	= "fsc",
+		.type	= fs_value_is_string,
+		.dirfd	= -1,
+	};
 
 	if (IS_ERR(server))
 		return PTR_ERR(server);
@@ -169,7 +181,15 @@ static int do_nfs4_mount(struct nfs_server *server,
 	root_ctx->server = server;
 
 	if (ctx->fscache_uniq) {
-		ret = vfs_parse_fs_string(root_fc, "fsc", ctx->fscache_uniq);
+		len = strlen(ctx->fscache_uniq);
+		param_fsc.size = len;
+		param_fsc.string = kmemdup_nul(ctx->fscache_uniq, len, GFP_KERNEL);
+		if (param_fsc.string == NULL) {
+			put_fs_context(root_fc);
+			return -ENOMEM;
+		}
+		ret = vfs_parse_fs_param(root_fc, &param_fsc);
+		kfree(param_fsc.string);
 		if (ret < 0) {
 			put_fs_context(root_fc);
 			return ret;
@@ -177,18 +197,20 @@ static int do_nfs4_mount(struct nfs_server *server,
 	}
 	/* We leave export_path unset as it's not used to find the root. */
 
-	/* Does hostname needs to be enclosed in brackets? */
-	if (strchr(hostname, ':'))
-		source = kasprintf(GFP_KERNEL, "[%s]:/", hostname);
-	else
-		source = kasprintf(GFP_KERNEL, "%s:/", hostname);
-
-	if (!source) {
+	len = strlen(hostname) + 5;
+	param.string = kmalloc(len, GFP_KERNEL);
+	if (param.string == NULL) {
 		put_fs_context(root_fc);
 		return -ENOMEM;
 	}
-	ret = vfs_parse_fs_string(root_fc, "source", source);
-	kfree(source);
+
+	/* Does hostname needs to be enclosed in brackets? */
+	if (strchr(hostname, ':'))
+		param.size = snprintf(param.string, len, "[%s]:/", hostname);
+	else
+		param.size = snprintf(param.string, len, "%s:/", hostname);
+	ret = vfs_parse_fs_param(root_fc, &param);
+	kfree(param.string);
 	if (ret < 0) {
 		put_fs_context(root_fc);
 		return ret;

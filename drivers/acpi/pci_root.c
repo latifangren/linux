@@ -24,6 +24,8 @@
 #include <linux/platform_data/x86/apple.h>
 #include "internal.h"
 
+#define ACPI_PCI_ROOT_CLASS		"pci_bridge"
+#define ACPI_PCI_ROOT_DEVICE_NAME	"PCI Root Bridge"
 static int acpi_pci_root_add(struct acpi_device *device,
 			     const struct acpi_device_id *not_used);
 static void acpi_pci_root_remove(struct acpi_device *device);
@@ -646,7 +648,7 @@ static int acpi_pci_root_add(struct acpi_device *device,
 	bool hotadd = system_state == SYSTEM_RUNNING;
 	const char *acpi_hid;
 
-	root = kzalloc_obj(struct acpi_pci_root);
+	root = kzalloc(sizeof(struct acpi_pci_root), GFP_KERNEL);
 	if (!root)
 		return -ENOMEM;
 
@@ -687,6 +689,8 @@ static int acpi_pci_root_add(struct acpi_device *device,
 
 	root->device = device;
 	root->segment = segment & 0xFFFF;
+	strcpy(acpi_device_name(device), ACPI_PCI_ROOT_DEVICE_NAME);
+	strcpy(acpi_device_class(device), ACPI_PCI_ROOT_CLASS);
 	device->driver_data = root;
 
 	if (hotadd && dmar_device_add(handle)) {
@@ -694,8 +698,9 @@ static int acpi_pci_root_add(struct acpi_device *device,
 		goto end;
 	}
 
-	pr_info("PCI Root Bridge [%s] (domain %04x %pR)\n",
-		acpi_device_bid(device), root->segment, &root->secondary);
+	pr_info("%s [%s] (domain %04x %pR)\n",
+	       acpi_device_name(device), acpi_device_bid(device),
+	       root->segment, &root->secondary);
 
 	root->mcfg_addr = acpi_pci_root_get_mcfg_addr(handle);
 
@@ -733,7 +738,7 @@ static int acpi_pci_root_add(struct acpi_device *device,
 	if (no_aspm)
 		pcie_no_aspm();
 
-	pci_acpi_add_root_pm_notifier(device, root);
+	pci_acpi_add_bus_pm_notifier(device);
 	device_set_wakeup_capable(root->bus->bridge, device->wakeup.flags.valid);
 
 	if (hotadd) {
@@ -853,7 +858,7 @@ next:
 	}
 }
 
-static void acpi_pci_root_remap_iospace(const struct fwnode_handle *fwnode,
+static void acpi_pci_root_remap_iospace(struct fwnode_handle *fwnode,
 			struct resource_entry *entry)
 {
 #ifdef PCI_IOBASE

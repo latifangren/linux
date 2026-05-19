@@ -50,7 +50,6 @@ static double get_refcyc_per_delivery(struct display_mode_lib *mode_lib,
 	unsigned int delivery_width,
 	unsigned int req_per_swath_ub)
 {
-	(void)mode_lib;
 	double refcyc_per_delivery = 0.0;
 
 	if (vratio <= 1.0) {
@@ -393,6 +392,8 @@ static void get_meta_and_pte_attr(struct display_mode_lib *mode_lib,
 	blk_bytes = surf_linear ?
 		256 : get_blk_size_bytes((enum source_macro_tile_size) macro_tile_size);
 	log2_blk_bytes = dml_log2((double)blk_bytes);
+	log2_blk_height = 0;
+	log2_blk_width = 0;
 
 	// remember log rule
 	// "+" in log is multiply
@@ -463,6 +464,8 @@ static void get_meta_and_pte_attr(struct display_mode_lib *mode_lib,
 		- log2_meta_req_height;
 	meta_req_width = 1 << log2_meta_req_width;
 	meta_req_height = 1 << log2_meta_req_height;
+	log2_meta_row_height = 0;
+	meta_row_width_ub = 0;
 
 	// the dimensions of a meta row are meta_row_width x meta_row_height in elements.
 	// calculate upper bound of the meta_row_width
@@ -621,7 +624,7 @@ static void get_meta_and_pte_attr(struct display_mode_lib *mode_lib,
 	if (hostvm_enable)
 		rq_sizing_param->dpte_group_bytes = 512;
 	else {
-		if (!surf_linear && (log2_dpte_req_height_ptes == 0) && surf_vert) //reduced, in this case, will have page fault within a group
+		if (!surf_linear & (log2_dpte_req_height_ptes == 0) & surf_vert) //reduced, in this case, will have page fault within a group
 			rq_sizing_param->dpte_group_bytes = 512;
 		else
 			rq_sizing_param->dpte_group_bytes = 2048;
@@ -805,7 +808,6 @@ static void calculate_ttu_cursor(struct display_mode_lib *mode_lib,
 	unsigned int cur_width,
 	enum cursor_bpp cur_bpp)
 {
-	(void)mode_lib;
 	unsigned int cur_src_width = cur_width;
 	unsigned int cur_req_size = 0;
 	unsigned int cur_req_width = 0;
@@ -898,9 +900,6 @@ static void dml_rq_dlg_get_dlg_params(struct display_mode_lib *mode_lib,
 	const bool ignore_viewport_pos,
 	const bool immediate_flip_support)
 {
-	(void)vm_en;
-	(void)ignore_viewport_pos;
-	(void)immediate_flip_support;
 	const display_pipe_source_params_st *src = &e2e_pipe_param[pipe_idx].pipe.src;
 	const display_pipe_dest_params_st *dst = &e2e_pipe_param[pipe_idx].pipe.dest;
 	const display_output_params_st *dout = &e2e_pipe_param[pipe_idx].dout;
@@ -1567,7 +1566,6 @@ static void dml_rq_dlg_get_dlg_params(struct display_mode_lib *mode_lib,
 	dml_print("DML_DLG: %s: disp_dlg_regs->dst_y_per_row_vblank = 0x%x\n", __func__, disp_dlg_regs->dst_y_per_row_vblank);
 	dml_print("DML_DLG: %s: disp_dlg_regs->dst_y_per_vm_flip    = 0x%x\n", __func__, disp_dlg_regs->dst_y_per_vm_flip);
 	dml_print("DML_DLG: %s: disp_dlg_regs->dst_y_per_row_flip   = 0x%x\n", __func__, disp_dlg_regs->dst_y_per_row_flip);
-
 	disp_dlg_regs->refcyc_per_pte_group_vblank_l =
 		(unsigned int)(dst_y_per_row_vblank * (double)htotal
 			* ref_freq_to_pix_freq / (double)dpte_groups_per_row_ub_l);

@@ -46,9 +46,7 @@ static int hps_release(struct inode *inode, struct file *file)
 					       struct hps_drvdata, misc_device);
 	struct device *dev = &hps->client->dev;
 
-	pm_runtime_put(dev);
-
-	return 0;
+	return pm_runtime_put(dev);
 }
 
 static const struct file_operations hps_fops = {
@@ -131,7 +129,7 @@ static int hps_resume(struct device *dev)
 static DEFINE_RUNTIME_DEV_PM_OPS(hps_pm_ops, hps_suspend, hps_resume, NULL);
 
 static const struct i2c_device_id hps_i2c_id[] = {
-	{ "cros-hps" },
+	{ "cros-hps", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, hps_i2c_id);

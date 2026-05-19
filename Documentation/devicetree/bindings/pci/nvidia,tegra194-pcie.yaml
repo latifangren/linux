@@ -58,16 +58,12 @@ properties:
       - const: msi
 
   clocks:
-    minItems: 1
     items:
-      - description: core clock
-      - description: monitor clock
+      - description: module clock
 
   clock-names:
-    minItems: 1
     items:
       - const: core
-      - const: core_m
 
   resets:
     items:

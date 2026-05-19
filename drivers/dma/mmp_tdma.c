@@ -554,7 +554,8 @@ static void mmp_tdma_issue_pending(struct dma_chan *chan)
 
 static void mmp_tdma_remove(struct platform_device *pdev)
 {
-	of_dma_controller_free(pdev->dev.of_node);
+	if (pdev->dev.of_node)
+		of_dma_controller_free(pdev->dev.of_node);
 }
 
 static int mmp_tdma_chan_init(struct mmp_tdma_device *tdev,
@@ -735,12 +736,13 @@ static struct platform_driver mmp_tdma_driver = {
 		.of_match_table = mmp_tdma_dt_ids,
 	},
 	.probe		= mmp_tdma_probe,
-	.remove		= mmp_tdma_remove,
+	.remove_new	= mmp_tdma_remove,
 };
 
 module_platform_driver(mmp_tdma_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("MMP Two-Channel DMA Driver");
+MODULE_ALIAS("platform:mmp-tdma");
 MODULE_AUTHOR("Leo Yan <leoy@marvell.com>");
 MODULE_AUTHOR("Zhangfei Gao <zhangfei.gao@marvell.com>");

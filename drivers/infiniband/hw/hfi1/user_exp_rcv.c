@@ -52,14 +52,17 @@ int hfi1_user_exp_rcv_init(struct hfi1_filedata *fd,
 {
 	int ret = 0;
 
-	fd->entry_to_rb = kzalloc_objs(*fd->entry_to_rb, uctxt->expected_count);
+	fd->entry_to_rb = kcalloc(uctxt->expected_count,
+				  sizeof(struct rb_node *),
+				  GFP_KERNEL);
 	if (!fd->entry_to_rb)
 		return -ENOMEM;
 
 	if (!HFI1_CAP_UGET_MASK(uctxt->flags, TID_UNMAP)) {
 		fd->invalid_tid_idx = 0;
-		fd->invalid_tids = kzalloc_objs(*fd->invalid_tids,
-						uctxt->expected_count);
+		fd->invalid_tids = kcalloc(uctxt->expected_count,
+					   sizeof(*fd->invalid_tids),
+					   GFP_KERNEL);
 		if (!fd->invalid_tids) {
 			kfree(fd->entry_to_rb);
 			fd->entry_to_rb = NULL;
@@ -167,7 +170,7 @@ static int pin_rcv_pages(struct hfi1_filedata *fd, struct tid_user_buf *tidbuf)
 	}
 
 	/* Allocate the array of struct page pointers needed for pinning */
-	pages = kzalloc_objs(*pages, npages);
+	pages = kcalloc(npages, sizeof(*pages), GFP_KERNEL);
 	if (!pages)
 		return -ENOMEM;
 
@@ -257,7 +260,7 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 	if (tinfo->length == 0)
 		return -EINVAL;
 
-	tidbuf = kzalloc_flex(*tidbuf, psets, uctxt->expected_count);
+	tidbuf = kzalloc(sizeof(*tidbuf), GFP_KERNEL);
 	if (!tidbuf)
 		return -ENOMEM;
 
@@ -265,6 +268,12 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 	tidbuf->vaddr = tinfo->vaddr;
 	tidbuf->length = tinfo->length;
 	tidbuf->npages = num_user_pages(tidbuf->vaddr, tidbuf->length);
+	tidbuf->psets = kcalloc(uctxt->expected_count, sizeof(*tidbuf->psets),
+				GFP_KERNEL);
+	if (!tidbuf->psets) {
+		ret = -ENOMEM;
+		goto fail_release_mem;
+	}
 
 	if (fd->use_mn) {
 		ret = mmu_interval_notifier_insert(
@@ -300,7 +309,7 @@ int hfi1_user_exp_rcv_setup(struct hfi1_filedata *fd,
 	}
 
 	ngroups = pageset_count / dd->rcv_entries.group_size;
-	tidlist = kzalloc_objs(*tidlist, pageset_count);
+	tidlist = kcalloc(pageset_count, sizeof(*tidlist), GFP_KERNEL);
 	if (!tidlist) {
 		ret = -ENOMEM;
 		goto fail_unreserve;
@@ -442,6 +451,7 @@ unlock:
 	if (fd->use_mn)
 		mmu_interval_notifier_remove(&tidbuf->notifier);
 	kfree(tidbuf->pages);
+	kfree(tidbuf->psets);
 	kfree(tidbuf);
 	kfree(tidlist);
 	return 0;
@@ -464,6 +474,7 @@ fail_unpin:
 		unpin_rcv_pages(fd, tidbuf, NULL, 0, pinned, false);
 fail_release_mem:
 	kfree(tidbuf->pages);
+	kfree(tidbuf->psets);
 	kfree(tidbuf);
 	kfree(tidlist);
 	return ret;
@@ -519,7 +530,7 @@ int hfi1_user_exp_rcv_invalid(struct hfi1_filedata *fd,
 	 * for a long time.
 	 * Copy the data to a local buffer so we can release the lock.
 	 */
-	array = kzalloc_objs(*array, uctxt->expected_count);
+	array = kcalloc(uctxt->expected_count, sizeof(*array), GFP_KERNEL);
 	if (!array)
 		return -EFAULT;
 
@@ -725,7 +736,7 @@ static int set_rcvarray_entry(struct hfi1_filedata *fd,
 	 * Allocate the node first so we can handle a potential
 	 * failure before we've programmed anything.
 	 */
-	node = kzalloc_flex(*node, pages, npages);
+	node = kzalloc(struct_size(node, pages, npages), GFP_KERNEL);
 	if (!node)
 		return -ENOMEM;
 

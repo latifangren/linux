@@ -8,7 +8,7 @@
  *	http://www.linux-mtd.infradead.org/doc/nand.html
  *
  *  Copyright (C) 2000 Steven J. Hill (sjhill@realitydiluted.com)
- *		  2002-2006 Thomas Gleixner (tglx@kernel.org)
+ *		  2002-2006 Thomas Gleixner (tglx@linutronix.de)
  *
  *  Credits:
  *	David Woodhouse for adding multichip support
@@ -43,7 +43,6 @@
 #include <linux/mtd/partitions.h>
 #include <linux/of.h>
 #include <linux/gpio/consumer.h>
-#include <linux/cleanup.h>
 
 #include "internals.h"
 
@@ -1063,7 +1062,7 @@ static int nand_choose_interface_config(struct nand_chip *chip)
 	if (!nand_controller_can_setup_interface(chip))
 		return 0;
 
-	iface = kzalloc_obj(*iface);
+	iface = kzalloc(sizeof(*iface), GFP_KERNEL);
 	if (!iface)
 		return -ENOMEM;
 
@@ -1834,7 +1833,7 @@ int nand_readid_op(struct nand_chip *chip, u8 addr, void *buf,
 
 		/* READ_ID data bytes are received twice in NV-DDR mode */
 		if (len && nand_interface_is_nvddr(conf)) {
-			ddrbuf = kcalloc(2, len, GFP_KERNEL);
+			ddrbuf = kzalloc(len * 2, GFP_KERNEL);
 			if (!ddrbuf)
 				return -ENOMEM;
 
@@ -2204,7 +2203,7 @@ int nand_read_data_op(struct nand_chip *chip, void *buf, unsigned int len,
 		 * twice.
 		 */
 		if (force_8bit && nand_interface_is_nvddr(conf)) {
-			ddrbuf = kcalloc(2, len, GFP_KERNEL);
+			ddrbuf = kzalloc(len * 2, GFP_KERNEL);
 			if (!ddrbuf)
 				return -ENOMEM;
 
@@ -2783,6 +2782,137 @@ int nand_set_features(struct nand_chip *chip, int addr,
 
 	return nand_set_features_op(chip, addr, subfeature_param);
 }
+
+/**
+ * nand_check_erased_buf - check if a buffer contains (almost) only 0xff data
+ * @buf: buffer to test
+ * @len: buffer length
+ * @bitflips_threshold: maximum number of bitflips
+ *
+ * Check if a buffer contains only 0xff, which means the underlying region
+ * has been erased and is ready to be programmed.
+ * The bitflips_threshold specify the maximum number of bitflips before
+ * considering the region is not erased.
+ * Note: The logic of this function has been extracted from the memweight
+ * implementation, except that nand_check_erased_buf function exit before
+ * testing the whole buffer if the number of bitflips exceed the
+ * bitflips_threshold value.
+ *
+ * Returns a positive number of bitflips less than or equal to
+ * bitflips_threshold, or -ERROR_CODE for bitflips in excess of the
+ * threshold.
+ */
+static int nand_check_erased_buf(void *buf, int len, int bitflips_threshold)
+{
+	const unsigned char *bitmap = buf;
+	int bitflips = 0;
+	int weight;
+
+	for (; len && ((uintptr_t)bitmap) % sizeof(long);
+	     len--, bitmap++) {
+		weight = hweight8(*bitmap);
+		bitflips += BITS_PER_BYTE - weight;
+		if (unlikely(bitflips > bitflips_threshold))
+			return -EBADMSG;
+	}
+
+	for (; len >= sizeof(long);
+	     len -= sizeof(long), bitmap += sizeof(long)) {
+		unsigned long d = *((unsigned long *)bitmap);
+		if (d == ~0UL)
+			continue;
+		weight = hweight_long(d);
+		bitflips += BITS_PER_LONG - weight;
+		if (unlikely(bitflips > bitflips_threshold))
+			return -EBADMSG;
+	}
+
+	for (; len > 0; len--, bitmap++) {
+		weight = hweight8(*bitmap);
+		bitflips += BITS_PER_BYTE - weight;
+		if (unlikely(bitflips > bitflips_threshold))
+			return -EBADMSG;
+	}
+
+	return bitflips;
+}
+
+/**
+ * nand_check_erased_ecc_chunk - check if an ECC chunk contains (almost) only
+ *				 0xff data
+ * @data: data buffer to test
+ * @datalen: data length
+ * @ecc: ECC buffer
+ * @ecclen: ECC length
+ * @extraoob: extra OOB buffer
+ * @extraooblen: extra OOB length
+ * @bitflips_threshold: maximum number of bitflips
+ *
+ * Check if a data buffer and its associated ECC and OOB data contains only
+ * 0xff pattern, which means the underlying region has been erased and is
+ * ready to be programmed.
+ * The bitflips_threshold specify the maximum number of bitflips before
+ * considering the region as not erased.
+ *
+ * Note:
+ * 1/ ECC algorithms are working on pre-defined block sizes which are usually
+ *    different from the NAND page size. When fixing bitflips, ECC engines will
+ *    report the number of errors per chunk, and the NAND core infrastructure
+ *    expect you to return the maximum number of bitflips for the whole page.
+ *    This is why you should always use this function on a single chunk and
+ *    not on the whole page. After checking each chunk you should update your
+ *    max_bitflips value accordingly.
+ * 2/ When checking for bitflips in erased pages you should not only check
+ *    the payload data but also their associated ECC data, because a user might
+ *    have programmed almost all bits to 1 but a few. In this case, we
+ *    shouldn't consider the chunk as erased, and checking ECC bytes prevent
+ *    this case.
+ * 3/ The extraoob argument is optional, and should be used if some of your OOB
+ *    data are protected by the ECC engine.
+ *    It could also be used if you support subpages and want to attach some
+ *    extra OOB data to an ECC chunk.
+ *
+ * Returns a positive number of bitflips less than or equal to
+ * bitflips_threshold, or -ERROR_CODE for bitflips in excess of the
+ * threshold. In case of success, the passed buffers are filled with 0xff.
+ */
+int nand_check_erased_ecc_chunk(void *data, int datalen,
+				void *ecc, int ecclen,
+				void *extraoob, int extraooblen,
+				int bitflips_threshold)
+{
+	int data_bitflips = 0, ecc_bitflips = 0, extraoob_bitflips = 0;
+
+	data_bitflips = nand_check_erased_buf(data, datalen,
+					      bitflips_threshold);
+	if (data_bitflips < 0)
+		return data_bitflips;
+
+	bitflips_threshold -= data_bitflips;
+
+	ecc_bitflips = nand_check_erased_buf(ecc, ecclen, bitflips_threshold);
+	if (ecc_bitflips < 0)
+		return ecc_bitflips;
+
+	bitflips_threshold -= ecc_bitflips;
+
+	extraoob_bitflips = nand_check_erased_buf(extraoob, extraooblen,
+						  bitflips_threshold);
+	if (extraoob_bitflips < 0)
+		return extraoob_bitflips;
+
+	if (data_bitflips)
+		memset(data, 0xff, datalen);
+
+	if (ecc_bitflips)
+		memset(ecc, 0xff, ecclen);
+
+	if (extraoob_bitflips)
+		memset(extraoob, 0xff, extraooblen);
+
+	return data_bitflips + ecc_bitflips + extraoob_bitflips;
+}
+EXPORT_SYMBOL(nand_check_erased_ecc_chunk);
 
 /**
  * nand_read_page_raw_notsupp - dummy read raw page function
@@ -4705,16 +4835,16 @@ static void nand_resume(struct mtd_info *mtd)
 {
 	struct nand_chip *chip = mtd_to_nand(mtd);
 
-	scoped_guard(mutex, &chip->lock) {
-		if (chip->suspended) {
-			if (chip->ops.resume)
-				chip->ops.resume(chip);
-			chip->suspended = 0;
-		} else {
-			pr_err("%s called for a chip which is not in suspended state\n",
-				__func__);
-		}
+	mutex_lock(&chip->lock);
+	if (chip->suspended) {
+		if (chip->ops.resume)
+			chip->ops.resume(chip);
+		chip->suspended = 0;
+	} else {
+		pr_err("%s called for a chip which is not in suspended state\n",
+			__func__);
 	}
+	mutex_unlock(&chip->lock);
 
 	wake_up_all(&chip->resume_wq);
 }
@@ -5440,8 +5570,8 @@ static int of_get_nand_secure_regions(struct nand_chip *chip)
 		return nr_elem;
 
 	chip->nr_secure_regions = nr_elem / 2;
-	chip->secure_regions = kzalloc_objs(*chip->secure_regions,
-					    chip->nr_secure_regions);
+	chip->secure_regions = kcalloc(chip->nr_secure_regions, sizeof(*chip->secure_regions),
+				       GFP_KERNEL);
 	if (!chip->secure_regions)
 		return -ENOMEM;
 
@@ -6605,5 +6735,5 @@ EXPORT_SYMBOL_GPL(nand_cleanup);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steven J. Hill <sjhill@realitydiluted.com>");
-MODULE_AUTHOR("Thomas Gleixner <tglx@kernel.org>");
+MODULE_AUTHOR("Thomas Gleixner <tglx@linutronix.de>");
 MODULE_DESCRIPTION("Generic NAND flash driver code");

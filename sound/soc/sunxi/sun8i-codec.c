@@ -248,10 +248,12 @@ static int sun8i_codec_runtime_resume(struct device *dev)
 	struct sun8i_codec *scodec = dev_get_drvdata(dev);
 	int ret;
 
-	ret = clk_prepare_enable(scodec->clk_bus);
-	if (ret) {
-		dev_err(dev, "Failed to enable the bus clock\n");
-		return ret;
+	if (scodec->clk_bus) {
+		ret = clk_prepare_enable(scodec->clk_bus);
+		if (ret) {
+			dev_err(dev, "Failed to enable the bus clock\n");
+			return ret;
+		}
 	}
 
 	regcache_cache_only(scodec->regmap, false);
@@ -272,7 +274,8 @@ static int sun8i_codec_runtime_suspend(struct device *dev)
 	regcache_cache_only(scodec->regmap, true);
 	regcache_mark_dirty(scodec->regmap);
 
-	clk_disable_unprepare(scodec->clk_bus);
+	if (scodec->clk_bus)
+		clk_disable_unprepare(scodec->clk_bus);
 
 	return 0;
 }
@@ -1287,7 +1290,7 @@ static const struct snd_soc_dapm_route sun8i_codec_legacy_routes[] = {
 
 static int sun8i_codec_component_probe(struct snd_soc_component *component)
 {
-	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
+	struct snd_soc_dapm_context *dapm = snd_soc_component_get_dapm(component);
 	struct sun8i_codec *scodec = snd_soc_component_get_drvdata(component);
 	int ret;
 
@@ -1331,7 +1334,7 @@ static int sun8i_codec_component_probe(struct snd_soc_component *component)
 
 static void sun8i_codec_set_hmic_bias(struct sun8i_codec *scodec, bool enable)
 {
-	struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(scodec->component->card);
+	struct snd_soc_dapm_context *dapm = &scodec->component->card->dapm;
 	int irq_mask = BIT(SUN8I_HMIC_CTRL1_HMIC_DATA_IRQ_EN);
 
 	if (enable)
@@ -1699,15 +1702,15 @@ static const struct of_device_id sun8i_codec_of_match[] = {
 MODULE_DEVICE_TABLE(of, sun8i_codec_of_match);
 
 static const struct dev_pm_ops sun8i_codec_pm_ops = {
-	RUNTIME_PM_OPS(sun8i_codec_runtime_suspend,
-		       sun8i_codec_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(sun8i_codec_runtime_suspend,
+			   sun8i_codec_runtime_resume, NULL)
 };
 
 static struct platform_driver sun8i_codec_driver = {
 	.driver = {
 		.name = "sun8i-codec",
 		.of_match_table = sun8i_codec_of_match,
-		.pm = pm_ptr(&sun8i_codec_pm_ops),
+		.pm = &sun8i_codec_pm_ops,
 	},
 	.probe = sun8i_codec_probe,
 	.remove = sun8i_codec_remove,

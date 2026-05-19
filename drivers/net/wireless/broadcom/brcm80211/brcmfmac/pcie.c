@@ -71,7 +71,6 @@ BRCMF_FW_CLM_DEF(4377B3, "brcmfmac4377b3-pcie");
 BRCMF_FW_CLM_DEF(4378B1, "brcmfmac4378b1-pcie");
 BRCMF_FW_CLM_DEF(4378B3, "brcmfmac4378b3-pcie");
 BRCMF_FW_CLM_DEF(4387C2, "brcmfmac4387c2-pcie");
-BRCMF_FW_CLM_DEF(54591, "brcmfmac54591-pcie");
 
 /* firmware config files */
 MODULE_FIRMWARE(BRCMF_FW_DEFAULT_PATH "brcmfmac*-pcie.txt");
@@ -89,7 +88,6 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 	BRCMF_FW_ENTRY(BRCM_CC_4350_CHIP_ID, 0xFFFFFF00, 4350),
 	BRCMF_FW_ENTRY(BRCM_CC_43525_CHIP_ID, 0xFFFFFFF0, 4365C),
 	BRCMF_FW_ENTRY(BRCM_CC_4355_CHIP_ID, 0x000007FF, 4355),
-	BRCMF_FW_ENTRY(BRCM_CC_4355_CHIP_ID, 0x00002000, 54591),
 	BRCMF_FW_ENTRY(BRCM_CC_4355_CHIP_ID, 0xFFFFF800, 4355C1), /* rev ID 12/C2 seen */
 	BRCMF_FW_ENTRY(BRCM_CC_4356_CHIP_ID, 0xFFFFFFFF, 4356),
 	BRCMF_FW_ENTRY(BRCM_CC_43567_CHIP_ID, 0xFFFFFFFF, 43570),
@@ -656,19 +654,17 @@ brcmf_pcie_select_core(struct brcmf_pciedev_info *devinfo, u16 coreid)
 static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 {
 	struct brcmf_core *core;
-	static const u16 cfg_offset[] = {
-		BRCMF_PCIE_CFGREG_STATUS_CMD,
-		BRCMF_PCIE_CFGREG_PM_CSR,
-		BRCMF_PCIE_CFGREG_MSI_CAP,
-		BRCMF_PCIE_CFGREG_MSI_ADDR_L,
-		BRCMF_PCIE_CFGREG_MSI_ADDR_H,
-		BRCMF_PCIE_CFGREG_MSI_DATA,
-		BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL2,
-		BRCMF_PCIE_CFGREG_RBAR_CTRL,
-		BRCMF_PCIE_CFGREG_PML1_SUB_CTRL1,
-		BRCMF_PCIE_CFGREG_REG_BAR2_CONFIG,
-		BRCMF_PCIE_CFGREG_REG_BAR3_CONFIG
-	};
+	u16 cfg_offset[] = { BRCMF_PCIE_CFGREG_STATUS_CMD,
+			     BRCMF_PCIE_CFGREG_PM_CSR,
+			     BRCMF_PCIE_CFGREG_MSI_CAP,
+			     BRCMF_PCIE_CFGREG_MSI_ADDR_L,
+			     BRCMF_PCIE_CFGREG_MSI_ADDR_H,
+			     BRCMF_PCIE_CFGREG_MSI_DATA,
+			     BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL2,
+			     BRCMF_PCIE_CFGREG_RBAR_CTRL,
+			     BRCMF_PCIE_CFGREG_PML1_SUB_CTRL1,
+			     BRCMF_PCIE_CFGREG_REG_BAR2_CONFIG,
+			     BRCMF_PCIE_CFGREG_REG_BAR3_CONFIG };
 	u32 i;
 	u32 val;
 	u32 lsc;
@@ -1155,7 +1151,7 @@ brcmf_pcie_alloc_dma_and_ring(struct brcmf_pciedev_info *devinfo, u32 ring_id,
 	addr = tcm_ring_phys_addr + BRCMF_RING_LEN_ITEMS_OFFSET;
 	brcmf_pcie_write_tcm16(devinfo, addr, ring_itemsize_array[ring_id]);
 
-	ring = kzalloc_obj(*ring);
+	ring = kzalloc(sizeof(*ring), GFP_KERNEL);
 	if (!ring) {
 		dma_free_coherent(&devinfo->pdev->dev, size, dma_buf,
 				  dma_handle);
@@ -1347,7 +1343,7 @@ static int brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info *devinfo)
 	devinfo->shared.max_flowrings = max_flowrings;
 	devinfo->shared.max_submissionrings = max_submissionrings;
 	devinfo->shared.max_completionrings = max_completionrings;
-	rings = kzalloc_objs(*ring, max_flowrings);
+	rings = kcalloc(max_flowrings, sizeof(*ring), GFP_KERNEL);
 	if (!rings)
 		goto fail;
 
@@ -2199,7 +2195,8 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 		bus->msgbuf->commonrings[i] =
 				&devinfo->shared.commonrings[i]->commonring;
 
-	flowrings = kzalloc_objs(*flowrings, devinfo->shared.max_flowrings);
+	flowrings = kcalloc(devinfo->shared.max_flowrings, sizeof(*flowrings),
+			    GFP_KERNEL);
 	if (!flowrings)
 		goto fail;
 
@@ -2307,7 +2304,7 @@ brcmf_pcie_fwcon_timer(struct brcmf_pciedev_info *devinfo, bool active)
 {
 	if (!active) {
 		if (devinfo->console_active) {
-			timer_delete_sync(&devinfo->timer);
+			del_timer_sync(&devinfo->timer);
 			devinfo->console_active = false;
 		}
 		return;
@@ -2331,8 +2328,7 @@ brcmf_pcie_fwcon_timer(struct brcmf_pciedev_info *devinfo, bool active)
 static void
 brcmf_pcie_fwcon(struct timer_list *t)
 {
-	struct brcmf_pciedev_info *devinfo = timer_container_of(devinfo, t,
-								timer);
+	struct brcmf_pciedev_info *devinfo = from_timer(devinfo, t, timer);
 
 	if (!devinfo->console_active)
 		return;
@@ -2456,7 +2452,7 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	brcmf_dbg(PCIE, "Enter %x:%x\n", pdev->vendor, pdev->device);
 
 	ret = -ENOMEM;
-	devinfo = kzalloc_obj(*devinfo);
+	devinfo = kzalloc(sizeof(*devinfo), GFP_KERNEL);
 	if (devinfo == NULL)
 		return ret;
 
@@ -2476,7 +2472,7 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	else
 		devinfo->reginfo = &brcmf_reginfo_default;
 
-	pcie_bus_dev = kzalloc_obj(*pcie_bus_dev);
+	pcie_bus_dev = kzalloc(sizeof(*pcie_bus_dev), GFP_KERNEL);
 	if (pcie_bus_dev == NULL) {
 		ret = -ENOMEM;
 		goto fail;
@@ -2494,12 +2490,12 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret < 0)
 		goto fail;
 
-	bus = kzalloc_obj(*bus);
+	bus = kzalloc(sizeof(*bus), GFP_KERNEL);
 	if (!bus) {
 		ret = -ENOMEM;
 		goto fail;
 	}
-	bus->msgbuf = kzalloc_obj(*bus->msgbuf);
+	bus->msgbuf = kzalloc(sizeof(*bus->msgbuf), GFP_KERNEL);
 	if (!bus->msgbuf) {
 		ret = -ENOMEM;
 		kfree(bus);
@@ -2523,19 +2519,10 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto fail_bus;
 
-	/* otp read operation */
-	switch (bus->fwvid) {
-	case BRCMF_FWVENDOR_WCC:
-	case BRCMF_FWVENDOR_BCA:
-		ret = brcmf_pcie_read_otp(devinfo);
-		if (ret) {
-			brcmf_err(bus, "failed to parse OTP\n");
-			goto fail_brcmf;
-		}
-		break;
-	case BRCMF_FWVENDOR_CYW:
-	default:
-		break;
+	ret = brcmf_pcie_read_otp(devinfo);
+	if (ret) {
+		brcmf_err(bus, "failed to parse OTP\n");
+		goto fail_brcmf;
 	}
 
 #ifdef DEBUG
@@ -2725,7 +2712,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4350_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE_SUB(0x4355, BRCM_PCIE_VENDOR_ID_BROADCOM, 0x4355, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4354_RAW_DEVICE_ID, WCC),
-	BRCMF_PCIE_DEVICE(BRCM_PCIE_4355_DEVICE_ID, WCC_SEED),
+	BRCMF_PCIE_DEVICE(BRCM_PCIE_4355_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4356_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43567_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43570_DEVICE_ID, WCC),
@@ -2736,7 +2723,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_2G_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_5G_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_RAW_DEVICE_ID, WCC),
-	BRCMF_PCIE_DEVICE(BRCM_PCIE_4364_DEVICE_ID, WCC_SEED),
+	BRCMF_PCIE_DEVICE(BRCM_PCIE_4364_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_DEVICE_ID, BCA),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_2G_DEVICE_ID, BCA),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_5G_DEVICE_ID, BCA),
@@ -2750,7 +2737,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4378_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4387_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43752_DEVICE_ID, WCC_SEED),
-	BRCMF_PCIE_DEVICE(CY_PCIE_54591_DEVICE_ID, CYW),
+
 	{ /* end: all zeroes */ }
 };
 

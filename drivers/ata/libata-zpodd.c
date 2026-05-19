@@ -160,7 +160,8 @@ void zpodd_on_suspend(struct ata_device *dev)
 		return;
 	}
 
-	expires = zpodd->last_ready + secs_to_jiffies(zpodd_poweroff_delay);
+	expires = zpodd->last_ready +
+		  msecs_to_jiffies(zpodd_poweroff_delay * 1000);
 	if (time_before(jiffies, expires))
 		return;
 
@@ -274,7 +275,7 @@ void zpodd_init(struct ata_device *dev)
 	if (mech_type == ODD_MECH_TYPE_UNSUPPORTED)
 		return;
 
-	zpodd = kzalloc_obj(struct zpodd);
+	zpodd = kzalloc(sizeof(struct zpodd), GFP_KERNEL);
 	if (!zpodd)
 		return;
 

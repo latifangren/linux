@@ -244,9 +244,13 @@ struct devfreq_event_dev *devfreq_event_get_edev_by_phandle(struct device *dev,
 	edev = NULL;
 out:
 	mutex_unlock(&devfreq_event_list_lock);
-	of_node_put(node);
-	if (!edev)
+
+	if (!edev) {
+		of_node_put(node);
 		return ERR_PTR(-ENODEV);
+	}
+
+	of_node_put(node);
 
 	return edev;
 }
@@ -313,7 +317,7 @@ struct devfreq_event_dev *devfreq_event_add_edev(struct device *dev,
 	if (!desc->ops->set_event || !desc->ops->get_event)
 		return ERR_PTR(-EINVAL);
 
-	edev = kzalloc_obj(struct devfreq_event_dev);
+	edev = kzalloc(sizeof(struct devfreq_event_dev), GFP_KERNEL);
 	if (!edev)
 		return ERR_PTR(-ENOMEM);
 

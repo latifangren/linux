@@ -32,10 +32,7 @@ required:
   - compatible
   - reg
 
-allOf:
-  - $ref: dai-common.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

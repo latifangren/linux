@@ -290,10 +290,8 @@ static int cat_run_test(const struct resctrl_test *test, const struct user_param
 
 static bool arch_supports_noncont_cat(const struct resctrl_test *test)
 {
-	unsigned int vendor_id = get_vendor();
-
-	/* AMD and Hygon always support non-contiguous CBM. */
-	if (vendor_id == ARCH_AMD || vendor_id == ARCH_HYGON)
+	/* AMD always supports non-contiguous CBM. */
+	if (get_vendor() == ARCH_AMD)
 		return true;
 
 #if defined(__i386__) || defined(__x86_64__) /* arch */

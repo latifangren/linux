@@ -19,7 +19,6 @@
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
-#include <linux/mmc/mmc.h>
 
 #include "core.h"
 #include "card.h"
@@ -279,7 +278,7 @@ struct mmc_card *mmc_alloc_card(struct mmc_host *host, const struct device_type 
 {
 	struct mmc_card *card;
 
-	card = kzalloc_obj(struct mmc_card);
+	card = kzalloc(sizeof(struct mmc_card), GFP_KERNEL);
 	if (!card)
 		return ERR_PTR(-ENOMEM);
 
@@ -302,7 +301,6 @@ int mmc_add_card(struct mmc_card *card)
 {
 	int ret;
 	const char *type;
-	const char *speed_mode = "";
 	const char *uhs_bus_speed_mode = "";
 	static const char *const uhs_speeds[] = {
 		[UHS_SDR12_BUS_SPEED] = "SDR12 ",
@@ -346,32 +344,27 @@ int mmc_add_card(struct mmc_card *card)
 		break;
 	}
 
-	if (mmc_card_hs(card))
-		speed_mode = "high speed ";
-	else if (mmc_card_uhs(card))
-		speed_mode = "UHS-I speed ";
-	else if (mmc_card_uhs2(card->host))
-		speed_mode = "UHS-II speed ";
-	else if	(mmc_card_ddr52(card))
-		speed_mode = "high speed DDR ";
-	else if (mmc_card_hs200(card))
-		speed_mode = "HS200 ";
-	else if (mmc_card_hs400es(card))
-		speed_mode = "HS400 Enhanced strobe ";
-	else if (mmc_card_hs400(card))
-		speed_mode = "HS400 ";
-
 	if (mmc_card_uhs(card) &&
 		(card->sd_bus_speed < ARRAY_SIZE(uhs_speeds)))
 		uhs_bus_speed_mode = uhs_speeds[card->sd_bus_speed];
 
-	if (mmc_host_is_spi(card->host))
-		pr_info("%s: new %s%s card on SPI\n",
-			mmc_hostname(card->host), speed_mode, type);
-	else
-		pr_info("%s: new %s%s%s card at address %04x\n",
-			mmc_hostname(card->host), speed_mode,
+	if (mmc_host_is_spi(card->host)) {
+		pr_info("%s: new %s%s%s card on SPI\n",
+			mmc_hostname(card->host),
+			mmc_card_hs(card) ? "high speed " : "",
+			mmc_card_ddr52(card) ? "DDR " : "",
+			type);
+	} else {
+		pr_info("%s: new %s%s%s%s%s%s card at address %04x\n",
+			mmc_hostname(card->host),
+			mmc_card_uhs(card) ? "ultra high speed " :
+			(mmc_card_hs(card) ? "high speed " : ""),
+			mmc_card_hs400(card) ? "HS400 " :
+			(mmc_card_hs200(card) ? "HS200 " : ""),
+			mmc_card_hs400es(card) ? "Enhanced strobe " : "",
+			mmc_card_ddr52(card) ? "DDR " : "",
 			uhs_bus_speed_mode, type, card->rca);
+	}
 
 	mmc_add_card_debugfs(card);
 	card->dev.of_node = mmc_of_find_child_device(card->host, 0);
@@ -384,14 +377,6 @@ int mmc_add_card(struct mmc_card *card)
 
 	mmc_card_set_present(card);
 
-	/*
-	 * Register for undervoltage notification if the card supports
-	 * power-off notification, enabling emergency shutdowns.
-	 */
-	if (mmc_card_mmc(card) &&
-	    card->ext_csd.power_off_notification == EXT_CSD_POWER_ON)
-		mmc_regulator_register_undervoltage_notifier(card->host);
-
 	return 0;
 }
 
@@ -402,9 +387,6 @@ int mmc_add_card(struct mmc_card *card)
 void mmc_remove_card(struct mmc_card *card)
 {
 	struct mmc_host *host = card->host;
-
-	if (mmc_card_present(card))
-		mmc_regulator_unregister_undervoltage_notifier(host);
 
 	mmc_remove_card_debugfs(card);
 

@@ -48,7 +48,8 @@ static inline void set_vtimer(u64 expires)
 
 static inline int virt_timer_forward(u64 elapsed)
 {
-	lockdep_assert_irqs_disabled();
+	BUG_ON(!irqs_disabled());
+
 	if (list_empty(&virt_timer_list))
 		return 0;
 	elapsed = atomic64_add_return(elapsed, &virt_timer_elapsed);
@@ -136,16 +137,23 @@ static int do_account_vtime(struct task_struct *tsk)
 		lc->system_timer += timer;
 
 	/* Update MT utilization calculation */
-	if (smp_cpu_mtid && time_after64(jiffies_64, __this_cpu_read(mt_scaling_jiffies)))
+	if (smp_cpu_mtid &&
+	    time_after64(jiffies_64, this_cpu_read(mt_scaling_jiffies)))
 		update_mt_scaling();
 
 	/* Calculate cputime delta */
-	user = update_tsk_timer(&tsk->thread.user_timer, lc->user_timer);
-	guest = update_tsk_timer(&tsk->thread.guest_timer, lc->guest_timer);
-	system = update_tsk_timer(&tsk->thread.system_timer, lc->system_timer);
-	hardirq = update_tsk_timer(&tsk->thread.hardirq_timer, lc->hardirq_timer);
-	softirq = update_tsk_timer(&tsk->thread.softirq_timer, lc->softirq_timer);
-	lc->steal_timer += clock - user - guest - system - hardirq - softirq;
+	user = update_tsk_timer(&tsk->thread.user_timer,
+				READ_ONCE(lc->user_timer));
+	guest = update_tsk_timer(&tsk->thread.guest_timer,
+				 READ_ONCE(lc->guest_timer));
+	system = update_tsk_timer(&tsk->thread.system_timer,
+				  READ_ONCE(lc->system_timer));
+	hardirq = update_tsk_timer(&tsk->thread.hardirq_timer,
+				   READ_ONCE(lc->hardirq_timer));
+	softirq = update_tsk_timer(&tsk->thread.softirq_timer,
+				   READ_ONCE(lc->softirq_timer));
+	lc->steal_timer +=
+		clock - user - guest - system - hardirq - softirq;
 
 	/* Push account value */
 	if (user) {

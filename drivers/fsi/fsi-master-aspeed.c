@@ -546,7 +546,7 @@ static int fsi_master_aspeed_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	aspeed = kzalloc_obj(*aspeed);
+	aspeed = kzalloc(sizeof(*aspeed), GFP_KERNEL);
 	if (!aspeed)
 		return -ENOMEM;
 
@@ -666,7 +666,7 @@ static struct platform_driver fsi_master_aspeed_driver = {
 		.of_match_table	= fsi_master_aspeed_match,
 	},
 	.probe	= fsi_master_aspeed_probe,
-	.remove = fsi_master_aspeed_remove,
+	.remove_new = fsi_master_aspeed_remove,
 };
 
 module_platform_driver(fsi_master_aspeed_driver);

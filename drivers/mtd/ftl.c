@@ -201,13 +201,16 @@ static int build_maps(partition_t *part)
     /* Set up erase unit maps */
     part->DataUnits = le16_to_cpu(part->header.NumEraseUnits) -
 	part->header.NumTransferUnits;
-    part->EUNInfo = kmalloc_objs(struct eun_info_t, part->DataUnits);
+    part->EUNInfo = kmalloc_array(part->DataUnits, sizeof(struct eun_info_t),
+                                  GFP_KERNEL);
     if (!part->EUNInfo)
 	    goto out;
     for (i = 0; i < part->DataUnits; i++)
 	part->EUNInfo[i].Offset = 0xffffffff;
     part->XferInfo =
-	kmalloc_objs(struct xfer_info_t, part->header.NumTransferUnits);
+	kmalloc_array(part->header.NumTransferUnits,
+                      sizeof(struct xfer_info_t),
+                      GFP_KERNEL);
     if (!part->XferInfo)
 	    goto out_EUNInfo;
 
@@ -260,7 +263,7 @@ static int build_maps(partition_t *part)
 
     /* Set up virtual page map */
     blocks = le32_to_cpu(header.FormattedSize) >> header.BlockSize;
-    part->VirtualBlockMap = vmalloc_array(blocks, sizeof(uint32_t));
+    part->VirtualBlockMap = vmalloc(array_size(blocks, sizeof(uint32_t)));
     if (!part->VirtualBlockMap)
 	    goto out_XferInfo;
 
@@ -336,7 +339,7 @@ static int erase_xfer(partition_t *part,
     /* Is there a free erase slot? Always in MTD. */
 
 
-    erase=kmalloc_obj(struct erase_info);
+    erase=kmalloc(sizeof(struct erase_info), GFP_KERNEL);
     if (!erase)
             return -ENOMEM;
 
@@ -1004,7 +1007,7 @@ static void ftl_add_mtd(struct mtd_blktrans_ops *tr, struct mtd_info *mtd)
 {
 	partition_t *partition;
 
-	partition = kzalloc_obj(partition_t);
+	partition = kzalloc(sizeof(partition_t), GFP_KERNEL);
 
 	if (!partition) {
 		printk(KERN_WARNING "No memory to scan for FTL on %s\n",

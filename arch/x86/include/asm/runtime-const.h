@@ -6,7 +6,7 @@
   #error "Cannot use runtime-const infrastructure from modules"
 #endif
 
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 
 .macro RUNTIME_CONST_PTR sym reg
 	movq	$0x0123456789abcdef, %\reg
@@ -16,7 +16,7 @@
 	.popsection
 .endm
 
-#else /* __ASSEMBLER__ */
+#else /* __ASSEMBLY__ */
 
 #define runtime_const_ptr(sym) ({				\
 	typeof(sym) __ret;					\
@@ -74,5 +74,5 @@ static inline void runtime_const_fixup(void (*fn)(void *, unsigned long),
 	}
 }
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif

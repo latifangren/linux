@@ -333,7 +333,7 @@ static struct clk_hw *m10v_clk_hw_register_mux(struct device *dev,
 	struct clk_init_data init;
 	int ret;
 
-	mux = kzalloc_obj(*mux);
+	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 	if (!mux)
 		return ERR_PTR(-ENOMEM);
 
@@ -386,8 +386,8 @@ static unsigned long m10v_clk_divider_recalc_rate(struct clk_hw *hw,
 				   divider->flags, divider->width);
 }
 
-static int m10v_clk_divider_determine_rate(struct clk_hw *hw,
-					   struct clk_rate_request *req)
+static long m10v_clk_divider_round_rate(struct clk_hw *hw, unsigned long rate,
+				unsigned long *prate)
 {
 	struct m10v_clk_divider *divider = to_m10v_div(hw);
 
@@ -398,12 +398,13 @@ static int m10v_clk_divider_determine_rate(struct clk_hw *hw,
 		val = readl(divider->reg) >> divider->shift;
 		val &= clk_div_mask(divider->width);
 
-		return divider_ro_determine_rate(hw, req, divider->table,
-						 divider->width, divider->flags,
-						 val);
+		return divider_ro_round_rate(hw, rate, prate, divider->table,
+					     divider->width, divider->flags,
+					     val);
 	}
 
-	return divider_determine_rate(hw, req, divider->table, divider->width, divider->flags);
+	return divider_round_rate(hw, rate, prate, divider->table,
+				  divider->width, divider->flags);
 }
 
 static int m10v_clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -449,7 +450,7 @@ static int m10v_clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 
 static const struct clk_ops m10v_clk_divider_ops = {
 	.recalc_rate = m10v_clk_divider_recalc_rate,
-	.determine_rate = m10v_clk_divider_determine_rate,
+	.round_rate = m10v_clk_divider_round_rate,
 	.set_rate = m10v_clk_divider_set_rate,
 };
 
@@ -464,7 +465,7 @@ static struct clk_hw *m10v_clk_hw_register_divider(struct device *dev,
 	struct clk_init_data init;
 	int ret;
 
-	div = kzalloc_obj(*div);
+	div = kzalloc(sizeof(*div), GFP_KERNEL);
 	if (!div)
 		return ERR_PTR(-ENOMEM);
 
@@ -611,7 +612,9 @@ static void __init m10v_cc_init(struct device_node *np)
 	const char *parent_name;
 	struct clk_hw *hw;
 
-	m10v_clk_data = kzalloc_flex(*m10v_clk_data, hws, M10V_NUM_CLKS);
+	m10v_clk_data = kzalloc(struct_size(m10v_clk_data, hws,
+					M10V_NUM_CLKS),
+					GFP_KERNEL);
 
 	if (!m10v_clk_data)
 		return;

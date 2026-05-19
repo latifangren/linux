@@ -30,4 +30,22 @@ config ROCKCHIP_DTPM
 	  on this platform. That will create all the power capping capable
 	  devices.
 
+config ROCKCHIP_MISC_GPIO_A99
+	tristate "Rockchip YS-A99 misc GPIO defaults"
+	depends on GPIOLIB && OF_GPIO
+	default y if ARCH_ROCKCHIP
+	help
+	  Apply board-specific GPIO default states used by the YS-A99 Android
+	  vendor tree, notably func_io1, func_io2, USB modem wake lines, and
+	  the MCU keepalive pulse exposed through the misc-power-en DT node.
+
+config ROCKCHIP_MCU_7502
+	tristate "Rockchip YS-A99 MCU companion"
+	depends on I2C && OF
+	default y if ARCH_ROCKCHIP
+	help
+	  Probe the YS-A99 board MCU over I2C and send the minimal early
+	  handshake observed in the Android vendor tree.
+
+
 endif

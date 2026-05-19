@@ -3,7 +3,6 @@
 
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
-#include <linux/string_choices.h>
 
 #include <media/v4l2-event.h>
 #include <media/v4l2-ioctl.h>
@@ -288,7 +287,7 @@ static int imgu_link_setup(struct media_entity *entity,
 	WARN_ON(pad >= IMGU_NODE_NUM);
 
 	dev_dbg(&imgu->pci_dev->dev, "pipe %u pad %u is %s", pipe, pad,
-		 str_enabled_disabled(flags & MEDIA_LNK_FL_ENABLED));
+		 flags & MEDIA_LNK_FL_ENABLED ? "enabled" : "disabled");
 
 	imgu_pipe = &imgu->imgu_pipe[pipe];
 	imgu_pipe->nodes[pad].enabled = flags & MEDIA_LNK_FL_ENABLED;
@@ -303,7 +302,7 @@ static int imgu_link_setup(struct media_entity *entity,
 		__clear_bit(pipe, imgu->css.enabled_pipes);
 
 	dev_dbg(&imgu->pci_dev->dev, "pipe %u is %s", pipe,
-		 str_enabled_disabled(flags & MEDIA_LNK_FL_ENABLED));
+		 flags & MEDIA_LNK_FL_ENABLED ? "enabled" : "disabled");
 
 	return 0;
 }
@@ -938,6 +937,8 @@ static const struct vb2_ops imgu_vb2_ops = {
 	.queue_setup = imgu_vb2_queue_setup,
 	.start_streaming = imgu_vb2_start_streaming,
 	.stop_streaming = imgu_vb2_stop_streaming,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
 };
 
 /****************** v4l2_file_operations *****************/

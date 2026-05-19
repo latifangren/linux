@@ -159,18 +159,14 @@ static int gre_rcv(struct sk_buff *skb)
 	rcu_read_lock();
 	proto = rcu_dereference(gre_proto[ver]);
 	if (!proto || !proto->handler)
-		goto drop_nohandler;
+		goto drop_unlock;
 	ret = proto->handler(skb);
 	rcu_read_unlock();
 	return ret;
 
-drop_nohandler:
+drop_unlock:
 	rcu_read_unlock();
-	dev_core_stats_rx_nohandler_inc(skb->dev);
-	kfree_skb(skb);
-	return NET_RX_DROP;
 drop:
-	dev_core_stats_rx_dropped_inc(skb->dev);
 	kfree_skb(skb);
 	return NET_RX_DROP;
 }
@@ -203,7 +199,7 @@ static const struct net_protocol net_gre_protocol = {
 
 static int __init gre_init(void)
 {
-	pr_info("GRE over IPv4 demultiplexer driver\n");
+	pr_info("GRE over IPv4 demultiplexor driver\n");
 
 	if (inet_add_protocol(&net_gre_protocol, IPPROTO_GRE) < 0) {
 		pr_err("can't add protocol\n");

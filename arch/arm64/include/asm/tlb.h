@@ -9,7 +9,12 @@
 #define __ASM_TLB_H
 
 #include <linux/pagemap.h>
+#include <linux/swap.h>
 
+static inline void __tlb_remove_table(void *_table)
+{
+	free_page_and_swap_cache((struct page *)_table);
+}
 
 #define tlb_flush tlb_flush
 static void tlb_flush(struct mmu_gather *tlb);
@@ -53,7 +58,7 @@ static inline int tlb_get_level(struct mmu_gather *tlb)
 static inline void tlb_flush(struct mmu_gather *tlb)
 {
 	struct vm_area_struct vma = TLB_FLUSH_VMA(tlb->mm, 0);
-	tlbf_t flags = tlb->freed_tables ? TLBF_NONE : TLBF_NOWALKCACHE;
+	bool last_level = !tlb->freed_tables;
 	unsigned long stride = tlb_get_unmap_size(tlb);
 	int tlb_level = tlb_get_level(tlb);
 
@@ -63,13 +68,13 @@ static inline void tlb_flush(struct mmu_gather *tlb)
 	 * reallocate our ASID without invalidating the entire TLB.
 	 */
 	if (tlb->fullmm) {
-		if (tlb->freed_tables)
+		if (!last_level)
 			flush_tlb_mm(tlb->mm);
 		return;
 	}
 
 	__flush_tlb_range(&vma, tlb->start, tlb->end, stride,
-			  tlb_level, flags);
+			  last_level, tlb_level);
 }
 
 static inline void __pte_free_tlb(struct mmu_gather *tlb, pgtable_t pte,
@@ -77,6 +82,7 @@ static inline void __pte_free_tlb(struct mmu_gather *tlb, pgtable_t pte,
 {
 	struct ptdesc *ptdesc = page_ptdesc(pte);
 
+	pagetable_pte_dtor(ptdesc);
 	tlb_remove_ptdesc(tlb, ptdesc);
 }
 
@@ -86,6 +92,7 @@ static inline void __pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmdp,
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(pmdp);
 
+	pagetable_pmd_dtor(ptdesc);
 	tlb_remove_ptdesc(tlb, ptdesc);
 }
 #endif
@@ -99,19 +106,7 @@ static inline void __pud_free_tlb(struct mmu_gather *tlb, pud_t *pudp,
 	if (!pgtable_l4_enabled())
 		return;
 
-	tlb_remove_ptdesc(tlb, ptdesc);
-}
-#endif
-
-#if CONFIG_PGTABLE_LEVELS > 4
-static inline void __p4d_free_tlb(struct mmu_gather *tlb, p4d_t *p4dp,
-				  unsigned long addr)
-{
-	struct ptdesc *ptdesc = virt_to_ptdesc(p4dp);
-
-	if (!pgtable_l5_enabled())
-		return;
-
+	pagetable_pud_dtor(ptdesc);
 	tlb_remove_ptdesc(tlb, ptdesc);
 }
 #endif

@@ -59,7 +59,7 @@ struct ktd2692_led_config_data {
 	enum led_brightness max_brightness;
 };
 
-static const struct expresswire_timing ktd2692_timing = {
+const struct expresswire_timing ktd2692_timing = {
 	.poweroff_us = 700,
 	.data_start_us = 10,
 	.end_of_data_low_us = 10,
@@ -344,12 +344,12 @@ static struct platform_driver ktd2692_driver = {
 		.of_match_table = ktd2692_match,
 	},
 	.probe  = ktd2692_probe,
-	.remove = ktd2692_remove,
+	.remove_new = ktd2692_remove,
 };
 
 module_platform_driver(ktd2692_driver);
 
-MODULE_IMPORT_NS("EXPRESSWIRE");
+MODULE_IMPORT_NS(EXPRESSWIRE);
 MODULE_AUTHOR("Ingi Kim <ingi2.kim@samsung.com>");
 MODULE_DESCRIPTION("Kinetic KTD2692 LED driver");
 MODULE_LICENSE("GPL v2");

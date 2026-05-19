@@ -187,7 +187,6 @@ static int dvb_usbv2_remote_exit(struct dvb_usb_device *d)
 	if (d->rc_dev) {
 		cancel_delayed_work_sync(&d->rc_query_work);
 		rc_unregister_device(d->rc_dev);
-		rc_free_device(d->rc_dev);
 		d->rc_dev = NULL;
 	}
 
@@ -393,7 +392,7 @@ static int dvb_usbv2_media_device_init(struct dvb_usb_adapter *adap)
 	struct dvb_usb_device *d = adap_to_d(adap);
 	struct usb_device *udev = d->udev;
 
-	mdev = kzalloc_obj(*mdev);
+	mdev = kzalloc(sizeof(*mdev), GFP_KERNEL);
 	if (!mdev)
 		return -ENOMEM;
 
@@ -905,7 +904,7 @@ int dvb_usbv2_probe(struct usb_interface *intf,
 		goto err;
 	}
 
-	d = kzalloc_obj(struct dvb_usb_device);
+	d = kzalloc(sizeof(struct dvb_usb_device), GFP_KERNEL);
 	if (!d) {
 		dev_err(&udev->dev, "%s: kzalloc() failed\n", KBUILD_MODNAME);
 		ret = -ENOMEM;

@@ -20,7 +20,6 @@
  */
 #include <linux/cleanup.h>
 #include <linux/clk.h>
-#include <linux/gpio/consumer.h>
 #include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -31,7 +30,6 @@
 #include <linux/reset.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 #include <linux/types.h>
 
 #include <linux/gpio/gpio-nomadik.h>
@@ -348,8 +346,8 @@ static int nmk_gpio_get_input(struct gpio_chip *chip, unsigned int offset)
 	return value;
 }
 
-static int nmk_gpio_set_output(struct gpio_chip *chip, unsigned int offset,
-			       int val)
+static void nmk_gpio_set_output(struct gpio_chip *chip, unsigned int offset,
+				int val)
 {
 	struct nmk_gpio_chip *nmk_chip = gpiochip_get_data(chip);
 
@@ -358,8 +356,6 @@ static int nmk_gpio_set_output(struct gpio_chip *chip, unsigned int offset,
 	__nmk_gpio_set_output(nmk_chip, offset, val);
 
 	clk_disable(nmk_chip->clk);
-
-	return 0;
 }
 
 static int nmk_gpio_make_output(struct gpio_chip *chip, unsigned int offset,
@@ -397,12 +393,10 @@ static int nmk_gpio_get_mode(struct nmk_gpio_chip *nmk_chip, int offset)
 }
 
 void nmk_gpio_dbg_show_one(struct seq_file *s, struct pinctrl_dev *pctldev,
-			   struct gpio_chip *chip, unsigned int offset)
+			   struct gpio_chip *chip, unsigned int offset,
+			   unsigned int gpio)
 {
 	struct nmk_gpio_chip *nmk_chip = gpiochip_get_data(chip);
-#ifdef CONFIG_PINCTRL_NOMADIK
-	struct gpio_desc *desc;
-#endif
 	int mode;
 	bool is_out;
 	bool data_out;
@@ -428,18 +422,15 @@ void nmk_gpio_dbg_show_one(struct seq_file *s, struct pinctrl_dev *pctldev,
 	data_out = !!(readl(nmk_chip->addr + NMK_GPIO_DAT) & BIT(offset));
 	mode = nmk_gpio_get_mode(nmk_chip, offset);
 #ifdef CONFIG_PINCTRL_NOMADIK
-	if (mode == NMK_GPIO_ALT_C && pctldev) {
-		desc = gpio_device_get_desc(chip->gpiodev, offset);
-		if (IS_ERR(desc))
-			return;
-
-		mode = nmk_prcm_gpiocr_get_mode(pctldev, desc_to_gpio(desc));
-	}
+	if (mode == NMK_GPIO_ALT_C && pctldev)
+		mode = nmk_prcm_gpiocr_get_mode(pctldev, gpio);
 #endif
 
 	if (is_out) {
 		seq_printf(s, " gpio-%-3d (%-20.20s) out %s           %s",
-			   offset, label ?: "(none)", str_hi_lo(data_out),
+			   gpio,
+			   label ?: "(none)",
+			   data_out ? "hi" : "lo",
 			   (mode < 0) ? "unknown" : modes[mode]);
 	} else {
 		int irq = chip->to_irq(chip, offset);
@@ -451,7 +442,9 @@ void nmk_gpio_dbg_show_one(struct seq_file *s, struct pinctrl_dev *pctldev,
 		};
 
 		seq_printf(s, " gpio-%-3d (%-20.20s) in  %s %s",
-			   offset, label ?: "(none)", pulls[pullidx],
+			   gpio,
+			   label ?: "(none)",
+			   pulls[pullidx],
 			   (mode < 0) ? "unknown" : modes[mode]);
 
 		val = nmk_gpio_get_input(chip, offset);
@@ -483,10 +476,10 @@ void nmk_gpio_dbg_show_one(struct seq_file *s, struct pinctrl_dev *pctldev,
 
 static void nmk_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 {
-	unsigned int i;
+	unsigned int i, gpio = chip->base;
 
-	for (i = 0; i < chip->ngpio; i++) {
-		nmk_gpio_dbg_show_one(s, NULL, chip, i);
+	for (i = 0; i < chip->ngpio; i++, gpio++) {
+		nmk_gpio_dbg_show_one(s, NULL, chip, i, gpio);
 		seq_puts(s, "\n");
 	}
 }

@@ -8,12 +8,11 @@
 
 #include <asm/byteorder.h>
 #include <linux/kobject.h>
-#include <linux/ksysfs.h>
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/export.h>
 #include <linux/init.h>
-#include <linux/vmcore_info.h>
+#include <linux/kexec.h>
 #include <linux/profile.h>
 #include <linux/stat.h>
 #include <linux/sched.h>
@@ -120,6 +119,50 @@ static ssize_t profiling_store(struct kobject *kobj,
 KERNEL_ATTR_RW(profiling);
 #endif
 
+#ifdef CONFIG_KEXEC_CORE
+static ssize_t kexec_loaded_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", !!kexec_image);
+}
+KERNEL_ATTR_RO(kexec_loaded);
+
+#ifdef CONFIG_CRASH_DUMP
+static ssize_t kexec_crash_loaded_show(struct kobject *kobj,
+				       struct kobj_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", kexec_crash_loaded());
+}
+KERNEL_ATTR_RO(kexec_crash_loaded);
+
+static ssize_t kexec_crash_size_show(struct kobject *kobj,
+				       struct kobj_attribute *attr, char *buf)
+{
+	ssize_t size = crash_get_memory_size();
+
+	if (size < 0)
+		return size;
+
+	return sysfs_emit(buf, "%zd\n", size);
+}
+static ssize_t kexec_crash_size_store(struct kobject *kobj,
+				   struct kobj_attribute *attr,
+				   const char *buf, size_t count)
+{
+	unsigned long cnt;
+	int ret;
+
+	if (kstrtoul(buf, 0, &cnt))
+		return -EINVAL;
+
+	ret = crash_shrink_memory(cnt);
+	return ret < 0 ? ret : count;
+}
+KERNEL_ATTR_RW(kexec_crash_size);
+
+#endif /* CONFIG_CRASH_DUMP*/
+#endif /* CONFIG_KEXEC_CORE */
+
 #ifdef CONFIG_VMCORE_INFO
 
 static ssize_t vmcoreinfo_show(struct kobject *kobj,
@@ -130,6 +173,18 @@ static ssize_t vmcoreinfo_show(struct kobject *kobj,
 			  (unsigned int)VMCOREINFO_NOTE_SIZE);
 }
 KERNEL_ATTR_RO(vmcoreinfo);
+
+#ifdef CONFIG_CRASH_HOTPLUG
+static ssize_t crash_elfcorehdr_size_show(struct kobject *kobj,
+			       struct kobj_attribute *attr, char *buf)
+{
+	unsigned int sz = crash_get_elfcorehdr_size();
+
+	return sysfs_emit(buf, "%u\n", sz);
+}
+KERNEL_ATTR_RO(crash_elfcorehdr_size);
+
+#endif
 
 #endif /* CONFIG_VMCORE_INFO */
 
@@ -184,7 +239,21 @@ extern const void __start_notes;
 extern const void __stop_notes;
 #define	notes_size (&__stop_notes - &__start_notes)
 
-static __ro_after_init BIN_ATTR_SIMPLE_RO(notes);
+static ssize_t notes_read(struct file *filp, struct kobject *kobj,
+			  struct bin_attribute *bin_attr,
+			  char *buf, loff_t off, size_t count)
+{
+	memcpy(buf, &__start_notes + off, count);
+	return count;
+}
+
+static struct bin_attribute notes_attr __ro_after_init  = {
+	.attr = {
+		.name = "notes",
+		.mode = S_IRUGO,
+	},
+	.read = &notes_read,
+};
 
 struct kobject *kernel_kobj;
 EXPORT_SYMBOL_GPL(kernel_kobj);
@@ -200,8 +269,18 @@ static struct attribute * kernel_attrs[] = {
 #ifdef CONFIG_PROFILING
 	&profiling_attr.attr,
 #endif
+#ifdef CONFIG_KEXEC_CORE
+	&kexec_loaded_attr.attr,
+#ifdef CONFIG_CRASH_DUMP
+	&kexec_crash_loaded_attr.attr,
+	&kexec_crash_size_attr.attr,
+#endif
+#endif
 #ifdef CONFIG_VMCORE_INFO
 	&vmcoreinfo_attr.attr,
+#ifdef CONFIG_CRASH_HOTPLUG
+	&crash_elfcorehdr_size_attr.attr,
+#endif
 #endif
 #ifndef CONFIG_TINY_RCU
 	&rcu_expedited_attr.attr,
@@ -214,7 +293,7 @@ static const struct attribute_group kernel_attr_group = {
 	.attrs = kernel_attrs,
 };
 
-void __init ksysfs_init(void)
+static int __init ksysfs_init(void)
 {
 	int error;
 
@@ -228,19 +307,20 @@ void __init ksysfs_init(void)
 		goto kset_exit;
 
 	if (notes_size > 0) {
-		bin_attr_notes.private = (void *)&__start_notes;
-		bin_attr_notes.size = notes_size;
-		error = sysfs_create_bin_file(kernel_kobj, &bin_attr_notes);
+		notes_attr.size = notes_size;
+		error = sysfs_create_bin_file(kernel_kobj, &notes_attr);
 		if (error)
 			goto group_exit;
 	}
 
-	return;
+	return 0;
 
 group_exit:
 	sysfs_remove_group(kernel_kobj, &kernel_attr_group);
 kset_exit:
 	kobject_put(kernel_kobj);
 exit:
-	pr_err("failed to initialize the kernel kobject: %d\n", error);
+	return error;
 }
+
+core_initcall(ksysfs_init);

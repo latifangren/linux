@@ -29,7 +29,7 @@
 #include "dcn35_dio_stream_encoder.h"
 #include "reg_helper.h"
 #include "hw_shared.h"
-#include "link_service.h"
+#include "link.h"
 #include "dpcd_defs.h"
 
 #define DC_LOGGER \
@@ -369,7 +369,6 @@ static void enc35_stream_encoder_map_to_link(
 		uint32_t stream_enc_inst,
 		uint32_t link_enc_inst)
 {
-	(void)stream_enc_inst;
 	struct dcn10_stream_encoder *enc1 = DCN10STRENC_FROM_STRENC(enc);
 
 	ASSERT(stream_enc_inst < 5 && link_enc_inst < 5);
@@ -398,7 +397,7 @@ static bool enc35_is_fifo_enabled(struct stream_encoder *enc)
 	uint32_t reset_val;
 
 	REG_GET(DIG_FIFO_CTRL0, DIG_FIFO_ENABLE, &reset_val);
-	return reset_val != 0;
+	return (reset_val == 0) ? false : true;
 }
 void enc35_disable_fifo(struct stream_encoder *enc)
 {

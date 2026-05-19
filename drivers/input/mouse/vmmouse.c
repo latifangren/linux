@@ -409,7 +409,7 @@ int vmmouse_init(struct psmouse *psmouse)
 	if (error)
 		return error;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	abs_dev = input_allocate_device();
 	if (!priv || !abs_dev) {
 		error = -ENOMEM;

@@ -214,7 +214,7 @@ static int mlx5e_test_loopback_setup(struct mlx5e_priv *priv,
 			return err;
 	}
 
-	err = mlx5e_modify_tirs_lb(priv->mdev, true, false);
+	err = mlx5e_refresh_tirs(priv, true, false);
 	if (err)
 		goto out;
 
@@ -243,7 +243,7 @@ static void mlx5e_test_loopback_cleanup(struct mlx5e_priv *priv,
 		mlx5_nic_vport_update_local_lb(priv->mdev, false);
 
 	dev_remove_pack(&lbtp->pt);
-	mlx5e_modify_tirs_lb(priv->mdev, false, false);
+	mlx5e_refresh_tirs(priv, false, false);
 }
 
 static int mlx5e_cond_loopback(struct mlx5e_priv *priv)
@@ -270,7 +270,7 @@ static int mlx5e_test_loopback(struct mlx5e_priv *priv)
 		return -ENODEV;
 	}
 
-	lbtp = kzalloc_obj(*lbtp);
+	lbtp = kzalloc(sizeof(*lbtp), GFP_KERNEL);
 	if (!lbtp)
 		return -ENOMEM;
 	lbtp->loopback_ok = false;

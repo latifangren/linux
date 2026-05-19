@@ -6,7 +6,6 @@
 #ifndef _XE_GT_SRIOV_PF_CONFIG_TYPES_H_
 #define _XE_GT_SRIOV_PF_CONFIG_TYPES_H_
 
-#include "abi/guc_scheduler_abi.h"
 #include "xe_ggtt_types.h"
 #include "xe_guc_klv_thresholds_set_types.h"
 
@@ -31,11 +30,9 @@ struct xe_gt_sriov_config {
 	/** @begin_db: start index of GuC doorbell ID range. */
 	u16 begin_db;
 	/** @exec_quantum: execution-quantum in milliseconds. */
-	u32 exec_quantum[GUC_MAX_SCHED_GROUPS];
+	u32 exec_quantum;
 	/** @preempt_timeout: preemption timeout in microseconds. */
-	u32 preempt_timeout[GUC_MAX_SCHED_GROUPS];
-	/** @sched_priority: scheduling priority. */
-	u32 sched_priority;
+	u32 preempt_timeout;
 	/** @thresholds: GuC thresholds for adverse events notifications. */
 	u32 thresholds[XE_GUC_KLV_NUM_THRESHOLDS];
 };

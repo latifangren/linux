@@ -7,6 +7,7 @@
 #include "debug.h"
 #include <errno.h>
 #include <string.h>
+#include <linux/capability.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -28,7 +29,8 @@ bool perf_cap__capable(int cap, bool *used_root)
 		    header.version == _LINUX_CAPABILITY_VERSION_1)
 			continue;
 
-		pr_debug2("capget syscall failed (%m) fall back on root check\n");
+		pr_debug2("capget syscall failed (%s - %d) fall back on root check\n",
+			  strerror(errno), errno);
 		*used_root = true;
 		return geteuid() == 0;
 	}

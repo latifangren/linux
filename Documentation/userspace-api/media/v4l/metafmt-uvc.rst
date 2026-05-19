@@ -1,5 +1,4 @@
 .. SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
-.. c:namespace:: V4L
 
 .. _v4l2-meta-fmt-uvc:
 
@@ -45,9 +44,7 @@ Each individual block contains the following fields:
         them
     * - :cspan:`1` *The rest is an exact copy of the UVC payload header:*
     * - __u8 length;
-      - length of the rest of the block, including this field. Please note that
-        regardless of this value, for V4L2_META_FMT_UVC the kernel will never
-        copy more than 2-12 bytes.
+      - length of the rest of the block, including this field
     * - __u8 flags;
       - Flags, indicating presence of other standard UVC fields
     * - __u8 buf[];

@@ -11,3 +11,10 @@ Fault-injection
     notifier-error-inject
     nvme-fault-injection
     provoke-crashes
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

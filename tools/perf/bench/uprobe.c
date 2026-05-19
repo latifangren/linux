@@ -54,11 +54,11 @@ static const char * const bench_uprobe_usage[] = {
 							   /*opts=*/&uprobe_opts); \
 	if (!skel->links.prog) { \
 		err = -errno; \
-		fprintf(stderr, "Failed to attach bench uprobe \"%s\": %m\n", #prog); \
+		fprintf(stderr, "Failed to attach bench uprobe \"%s\": %s\n", #prog, strerror(errno)); \
 		goto cleanup; \
 	}
 
-static struct bench_uprobe_bpf *skel;
+struct bench_uprobe_bpf *skel;
 
 static int bench_uprobe__setup_bpf_skel(enum bench_uprobe bench)
 {

@@ -20,6 +20,7 @@
 static struct sk_buff *hellcreek_xmit(struct sk_buff *skb,
 				      struct net_device *dev)
 {
+	struct dsa_port *dp = dsa_user_to_port(dev);
 	u8 *tag;
 
 	/* Calculate checksums (if required) before adding the trailer tag to
@@ -32,7 +33,7 @@ static struct sk_buff *hellcreek_xmit(struct sk_buff *skb,
 
 	/* Tag encoding */
 	tag  = skb_put(skb, HELLCREEK_TAG_LEN);
-	*tag = dsa_xmit_port_mask(skb, dev);
+	*tag = BIT(dp->index);
 
 	return skb;
 }

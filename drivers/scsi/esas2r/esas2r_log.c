@@ -101,6 +101,11 @@ static const char *translate_esas2r_event_level_to_kernel(const long level)
 	}
 }
 
+#pragma GCC diagnostic push
+#ifndef __clang__
+#pragma GCC diagnostic ignored "-Wsuggest-attribute=format"
+#endif
+
 /*
  * the master logging function.  this function will format the message as
  * outlined by the formatting string, the input device information and the
@@ -113,9 +118,10 @@ static const char *translate_esas2r_event_level_to_kernel(const long level)
  *
  * @return 0 on success, or -1 if an error occurred.
  */
-static __printf(3, 0)
-int esas2r_log_master(const long level, const struct device *dev,
-		      const char *format, va_list args)
+static int esas2r_log_master(const long level,
+			     const struct device *dev,
+			     const char *format,
+			     va_list args)
 {
 	if (level <= event_log_level) {
 		unsigned long flags = 0;
@@ -168,6 +174,8 @@ int esas2r_log_master(const long level, const struct device *dev,
 
 	return 0;
 }
+
+#pragma GCC diagnostic pop
 
 /*
  * formats and logs a message to the system log.

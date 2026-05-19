@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * netfilter module to limit the number of parallel tcp
  * connections per IP address.
@@ -10,7 +9,7 @@
  * based on ...
  *
  * Kernel module to match connection tracking information.
- *   (C) 1999  Rusty Russell (rusty@rustcorp.com.au).
+ * GPL (C) 1999  Rusty Russell (rusty@rustcorp.com.au).
  */
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 

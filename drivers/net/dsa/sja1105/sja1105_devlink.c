@@ -82,7 +82,8 @@ static int sja1105_setup_devlink_regions(struct dsa_switch *ds)
 	struct devlink_region *region;
 	u64 size;
 
-	priv->regions = kzalloc_objs(struct devlink_region *, num_regions);
+	priv->regions = kcalloc(num_regions, sizeof(struct devlink_region *),
+				GFP_KERNEL);
 	if (!priv->regions)
 		return -ENOMEM;
 

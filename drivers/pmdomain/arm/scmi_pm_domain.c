@@ -22,21 +22,34 @@ struct scmi_pm_domain {
 
 #define to_scmi_pd(gpd) container_of(gpd, struct scmi_pm_domain, genpd)
 
-static int scmi_pd_power(struct generic_pm_domain *domain, u32 state)
+static int scmi_pd_power(struct generic_pm_domain *domain, bool power_on)
 {
+	int ret;
+	u32 state, ret_state;
 	struct scmi_pm_domain *pd = to_scmi_pd(domain);
 
-	return power_ops->state_set(pd->ph, pd->domain, state);
+	if (power_on)
+		state = SCMI_POWER_STATE_GENERIC_ON;
+	else
+		state = SCMI_POWER_STATE_GENERIC_OFF;
+
+	ret = power_ops->state_set(pd->ph, pd->domain, state);
+	if (!ret)
+		ret = power_ops->state_get(pd->ph, pd->domain, &ret_state);
+	if (!ret && state != ret_state)
+		return -EIO;
+
+	return ret;
 }
 
 static int scmi_pd_power_on(struct generic_pm_domain *domain)
 {
-	return scmi_pd_power(domain, SCMI_POWER_STATE_GENERIC_ON);
+	return scmi_pd_power(domain, true);
 }
 
 static int scmi_pd_power_off(struct generic_pm_domain *domain)
 {
-	return scmi_pd_power(domain, SCMI_POWER_STATE_GENERIC_OFF);
+	return scmi_pd_power(domain, false);
 }
 
 static int scmi_pm_domain_probe(struct scmi_device *sdev)
@@ -83,14 +96,6 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
 			continue;
 		}
 
-		/*
-		 * Register the explicit power on request to the firmware so
-		 * that it is tracked as used by OSPM agent and not
-		 * accidentally turned off with OSPM's knowledge
-		 */
-		if (state == SCMI_POWER_STATE_GENERIC_ON)
-			power_ops->state_set(ph, i, state);
-
 		scmi_pd->domain = i;
 		scmi_pd->ph = ph;
 		scmi_pd->name = power_ops->name_get(ph, i);
@@ -113,7 +118,6 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
 		goto err_rm_genpds;
 
 	dev_set_drvdata(dev, scmi_pd_data);
-	dev_info(dev, "Initialized %d power domains", num_domains);
 
 	return 0;
 err_rm_genpds:

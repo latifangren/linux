@@ -138,7 +138,7 @@ struct clk_hw *zynqmp_clk_register_mux(const char *name, u32 clk_id,
 	struct clk_init_data init;
 	int ret;
 
-	mux = kzalloc_obj(*mux);
+	mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 	if (!mux)
 		return ERR_PTR(-ENOMEM);
 

@@ -204,7 +204,8 @@ static int lan966x_fdma_tx_alloc(struct lan966x_tx *tx)
 	struct fdma *fdma = &tx->fdma;
 	int err;
 
-	tx->dcbs_buf = kzalloc_objs(struct lan966x_tx_dcb_buf, fdma->n_dcbs);
+	tx->dcbs_buf = kcalloc(fdma->n_dcbs, sizeof(struct lan966x_tx_dcb_buf),
+			       GFP_KERNEL);
 	if (!tx->dcbs_buf)
 		return -ENOMEM;
 

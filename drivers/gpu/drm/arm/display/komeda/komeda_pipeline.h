@@ -128,8 +128,6 @@ struct komeda_component {
 	const struct komeda_component_funcs *funcs;
 };
 
-#define to_component(o)	container_of(o, struct komeda_component, obj)
-
 /**
  * struct komeda_component_output
  *
@@ -319,7 +317,7 @@ struct komeda_splitter_state {
 
 struct komeda_improc {
 	struct komeda_component base;
-	u32 supported_color_formats;  /* BIT(DRM_OUTPUT_COLOR_FORMAT_RGB444/YUV444/YUV420) */
+	u32 supported_color_formats;  /* DRM_RGB/YUV444/YUV420*/
 	u32 supported_color_depths; /* BIT(8) | BIT(10)*/
 	u8 supports_degamma : 1;
 	u8 supports_csc : 1;
@@ -328,8 +326,7 @@ struct komeda_improc {
 
 struct komeda_improc_state {
 	struct komeda_component_state base;
-	enum drm_output_color_format color_format;
-	u8 color_depth;
+	u8 color_format, color_depth;
 	u16 hsize, vsize;
 	u32 fgamma_coeffs[KOMEDA_N_GAMMA_COEFFS];
 	u32 ctm_coeffs[KOMEDA_N_CTM_COEFFS];

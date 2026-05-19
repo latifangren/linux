@@ -73,7 +73,6 @@
 #include "nfs.h"
 #include "netns.h"
 #include "sysfs.h"
-#include "nfs4idmap.h"
 
 #define NFSDBG_FACILITY		NFSDBG_VFS
 
@@ -212,14 +211,15 @@ void nfs_sb_deactive(struct super_block *sb)
 }
 EXPORT_SYMBOL_GPL(nfs_sb_deactive);
 
-int nfs_client_for_each_server(struct nfs_client *clp,
-		int (*fn)(struct nfs_server *server, void *data), void *data)
+static int __nfs_list_for_each_server(struct list_head *head,
+		int (*fn)(struct nfs_server *, void *),
+		void *data)
 {
 	struct nfs_server *server, *last = NULL;
 	int ret = 0;
 
 	rcu_read_lock();
-	list_for_each_entry_rcu(server, &clp->cl_superblocks, client_link) {
+	list_for_each_entry_rcu(server, head, client_link) {
 		if (!(server->super && nfs_sb_active(server->super)))
 			continue;
 		rcu_read_unlock();
@@ -237,6 +237,13 @@ out:
 	if (last)
 		nfs_sb_deactive(last->super);
 	return ret;
+}
+
+int nfs_client_for_each_server(struct nfs_client *clp,
+		int (*fn)(struct nfs_server *, void *),
+		void *data)
+{
+	return __nfs_list_for_each_server(&clp->cl_superblocks, fn, data);
 }
 EXPORT_SYMBOL_GPL(nfs_client_for_each_server);
 
@@ -446,12 +453,8 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 		{ NFS_MOUNT_NONLM, ",nolock", "" },
 		{ NFS_MOUNT_NOACL, ",noacl", "" },
 		{ NFS_MOUNT_NORDIRPLUS, ",nordirplus", "" },
-		{ NFS_MOUNT_FORCE_RDIRPLUS, ",rdirplus=force", "" },
 		{ NFS_MOUNT_UNSHARED, ",nosharecache", "" },
 		{ NFS_MOUNT_NORESVPORT, ",noresvport", "" },
-		{ NFS_MOUNT_NETUNREACH_FATAL,
-		  ",fatal_neterrors=ENETDOWN:ENETUNREACH",
-		  ",fatal_neterrors=none" },
 		{ 0, NULL, NULL }
 	};
 	const struct proc_nfs_info *nfs_infop;
@@ -589,13 +592,18 @@ static void show_lease(struct seq_file *m, struct nfs_server *server)
 	seq_printf(m, ",lease_expired=%ld",
 		   time_after(expire, jiffies) ?  0 : (jiffies - expire) / HZ);
 }
-
+#ifdef CONFIG_NFS_V4_1
 static void show_sessions(struct seq_file *m, struct nfs_server *server)
 {
 	if (nfs4_has_session(server->nfs_client))
 		seq_puts(m, ",sessions");
 }
+#else
+static void show_sessions(struct seq_file *m, struct nfs_server *server) {}
+#endif
+#endif
 
+#ifdef CONFIG_NFS_V4_1
 static void show_pnfs(struct seq_file *m, struct nfs_server *server)
 {
 	seq_printf(m, ",pnfs=");
@@ -615,11 +623,16 @@ static void show_implementation_id(struct seq_file *m, struct nfs_server *nfss)
 			   impl_id->date.seconds, impl_id->date.nseconds);
 	}
 }
-#else /* CONFIG_NFS_V4 */
+#else
+#if IS_ENABLED(CONFIG_NFS_V4)
+static void show_pnfs(struct seq_file *m, struct nfs_server *server)
+{
+}
+#endif
 static void show_implementation_id(struct seq_file *m, struct nfs_server *nfss)
 {
 }
-#endif /* CONFIG_NFS_V4 */
+#endif
 
 int nfs_show_devname(struct seq_file *m, struct dentry *root)
 {
@@ -1156,7 +1169,7 @@ static int nfs_set_super(struct super_block *s, struct fs_context *fc)
 	struct nfs_server *server = fc->s_fs_info;
 	int ret;
 
-	set_default_d_op(s, server->nfs_client->rpc_ops->dentry_ops);
+	s->s_d_op = server->nfs_client->rpc_ops->dentry_ops;
 	ret = set_anon_super(s, server);
 	if (ret == 0)
 		server->s_dev = s->s_dev;

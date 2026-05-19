@@ -937,7 +937,7 @@ static void via_sdc_timeout(struct timer_list *t)
 	struct via_crdr_mmc_host *sdhost;
 	unsigned long flags;
 
-	sdhost = timer_container_of(sdhost, t, timer);
+	sdhost = from_timer(sdhost, t, timer);
 
 	spin_lock_irqsave(&sdhost->lock, flags);
 
@@ -971,7 +971,7 @@ static void via_sdc_finish_bh_work(struct work_struct *t)
 
 	spin_lock_irqsave(&host->lock, flags);
 
-	timer_delete(&host->timer);
+	del_timer(&host->timer);
 	mrq = host->mrq;
 	host->mrq = NULL;
 	host->cmd = NULL;
@@ -1100,7 +1100,7 @@ static int via_sd_probe(struct pci_dev *pcidev,
 	pci_write_config_byte(pcidev, VIA_CRDR_PCI_WORK_MODE, 0);
 	pci_write_config_byte(pcidev, VIA_CRDR_PCI_DBG_MODE, 0);
 
-	mmc = devm_mmc_alloc_host(&pcidev->dev, sizeof(*sdhost));
+	mmc = mmc_alloc_host(sizeof(struct via_crdr_mmc_host), &pcidev->dev);
 	if (!mmc) {
 		ret = -ENOMEM;
 		goto release;
@@ -1115,7 +1115,7 @@ static int via_sd_probe(struct pci_dev *pcidev,
 	sdhost->mmiobase = ioremap(base, len);
 	if (!sdhost->mmiobase) {
 		ret = -ENOMEM;
-		goto release;
+		goto free_mmc_host;
 	}
 
 	sdhost->sdhc_mmiobase =
@@ -1160,6 +1160,8 @@ static int via_sd_probe(struct pci_dev *pcidev,
 
 unmap:
 	iounmap(sdhost->mmiobase);
+free_mmc_host:
+	mmc_free_host(mmc);
 release:
 	pci_release_regions(pcidev);
 disable:
@@ -1200,7 +1202,7 @@ static void via_sd_remove(struct pci_dev *pcidev)
 
 	free_irq(pcidev->irq, sdhost);
 
-	timer_delete_sync(&sdhost->timer);
+	del_timer_sync(&sdhost->timer);
 
 	cancel_work_sync(&sdhost->finish_bh_work);
 
@@ -1210,6 +1212,7 @@ static void via_sd_remove(struct pci_dev *pcidev)
 	writeb(gatt, sdhost->pcictrl_mmiobase + VIA_CRDR_PCICLKGATT);
 
 	iounmap(sdhost->mmiobase);
+	mmc_free_host(sdhost->mmc);
 	pci_release_regions(pcidev);
 	pci_disable_device(pcidev);
 
@@ -1218,7 +1221,7 @@ static void via_sd_remove(struct pci_dev *pcidev)
 		pci_name(pcidev), (int)pcidev->vendor, (int)pcidev->device);
 }
 
-static void via_init_sdc_pm(struct via_crdr_mmc_host *host)
+static void __maybe_unused via_init_sdc_pm(struct via_crdr_mmc_host *host)
 {
 	struct sdhcreg *pm_sdhcreg;
 	void __iomem *addrbase;
@@ -1252,7 +1255,7 @@ static void via_init_sdc_pm(struct via_crdr_mmc_host *host)
 	via_print_sdchc(host);
 }
 
-static int via_sd_suspend(struct device *dev)
+static int __maybe_unused via_sd_suspend(struct device *dev)
 {
 	struct via_crdr_mmc_host *host;
 	unsigned long flags;
@@ -1269,7 +1272,7 @@ static int via_sd_suspend(struct device *dev)
 	return 0;
 }
 
-static int via_sd_resume(struct device *dev)
+static int __maybe_unused via_sd_resume(struct device *dev)
 {
 	struct via_crdr_mmc_host *sdhost;
 	u8 gatt;
@@ -1295,14 +1298,14 @@ static int via_sd_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(via_sd_pm_ops, via_sd_suspend, via_sd_resume);
+static SIMPLE_DEV_PM_OPS(via_sd_pm_ops, via_sd_suspend, via_sd_resume);
 
 static struct pci_driver via_sd_driver = {
 	.name = DRV_NAME,
 	.id_table = via_ids,
 	.probe = via_sd_probe,
 	.remove = via_sd_remove,
-	.driver.pm = pm_sleep_ptr(&via_sd_pm_ops),
+	.driver.pm = &via_sd_pm_ops,
 };
 
 module_pci_driver(via_sd_driver);

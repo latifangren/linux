@@ -297,7 +297,8 @@ static int mt6577_auxadc_probe(struct platform_device *pdev)
 
 	ret = devm_add_action_or_reset(&pdev->dev, mt6577_power_off, adc_dev);
 	if (ret)
-		return ret;
+		return dev_err_probe(&pdev->dev, ret,
+				     "Failed to add action to managed power off\n");
 
 	ret = devm_iio_device_register(&pdev->dev, indio_dev);
 	if (ret < 0)

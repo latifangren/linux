@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include <linux/export.h>
-#include <linux/module.h>
 #include <linux/objtool.h>
+#include <linux/module.h>
 #include <linux/sort.h>
 #include <asm/exception.h>
 #include <asm/orc_header.h>
@@ -348,8 +347,18 @@ void unwind_start(struct unwind_state *state, struct task_struct *task,
 }
 EXPORT_SYMBOL_GPL(unwind_start);
 
+static bool is_entry_func(unsigned long addr)
+{
+	extern u32 kernel_entry;
+	extern u32 kernel_entry_end;
+
+	return addr >= (unsigned long)&kernel_entry && addr < (unsigned long)&kernel_entry_end;
+}
+
 static inline unsigned long bt_address(unsigned long ra)
 {
+	extern unsigned long eentry;
+
 #if defined(CONFIG_NUMA) && !defined(CONFIG_PREEMPT_RT)
 	int cpu;
 	int vec_sz = sizeof(exception_handlers);
@@ -403,7 +412,10 @@ bool unwind_next_frame(struct unwind_state *state)
 		return false;
 
 	/* Don't let modules unload while we're reading their ORC data. */
-	guard(rcu)();
+	preempt_disable();
+
+	if (is_entry_func(state->pc))
+		goto end;
 
 	orc = orc_find(state->pc);
 	if (!orc) {
@@ -512,12 +524,14 @@ bool unwind_next_frame(struct unwind_state *state)
 		goto err;
 	}
 
+	preempt_enable();
 	return true;
 
 err:
 	state->error = true;
 
 end:
+	preempt_enable();
 	state->stack_info.type = STACK_TYPE_UNKNOWN;
 	return false;
 }

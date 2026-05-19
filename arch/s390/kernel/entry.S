@@ -23,14 +23,12 @@
 #include <asm/unistd.h>
 #include <asm/page.h>
 #include <asm/sigp.h>
-#include <asm/bug.h>
 #include <asm/irq.h>
 #include <asm/fpu-insn.h>
 #include <asm/setup.h>
 #include <asm/nmi.h>
 #include <asm/nospec-insn.h>
 #include <asm/lowcore.h>
-#include <asm/machine.h>
 
 _LPP_OFFSET	= __LC_LPP
 
@@ -46,7 +44,7 @@ _LPP_OFFSET	= __LC_LPP
 	ALTERNATIVE_2 "b \lpswe;nopr", \
 		".insn siy,0xeb0000000071,\address,0", ALT_FACILITY(193),		\
 		__stringify(.insn siy,0xeb0000000071,LOWCORE_ALT_ADDRESS+\address,0),	\
-		ALT_FEATURE(MFEATURE_LOWCORE)
+		ALT_LOWCORE
 	.endm
 
 	.macro MBEAR reg, lowcore
@@ -54,7 +52,16 @@ _LPP_OFFSET	= __LC_LPP
 		ALT_FACILITY(193)
 	.endm
 
+	.macro	CHECK_STACK savearea, lowcore
+#ifdef CONFIG_CHECK_STACK
+	tml	%r15,THREAD_SIZE - CONFIG_STACK_GUARD
+	la	%r14,\savearea(\lowcore)
+	jz	stack_overflow
+#endif
+	.endm
+
 	.macro	CHECK_VMAP_STACK savearea, lowcore, oklabel
+#ifdef CONFIG_VMAP_STACK
 	lgr	%r14,%r15
 	nill	%r14,0x10000 - THREAD_SIZE
 	oill	%r14,STACK_INIT_OFFSET
@@ -69,7 +76,10 @@ _LPP_OFFSET	= __LC_LPP
 	clg	%r14,__LC_RESTART_STACK(\lowcore)
 	je	\oklabel
 	la	%r14,\savearea(\lowcore)
-	j	stack_invalid
+	j	stack_overflow
+#else
+	j	\oklabel
+#endif
 	.endm
 
 	/*
@@ -117,7 +127,7 @@ _LPP_OFFSET	= __LC_LPP
 	.macro SIEEXIT sie_control,lowcore
 	lg	%r9,\sie_control			# get control block pointer
 	ni	__SIE_PROG0C+3(%r9),0xfe		# no longer in SIE
-	lctlg	%c1,%c1,__LC_USER_ASCE(\lowcore)	# load primary asce
+	lctlg	%c1,%c1,__LC_KERNEL_ASCE(\lowcore)	# load primary asce
 	lg	%r9,__LC_CURRENT(\lowcore)
 	mvi	__TI_sie(%r9),0
 	larl	%r9,sie_exit			# skip forward to sie_exit
@@ -125,7 +135,7 @@ _LPP_OFFSET	= __LC_LPP
 #endif
 
 	.macro STACKLEAK_ERASE
-#ifdef CONFIG_KSTACK_ERASE
+#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
 	brasl	%r14,stackleak_erase_on_task_stack
 #endif
 	.endm
@@ -163,26 +173,12 @@ SYM_FUNC_START(__switch_to_asm)
 	stg	%r3,__LC_CURRENT(%r13)		# store task struct of next
 	stg	%r15,__LC_KERNEL_STACK(%r13)	# store end of kernel stack
 	lg	%r15,__THREAD_ksp(%r1,%r3)	# load kernel stack of next
-	lay	%r4,__TASK_pid(%r3)
-	mvc	__LC_CURRENT_PID(4,%r13),0(%r4) # store pid of next
+	aghi	%r3,__TASK_pid
+	mvc	__LC_CURRENT_PID(4,%r13),0(%r3)	# store pid of next
 	ALTERNATIVE "nop", "lpp _LPP_OFFSET(%r13)", ALT_FACILITY(40)
-#ifdef CONFIG_STACKPROTECTOR
-	lg	%r3,__TASK_stack_canary(%r3)
-	stg	%r3,__LC_STACK_CANARY(%r13)
-#endif
 	lmg	%r6,%r15,__SF_GPRS(%r15)	# load gprs of next task
 	BR_EX	%r14
 SYM_FUNC_END(__switch_to_asm)
-
-#if defined(CONFIG_BUG) && defined(CONFIG_CC_HAS_ASM_IMMEDIATE_STRINGS)
-
-SYM_FUNC_START(__WARN_trap)
-	mc	MONCODE_BUG_ARG(%r0),0
-	BR_EX	%r14
-SYM_FUNC_END(__WARN_trap)
-EXPORT_SYMBOL(__WARN_trap)
-
-#endif /* CONFIG_BUG && CONFIG_CC_HAS_ASM_IMMEDIATE_STRINGS */
 
 #if IS_ENABLED(CONFIG_KVM)
 /*
@@ -200,11 +196,10 @@ SYM_FUNC_START(__sie64a)
 	stg	%r3,__SF_SIE_CONTROL(%r15)	# ...and virtual addresses
 	stg	%r4,__SF_SIE_SAVEAREA(%r15)	# save guest register save area
 	stg	%r5,__SF_SIE_GUEST_ASCE(%r15)	# save guest asce
-	xc	__SF_SIE_RETURN(8,%r15),__SF_SIE_RETURN(%r15) # return code = 0
+	xc	__SF_SIE_REASON(8,%r15),__SF_SIE_REASON(%r15) # reason code = 0
 	mvc	__SF_SIE_FLAGS(8,%r15),__TI_flags(%r14) # copy thread flags
 	lmg	%r0,%r13,0(%r4)			# load guest gprs 0-13
 	mvi	__TI_sie(%r14),1
-	stosm	__SF_SIE_IRQ(%r15),0x03		# enable interrupts
 	lctlg	%c1,%c1,__SF_SIE_GUEST_ASCE(%r15) # load primary asce
 	lg	%r14,__SF_SIE_CONTROL(%r15)	# get control block pointer
 	oi	__SIE_PROG0C+3(%r14),1		# we are going into SIE now
@@ -224,11 +219,21 @@ SYM_FUNC_START(__sie64a)
 	lg	%r14,__SF_SIE_CONTROL(%r15)	# get control block pointer
 	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
 	GET_LC	%r14
-	lctlg	%c1,%c1,__LC_USER_ASCE(%r14)	# load primary asce
+	lctlg	%c1,%c1,__LC_KERNEL_ASCE(%r14)	# load primary asce
 	lg	%r14,__LC_CURRENT(%r14)
 	mvi	__TI_sie(%r14),0
+# some program checks are suppressing. C code (e.g. do_protection_exception)
+# will rewind the PSW by the ILC, which is often 4 bytes in case of SIE. There
+# are some corner cases (e.g. runtime instrumentation) where ILC is unpredictable.
+# Other instructions between __sie64a and .Lsie_done should not cause program
+# interrupts. So lets use 3 nops as a landing pad for all possible rewinds.
+.Lrewind_pad6:
+	nopr	7
+.Lrewind_pad4:
+	nopr	7
+.Lrewind_pad2:
+	nopr	7
 SYM_INNER_LABEL(sie_exit, SYM_L_GLOBAL)
-	stnsm	__SF_SIE_IRQ(%r15),0xfc		# disable interrupts
 	lg	%r14,__SF_SIE_SAVEAREA(%r15)	# load guest register save area
 	stmg	%r0,%r13,0(%r14)		# save guest gprs 0-13
 	xgr	%r0,%r0				# clear guest registers to
@@ -237,8 +242,17 @@ SYM_INNER_LABEL(sie_exit, SYM_L_GLOBAL)
 	xgr	%r4,%r4
 	xgr	%r5,%r5
 	lmg	%r6,%r14,__SF_GPRS(%r15)	# restore kernel registers
-	lg	%r2,__SF_SIE_RETURN(%r15)	# return sie return code
+	lg	%r2,__SF_SIE_REASON(%r15)	# return exit reason code
 	BR_EX	%r14
+.Lsie_fault:
+	lghi	%r14,-EFAULT
+	stg	%r14,__SF_SIE_REASON(%r15)	# set exit reason code
+	j	sie_exit
+
+	EX_TABLE(.Lrewind_pad6,.Lsie_fault)
+	EX_TABLE(.Lrewind_pad4,.Lsie_fault)
+	EX_TABLE(.Lrewind_pad2,.Lsie_fault)
+	EX_TABLE(sie_exit,.Lsie_fault)
 SYM_FUNC_END(__sie64a)
 EXPORT_SYMBOL(__sie64a)
 EXPORT_SYMBOL(sie_exit)
@@ -257,6 +271,7 @@ SYM_CODE_START(system_call)
 	lghi	%r14,0
 .Lsysc_per:
 	STBEAR	__LC_LAST_BREAK(%r13)
+	lctlg	%c1,%c1,__LC_KERNEL_ASCE(%r13)
 	lg	%r15,__LC_KERNEL_STACK(%r13)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	stmg	%r0,%r7,STACK_FRAME_OVERHEAD+__PT_R0(%r15)
@@ -278,6 +293,7 @@ SYM_CODE_START(system_call)
 	lgr	%r3,%r14
 	brasl	%r14,__do_syscall
 	STACKLEAK_ERASE
+	lctlg	%c1,%c1,__LC_USER_ASCE(%r13)
 	mvc	__LC_RETURN_PSW(16,%r13),STACK_FRAME_OVERHEAD+__PT_PSW(%r15)
 	BPON
 	LBEAR	STACK_FRAME_OVERHEAD+__PT_LAST_BREAK(%r15)
@@ -294,6 +310,7 @@ SYM_CODE_START(ret_from_fork)
 	brasl	%r14,__ret_from_fork
 	STACKLEAK_ERASE
 	GET_LC	%r13
+	lctlg	%c1,%c1,__LC_USER_ASCE(%r13)
 	mvc	__LC_RETURN_PSW(16,%r13),STACK_FRAME_OVERHEAD+__PT_PSW(%r15)
 	BPON
 	LBEAR	STACK_FRAME_OVERHEAD+__PT_LAST_BREAK(%r15)
@@ -311,33 +328,38 @@ SYM_CODE_START(pgm_check_handler)
 	GET_LC	%r13
 	stpt	__LC_SYS_ENTER_TIMER(%r13)
 	BPOFF
+	lgr	%r10,%r15
 	lmg	%r8,%r9,__LC_PGM_OLD_PSW(%r13)
-	xgr	%r10,%r10
 	tmhh	%r8,0x0001		# coming from user space?
-	jo	3f			# -> fault in user space
-#if IS_ENABLED(CONFIG_KVM)
-	lg	%r11,__LC_CURRENT(%r13)
-	tm	__TI_sie(%r11),0xff
-	jz	1f
-	BPENTER	__SF_SIE_FLAGS(%r15),_TIF_ISOLATE_BP_GUEST
-	SIEEXIT __SF_SIE_CONTROL(%r15),%r13
-	lghi	%r10,_PIF_GUEST_FAULT
-#endif
+	jno	.Lpgm_skip_asce
+	lctlg	%c1,%c1,__LC_KERNEL_ASCE(%r13)
+	j	3f			# -> fault in user space
+.Lpgm_skip_asce:
 1:	tmhh	%r8,0x4000		# PER bit set in old PSW ?
 	jnz	2f			# -> enabled, can't be a double fault
 	tm	__LC_PGM_ILC+3(%r13),0x80	# check for per exception
 	jnz	.Lpgm_svcper		# -> single stepped svc
-2:	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
-	# CHECK_VMAP_STACK branches to stack_invalid or 4f
+2:	CHECK_STACK __LC_SAVE_AREA,%r13
+	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
+	# CHECK_VMAP_STACK branches to stack_overflow or 4f
 	CHECK_VMAP_STACK __LC_SAVE_AREA,%r13,4f
 3:	lg	%r15,__LC_KERNEL_STACK(%r13)
 4:	la	%r11,STACK_FRAME_OVERHEAD(%r15)
-	stg	%r10,__PT_FLAGS(%r11)
+	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA(%r13)
 	mvc	__PT_LAST_BREAK(8,%r11),__LC_PGM_LAST_BREAK(%r13)
-	stmg	%r8,%r9,__PT_PSW(%r11)
+	stctg	%c1,%c1,__PT_CR1(%r11)
+#if IS_ENABLED(CONFIG_KVM)
+	ltg	%r12,__LC_GMAP(%r13)
+	jz	5f
+	clc	__GMAP_ASCE(8,%r12), __PT_CR1(%r11)
+	jne	5f
+	BPENTER	__SF_SIE_FLAGS(%r10),_TIF_ISOLATE_BP_GUEST
+	SIEEXIT __SF_SIE_CONTROL(%r10),%r13
+#endif
+5:	stmg	%r8,%r9,__PT_PSW(%r11)
 	# clear user controlled registers to prevent speculative use
 	xgr	%r0,%r0
 	xgr	%r1,%r1
@@ -346,12 +368,12 @@ SYM_CODE_START(pgm_check_handler)
 	xgr	%r5,%r5
 	xgr	%r6,%r6
 	xgr	%r7,%r7
-	xgr	%r12,%r12
 	lgr	%r2,%r11
 	brasl	%r14,__do_pgm_check
 	tmhh	%r8,0x0001		# returning to user space?
 	jno	.Lpgm_exit_kernel
 	STACKLEAK_ERASE
+	lctlg	%c1,%c1,__LC_USER_ASCE(%r13)
 	BPON
 	stpt	__LC_EXIT_TIMER(%r13)
 .Lpgm_exit_kernel:
@@ -393,9 +415,11 @@ SYM_CODE_START(\name)
 	BPENTER	__SF_SIE_FLAGS(%r15),_TIF_ISOLATE_BP_GUEST
 	SIEEXIT __SF_SIE_CONTROL(%r15),%r13
 #endif
-0:	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
+0:	CHECK_STACK __LC_SAVE_AREA,%r13
+	aghi	%r15,-(STACK_FRAME_OVERHEAD + __PT_SIZE)
 	j	2f
-1:	lg	%r15,__LC_KERNEL_STACK(%r13)
+1:	lctlg	%c1,%c1,__LC_KERNEL_ASCE(%r13)
+	lg	%r15,__LC_KERNEL_STACK(%r13)
 2:	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)
 	stmg	%r0,%r7,__PT_R0(%r11)
@@ -419,6 +443,7 @@ SYM_CODE_START(\name)
 	tmhh	%r8,0x0001		# returning to user ?
 	jno	2f
 	STACKLEAK_ERASE
+	lctlg	%c1,%c1,__LC_USER_ASCE(%r13)
 	BPON
 	stpt	__LC_EXIT_TIMER(%r13)
 2:	LBEAR	__PT_LAST_BREAK(%r11)
@@ -486,6 +511,8 @@ SYM_CODE_START(mcck_int_handler)
 .Lmcck_user:
 	lg	%r15,__LC_MCCK_STACK(%r13)
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)
+	stctg	%c1,%c1,__PT_CR1(%r11)
+	lctlg	%c1,%c1,__LC_KERNEL_ASCE(%r13)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lay	%r14,__LC_GPREGS_SAVE_AREA(%r13)
 	mvc	__PT_R0(128,%r11),0(%r14)
@@ -504,6 +531,7 @@ SYM_CODE_START(mcck_int_handler)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	brasl	%r14,s390_do_machine_check
+	lctlg	%c1,%c1,__PT_CR1(%r11)
 	lmg	%r0,%r10,__PT_R0(%r11)
 	mvc	__LC_RETURN_MCCK_PSW(16,%r13),__PT_PSW(%r11) # move return PSW
 	tm	__LC_RETURN_MCCK_PSW+1(%r13),0x01 # returning to user ?
@@ -598,12 +626,13 @@ SYM_CODE_END(early_pgm_check_handler)
 
 	.section .kprobes.text, "ax"
 
+#if defined(CONFIG_CHECK_STACK) || defined(CONFIG_VMAP_STACK)
 /*
- * The synchronous or the asynchronous stack pointer is invalid. We are dead.
+ * The synchronous or the asynchronous stack overflowed. We are dead.
  * No need to properly save the registers, we are going to panic anyway.
  * Setup a pt_regs so that show_trace can provide a good call trace.
  */
-SYM_CODE_START(stack_invalid)
+SYM_CODE_START(stack_overflow)
 	GET_LC	%r15
 	lg	%r15,__LC_NODAT_STACK(%r15) # change to panic stack
 	la	%r11,STACK_FRAME_OVERHEAD(%r15)
@@ -614,8 +643,9 @@ SYM_CODE_START(stack_invalid)
 	mvc	__PT_ORIG_GPR2(8,%r11),__LC_PGM_LAST_BREAK(%r2)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lgr	%r2,%r11		# pass pointer to pt_regs
-	jg	kernel_stack_invalid
-SYM_CODE_END(stack_invalid)
+	jg	kernel_stack_overflow
+SYM_CODE_END(stack_overflow)
+#endif
 
 	.section .data, "aw"
 	.balign	4
@@ -626,3 +656,20 @@ SYM_DATA_START_LOCAL(daton_psw)
 	.quad	PSW_KERNEL_BITS
 	.quad	.Ldaton
 SYM_DATA_END(daton_psw)
+
+	.section .rodata, "a"
+	.balign	8
+#define SYSCALL(esame,emu)	.quad __s390x_ ## esame
+SYM_DATA_START(sys_call_table)
+#include "asm/syscall_table.h"
+SYM_DATA_END(sys_call_table)
+#undef SYSCALL
+
+#ifdef CONFIG_COMPAT
+
+#define SYSCALL(esame,emu)	.quad __s390_ ## emu
+SYM_DATA_START(sys_call_table_emu)
+#include "asm/syscall_table.h"
+SYM_DATA_END(sys_call_table_emu)
+#undef SYSCALL
+#endif

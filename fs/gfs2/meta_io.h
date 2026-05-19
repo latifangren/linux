@@ -43,7 +43,7 @@ static inline struct gfs2_sbd *gfs2_mapping2sbd(struct address_space *mapping)
 	if (mapping->a_ops == &gfs2_meta_aops) {
 		struct gfs2_glock_aspace *gla =
 			container_of(mapping, struct gfs2_glock_aspace, mapping);
-		return glock_sbd(&gla->glock);
+		return gla->glock.gl_name.ln_sbd;
 	} else
 		return inode->i_sb->s_fs_info;
 }
@@ -59,6 +59,7 @@ enum {
 	REMOVE_META = 1,
 };
 
+void gfs2_remove_from_journal(struct buffer_head *bh, int meta);
 void gfs2_journal_wipe(struct gfs2_inode *ip, u64 bstart, u32 blen);
 int gfs2_meta_buffer(struct gfs2_inode *ip, u32 mtype, u64 num,
 		     struct buffer_head **bhp);

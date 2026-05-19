@@ -27,7 +27,6 @@
 #include <linux/hwmon-sysfs.h>
 #include <linux/err.h>
 #include <linux/of.h>
-#include <linux/sysfs.h>
 #include <linux/thermal.h>
 
 /*
@@ -313,7 +312,7 @@ static ssize_t alarm_show(struct device *dev,
 		mutex_unlock(&data->update_lock);
 	}
 
-	return sysfs_emit(buf, "%d\n", alarm);
+	return sprintf(buf, "%d\n", alarm);
 }
 
 static SENSOR_DEVICE_ATTR_RO(gpio1_alarm, alarm, MAX6650_ALRM_GPIO1);

@@ -57,6 +57,7 @@ static irqreturn_t button_irq(int irq, void *_priv)
 	struct mc13783_pwrb *priv = _priv;
 	int val;
 
+	mc13xxx_irq_ack(priv->mc13783, irq);
 	mc13xxx_reg_read(priv->mc13783, MC13783_REG_INTERRUPT_SENSE_1, &val);
 
 	switch (irq) {
@@ -108,7 +109,7 @@ static int mc13783_pwrbutton_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		err = -ENOMEM;
 		dev_dbg(&pdev->dev, "Can't allocate power button\n");
@@ -252,7 +253,7 @@ static void mc13783_pwrbutton_remove(struct platform_device *pdev)
 
 static struct platform_driver mc13783_pwrbutton_driver = {
 	.probe		= mc13783_pwrbutton_probe,
-	.remove		= mc13783_pwrbutton_remove,
+	.remove_new	= mc13783_pwrbutton_remove,
 	.driver		= {
 		.name	= "mc13783-pwrbutton",
 	},

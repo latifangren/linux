@@ -39,7 +39,7 @@ static int nvdimm_probe(struct device *dev)
 	 */
 	nvdimm_clear_locked(dev);
 
-	ndd = kzalloc_obj(*ndd);
+	ndd = kzalloc(sizeof(*ndd), GFP_KERNEL);
 	if (!ndd)
 		return -ENOMEM;
 
@@ -117,8 +117,9 @@ static void nvdimm_remove(struct device *dev)
 {
 	struct nvdimm_drvdata *ndd = dev_get_drvdata(dev);
 
-	scoped_guard(nvdimm_bus, dev)
-		dev_set_drvdata(dev, NULL);
+	nvdimm_bus_lock(dev);
+	dev_set_drvdata(dev, NULL);
+	nvdimm_bus_unlock(dev);
 	put_ndd(ndd);
 }
 

@@ -539,8 +539,9 @@ static int gaudi_set_fixed_properties(struct hl_device *hdev)
 	int i;
 
 	prop->max_queues = GAUDI_QUEUE_ID_SIZE;
-	prop->hw_queues_props = kzalloc_objs(struct hw_queue_properties,
-					     prop->max_queues);
+	prop->hw_queues_props = kcalloc(prop->max_queues,
+			sizeof(struct hw_queue_properties),
+			GFP_KERNEL);
 
 	if (!prop->hw_queues_props)
 		return -ENOMEM;
@@ -1852,7 +1853,7 @@ static int gaudi_sw_init(struct hl_device *hdev)
 	int rc;
 
 	/* Allocate device structure */
-	gaudi = kzalloc_obj(*gaudi);
+	gaudi = kzalloc(sizeof(*gaudi), GFP_KERNEL);
 	if (!gaudi)
 		return -ENOMEM;
 
@@ -4905,7 +4906,7 @@ static int gaudi_pin_memory_before_cs(struct hl_device *hdev,
 			parser->job_userptr_list, &userptr))
 		goto already_pinned;
 
-	userptr = kzalloc_obj(*userptr);
+	userptr = kzalloc(sizeof(*userptr), GFP_KERNEL);
 	if (!userptr)
 		return -ENOMEM;
 
@@ -8842,7 +8843,7 @@ static int gaudi_add_sync_to_engine_map_entry(
 	reg_value -= lower_32_bits(CFG_BASE);
 
 	/* create a new hash entry */
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 	entry->engine_type = engine_type;

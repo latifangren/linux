@@ -33,16 +33,14 @@ int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
 	int err, i;
 
 	if (rockchip->is_rc) {
-		regs = platform_get_resource_byname(pdev,
-						    IORESOURCE_MEM,
+		regs = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						    "axi-base");
 		rockchip->reg_base = devm_pci_remap_cfg_resource(dev, regs);
 		if (IS_ERR(rockchip->reg_base))
 			return PTR_ERR(rockchip->reg_base);
 	} else {
-		rockchip->mem_res =
-			platform_get_resource_byname(pdev, IORESOURCE_MEM,
-						     "mem-base");
+		rockchip->mem_res = platform_get_resource_byname(
+			pdev, IORESOURCE_MEM, "mem-base");
 		if (!rockchip->mem_res)
 			return -EINVAL;
 	}
@@ -58,8 +56,7 @@ int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
 
 	rockchip->lanes = 1;
 	err = of_property_read_u32(node, "num-lanes", &rockchip->lanes);
-	if (!err && (rockchip->lanes == 0 ||
-		     rockchip->lanes == 3 ||
+	if (!err && (rockchip->lanes == 0 || rockchip->lanes == 3 ||
 		     rockchip->lanes > 4)) {
 		dev_warn(dev, "invalid num-lanes, default to use one lane\n");
 		rockchip->lanes = 1;
@@ -72,8 +69,7 @@ int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
 	for (i = 0; i < ROCKCHIP_NUM_PM_RSTS; i++)
 		rockchip->pm_rsts[i].id = rockchip_pci_pm_rsts[i];
 
-	err = devm_reset_control_bulk_get_exclusive(dev,
-						    ROCKCHIP_NUM_PM_RSTS,
+	err = devm_reset_control_bulk_get_exclusive(dev, ROCKCHIP_NUM_PM_RSTS,
 						    rockchip->pm_rsts);
 	if (err)
 		return dev_err_probe(dev, err, "Cannot get the PM reset\n");
@@ -81,18 +77,17 @@ int rockchip_pcie_parse_dt(struct rockchip_pcie *rockchip)
 	for (i = 0; i < ROCKCHIP_NUM_CORE_RSTS; i++)
 		rockchip->core_rsts[i].id = rockchip_pci_core_rsts[i];
 
-	err = devm_reset_control_bulk_get_exclusive(dev,
-						    ROCKCHIP_NUM_CORE_RSTS,
+	err = devm_reset_control_bulk_get_exclusive(dev, ROCKCHIP_NUM_CORE_RSTS,
 						    rockchip->core_rsts);
 	if (err)
 		return dev_err_probe(dev, err, "Cannot get the Core resets\n");
 
 	if (rockchip->is_rc)
-		rockchip->perst_gpio = devm_gpiod_get_optional(dev, "ep",
-							       GPIOD_OUT_LOW);
+		rockchip->perst_gpio =
+			devm_gpiod_get_optional(dev, "ep", GPIOD_OUT_LOW);
 	else
-		rockchip->perst_gpio = devm_gpiod_get_optional(dev, "reset",
-							       GPIOD_IN);
+		rockchip->perst_gpio =
+			devm_gpiod_get_optional(dev, "reset", GPIOD_IN);
 	if (IS_ERR(rockchip->perst_gpio))
 		return dev_err_probe(dev, PTR_ERR(rockchip->perst_gpio),
 				     "failed to get PERST# GPIO\n");
@@ -123,7 +118,7 @@ int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
 	if (err)
 		return dev_err_probe(dev, err, "Couldn't assert PM resets\n");
 
-	for (i = 0; i < MAX_LANE_NUM; i++) {
+	for (i = 0; i < rockchip->lanes; i++) {
 		err = phy_init(rockchip->phys[i]);
 		if (err) {
 			dev_err(dev, "init phy%d err %d\n", i, err);
@@ -165,7 +160,7 @@ int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
 
 	rockchip_pcie_write(rockchip, regs, PCIE_CLIENT_CONFIG);
 
-	for (i = 0; i < MAX_LANE_NUM; i++) {
+	for (i = 0; i < rockchip->lanes; i++) {
 		err = phy_power_on(rockchip->phys[i]);
 		if (err) {
 			dev_err(dev, "power on phy%d err %d\n", i, err);
@@ -174,8 +169,8 @@ int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
 	}
 
 	err = readx_poll_timeout(rockchip_pcie_read_addr,
-				 PCIE_CLIENT_SIDE_BAND_STATUS,
-				 regs, !(regs & PCIE_CLIENT_PHY_ST),
+				 PCIE_CLIENT_SIDE_BAND_STATUS, regs,
+				 !(regs & PCIE_CLIENT_PHY_ST),
 				 RK_PHY_PLL_LOCK_SLEEP_US,
 				 RK_PHY_PLL_LOCK_TIMEOUT_US);
 	if (err) {
@@ -194,7 +189,7 @@ int rockchip_pcie_init_port(struct rockchip_pcie *rockchip)
 err_power_off_phy:
 	while (i--)
 		phy_power_off(rockchip->phys[i]);
-	i = MAX_LANE_NUM;
+	i = rockchip->lanes;
 err_exit_phy:
 	while (i--)
 		phy_exit(rockchip->phys[i]);
@@ -248,7 +243,7 @@ void rockchip_pcie_deinit_phys(struct rockchip_pcie *rockchip)
 {
 	int i;
 
-	for (i = 0; i < MAX_LANE_NUM; i++) {
+	for (i = 0; i < rockchip->lanes; i++) {
 		/* inactive lanes are already powered off */
 		if (rockchip->lanes_map & BIT(i))
 			phy_power_off(rockchip->phys[i]);
@@ -272,13 +267,12 @@ EXPORT_SYMBOL_GPL(rockchip_pcie_enable_clocks);
 
 void rockchip_pcie_disable_clocks(struct rockchip_pcie *rockchip)
 {
-
 	clk_bulk_disable_unprepare(rockchip->num_clks, rockchip->clks);
 }
 EXPORT_SYMBOL_GPL(rockchip_pcie_disable_clocks);
 
-void rockchip_pcie_cfg_configuration_accesses(
-		struct rockchip_pcie *rockchip, u32 type)
+void rockchip_pcie_cfg_configuration_accesses(struct rockchip_pcie *rockchip,
+					      u32 type)
 {
 	u32 ob_desc_0;
 

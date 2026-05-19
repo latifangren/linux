@@ -9,7 +9,7 @@
 
 #include <uapi/asm/setup.h>
 
-# ifndef __ASSEMBLER__
+# ifndef __ASSEMBLY__
 extern char cmd_line[COMMAND_LINE_SIZE];
 
 extern char *klimit;
@@ -25,5 +25,5 @@ void machine_shutdown(void);
 void machine_halt(void);
 void machine_power_off(void);
 
-# endif /* __ASSEMBLER__ */
+# endif /* __ASSEMBLY__ */
 #endif /* _ASM_MICROBLAZE_SETUP_H */

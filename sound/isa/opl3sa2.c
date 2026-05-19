@@ -172,8 +172,13 @@ static unsigned char __snd_opl3sa2_read(struct snd_opl3sa2 *chip, unsigned char 
 /* read control port (with spinlock) */
 static unsigned char snd_opl3sa2_read(struct snd_opl3sa2 *chip, unsigned char reg)
 {
-	guard(spinlock_irqsave)(&chip->reg_lock);
-	return __snd_opl3sa2_read(chip, reg);
+	unsigned long flags;
+	unsigned char result;
+
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	result = __snd_opl3sa2_read(chip, reg);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
+	return result;
 }
 
 /* write control port (w/o spinlock) */
@@ -190,8 +195,10 @@ static void __snd_opl3sa2_write(struct snd_opl3sa2 *chip, unsigned char reg, uns
 /* write control port (with spinlock) */
 static void snd_opl3sa2_write(struct snd_opl3sa2 *chip, unsigned char reg, unsigned char value)
 {
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	unsigned long flags;
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	__snd_opl3sa2_write(chip, reg, value);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 }
 
 static int snd_opl3sa2_detect(struct snd_card *card)
@@ -329,13 +336,15 @@ static irqreturn_t snd_opl3sa2_interrupt(int irq, void *dev_id)
 static int snd_opl3sa2_get_single(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_opl3sa2 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int reg = kcontrol->private_value & 0xff;
 	int shift = (kcontrol->private_value >> 8) & 0xff;
 	int mask = (kcontrol->private_value >> 16) & 0xff;
 	int invert = (kcontrol->private_value >> 24) & 0xff;
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ucontrol->value.integer.value[0] = (chip->ctlregs[reg] >> shift) & mask;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (invert)
 		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
 	return 0;
@@ -344,6 +353,7 @@ static int snd_opl3sa2_get_single(struct snd_kcontrol *kcontrol, struct snd_ctl_
 static int snd_opl3sa2_put_single(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_opl3sa2 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int reg = kcontrol->private_value & 0xff;
 	int shift = (kcontrol->private_value >> 8) & 0xff;
 	int mask = (kcontrol->private_value >> 16) & 0xff;
@@ -355,11 +365,12 @@ static int snd_opl3sa2_put_single(struct snd_kcontrol *kcontrol, struct snd_ctl_
 	if (invert)
 		val = mask - val;
 	val <<= shift;
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	oval = chip->ctlregs[reg];
 	val = (oval & ~(mask << shift)) | val;
 	change = val != oval;
 	__snd_opl3sa2_write(chip, reg, val);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return change;
 }
 
@@ -380,6 +391,7 @@ static int snd_opl3sa2_put_single(struct snd_kcontrol *kcontrol, struct snd_ctl_
 static int snd_opl3sa2_get_double(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_opl3sa2 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int left_reg = kcontrol->private_value & 0xff;
 	int right_reg = (kcontrol->private_value >> 8) & 0xff;
 	int shift_left = (kcontrol->private_value >> 16) & 0x07;
@@ -387,9 +399,10 @@ static int snd_opl3sa2_get_double(struct snd_kcontrol *kcontrol, struct snd_ctl_
 	int mask = (kcontrol->private_value >> 24) & 0xff;
 	int invert = (kcontrol->private_value >> 22) & 1;
 	
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ucontrol->value.integer.value[0] = (chip->ctlregs[left_reg] >> shift_left) & mask;
 	ucontrol->value.integer.value[1] = (chip->ctlregs[right_reg] >> shift_right) & mask;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (invert) {
 		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
 		ucontrol->value.integer.value[1] = mask - ucontrol->value.integer.value[1];
@@ -400,6 +413,7 @@ static int snd_opl3sa2_get_double(struct snd_kcontrol *kcontrol, struct snd_ctl_
 static int snd_opl3sa2_put_double(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_opl3sa2 *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int left_reg = kcontrol->private_value & 0xff;
 	int right_reg = (kcontrol->private_value >> 8) & 0xff;
 	int shift_left = (kcontrol->private_value >> 16) & 0x07;
@@ -417,7 +431,7 @@ static int snd_opl3sa2_put_double(struct snd_kcontrol *kcontrol, struct snd_ctl_
 	}
 	val1 <<= shift_left;
 	val2 <<= shift_right;
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	if (left_reg != right_reg) {
 		oval1 = chip->ctlregs[left_reg];
 		oval2 = chip->ctlregs[right_reg];
@@ -432,6 +446,7 @@ static int snd_opl3sa2_put_double(struct snd_kcontrol *kcontrol, struct snd_ctl_
 		change = val1 != oval1;
 		__snd_opl3sa2_write(chip, left_reg, val1);
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return change;
 }
 
@@ -473,30 +488,30 @@ static int snd_opl3sa2_mixer(struct snd_card *card)
 	memset(&id2, 0, sizeof(id2));
 	id1.iface = id2.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
 	/* reassign AUX0 to CD */
-        strscpy(id1.name, "Aux Playback Switch");
-        strscpy(id2.name, "CD Playback Switch");
+        strcpy(id1.name, "Aux Playback Switch");
+        strcpy(id2.name, "CD Playback Switch");
 	err = snd_ctl_rename_id(card, &id1, &id2);
 	if (err < 0) {
 		dev_err(card->dev, "Cannot rename opl3sa2 control\n");
                 return err;
 	}
-        strscpy(id1.name, "Aux Playback Volume");
-        strscpy(id2.name, "CD Playback Volume");
+        strcpy(id1.name, "Aux Playback Volume");
+        strcpy(id2.name, "CD Playback Volume");
 	err = snd_ctl_rename_id(card, &id1, &id2);
 	if (err < 0) {
 		dev_err(card->dev, "Cannot rename opl3sa2 control\n");
                 return err;
 	}
 	/* reassign AUX1 to FM */
-        strscpy(id1.name, "Aux Playback Switch"); id1.index = 1;
-        strscpy(id2.name, "FM Playback Switch");
+        strcpy(id1.name, "Aux Playback Switch"); id1.index = 1;
+        strcpy(id2.name, "FM Playback Switch");
 	err = snd_ctl_rename_id(card, &id1, &id2);
 	if (err < 0) {
 		dev_err(card->dev, "Cannot rename opl3sa2 control\n");
                 return err;
 	}
-        strscpy(id1.name, "Aux Playback Volume");
-        strscpy(id2.name, "FM Playback Volume");
+        strcpy(id1.name, "Aux Playback Volume");
+        strcpy(id2.name, "FM Playback Volume");
 	err = snd_ctl_rename_id(card, &id1, &id2);
 	if (err < 0) {
 		dev_err(card->dev, "Cannot rename opl3sa2 control\n");
@@ -603,8 +618,8 @@ static int snd_opl3sa2_card_new(struct device *pdev, int dev,
 				sizeof(struct snd_opl3sa2), &card);
 	if (err < 0)
 		return err;
-	strscpy(card->driver, "OPL3SA2");
-	strscpy(card->shortname, "Yamaha OPL3-SA");
+	strcpy(card->driver, "OPL3SA2");
+	strcpy(card->shortname, "Yamaha OPL3-SA");
 	chip = card->private_data;
 	spin_lock_init(&chip->reg_lock);
 	chip->irq = -1;

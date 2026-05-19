@@ -128,7 +128,7 @@ static int io_err_get_args(struct dm_target *tt, unsigned int argc, char **args)
 	char dummy;
 	int ret;
 
-	ioec = kmalloc_obj(*ioec);
+	ioec = kmalloc(sizeof(*ioec), GFP_KERNEL);
 	if (!ioec) {
 		tt->error = "Cannot allocate io_err context";
 		return -ENOMEM;
@@ -255,7 +255,7 @@ static void io_err_io_hints(struct dm_target *ti, struct queue_limits *limits)
 
 static long io_err_dax_direct_access(struct dm_target *ti, pgoff_t pgoff,
 		long nr_pages, enum dax_access_mode mode, void **kaddr,
-		unsigned long *pfn)
+		pfn_t *pfn)
 {
 	return -EIO;
 }

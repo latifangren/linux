@@ -37,6 +37,7 @@
 		.io_reg = base + 0x4 + REG_SIZE * id,		\
 		.intr_cfg_reg = base + 0x8 + REG_SIZE * id,	\
 		.intr_status_reg = base + 0xc + REG_SIZE * id,	\
+		.intr_target_reg = base + 0x8 + REG_SIZE * id,	\
 		.mux_bit = 2,			\
 		.pull_bit = 0,			\
 		.drv_bit = 6,			\
@@ -62,6 +63,7 @@
 		.io_reg = 0,				\
 		.intr_cfg_reg = 0,			\
 		.intr_status_reg = 0,			\
+		.intr_target_reg = 0,			\
 		.mux_bit = -1,				\
 		.pull_bit = pull,			\
 		.drv_bit = drv,				\
@@ -86,6 +88,7 @@
 		.io_reg = offset + 0x4,			\
 		.intr_cfg_reg = 0,			\
 		.intr_status_reg = 0,			\
+		.intr_target_reg = 0,			\
 		.mux_bit = -1,				\
 		.pull_bit = 3,				\
 		.drv_bit = 0,				\
@@ -973,7 +976,7 @@ static const char * const tsif1_sync_groups[] = {
 };
 
 static const struct pinfunction sdm845_functions[] = {
-	MSM_GPIO_PIN_FUNCTION(gpio),
+	MSM_PIN_FUNCTION(gpio),
 	MSM_PIN_FUNCTION(adsp_ext),
 	MSM_PIN_FUNCTION(agera_pll),
 	MSM_PIN_FUNCTION(atest_char),
@@ -1348,6 +1351,7 @@ static struct platform_driver sdm845_pinctrl_driver = {
 		.acpi_match_table = ACPI_PTR(sdm845_pinctrl_acpi_match),
 	},
 	.probe = sdm845_pinctrl_probe,
+	.remove_new = msm_pinctrl_remove,
 };
 
 static int __init sdm845_pinctrl_init(void)

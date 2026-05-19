@@ -35,7 +35,7 @@
 #define ESID_MASK_1T		0xffffff0000000000UL
 #define GET_ESID_1T(x)		(((x) >> SID_SHIFT_1T) & SID_MASK_1T)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <asm/cache.h>
 
 typedef unsigned long pte_basic_t;
@@ -82,11 +82,11 @@ extern void copy_page(void *to, void *from);
 /* Log 2 of page table size */
 extern u64 ppc64_pft_size;
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
-#define VMA_DATA_DEFAULT_FLAGS \
+#define VM_DATA_DEFAULT_FLAGS \
 	(is_32bit_task() ? \
-	 VMA_DATA_DEFAULT_FLAGS32 : VMA_DATA_DEFAULT_FLAGS64)
+	 VM_DATA_DEFAULT_FLAGS32 : VM_DATA_DEFAULT_FLAGS64)
 
 /*
  * This is the default if a program doesn't have a PT_GNU_STACK
@@ -94,12 +94,12 @@ extern u64 ppc64_pft_size;
  * stack by default, so in the absence of a PT_GNU_STACK program header
  * we turn execute permission off.
  */
-#define VMA_STACK_DEFAULT_FLAGS32	VMA_DATA_FLAGS_EXEC
-#define VMA_STACK_DEFAULT_FLAGS64	VMA_DATA_FLAGS_NON_EXEC
+#define VM_STACK_DEFAULT_FLAGS32	VM_DATA_FLAGS_EXEC
+#define VM_STACK_DEFAULT_FLAGS64	VM_DATA_FLAGS_NON_EXEC
 
-#define VMA_STACK_DEFAULT_FLAGS \
+#define VM_STACK_DEFAULT_FLAGS \
 	(is_32bit_task() ? \
-	 VMA_STACK_DEFAULT_FLAGS32 : VMA_STACK_DEFAULT_FLAGS64)
+	 VM_STACK_DEFAULT_FLAGS32 : VM_STACK_DEFAULT_FLAGS64)
 
 #include <asm-generic/getorder.h>
 

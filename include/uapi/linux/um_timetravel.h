@@ -56,9 +56,6 @@ enum um_timetravel_shared_mem_fds {
 	 *	in the control message
 	 */
 	UM_TIMETRAVEL_SHARED_LOGFD,
-	/**
-	 * @UM_TIMETRAVEL_SHARED_MAX_FDS: number of fds listed here
-	 */
 	UM_TIMETRAVEL_SHARED_MAX_FDS,
 };
 
@@ -245,7 +242,6 @@ union um_timetravel_schedshm_client {
 		__u64 req_time;
 		__u64 name;
 	};
-	/* private: */
 	char reserve[128]; /* reserved for future usage */
 };
 
@@ -268,7 +264,7 @@ union um_timetravel_schedshm_client {
  *	is made by any client. Clients also must update this value when they
  *	insert/update an own request into the shared memory while not running
  *	themselves, and the new request is before than the current value.
- * @current_time: Current time, can only be set by the client in running state
+ * current_time: Current time, can only be set by the client in running state
  *	(indicated by @running_id), though that client may only run until @free_until,
  *	so it must remain smaller than @free_until.
  * @running_id: The current client in state running, set before a client is

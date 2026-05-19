@@ -119,7 +119,8 @@ int vpu_ipi_send(struct platform_device *pdev,
  * @pdev:	the platform device of the module requesting VPU platform
  *		device for using VPU API.
  *
- * Return: a reference to the VPU's platform device, or NULL on failure.
+ * Return: Return NULL if it is failed.
+ * otherwise it is VPU's platform device
  **/
 struct platform_device *vpu_get_plat_device(struct platform_device *pdev);
 

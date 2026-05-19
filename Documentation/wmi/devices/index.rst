@@ -13,3 +13,10 @@ the Linux kernel, their protocols and driver details.
    :glob:
 
    *
+
+.. only:: subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

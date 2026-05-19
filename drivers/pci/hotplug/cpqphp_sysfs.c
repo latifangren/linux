@@ -123,6 +123,7 @@ static int spew_debug_info(struct controller *ctrl, char *data, int size)
 struct ctrl_dbg {
 	int size;
 	char *data;
+	struct controller *ctrl;
 };
 
 #define MAX_OUTPUT	(4*PAGE_SIZE)
@@ -134,7 +135,7 @@ static int open(struct inode *inode, struct file *file)
 	int retval = -ENOMEM;
 
 	mutex_lock(&cpqphp_mutex);
-	dbg = kmalloc_obj(*dbg);
+	dbg = kmalloc(sizeof(*dbg), GFP_KERNEL);
 	if (!dbg)
 		goto exit;
 	dbg->data = kmalloc(MAX_OUTPUT, GFP_KERNEL);

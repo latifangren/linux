@@ -2,17 +2,12 @@
 /*
  * Simple CPU accounting cgroup controller
  */
-#include <linux/sched/cputime.h>
-#include <linux/tsacct_kern.h>
-#include "sched.h"
 
 #ifdef CONFIG_VIRT_CPU_ACCOUNTING_NATIVE
  #include <asm/cputime.h>
 #endif
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
-
-DEFINE_STATIC_KEY_FALSE(sched_clock_irqtime);
 
 /*
  * There are no locks covering percpu hardirq/softirq time.
@@ -27,15 +22,16 @@ DEFINE_STATIC_KEY_FALSE(sched_clock_irqtime);
  */
 DEFINE_PER_CPU(struct irqtime, cpu_irqtime);
 
+static int sched_clock_irqtime;
+
 void enable_sched_clock_irqtime(void)
 {
-	static_branch_enable(&sched_clock_irqtime);
+	sched_clock_irqtime = 1;
 }
 
 void disable_sched_clock_irqtime(void)
 {
-	if (irqtime_enabled())
-		static_branch_disable(&sched_clock_irqtime);
+	sched_clock_irqtime = 0;
 }
 
 static void irqtime_account_delta(struct irqtime *irqtime, u64 delta,
@@ -61,7 +57,7 @@ void irqtime_account_irq(struct task_struct *curr, unsigned int offset)
 	s64 delta;
 	int cpu;
 
-	if (!irqtime_enabled())
+	if (!sched_clock_irqtime)
 		return;
 
 	cpu = smp_processor_id();
@@ -92,7 +88,9 @@ static u64 irqtime_tick_accounted(u64 maxtime)
 	return delta;
 }
 
-#else /* !CONFIG_IRQ_TIME_ACCOUNTING: */
+#else /* CONFIG_IRQ_TIME_ACCOUNTING */
+
+#define sched_clock_irqtime	(0)
 
 static u64 irqtime_tick_accounted(u64 dummy)
 {
@@ -245,26 +243,13 @@ void __account_forceidle_time(struct task_struct *p, u64 delta)
 
 	task_group_account_field(p, CPUTIME_FORCEIDLE, delta);
 }
-#endif /* CONFIG_SCHED_CORE */
+#endif
 
 /*
  * When a guest is interrupted for a longer amount of time, missed clock
  * ticks are not redelivered later. Due to that, this function may on
  * occasion account more time than the calling functions think elapsed.
  */
-#ifdef CONFIG_PARAVIRT
-struct static_key paravirt_steal_enabled;
-
-#ifdef CONFIG_HAVE_PV_STEAL_CLOCK_GEN
-static u64 native_steal_clock(int cpu)
-{
-	return 0;
-}
-
-DEFINE_STATIC_CALL(pv_steal_clock, native_steal_clock);
-#endif
-#endif
-
 static __always_inline u64 steal_account_process_time(u64 maxtime)
 {
 #ifdef CONFIG_PARAVIRT
@@ -279,7 +264,7 @@ static __always_inline u64 steal_account_process_time(u64 maxtime)
 
 		return steal;
 	}
-#endif /* CONFIG_PARAVIRT */
+#endif
 	return 0;
 }
 
@@ -305,7 +290,7 @@ static inline u64 read_sum_exec_runtime(struct task_struct *t)
 {
 	return t->se.sum_exec_runtime;
 }
-#else /* !CONFIG_64BIT: */
+#else
 static u64 read_sum_exec_runtime(struct task_struct *t)
 {
 	u64 ns;
@@ -318,7 +303,7 @@ static u64 read_sum_exec_runtime(struct task_struct *t)
 
 	return ns;
 }
-#endif /* !CONFIG_64BIT */
+#endif
 
 /*
  * Accumulate raw cputime values of dead tasks (sig->[us]time) and live
@@ -327,8 +312,10 @@ static u64 read_sum_exec_runtime(struct task_struct *t)
 void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
 {
 	struct signal_struct *sig = tsk->signal;
-	struct task_struct *t;
 	u64 utime, stime;
+	struct task_struct *t;
+	unsigned int seq, nextseq;
+	unsigned long flags;
 
 	/*
 	 * Update current task runtime to account pending time since last
@@ -341,19 +328,27 @@ void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
 	if (same_thread_group(current, tsk))
 		(void) task_sched_runtime(current);
 
-	guard(rcu)();
-	scoped_seqlock_read (&sig->stats_lock, ss_lock_irqsave) {
+	rcu_read_lock();
+	/* Attempt a lockless read on the first round. */
+	nextseq = 0;
+	do {
+		seq = nextseq;
+		flags = read_seqbegin_or_lock_irqsave(&sig->stats_lock, &seq);
 		times->utime = sig->utime;
 		times->stime = sig->stime;
 		times->sum_exec_runtime = sig->sum_sched_runtime;
 
-		__for_each_thread(sig, t) {
+		for_each_thread(tsk, t) {
 			task_cputime(t, &utime, &stime);
 			times->utime += utime;
 			times->stime += stime;
 			times->sum_exec_runtime += read_sum_exec_runtime(t);
 		}
-	}
+		/* If lockless access failed, take the lock. */
+		nextseq = 1;
+	} while (need_seqretry(&sig->stats_lock, seq));
+	done_seqretry_irqrestore(&sig->stats_lock, seq, flags);
+	rcu_read_unlock();
 }
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
@@ -418,11 +413,11 @@ static void irqtime_account_idle_ticks(int ticks)
 {
 	irqtime_account_process_tick(current, 0, ticks);
 }
-#else /* !CONFIG_IRQ_TIME_ACCOUNTING: */
+#else /* CONFIG_IRQ_TIME_ACCOUNTING */
 static inline void irqtime_account_idle_ticks(int ticks) { }
 static inline void irqtime_account_process_tick(struct task_struct *p, int user_tick,
 						int nr_ticks) { }
-#endif /* !CONFIG_IRQ_TIME_ACCOUNTING */
+#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 
 /*
  * Use precise platform statistics if available:
@@ -483,7 +478,7 @@ void account_process_tick(struct task_struct *p, int user_tick)
 	if (vtime_accounting_enabled_this_cpu())
 		return;
 
-	if (irqtime_enabled()) {
+	if (sched_clock_irqtime) {
 		irqtime_account_process_tick(p, user_tick, 1);
 		return;
 	}
@@ -512,7 +507,7 @@ void account_idle_ticks(unsigned long ticks)
 {
 	u64 cputime, steal;
 
-	if (irqtime_enabled()) {
+	if (sched_clock_irqtime) {
 		irqtime_account_idle_ticks(ticks);
 		return;
 	}

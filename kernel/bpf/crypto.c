@@ -60,7 +60,7 @@ struct bpf_crypto_ctx {
 int bpf_crypto_register_type(const struct bpf_crypto_type *type)
 {
 	struct bpf_crypto_type_list *node;
-	int err = -EBUSY;
+	int err = -EEXIST;
 
 	down_write(&bpf_crypto_types_sem);
 	list_for_each_entry(node, &bpf_crypto_types, list) {
@@ -68,7 +68,7 @@ int bpf_crypto_register_type(const struct bpf_crypto_type *type)
 			goto unlock;
 	}
 
-	node = kmalloc_obj(*node);
+	node = kmalloc(sizeof(*node), GFP_KERNEL);
 	err = -ENOMEM;
 	if (!node)
 		goto unlock;
@@ -176,7 +176,7 @@ bpf_crypto_ctx_create(const struct bpf_crypto_params *params, u32 params__sz,
 		goto err_module_put;
 	}
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx) {
 		*err = -ENOMEM;
 		goto err_module_put;

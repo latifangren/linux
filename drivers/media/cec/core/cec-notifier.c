@@ -63,7 +63,7 @@ cec_notifier_get_conn(struct device *hdmi_dev, const char *port_name)
 			return n;
 		}
 	}
-	n = kzalloc_obj(*n);
+	n = kzalloc(sizeof(*n), GFP_KERNEL);
 	if (!n)
 		goto unlock;
 	n->hdmi_dev = hdmi_dev;

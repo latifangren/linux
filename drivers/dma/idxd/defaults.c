@@ -36,10 +36,12 @@ int idxd_load_iaa_device_defaults(struct idxd_device *idxd)
 	group->num_wqs++;
 
 	/* set name to "iaa_crypto" */
-	strscpy_pad(wq->name, "iaa_crypto");
+	memset(wq->name, 0, WQ_NAME_SIZE + 1);
+	strscpy(wq->name, "iaa_crypto", WQ_NAME_SIZE + 1);
 
 	/* set driver_name to "crypto" */
-	strscpy_pad(wq->driver_name, "crypto");
+	memset(wq->driver_name, 0, DRIVER_NAME_SIZE + 1);
+	strscpy(wq->driver_name, "crypto", DRIVER_NAME_SIZE + 1);
 
 	engine = idxd->engines[0];
 

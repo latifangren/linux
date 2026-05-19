@@ -385,7 +385,7 @@ struct hal_com_data {
 	struct dm_priv dmpriv;
 	struct dm_odm_t		odmpriv;
 
-	/*  For bluetooth co-existence */
+	/*  For bluetooth co-existance */
 	struct bt_coexist		bt_coexist;
 
 	/*  Interrupt related register information. */

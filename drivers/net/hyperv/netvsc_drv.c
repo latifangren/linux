@@ -29,7 +29,6 @@
 #include <linux/bpf.h>
 
 #include <net/arp.h>
-#include <net/netdev_lock.h>
 #include <net/route.h>
 #include <net/sock.h>
 #include <net/pkt_sched.h>
@@ -712,7 +711,7 @@ void netvsc_linkstatus_callback(struct net_device *net,
 	if (net->reg_state != NETREG_REGISTERED)
 		return;
 
-	event = kzalloc_obj(*event, GFP_ATOMIC);
+	event = kzalloc(sizeof(*event), GFP_ATOMIC);
 	if (!event)
 		return;
 	event->event = indicate->status;
@@ -931,7 +930,7 @@ struct netvsc_device_info *netvsc_devinfo_get(struct netvsc_device *nvdev)
 	struct netvsc_device_info *dev_info;
 	struct bpf_prog *prog;
 
-	dev_info = kzalloc_obj(*dev_info, GFP_ATOMIC);
+	dev_info = kzalloc(sizeof(*dev_info), GFP_ATOMIC);
 
 	if (!dev_info)
 		return NULL;
@@ -1371,7 +1370,7 @@ static int netvsc_set_mac_addr(struct net_device *ndev, void *p)
 	struct net_device_context *ndc = netdev_priv(ndev);
 	struct net_device *vf_netdev = rtnl_dereference(ndc->vf_netdev);
 	struct netvsc_device *nvdev = rtnl_dereference(ndc->nvdev);
-	struct sockaddr_storage *addr = p;
+	struct sockaddr *addr = p;
 	int err;
 
 	err = eth_prepare_mac_addr_change(ndev, p);
@@ -1387,12 +1386,12 @@ static int netvsc_set_mac_addr(struct net_device *ndev, void *p)
 			return err;
 	}
 
-	err = rndis_filter_set_device_mac(nvdev, addr->__data);
+	err = rndis_filter_set_device_mac(nvdev, addr->sa_data);
 	if (!err) {
 		eth_commit_mac_addr_change(ndev, p);
 	} else if (vf_netdev) {
 		/* rollback change on VF */
-		memcpy(addr->__data, ndev->dev_addr, ETH_ALEN);
+		memcpy(addr->sa_data, ndev->dev_addr, ETH_ALEN);
 		dev_set_mac_address(vf_netdev, addr, NULL);
 	}
 
@@ -1524,7 +1523,9 @@ static void netvsc_get_ethtool_stats(struct net_device *dev,
 		data[i++] = xdp_tx;
 	}
 
-	pcpu_sum = kvmalloc_objs(struct netvsc_ethtool_pcpu_stats, nr_cpu_ids);
+	pcpu_sum = kvmalloc_array(num_possible_cpus(),
+				  sizeof(struct netvsc_ethtool_pcpu_stats),
+				  GFP_KERNEL);
 	if (!pcpu_sum)
 		return;
 
@@ -1578,10 +1579,9 @@ static void netvsc_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 }
 
 static int
-netvsc_get_rxfh_fields(struct net_device *ndev,
-		       struct ethtool_rxfh_fields *info)
+netvsc_get_rss_hash_opts(struct net_device_context *ndc,
+			 struct ethtool_rxnfc *info)
 {
-	struct net_device_context *ndc = netdev_priv(ndev);
 	const u32 l4_flag = RXH_L4_B_0_1 | RXH_L4_B_2_3;
 
 	info->data = RXH_IP_SRC | RXH_IP_DST;
@@ -1622,24 +1622,30 @@ netvsc_get_rxfh_fields(struct net_device *ndev,
 	return 0;
 }
 
-static u32 netvsc_get_rx_ring_count(struct net_device *dev)
+static int
+netvsc_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
+		 u32 *rules)
 {
 	struct net_device_context *ndc = netdev_priv(dev);
 	struct netvsc_device *nvdev = rtnl_dereference(ndc->nvdev);
 
 	if (!nvdev)
+		return -ENODEV;
+
+	switch (info->cmd) {
+	case ETHTOOL_GRXRINGS:
+		info->data = nvdev->num_chn;
 		return 0;
 
-	return nvdev->num_chn;
+	case ETHTOOL_GRXFH:
+		return netvsc_get_rss_hash_opts(ndc, info);
+	}
+	return -EOPNOTSUPP;
 }
 
-static int
-netvsc_set_rxfh_fields(struct net_device *dev,
-		       const struct ethtool_rxfh_fields *info,
-		       struct netlink_ext_ack *extack)
+static int netvsc_set_rss_hash_opts(struct net_device_context *ndc,
+				    struct ethtool_rxnfc *info)
 {
-	struct net_device_context *ndc = netdev_priv(dev);
-
 	if (info->data == (RXH_IP_SRC | RXH_IP_DST |
 			   RXH_L4_B_0_1 | RXH_L4_B_2_3)) {
 		switch (info->flow_type) {
@@ -1690,6 +1696,17 @@ netvsc_set_rxfh_fields(struct net_device *dev,
 
 		return 0;
 	}
+
+	return -EOPNOTSUPP;
+}
+
+static int
+netvsc_set_rxnfc(struct net_device *ndev, struct ethtool_rxnfc *info)
+{
+	struct net_device_context *ndc = netdev_priv(ndev);
+
+	if (info->cmd == ETHTOOL_SRXFH)
+		return netvsc_set_rss_hash_opts(ndc, info);
 
 	return -EOPNOTSUPP;
 }
@@ -1963,13 +1980,12 @@ static const struct ethtool_ops ethtool_ops = {
 	.get_channels   = netvsc_get_channels,
 	.set_channels   = netvsc_set_channels,
 	.get_ts_info	= ethtool_op_get_ts_info,
-	.get_rx_ring_count = netvsc_get_rx_ring_count,
+	.get_rxnfc	= netvsc_get_rxnfc,
+	.set_rxnfc	= netvsc_set_rxnfc,
 	.get_rxfh_key_size = netvsc_get_rxfh_key_size,
 	.get_rxfh_indir_size = netvsc_rss_indir_size,
 	.get_rxfh	= netvsc_get_rxfh,
 	.set_rxfh	= netvsc_set_rxfh,
-	.get_rxfh_fields = netvsc_get_rxfh_fields,
-	.set_rxfh_fields = netvsc_set_rxfh_fields,
 	.get_link_ksettings = netvsc_get_link_ksettings,
 	.set_link_ksettings = netvsc_set_link_ksettings,
 	.get_ringparam	= netvsc_get_ringparam,
@@ -2417,21 +2433,6 @@ static int netvsc_vf_changed(struct net_device *vf_netdev, unsigned long event)
 	} else {
 		netdev_info(ndev, "Data path switched %s VF: %s\n",
 			    vf_is_up ? "to" : "from", vf_netdev->name);
-
-		/* In Azure, when accelerated networking in enabled, other NICs
-		 * like MANA, MLX, are configured as a bonded nic with
-		 * Netvsc(failover) NIC. For bonded NICs, the min of the max
-		 * pkt aggregate size of the members is propagated in the stack.
-		 * In order to allow these NICs (MANA/MLX) to use up to
-		 * GSO_MAX_SIZE gso packet size, we need to allow Netvsc NIC to
-		 * also support this in the guest.
-		 * This value is only increased for netvsc NIC when datapath is
-		 * switched over to the VF
-		 */
-		if (vf_is_up)
-			netif_set_tso_max_size(ndev, vf_netdev->tso_max_size);
-		else
-			netif_set_tso_max_size(ndev, netvsc_dev->netvsc_gso_max_size);
 	}
 
 	return NOTIFY_OK;
@@ -2450,6 +2451,8 @@ static int netvsc_unregister_vf(struct net_device *vf_netdev)
 	cancel_delayed_work_sync(&net_device_ctx->vf_takeover);
 
 	netdev_info(ndev, "VF unregistering: %s\n", vf_netdev->name);
+
+	netvsc_vf_setxdp(vf_netdev, NULL);
 
 	reinit_completion(&net_device_ctx->vf_add);
 	netdev_rx_handler_unregister(vf_netdev);
@@ -2619,9 +2622,7 @@ static int netvsc_probe(struct hv_device *dev,
 			continue;
 
 		netvsc_prepare_bonding(vf_netdev);
-		netdev_lock_ops(vf_netdev);
 		netvsc_register_vf(vf_netdev, VF_REG_IN_PROBE);
-		netdev_unlock_ops(vf_netdev);
 		__netvsc_vf_setup(net, vf_netdev);
 		break;
 	}

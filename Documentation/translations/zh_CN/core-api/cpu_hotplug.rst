@@ -22,7 +22,7 @@
        Srivatsa Vaddagiri <vatsa@in.ibm.com>,
        Ashok Raj <ashok.raj@intel.com>,
        Joel Schopp <jschopp@austin.ibm.com>,
-       Thomas Gleixner <tglx@kernel.org>
+       Thomas Gleixner <tglx@linutronix.de>
 
 简介
 ====

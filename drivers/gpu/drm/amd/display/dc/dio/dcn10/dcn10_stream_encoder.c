@@ -28,7 +28,7 @@
 #include "dcn10_stream_encoder.h"
 #include "reg_helper.h"
 #include "hw_shared.h"
-#include "link_service.h"
+#include "link.h"
 #include "dpcd_defs.h"
 #include "dcn30/dcn30_afmt.h"
 
@@ -249,13 +249,13 @@ void enc1_stream_encoder_dp_set_stream_attribute(
 	bool use_vsc_sdp_for_colorimetry,
 	uint32_t enable_sdp_splitting)
 {
-	(void)enable_sdp_splitting;
 	uint32_t h_active_start;
 	uint32_t v_active_start;
 	uint32_t misc0 = 0;
 	uint32_t misc1 = 0;
 	uint32_t h_blank;
 	uint32_t h_back_porch;
+	uint8_t synchronous_clock = 0; /* asynchronous mode */
 	uint8_t colorimetry_bpc;
 	uint8_t dp_pixel_encoding = 0;
 	uint8_t dp_component_depth = 0;
@@ -362,6 +362,7 @@ void enc1_stream_encoder_dp_set_stream_attribute(
 		break;
 	}
 
+	misc0 = misc0 | synchronous_clock;
 	misc0 = colorimetry_bpc << 5;
 
 	switch (output_color_space) {
@@ -784,7 +785,6 @@ void enc1_stream_encoder_send_immediate_sdp_message(
 	const uint8_t *custom_sdp_message,
 	unsigned int sdp_message_size)
 {
-	(void)sdp_message_size;
 	struct dcn10_stream_encoder *enc1 = DCN10STRENC_FROM_STRENC(enc);
 	uint32_t value = 0;
 

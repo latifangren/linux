@@ -320,7 +320,7 @@ struct b43legacy_pioqueue *b43legacy_setup_pioqueue(struct b43legacy_wldev *dev,
 	u32 value;
 	u16 qsize;
 
-	queue = kzalloc_obj(*queue);
+	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
 	if (!queue)
 		goto out;
 

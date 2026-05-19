@@ -389,7 +389,7 @@ struct riscv_pmu *riscv_pmu_alloc(void)
 	int cpuid, i;
 	struct cpu_hw_events *cpuc;
 
-	pmu = kzalloc_obj(*pmu);
+	pmu = kzalloc(sizeof(*pmu), GFP_KERNEL);
 	if (!pmu)
 		goto out;
 

@@ -123,7 +123,7 @@ enum adin1110_chips_id {
 
 struct adin1110_cfg {
 	enum adin1110_chips_id	id;
-	const char		*name;
+	char			name[MDIO_NAME_SIZE];
 	u32			phy_ids[PHY_MAX_ADDR];
 	u32			ports_nr;
 	u32			phy_id_val;
@@ -1492,7 +1492,7 @@ static int adin1110_switchdev_event(struct notifier_block *unused,
 	if (!adin1110_port_dev_check(netdev))
 		return NOTIFY_DONE;
 
-	switchdev_work = kzalloc_obj(*switchdev_work, GFP_ATOMIC);
+	switchdev_work = kzalloc(sizeof(*switchdev_work), GFP_ATOMIC);
 	if (WARN_ON(!switchdev_work))
 		return NOTIFY_BAD;
 
@@ -1602,7 +1602,7 @@ static int adin1110_probe_netdevs(struct adin1110_priv *priv)
 		netdev->netdev_ops = &adin1110_netdev_ops;
 		netdev->ethtool_ops = &adin1110_ethtool_ops;
 		netdev->priv_flags |= IFF_UNICAST_FLT;
-		netdev->netns_immutable = true;
+		netdev->netns_local = true;
 
 		port_priv->phydev = get_phy_device(priv->mii_bus, i + 1, false);
 		if (IS_ERR(port_priv->phydev)) {

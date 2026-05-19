@@ -130,8 +130,7 @@ struct saa7146_ext_vv
 	/* pointer to the saa7146 core ops */
 	const struct v4l2_ioctl_ops *core_ops;
 
-	ssize_t (*vbi_write)(struct file *file, const char __user *data,
-			     size_t count, loff_t *ppos);
+	struct v4l2_file_operations vbi_fops;
 };
 
 struct saa7146_use_ops  {

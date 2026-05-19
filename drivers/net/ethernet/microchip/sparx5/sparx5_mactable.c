@@ -80,16 +80,15 @@ static void sparx5_mact_select(struct sparx5 *sparx5,
 int sparx5_mact_learn(struct sparx5 *sparx5, int pgid,
 		      const unsigned char mac[ETH_ALEN], u16 vid)
 {
-	const struct sparx5_consts *consts = sparx5->data->consts;
 	int addr, type, ret;
 
-	if (pgid < consts->n_ports) {
+	if (pgid < SPX5_PORTS) {
 		type = MAC_ENTRY_ADDR_TYPE_UPSID_PN;
 		addr = pgid % 32;
 		addr += (pgid / 32) << 5; /* Add upsid */
 	} else {
 		type = MAC_ENTRY_ADDR_TYPE_MC_IDX;
-		addr = pgid - consts->n_ports;
+		addr = pgid - SPX5_PORTS;
 	}
 
 	mutex_lock(&sparx5->lock);
@@ -129,8 +128,7 @@ int sparx5_mc_sync(struct net_device *dev, const unsigned char *addr)
 	struct sparx5_port *port = netdev_priv(dev);
 	struct sparx5 *sparx5 = port->sparx5;
 
-	return sparx5_mact_learn(sparx5, sparx5_get_pgid(sparx5, PGID_CPU),
-				 addr, port->pvid);
+	return sparx5_mact_learn(sparx5, PGID_CPU, addr, port->pvid);
 }
 
 static int sparx5_mact_get(struct sparx5 *sparx5,
@@ -373,7 +371,7 @@ static void sparx5_mact_handle_entry(struct sparx5 *sparx5,
 		return;
 
 	port = LRN_MAC_ACCESS_CFG_2_MAC_ENTRY_ADDR_GET(cfg2);
-	if (port >= sparx5->data->consts->n_ports)
+	if (port >= SPX5_PORTS)
 		return;
 
 	if (!test_bit(port, sparx5->bridge_mask))
@@ -419,7 +417,7 @@ static void sparx5_mact_handle_entry(struct sparx5 *sparx5,
 				  true);
 }
 
-static void sparx5_mact_pull_work(struct work_struct *work)
+void sparx5_mact_pull_work(struct work_struct *work)
 {
 	struct delayed_work *del_work = to_delayed_work(work);
 	struct sparx5 *sparx5 = container_of(del_work, struct sparx5,
@@ -489,10 +487,8 @@ void sparx5_set_ageing(struct sparx5 *sparx5, int msecs)
 		 LRN_AUTOAGE_CFG(0));
 }
 
-int sparx5_mact_init(struct sparx5 *sparx5)
+void sparx5_mact_init(struct sparx5 *sparx5)
 {
-	char queue_name[32];
-
 	mutex_init(&sparx5->lock);
 
 	/*  Flush MAC table */
@@ -504,32 +500,4 @@ int sparx5_mact_init(struct sparx5 *sparx5)
 		dev_warn(sparx5->dev, "MAC flush error\n");
 
 	sparx5_set_ageing(sparx5, BR_DEFAULT_AGEING_TIME / HZ * 1000);
-
-	/* Add host mode BC address (points only to CPU) */
-	sparx5_mact_learn(sparx5, sparx5_get_pgid(sparx5, PGID_CPU),
-			  (unsigned char[]){0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-			  NULL_VID);
-
-	mutex_init(&sparx5->mdb_lock);
-	INIT_LIST_HEAD(&sparx5->mdb_entries);
-	mutex_init(&sparx5->mact_lock);
-	INIT_LIST_HEAD(&sparx5->mact_entries);
-	snprintf(queue_name, sizeof(queue_name), "%s-mact",
-		 dev_name(sparx5->dev));
-	sparx5->mact_queue = create_singlethread_workqueue(queue_name);
-	if (!sparx5->mact_queue)
-		return -ENOMEM;
-
-	INIT_DELAYED_WORK(&sparx5->mact_work, sparx5_mact_pull_work);
-	queue_delayed_work(sparx5->mact_queue, &sparx5->mact_work,
-			   SPX5_MACT_PULL_DELAY);
-
-	return 0;
-}
-
-void sparx5_mact_deinit(struct sparx5 *sparx5)
-{
-	cancel_delayed_work_sync(&sparx5->mact_work);
-	destroy_workqueue(sparx5->mact_queue);
-	mutex_destroy(&sparx5->mact_lock);
 }

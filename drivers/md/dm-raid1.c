@@ -103,7 +103,7 @@ static void wakeup_mirrord(void *context)
 
 static void delayed_wake_fn(struct timer_list *t)
 {
-	struct mirror_set *ms = timer_container_of(ms, t, timer);
+	struct mirror_set *ms = from_timer(ms, t, timer);
 
 	clear_bit(0, &ms->timer_pending);
 	wakeup_mirrord(ms);
@@ -655,7 +655,7 @@ static void do_write(struct mirror_set *ms, struct bio *bio)
 	unsigned int i;
 	struct dm_io_region io[MAX_NR_MIRRORS], *dest = io;
 	struct mirror *m;
-	blk_opf_t op_flags = bio->bi_opf & (REQ_FUA | REQ_PREFLUSH | REQ_ATOMIC);
+	blk_opf_t op_flags = bio->bi_opf & (REQ_FUA | REQ_PREFLUSH);
 	struct dm_io_request io_req = {
 		.bi_opf = REQ_OP_WRITE | op_flags,
 		.mem.type = DM_IO_BIO,
@@ -890,7 +890,7 @@ static struct mirror_set *alloc_context(unsigned int nr_mirrors,
 					struct dm_dirty_log *dl)
 {
 	struct mirror_set *ms =
-		kzalloc_flex(*ms, mirror, nr_mirrors);
+		kzalloc(struct_size(ms, mirror, nr_mirrors), GFP_KERNEL);
 
 	if (!ms) {
 		ti->error = "Cannot allocate mirror context";
@@ -993,12 +993,12 @@ static struct dm_dirty_log *create_dirty_log(struct dm_target *ti,
 		return NULL;
 	}
 
-	if (param_count > argc - 2) {
+	*args_used = 2 + param_count;
+
+	if (argc < *args_used) {
 		ti->error = "Insufficient mirror log arguments";
 		return NULL;
 	}
-
-	*args_used = 2 + param_count;
 
 	dl = dm_dirty_log_create(argv[0], ti, mirror_flush, param_count,
 				 argv + 2);
@@ -1128,8 +1128,7 @@ static int mirror_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ti->num_discard_bios = 1;
 	ti->per_io_data_size = sizeof(struct dm_raid1_bio_record);
 
-	ms->kmirrord_wq = alloc_workqueue("kmirrord",
-					  WQ_MEM_RECLAIM | WQ_PERCPU, 0);
+	ms->kmirrord_wq = alloc_workqueue("kmirrord", WQ_MEM_RECLAIM, 0);
 	if (!ms->kmirrord_wq) {
 		DMERR("couldn't start kmirrord");
 		r = -ENOMEM;
@@ -1182,7 +1181,7 @@ static void mirror_dtr(struct dm_target *ti)
 {
 	struct mirror_set *ms = ti->private;
 
-	timer_delete_sync(&ms->timer);
+	del_timer_sync(&ms->timer);
 	flush_workqueue(ms->kmirrord_wq);
 	flush_work(&ms->trigger_event);
 	dm_kcopyd_client_destroy(ms->kcopyd_client);
@@ -1483,9 +1482,8 @@ static int mirror_iterate_devices(struct dm_target *ti,
 
 static struct target_type mirror_target = {
 	.name	 = "mirror",
-	.version = {1, 15, 0},
+	.version = {1, 14, 0},
 	.module	 = THIS_MODULE,
-	.features = DM_TARGET_ATOMIC_WRITES,
 	.ctr	 = mirror_ctr,
 	.dtr	 = mirror_dtr,
 	.map	 = mirror_map,
@@ -1501,7 +1499,7 @@ static int __init dm_mirror_init(void)
 {
 	int r;
 
-	dm_raid1_wq = alloc_workqueue("dm_raid1_wq", WQ_PERCPU, 0);
+	dm_raid1_wq = alloc_workqueue("dm_raid1_wq", 0, 0);
 	if (!dm_raid1_wq) {
 		DMERR("Failed to alloc workqueue");
 		return -ENOMEM;

@@ -7,8 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Xilinx Zynq Ultrascale AMS controller
 
 maintainers:
-  - Salih Erim <salih.erim@amd.com>
-  - Conall O'Griofa <conall.ogriofa@amd.com>
+  - Anand Ashok Dumbre <anand.ashok.dumbre@xilinx.com>
 
 description: |
   The AMS (Analog Monitoring System) includes an ADC as well as on-chip sensors
@@ -194,6 +193,7 @@ additionalProperties: false
 
 examples:
   - |
+    #include <dt-bindings/clock/xlnx-zynqmp-clk.h>
 
     bus {
         #address-cells = <2>;
@@ -204,7 +204,7 @@ examples:
             interrupt-parent = <&gic>;
             interrupts = <0 56 4>;
             reg = <0x0 0xffa50000 0x0 0x800>;
-            clocks = <&zynqmp_clk 70>;
+            clocks = <&zynqmp_clk AMS_REF>;
             #address-cells = <1>;
             #size-cells = <1>;
             #io-channel-cells = <1>;

@@ -86,32 +86,29 @@ static ssize_t open_dice_write(struct file *filp, const char __user *ptr,
 /*
  * Creates a mapping of the reserved memory region in user address space.
  */
-static int open_dice_mmap_prepare(struct vm_area_desc *desc)
+static int open_dice_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-	struct file *filp = desc->file;
 	struct open_dice_drvdata *drvdata = to_open_dice_drvdata(filp);
 
-	if (vma_desc_test(desc, VMA_MAYSHARE_BIT)) {
+	if (vma->vm_flags & VM_MAYSHARE) {
 		/* Do not allow userspace to modify the underlying data. */
-		if (vma_desc_test(desc, VMA_WRITE_BIT))
+		if (vma->vm_flags & VM_WRITE)
 			return -EPERM;
 		/* Ensure userspace cannot acquire VM_WRITE later. */
-		vma_desc_clear_flags(desc, VMA_MAYWRITE_BIT);
+		vm_flags_clear(vma, VM_MAYWRITE);
 	}
 
 	/* Create write-combine mapping so all clients observe a wipe. */
-	desc->page_prot = pgprot_writecombine(desc->page_prot);
-	vma_desc_set_flags(desc, VMA_DONTCOPY_BIT, VMA_DONTDUMP_BIT);
-	mmap_action_simple_ioremap(desc, drvdata->rmem->base,
-				   drvdata->rmem->size);
-	return 0;
+	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	vm_flags_set(vma, VM_DONTCOPY | VM_DONTDUMP);
+	return vm_iomap_memory(vma, drvdata->rmem->base, drvdata->rmem->size);
 }
 
 static const struct file_operations open_dice_fops = {
 	.owner = THIS_MODULE,
 	.read = open_dice_read,
 	.write = open_dice_write,
-	.mmap_prepare = open_dice_mmap_prepare,
+	.mmap = open_dice_mmap,
 };
 
 static int __init open_dice_probe(struct platform_device *pdev)
@@ -181,7 +178,7 @@ static const struct of_device_id open_dice_of_match[] = {
 };
 
 static struct platform_driver open_dice_driver = {
-	.remove = open_dice_remove,
+	.remove_new = open_dice_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = open_dice_of_match,

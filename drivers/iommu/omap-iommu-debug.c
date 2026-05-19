@@ -147,7 +147,7 @@ static size_t omap_dump_tlb_entries(struct omap_iommu *obj, struct seq_file *s)
 
 	num = obj->nr_tlb_entries;
 
-	cr = kzalloc_objs(*cr, num);
+	cr = kcalloc(num, sizeof(*cr), GFP_KERNEL);
 	if (!cr)
 		return 0;
 

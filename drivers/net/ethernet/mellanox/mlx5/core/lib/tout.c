@@ -37,7 +37,7 @@ int mlx5_tout_init(struct mlx5_core_dev *dev)
 {
 	int i;
 
-	dev->timeouts = kmalloc_obj(*dev->timeouts);
+	dev->timeouts = kmalloc(sizeof(*dev->timeouts), GFP_KERNEL);
 	if (!dev->timeouts)
 		return -ENOMEM;
 

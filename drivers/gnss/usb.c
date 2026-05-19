@@ -131,7 +131,7 @@ static int gnss_usb_probe(struct usb_interface *intf, const struct usb_device_id
 	if (ret)
 		return ret;
 
-	gusb = kzalloc_obj(*gusb);
+	gusb = kzalloc(sizeof(*gusb), GFP_KERNEL);
 	if (!gusb)
 		return -ENOMEM;
 

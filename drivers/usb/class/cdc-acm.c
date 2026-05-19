@@ -1371,7 +1371,7 @@ skip_normal_probe:
 made_compressed_probe:
 	dev_dbg(&intf->dev, "interfaces are valid\n");
 
-	acm = kzalloc_obj(struct acm);
+	acm = kzalloc(sizeof(struct acm), GFP_KERNEL);
 	if (!acm)
 		return -ENOMEM;
 
@@ -1498,7 +1498,7 @@ made_compressed_probe:
 		if (!acm->country_codes)
 			goto skip_countries;
 		acm->country_code_size = cfd->bLength - 4;
-		memcpy(acm->country_codes, cfd->wCountryCodes,
+		memcpy(acm->country_codes, (u8 *)&cfd->wCountyCode0,
 							cfd->bLength - 4);
 		acm->country_rel_date = cfd->iCountryCodeRelDate;
 

@@ -59,7 +59,7 @@ static struct key *integrity_keyring_from_id(const unsigned int id)
 }
 
 int integrity_digsig_verify(const unsigned int id, const char *sig, int siglen,
-			    const char *digest, int digestlen, u8 algo)
+			    const char *digest, int digestlen)
 {
 	struct key *keyring;
 
@@ -76,11 +76,9 @@ int integrity_digsig_verify(const unsigned int id, const char *sig, int siglen,
 		return digsig_verify(keyring, sig + 1, siglen - 1, digest,
 				     digestlen);
 	case 2: /* regular file data hash based signature */
-		return asymmetric_verify(keyring, sig, siglen, digest,
-					    digestlen);
 	case 3: /* struct ima_file_id data based signature */
-		return asymmetric_verify_v3(keyring, sig, siglen, digest,
-					    digestlen, algo);
+		return asymmetric_verify(keyring, sig, siglen, digest,
+					 digestlen);
 	}
 
 	return -EOPNOTSUPP;
@@ -143,7 +141,7 @@ int __init integrity_init_keyring(const unsigned int id)
 	if (!IS_ENABLED(CONFIG_INTEGRITY_TRUSTED_KEYRING))
 		return 0;
 
-	restriction = kzalloc_obj(struct key_restriction);
+	restriction = kzalloc(sizeof(struct key_restriction), GFP_KERNEL);
 	if (!restriction)
 		return -ENOMEM;
 

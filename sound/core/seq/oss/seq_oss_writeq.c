@@ -27,7 +27,7 @@ snd_seq_oss_writeq_new(struct seq_oss_devinfo *dp, int maxlen)
 	struct seq_oss_writeq *q;
 	struct snd_seq_client_pool pool;
 
-	q = kzalloc_obj(*q);
+	q = kzalloc(sizeof(*q), GFP_KERNEL);
 	if (!q)
 		return NULL;
 	q->dp = dp;
@@ -122,10 +122,13 @@ snd_seq_oss_writeq_sync(struct seq_oss_writeq *q)
 void
 snd_seq_oss_writeq_wakeup(struct seq_oss_writeq *q, abstime_t time)
 {
-	guard(spinlock_irqsave)(&q->sync_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&q->sync_lock, flags);
 	q->sync_time = time;
 	q->sync_event_put = 0;
 	wake_up(&q->sync_sleep);
+	spin_unlock_irqrestore(&q->sync_lock, flags);
 }
 
 

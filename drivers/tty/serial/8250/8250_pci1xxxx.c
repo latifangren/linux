@@ -671,7 +671,7 @@ static int pci1xxxx_resume(struct device *dev)
 }
 
 static int pci1xxxx_setup(struct pci_dev *pdev,
-			  struct uart_8250_port *port, int port_idx, struct pci1xxxx_8250 *priv)
+			  struct uart_8250_port *port, int port_idx, int rev)
 {
 	int ret;
 
@@ -698,12 +698,12 @@ static int pci1xxxx_setup(struct pci_dev *pdev,
 	 * C0 and later revisions support Burst operation.
 	 * RTS workaround in mctrl is applicable only to B0.
 	 */
-	if (priv->dev_rev >= 0xC0)
+	if (rev >= 0xC0)
 		port->port.handle_irq = pci1xxxx_handle_irq;
-	else if (priv->dev_rev == 0xB0)
+	else if (rev == 0xB0)
 		port->port.set_mctrl = pci1xxxx_set_mctrl;
 
-	ret = serial8250_pci_setup_port(pdev, port, 0, PORT_OFFSET * port_idx, 0, priv->membase);
+	ret = serial8250_pci_setup_port(pdev, port, 0, PORT_OFFSET * port_idx, 0);
 	if (ret < 0)
 		return ret;
 
@@ -821,7 +821,7 @@ static int pci1xxxx_serial_probe(struct pci_dev *pdev,
 		else
 			uart.port.irq = pci_irq_vector(pdev, 0);
 
-		rc = pci1xxxx_setup(pdev, &uart, port_idx, priv);
+		rc = pci1xxxx_setup(pdev, &uart, port_idx, priv->dev_rev);
 		if (rc) {
 			dev_warn(dev, "Failed to setup port %u\n", i);
 			continue;
@@ -880,7 +880,7 @@ module_pci_driver(pci1xxxx_pci_driver);
 
 static_assert((ARRAY_SIZE(logical_to_physical_port_idx) == PCI_SUBDEVICE_ID_EFAR_PCI1XXXX_1p3 + 1));
 
-MODULE_IMPORT_NS("SERIAL_8250_PCI");
+MODULE_IMPORT_NS(SERIAL_8250_PCI);
 MODULE_DESCRIPTION("Microchip Technology Inc. PCIe to UART module");
 MODULE_AUTHOR("Kumaravel Thiagarajan <kumaravel.thiagarajan@microchip.com>");
 MODULE_AUTHOR("Tharun Kumar P <tharunkumar.pasumarthi@microchip.com>");

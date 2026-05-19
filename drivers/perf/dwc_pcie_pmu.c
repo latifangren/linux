@@ -13,7 +13,6 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
-#include <linux/pcie-dwc.h>
 #include <linux/perf_event.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
@@ -21,6 +20,7 @@
 #include <linux/sysfs.h>
 #include <linux/types.h>
 
+#define DWC_PCIE_VSEC_RAS_DES_ID		0x02
 #define DWC_PCIE_EVENT_CNT_CTL			0x8
 
 /*
@@ -38,10 +38,6 @@
 #define DWC_PCIE_PER_EVENT_ON			0x3
 #define DWC_PCIE_EVENT_CLEAR			GENMASK(1, 0)
 #define DWC_PCIE_EVENT_PER_CLEAR		0x1
-
-/* Event Selection Field has two subfields */
-#define DWC_PCIE_CNT_EVENT_SEL_GROUP		GENMASK(11, 8)
-#define DWC_PCIE_CNT_EVENT_SEL_EVID		GENMASK(7, 0)
 
 #define DWC_PCIE_EVENT_CNT_DATA			0xC
 
@@ -77,10 +73,6 @@ enum dwc_pcie_event_type {
 	DWC_PCIE_EVENT_TYPE_MAX,
 };
 
-#define DWC_PCIE_LANE_GROUP_6 6
-#define DWC_PCIE_LANE_GROUP_7 7
-#define DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP 256
-
 #define DWC_PCIE_LANE_EVENT_MAX_PERIOD		GENMASK_ULL(31, 0)
 #define DWC_PCIE_MAX_PERIOD			GENMASK_ULL(63, 0)
 
@@ -90,11 +82,9 @@ struct dwc_pcie_pmu {
 	u16			ras_des_offset;
 	u32			nr_lanes;
 
-	/* Groups #6 and #7 */
-	DECLARE_BITMAP(lane_events, 2 * DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP);
-	struct perf_event	*time_based_event;
-
+	struct list_head	pmu_node;
 	struct hlist_node	cpuhp_node;
+	struct perf_event	*event[DWC_PCIE_EVENT_TYPE_MAX];
 	int			on_cpu;
 };
 
@@ -109,6 +99,16 @@ struct dwc_pcie_dev_info {
 	struct platform_device *plat_dev;
 	struct pci_dev *pdev;
 	struct list_head dev_node;
+};
+
+struct dwc_pcie_vendor_id {
+	int vendor_id;
+};
+
+static const struct dwc_pcie_vendor_id dwc_pcie_vendor_ids[] = {
+	{.vendor_id = PCI_VENDOR_ID_ALIBABA },
+	{.vendor_id = PCI_VENDOR_ID_QCOM },
+	{} /* terminator */
 };
 
 static ssize_t cpumask_show(struct device *dev,
@@ -199,14 +199,14 @@ static struct attribute *dwc_pcie_pmu_time_event_attrs[] = {
 	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(L1_1, 0x05),
 	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(L1_2, 0x06),
 	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(CFG_RCVRY, 0x07),
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(L1_AUX, 0x08),
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(TX_RX_L0S, 0x09),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(TX_RX_L0S, 0x08),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(L1_AUX, 0x09),
 
 	/* Group #1 */
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(tx_pcie_tlp_data_payload, 0x20),
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(rx_pcie_tlp_data_payload, 0x21),
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(tx_ccix_tlp_data_payload, 0x22),
-	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(rx_ccix_tlp_data_payload, 0x23),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(Tx_PCIe_TLP_Data_Payload, 0x20),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(Rx_PCIe_TLP_Data_Payload, 0x21),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(Tx_CCIX_TLP_Data_Payload, 0x22),
+	DWC_PCIE_PMU_TIME_BASE_EVENT_ATTR(Rx_CCIX_TLP_Data_Payload, 0x23),
 
 	/*
 	 * Leave it to the user to specify the lane ID to avoid generating
@@ -216,9 +216,9 @@ static struct attribute *dwc_pcie_pmu_time_event_attrs[] = {
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_update_fc_dllp, 0x601),
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_ack_dllp, 0x602),
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_update_fc_dllp, 0x603),
-	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_nullified_tlp, 0x604),
-	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_nullified_tlp, 0x605),
-	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_duplicate_tlp, 0x606),
+	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_nulified_tlp, 0x604),
+	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_nulified_tlp, 0x605),
+	DWC_PCIE_PMU_LANE_EVENT_ATTR(rx_duplicate_tl, 0x606),
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_memory_write, 0x700),
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_memory_read, 0x701),
 	DWC_PCIE_PMU_LANE_EVENT_ATTR(tx_configuration_write, 0x702),
@@ -257,26 +257,19 @@ static const struct attribute_group *dwc_pcie_attr_groups[] = {
 };
 
 static void dwc_pcie_pmu_lane_event_enable(struct dwc_pcie_pmu *pcie_pmu,
-					   struct perf_event *event,
 					   bool enable)
 {
 	struct pci_dev *pdev = pcie_pmu->pdev;
 	u16 ras_des_offset = pcie_pmu->ras_des_offset;
-	int event_id = DWC_PCIE_EVENT_ID(event);
-	int lane = DWC_PCIE_EVENT_LANE(event);
-	u32 ctrl;
-
-	ctrl = FIELD_PREP(DWC_PCIE_CNT_EVENT_SEL, event_id) |
-		FIELD_PREP(DWC_PCIE_CNT_LANE_SEL, lane) |
-		FIELD_PREP(DWC_PCIE_EVENT_CLEAR, DWC_PCIE_EVENT_PER_CLEAR);
 
 	if (enable)
-		ctrl |= FIELD_PREP(DWC_PCIE_CNT_ENABLE, DWC_PCIE_PER_EVENT_ON);
+		pci_clear_and_set_config_dword(pdev,
+					ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
+					DWC_PCIE_CNT_ENABLE, DWC_PCIE_PER_EVENT_ON);
 	else
-		ctrl |= FIELD_PREP(DWC_PCIE_CNT_ENABLE, DWC_PCIE_PER_EVENT_OFF);
-
-	pci_write_config_dword(pdev, ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
-			       ctrl);
+		pci_clear_and_set_config_dword(pdev,
+					ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
+					DWC_PCIE_CNT_ENABLE, DWC_PCIE_PER_EVENT_OFF);
 }
 
 static void dwc_pcie_pmu_time_based_event_enable(struct dwc_pcie_pmu *pcie_pmu,
@@ -294,21 +287,10 @@ static u64 dwc_pcie_pmu_read_lane_event_counter(struct perf_event *event)
 {
 	struct dwc_pcie_pmu *pcie_pmu = to_dwc_pcie_pmu(event->pmu);
 	struct pci_dev *pdev = pcie_pmu->pdev;
-	int event_id = DWC_PCIE_EVENT_ID(event);
-	int lane = DWC_PCIE_EVENT_LANE(event);
 	u16 ras_des_offset = pcie_pmu->ras_des_offset;
-	u32 val, ctrl;
+	u32 val;
 
-	ctrl = FIELD_PREP(DWC_PCIE_CNT_EVENT_SEL, event_id) |
-		FIELD_PREP(DWC_PCIE_CNT_LANE_SEL, lane) |
-		FIELD_PREP(DWC_PCIE_CNT_ENABLE, DWC_PCIE_PER_EVENT_ON);
-	pci_write_config_dword(pdev, ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
-			       ctrl);
 	pci_read_config_dword(pdev, ras_des_offset + DWC_PCIE_EVENT_CNT_DATA, &val);
-
-	ctrl |= FIELD_PREP(DWC_PCIE_EVENT_CLEAR, DWC_PCIE_EVENT_PER_CLEAR);
-	pci_write_config_dword(pdev, ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
-			       ctrl);
 
 	return val;
 }
@@ -358,75 +340,24 @@ static void dwc_pcie_pmu_event_update(struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
 	enum dwc_pcie_event_type type = DWC_PCIE_EVENT_TYPE(event);
-	u64 delta, prev, now;
-
-	if (type == DWC_PCIE_LANE_EVENT) {
-		now = dwc_pcie_pmu_read_lane_event_counter(event) &
-			DWC_PCIE_LANE_EVENT_MAX_PERIOD;
-		local64_add(now, &event->count);
-		return;
-	}
+	u64 delta, prev, now = 0;
 
 	do {
 		prev = local64_read(&hwc->prev_count);
-		now = dwc_pcie_pmu_read_time_based_counter(event);
+
+		if (type == DWC_PCIE_LANE_EVENT)
+			now = dwc_pcie_pmu_read_lane_event_counter(event);
+		else if (type == DWC_PCIE_TIME_BASE_EVENT)
+			now = dwc_pcie_pmu_read_time_based_counter(event);
 
 	} while (local64_cmpxchg(&hwc->prev_count, prev, now) != prev);
 
 	delta = (now - prev) & DWC_PCIE_MAX_PERIOD;
+	/* 32-bit counter for Lane Event Counting */
+	if (type == DWC_PCIE_LANE_EVENT)
+		delta &= DWC_PCIE_LANE_EVENT_MAX_PERIOD;
+
 	local64_add(delta, &event->count);
-}
-
-static int dwc_pcie_pmu_validate_add_lane_event(struct perf_event *event,
-						unsigned long val_lane_events[])
-{
-	int event_id, event_nr, group;
-
-	event_id = DWC_PCIE_EVENT_ID(event);
-	event_nr = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_EVID, event_id);
-	group = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_GROUP, event_id);
-
-	if (group != DWC_PCIE_LANE_GROUP_6 && group != DWC_PCIE_LANE_GROUP_7)
-		return -EINVAL;
-
-	group -= DWC_PCIE_LANE_GROUP_6;
-
-	if (test_and_set_bit(group * DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP + event_nr,
-			     val_lane_events))
-		return -EINVAL;
-
-	return 0;
-}
-
-static int dwc_pcie_pmu_validate_group(struct perf_event *event)
-{
-	struct perf_event *sibling, *leader = event->group_leader;
-	DECLARE_BITMAP(val_lane_events, 2 * DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP);
-	bool time_event = false;
-	int type;
-
-	type = DWC_PCIE_EVENT_TYPE(leader);
-	if (type == DWC_PCIE_TIME_BASE_EVENT)
-		time_event = true;
-	else
-		if (dwc_pcie_pmu_validate_add_lane_event(leader, val_lane_events))
-			return -ENOSPC;
-
-	for_each_sibling_event(sibling, leader) {
-		type = DWC_PCIE_EVENT_TYPE(sibling);
-		if (type == DWC_PCIE_TIME_BASE_EVENT) {
-			if (time_event)
-				return -ENOSPC;
-
-			time_event = true;
-			continue;
-		}
-
-		if (dwc_pcie_pmu_validate_add_lane_event(sibling, val_lane_events))
-			return -ENOSPC;
-	}
-
-	return 0;
 }
 
 static int dwc_pcie_pmu_event_init(struct perf_event *event)
@@ -447,6 +378,10 @@ static int dwc_pcie_pmu_event_init(struct perf_event *event)
 	if (event->cpu < 0 || event->attach_state & PERF_ATTACH_TASK)
 		return -EINVAL;
 
+	if (event->group_leader != event &&
+	    !is_software_event(event->group_leader))
+		return -EINVAL;
+
 	for_each_sibling_event(sibling, event->group_leader) {
 		if (sibling->pmu != event->pmu && !is_software_event(sibling))
 			return -EINVAL;
@@ -460,9 +395,6 @@ static int dwc_pcie_pmu_event_init(struct perf_event *event)
 		if (lane < 0 || lane >= pcie_pmu->nr_lanes)
 			return -EINVAL;
 	}
-
-	if (dwc_pcie_pmu_validate_group(event))
-		return -ENOSPC;
 
 	event->cpu = pcie_pmu->on_cpu;
 
@@ -479,7 +411,7 @@ static void dwc_pcie_pmu_event_start(struct perf_event *event, int flags)
 	local64_set(&hwc->prev_count, 0);
 
 	if (type == DWC_PCIE_LANE_EVENT)
-		dwc_pcie_pmu_lane_event_enable(pcie_pmu, event, true);
+		dwc_pcie_pmu_lane_event_enable(pcie_pmu, true);
 	else if (type == DWC_PCIE_TIME_BASE_EVENT)
 		dwc_pcie_pmu_time_based_event_enable(pcie_pmu, true);
 }
@@ -493,13 +425,12 @@ static void dwc_pcie_pmu_event_stop(struct perf_event *event, int flags)
 	if (event->hw.state & PERF_HES_STOPPED)
 		return;
 
-	dwc_pcie_pmu_event_update(event);
-
 	if (type == DWC_PCIE_LANE_EVENT)
-		dwc_pcie_pmu_lane_event_enable(pcie_pmu, event, false);
+		dwc_pcie_pmu_lane_event_enable(pcie_pmu, false);
 	else if (type == DWC_PCIE_TIME_BASE_EVENT)
 		dwc_pcie_pmu_time_based_event_enable(pcie_pmu, false);
 
+	dwc_pcie_pmu_event_update(event);
 	hwc->state |= PERF_HES_STOPPED | PERF_HES_UPTODATE;
 }
 
@@ -514,17 +445,14 @@ static int dwc_pcie_pmu_event_add(struct perf_event *event, int flags)
 	u16 ras_des_offset = pcie_pmu->ras_des_offset;
 	u32 ctrl;
 
+	/* one counter for each type and it is in use */
+	if (pcie_pmu->event[type])
+		return -ENOSPC;
+
+	pcie_pmu->event[type] = event;
 	hwc->state = PERF_HES_STOPPED | PERF_HES_UPTODATE;
 
 	if (type == DWC_PCIE_LANE_EVENT) {
-		int event_nr = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_EVID, event_id);
-		int group = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_GROUP, event_id) -
-			DWC_PCIE_LANE_GROUP_6;
-
-		if (test_and_set_bit(group * DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP + event_nr,
-				     pcie_pmu->lane_events))
-			return -ENOSPC;
-
 		/* EVENT_COUNTER_DATA_REG needs clear manually */
 		ctrl = FIELD_PREP(DWC_PCIE_CNT_EVENT_SEL, event_id) |
 			FIELD_PREP(DWC_PCIE_CNT_LANE_SEL, lane) |
@@ -533,11 +461,6 @@ static int dwc_pcie_pmu_event_add(struct perf_event *event, int flags)
 		pci_write_config_dword(pdev, ras_des_offset + DWC_PCIE_EVENT_CNT_CTL,
 				       ctrl);
 	} else if (type == DWC_PCIE_TIME_BASE_EVENT) {
-		if (pcie_pmu->time_based_event)
-			return -ENOSPC;
-
-		pcie_pmu->time_based_event = event;
-
 		/*
 		 * TIME_BASED_ANAL_DATA_REG is a 64 bit register, we can safely
 		 * use it with any manually controlled duration. And it is
@@ -566,18 +489,7 @@ static void dwc_pcie_pmu_event_del(struct perf_event *event, int flags)
 
 	dwc_pcie_pmu_event_stop(event, flags | PERF_EF_UPDATE);
 	perf_event_update_userpage(event);
-
-	if (type == DWC_PCIE_TIME_BASE_EVENT) {
-		pcie_pmu->time_based_event = NULL;
-	} else {
-		int event_id = DWC_PCIE_EVENT_ID(event);
-		int event_nr = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_EVID, event_id);
-		int group    = FIELD_GET(DWC_PCIE_CNT_EVENT_SEL_GROUP, event_id) -
-			DWC_PCIE_LANE_GROUP_6;
-
-		clear_bit(group * DWC_PCIE_LANE_MAX_EVENTS_PER_GROUP + event_nr,
-			  pcie_pmu->lane_events);
-	}
+	pcie_pmu->event[type] = NULL;
 }
 
 static void dwc_pcie_pmu_remove_cpuhp_instance(void *hotplug_node)
@@ -607,28 +519,31 @@ static void dwc_pcie_unregister_pmu(void *data)
 	perf_pmu_unregister(&pcie_pmu->pmu);
 }
 
-static u16 dwc_pcie_des_cap(struct pci_dev *pdev)
+static bool dwc_pcie_match_des_cap(struct pci_dev *pdev)
 {
-	const struct dwc_pcie_vsec_id *vid;
-	u16 vsec;
+	const struct dwc_pcie_vendor_id *vid;
+	u16 vsec = 0;
 	u32 val;
 
 	if (!pci_is_pcie(pdev) || !(pci_pcie_type(pdev) == PCI_EXP_TYPE_ROOT_PORT))
-		return 0;
+		return false;
 
-	for (vid = dwc_pcie_rasdes_vsec_ids; vid->vendor_id; vid++) {
+	for (vid = dwc_pcie_vendor_ids; vid->vendor_id; vid++) {
 		vsec = pci_find_vsec_capability(pdev, vid->vendor_id,
-						vid->vsec_id);
-		if (vsec) {
-			pci_read_config_dword(pdev, vsec + PCI_VNDR_HEADER,
-					      &val);
-			if (PCI_VNDR_HEADER_REV(val) == vid->vsec_rev) {
-				pci_dbg(pdev, "Detected PCIe Vendor-Specific Extended Capability RAS DES\n");
-				return vsec;
-			}
-		}
+						DWC_PCIE_VSEC_RAS_DES_ID);
+		if (vsec)
+			break;
 	}
-	return 0;
+	if (!vsec)
+		return false;
+
+	pci_read_config_dword(pdev, vsec + PCI_VNDR_HEADER, &val);
+	if (PCI_VNDR_HEADER_REV(val) != 0x04)
+		return false;
+
+	pci_dbg(pdev,
+		"Detected PCIe Vendor-Specific Extended Capability RAS DES\n");
+	return true;
 }
 
 static void dwc_pcie_unregister_dev(struct dwc_pcie_dev_info *dev_info)
@@ -645,11 +560,13 @@ static int dwc_pcie_register_dev(struct pci_dev *pdev)
 	u32 sbdf;
 
 	sbdf = (pci_domain_nr(pdev->bus) << 16) | PCI_DEVID(pdev->bus->number, pdev->devfn);
-	plat_dev = platform_device_register_simple("dwc_pcie_pmu", sbdf, NULL, 0);
+	plat_dev = platform_device_register_data(NULL, "dwc_pcie_pmu", sbdf,
+						 pdev, sizeof(*pdev));
+
 	if (IS_ERR(plat_dev))
 		return PTR_ERR(plat_dev);
 
-	dev_info = kzalloc_obj(*dev_info);
+	dev_info = kzalloc(sizeof(*dev_info), GFP_KERNEL);
 	if (!dev_info) {
 		platform_device_unregister(plat_dev);
 		return -ENOMEM;
@@ -672,7 +589,7 @@ static int dwc_pcie_pmu_notifier(struct notifier_block *nb,
 
 	switch (action) {
 	case BUS_NOTIFY_ADD_DEVICE:
-		if (!dwc_pcie_des_cap(pdev))
+		if (!dwc_pcie_match_des_cap(pdev))
 			return NOTIFY_DONE;
 		if (dwc_pcie_register_dev(pdev))
 			return NOTIFY_BAD;
@@ -694,26 +611,17 @@ static struct notifier_block dwc_pcie_pmu_nb = {
 
 static int dwc_pcie_pmu_probe(struct platform_device *plat_dev)
 {
-	struct pci_dev *pdev;
+	struct pci_dev *pdev = plat_dev->dev.platform_data;
 	struct dwc_pcie_pmu *pcie_pmu;
 	char *name;
-	u32 sbdf;
+	u32 sbdf, val;
 	u16 vsec;
 	int ret;
 
+	vsec = pci_find_vsec_capability(pdev, pdev->vendor,
+					DWC_PCIE_VSEC_RAS_DES_ID);
+	pci_read_config_dword(pdev, vsec + PCI_VNDR_HEADER, &val);
 	sbdf = plat_dev->id;
-	pdev = pci_get_domain_bus_and_slot(sbdf >> 16, PCI_BUS_NUM(sbdf & 0xffff),
-					   sbdf & 0xff);
-	if (!pdev) {
-		pr_err("No pdev found for the sbdf 0x%x\n", sbdf);
-		return -ENODEV;
-	}
-
-	vsec = dwc_pcie_des_cap(pdev);
-	if (!vsec)
-		return -ENODEV;
-
-	pci_dev_put(pdev);
 	name = devm_kasprintf(&plat_dev->dev, GFP_KERNEL, "dwc_rootport_%x", sbdf);
 	if (!name)
 		return -ENOMEM;
@@ -728,7 +636,7 @@ static int dwc_pcie_pmu_probe(struct platform_device *plat_dev)
 	pcie_pmu->on_cpu = -1;
 	pcie_pmu->pmu = (struct pmu){
 		.name		= name,
-		.parent		= &plat_dev->dev,
+		.parent		= &pdev->dev,
 		.module		= THIS_MODULE,
 		.attr_groups	= dwc_pcie_attr_groups,
 		.capabilities	= PERF_PMU_CAP_NO_EXCLUDE,
@@ -833,7 +741,7 @@ static int __init dwc_pcie_pmu_init(void)
 	int ret;
 
 	for_each_pci_dev(pdev) {
-		if (!dwc_pcie_des_cap(pdev))
+		if (!dwc_pcie_match_des_cap(pdev))
 			continue;
 
 		ret = dwc_pcie_register_dev(pdev);

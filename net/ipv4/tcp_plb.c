@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /* Protective Load Balancing (PLB)
  *
  * PLB was designed to reduce link load imbalance across datacenter

@@ -3,7 +3,7 @@
  * Copyright (C) 2017-2023 Oracle.  All Rights Reserved.
  * Author: Darrick J. Wong <djwong@kernel.org>
  */
-#include "xfs_platform.h"
+#include "xfs.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -99,14 +99,6 @@ xchk_dir_check_ftype(
 	}
 
 	if (xfs_mode_to_ftype(VFS_I(ip)->i_mode) != ftype)
-		xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, offset);
-
-	/*
-	 * Metadata and regular inodes cannot cross trees.  This property
-	 * cannot change without a full inode free and realloc cycle, so it's
-	 * safe to check this without holding locks.
-	 */
-	if (xfs_is_metadir_inode(ip) != xfs_is_metadir_inode(sc->ip))
 		xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, offset);
 }
 
@@ -261,7 +253,7 @@ xchk_dir_actor(
 		 * If this is ".." in the root inode, check that the inum
 		 * matches this dir.
 		 */
-		if (xchk_inode_is_dirtree_root(dp) && ino != dp->i_ino)
+		if (dp->i_ino == mp->m_sb.sb_rootino && ino != dp->i_ino)
 			xchk_fblock_set_corrupt(sc, XFS_DATA_FORK, offset);
 	}
 
@@ -1095,7 +1087,7 @@ xchk_directory(
 	if (sc->sm->sm_flags & XFS_SCRUB_OFLAG_CORRUPT)
 		return 0;
 
-	sd = kvzalloc_obj(struct xchk_dir, XCHK_GFP_FLAGS);
+	sd = kvzalloc(sizeof(struct xchk_dir), XCHK_GFP_FLAGS);
 	if (!sd)
 		return -ENOMEM;
 	sd->sc = sc;

@@ -92,6 +92,26 @@ static void flush_dcache_range_chunked(unsigned long start, unsigned long stop,
 	}
 }
 
+static void memtrace_clear_range(unsigned long start_pfn,
+				 unsigned long nr_pages)
+{
+	unsigned long pfn;
+
+	/* As HIGHMEM does not apply, use clear_page() directly. */
+	for (pfn = start_pfn; pfn < start_pfn + nr_pages; pfn++) {
+		if (IS_ALIGNED(pfn, PAGES_PER_SECTION))
+			cond_resched();
+		clear_page(__va(PFN_PHYS(pfn)));
+	}
+	/*
+	 * Before we go ahead and use this range as cache inhibited range
+	 * flush the cache.
+	 */
+	flush_dcache_range_chunked((unsigned long)pfn_to_kaddr(start_pfn),
+				   (unsigned long)pfn_to_kaddr(start_pfn + nr_pages),
+				   FLUSH_CHUNK_SIZE);
+}
+
 static u64 memtrace_alloc_node(u32 nid, u64 size)
 {
 	const unsigned long nr_pages = PHYS_PFN(size);
@@ -103,18 +123,17 @@ static u64 memtrace_alloc_node(u32 nid, u64 size)
 	 * by alloc_contig_pages().
 	 */
 	page = alloc_contig_pages(nr_pages, GFP_KERNEL | __GFP_THISNODE |
-				  __GFP_NOWARN | __GFP_ZERO, nid, NULL);
+				  __GFP_NOWARN, nid, NULL);
 	if (!page)
 		return 0;
 	start_pfn = page_to_pfn(page);
 
 	/*
-	 * Before we go ahead and use this range as cache inhibited range
-	 * flush the cache.
+	 * Clear the range while we still have a linear mapping.
+	 *
+	 * TODO: use __GFP_ZERO with alloc_contig_pages() once supported.
 	 */
-	flush_dcache_range_chunked((unsigned long)pfn_to_kaddr(start_pfn),
-				   (unsigned long)pfn_to_kaddr(start_pfn + nr_pages),
-				   FLUSH_CHUNK_SIZE);
+	memtrace_clear_range(start_pfn, nr_pages);
 
 	/*
 	 * Set pages PageOffline(), to indicate that nobody (e.g., hibernation,
@@ -133,7 +152,8 @@ static int memtrace_init_regions_runtime(u64 size)
 	u32 nid;
 	u64 m;
 
-	memtrace_array = kzalloc_objs(struct memtrace_entry, num_online_nodes());
+	memtrace_array = kcalloc(num_online_nodes(),
+				sizeof(struct memtrace_entry), GFP_KERNEL);
 	if (!memtrace_array) {
 		pr_err("Failed to allocate memtrace_array\n");
 		return -EINVAL;

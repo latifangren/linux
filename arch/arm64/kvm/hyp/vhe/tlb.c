@@ -63,7 +63,7 @@ static void enter_vmid_context(struct kvm_s2_mmu *mmu,
 	__load_stage2(mmu, mmu->arch);
 	val = read_sysreg(hcr_el2);
 	val &= ~HCR_TGE;
-	write_sysreg_hcr(val);
+	write_sysreg(val, hcr_el2);
 	isb();
 }
 
@@ -73,7 +73,7 @@ static void exit_vmid_context(struct tlb_inv_context *cxt)
 	 * We're done with the TLB operation, let's restore the host's
 	 * view of HCR_EL2.
 	 */
-	write_sysreg_hcr(HCR_HOST_VHE_FLAGS);
+	write_sysreg(HCR_HOST_VHE_FLAGS, hcr_el2);
 	isb();
 
 	/* ... and the stage-2 MMU context that we switched away from */
@@ -104,6 +104,7 @@ void __kvm_tlb_flush_vmid_ipa(struct kvm_s2_mmu *mmu,
 	 * Instead, we invalidate Stage-2 for this IPA, and the
 	 * whole of Stage-1. Weep...
 	 */
+	ipa >>= 12;
 	__tlbi_level(ipas2e1is, ipa, level);
 
 	/*
@@ -114,7 +115,7 @@ void __kvm_tlb_flush_vmid_ipa(struct kvm_s2_mmu *mmu,
 	 */
 	dsb(ish);
 	__tlbi(vmalle1is);
-	__tlbi_sync_s1ish_hyp();
+	dsb(ish);
 	isb();
 
 	exit_vmid_context(&cxt);
@@ -135,6 +136,7 @@ void __kvm_tlb_flush_vmid_ipa_nsh(struct kvm_s2_mmu *mmu,
 	 * Instead, we invalidate Stage-2 for this IPA, and the
 	 * whole of Stage-1. Weep...
 	 */
+	ipa >>= 12;
 	__tlbi_level(ipas2e1, ipa, level);
 
 	/*
@@ -174,7 +176,7 @@ void __kvm_tlb_flush_vmid_range(struct kvm_s2_mmu *mmu,
 
 	dsb(ish);
 	__tlbi(vmalle1is);
-	__tlbi_sync_s1ish_hyp();
+	dsb(ish);
 	isb();
 
 	exit_vmid_context(&cxt);
@@ -190,7 +192,7 @@ void __kvm_tlb_flush_vmid(struct kvm_s2_mmu *mmu)
 	enter_vmid_context(mmu, &cxt);
 
 	__tlbi(vmalls12e1is);
-	__tlbi_sync_s1ish_hyp();
+	dsb(ish);
 	isb();
 
 	exit_vmid_context(&cxt);
@@ -215,7 +217,7 @@ void __kvm_flush_vm_context(void)
 {
 	dsb(ishst);
 	__tlbi(alle1is);
-	__tlbi_sync_s1ish_hyp();
+	dsb(ish);
 }
 
 /*
@@ -356,7 +358,7 @@ int __kvm_tlbi_s1e2(struct kvm_s2_mmu *mmu, u64 va, u64 sys_encoding)
 	default:
 		ret = -EINVAL;
 	}
-	__tlbi_sync_s1ish_hyp();
+	dsb(ish);
 	isb();
 
 	if (mmu)

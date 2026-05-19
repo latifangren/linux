@@ -413,21 +413,6 @@ Plane Panic Functions Reference
 .. kernel-doc:: drivers/gpu/drm/drm_panic.c
    :export:
 
-Colorop Abstraction
-===================
-
-.. kernel-doc:: drivers/gpu/drm/drm_colorop.c
-   :doc: overview
-
-Colorop Functions Reference
----------------------------
-
-.. kernel-doc:: include/drm/drm_colorop.h
-   :internal:
-
-.. kernel-doc:: drivers/gpu/drm/drm_colorop.c
-   :export:
-
 Display Modes Function Reference
 ================================
 

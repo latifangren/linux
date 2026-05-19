@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 1999 - 2024 Intel Corporation. */
+/* Copyright(c) 1999 - 2018 Intel Corporation. */
 
 #include <linux/pci.h>
 #include <linux/delay.h>
@@ -1117,7 +1117,7 @@ int ixgbe_setup_phy_link_generic(struct ixgbe_hw *hw)
 	hw->phy.ops.read_reg(hw, IXGBE_MII_AUTONEG_VENDOR_PROVISION_1_REG,
 			     MDIO_MMD_AN, &autoneg_reg);
 
-	if (hw->mac.type == ixgbe_mac_X550 || hw->mac.type == ixgbe_mac_e610) {
+	if (hw->mac.type == ixgbe_mac_X550) {
 		/* Set or unset auto-negotiation 5G advertisement */
 		autoneg_reg &= ~IXGBE_MII_5GBASE_T_ADVERTISE;
 		if ((hw->phy.autoneg_advertised & IXGBE_LINK_SPEED_5GB_FULL) &&
@@ -1233,7 +1233,6 @@ static int ixgbe_get_copper_speeds_supported(struct ixgbe_hw *hw)
 
 	switch (hw->mac.type) {
 	case ixgbe_mac_X550:
-	case ixgbe_mac_e610:
 		hw->phy.speeds_supported |= IXGBE_LINK_SPEED_2_5GB_FULL;
 		hw->phy.speeds_supported |= IXGBE_LINK_SPEED_5GB_FULL;
 		break;
@@ -1323,7 +1322,7 @@ int ixgbe_check_phy_link_tnx(struct ixgbe_hw *hw, ixgbe_link_speed *speed,
  *	@hw: pointer to hardware structure
  *
  *	Restart autonegotiation and PHY and waits for completion.
- *	This function always returns success, this is necessary since
+ *      This function always returns success, this is nessary since
  *	it is called via a function pointer that could call other
  *	functions that could return an error.
  **/
@@ -1534,10 +1533,8 @@ int ixgbe_identify_sfp_module_generic(struct ixgbe_hw *hw)
 	struct ixgbe_adapter *adapter = hw->back;
 	u8 oui_bytes[3] = {0, 0, 0};
 	u8 bitrate_nominal = 0;
-	u8 sm_length_100m = 0;
 	u8 comp_codes_10g = 0;
 	u8 comp_codes_1g = 0;
-	u8 sm_length_km = 0;
 	u16 enforce_sfp = 0;
 	u32 vendor_oui = 0;
 	u8 identifier = 0;
@@ -1680,33 +1677,6 @@ int ixgbe_identify_sfp_module_generic(struct ixgbe_hw *hw)
 			else
 				hw->phy.sfp_type =
 					ixgbe_sfp_type_1g_bx_core1;
-		/* Support Ethernet 10G-BX, checking the Bit Rate
-		 * Nominal Value as per SFF-8472 to be 12.5 Gb/s (67h) and
-		 * Single Mode fibre with at least 1km link length
-		 */
-		} else if ((!comp_codes_10g) && (bitrate_nominal == 0x67) &&
-			   (!(cable_tech & IXGBE_SFF_DA_PASSIVE_CABLE)) &&
-			   (!(cable_tech & IXGBE_SFF_DA_ACTIVE_CABLE))) {
-			status = hw->phy.ops.read_i2c_eeprom(hw,
-					    IXGBE_SFF_SM_LENGTH_KM,
-					    &sm_length_km);
-			if (status != 0)
-				goto err_read_i2c_eeprom;
-			status = hw->phy.ops.read_i2c_eeprom(hw,
-					    IXGBE_SFF_SM_LENGTH_100M,
-					    &sm_length_100m);
-			if (status != 0)
-				goto err_read_i2c_eeprom;
-			if (sm_length_km > 0 || sm_length_100m >= 10) {
-				if (hw->bus.lan_id == 0)
-					hw->phy.sfp_type =
-						ixgbe_sfp_type_10g_bx_core0;
-				else
-					hw->phy.sfp_type =
-						ixgbe_sfp_type_10g_bx_core1;
-			} else {
-				hw->phy.sfp_type = ixgbe_sfp_type_unknown;
-			}
 		} else {
 			hw->phy.sfp_type = ixgbe_sfp_type_unknown;
 		}
@@ -1797,9 +1767,7 @@ int ixgbe_identify_sfp_module_generic(struct ixgbe_hw *hw)
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core0 ||
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core1 ||
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core0 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core1 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_10g_bx_core0 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_10g_bx_core1)) {
+	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core1)) {
 		hw->phy.type = ixgbe_phy_sfp_unsupported;
 		return -EOPNOTSUPP;
 	}
@@ -1817,9 +1785,7 @@ int ixgbe_identify_sfp_module_generic(struct ixgbe_hw *hw)
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core0 ||
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_sx_core1 ||
 	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core0 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core1 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_10g_bx_core0 ||
-	      hw->phy.sfp_type == ixgbe_sfp_type_10g_bx_core1)) {
+	      hw->phy.sfp_type == ixgbe_sfp_type_1g_bx_core1)) {
 		/* Make sure we're a supported PHY type */
 		if (hw->phy.type == ixgbe_phy_sfp_intel)
 			return 0;
@@ -2049,22 +2015,20 @@ int ixgbe_get_sfp_init_sequence_offsets(struct ixgbe_hw *hw,
 		return -EOPNOTSUPP;
 
 	/*
-	 * Limiting active cables, 10G BX and 1G Phys must be initialized as
+	 * Limiting active cables and 1G Phys must be initialized as
 	 * SR modules
 	 */
 	if (sfp_type == ixgbe_sfp_type_da_act_lmt_core0 ||
 	    sfp_type == ixgbe_sfp_type_1g_lx_core0 ||
 	    sfp_type == ixgbe_sfp_type_1g_cu_core0 ||
 	    sfp_type == ixgbe_sfp_type_1g_sx_core0 ||
-	    sfp_type == ixgbe_sfp_type_1g_bx_core0 ||
-	    sfp_type == ixgbe_sfp_type_10g_bx_core0)
+	    sfp_type == ixgbe_sfp_type_1g_bx_core0)
 		sfp_type = ixgbe_sfp_type_srlr_core0;
 	else if (sfp_type == ixgbe_sfp_type_da_act_lmt_core1 ||
 		 sfp_type == ixgbe_sfp_type_1g_lx_core1 ||
 		 sfp_type == ixgbe_sfp_type_1g_cu_core1 ||
 		 sfp_type == ixgbe_sfp_type_1g_sx_core1 ||
-		 sfp_type == ixgbe_sfp_type_1g_bx_core1 ||
-		 sfp_type == ixgbe_sfp_type_10g_bx_core1)
+		 sfp_type == ixgbe_sfp_type_1g_bx_core1)
 		sfp_type = ixgbe_sfp_type_srlr_core1;
 
 	/* Read offset to PHY init contents */

@@ -13,6 +13,7 @@
 #include <linux/string_helpers.h>
 #include <linux/idr.h>
 #include <linux/blk-mq.h>
+#include <linux/blk-mq-virtio.h>
 #include <linux/numa.h>
 #include <linux/vmalloc.h>
 #include <uapi/linux/virtio_ring.h>
@@ -168,7 +169,7 @@ static int virtblk_setup_discard_write_zeroes_erase(struct request *req, bool un
 	if (unmap)
 		flags |= VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP;
 
-	range = kmalloc_objs(*range, segments, GFP_ATOMIC);
+	range = kmalloc_array(segments, sizeof(*range), GFP_ATOMIC);
 	if (!range)
 		return -ENOMEM;
 
@@ -226,7 +227,7 @@ static int virtblk_map_data(struct blk_mq_hw_ctx *hctx, struct request *req,
 	if (unlikely(err))
 		return -ENOMEM;
 
-	return blk_rq_map_sg(req, vbr->sg_table.sgl);
+	return blk_rq_map_sg(hctx->queue, req, vbr->sg_table.sgl);
 }
 
 static void virtblk_cleanup_cmd(struct request *req)
@@ -571,7 +572,7 @@ static int virtblk_submit_zone_report(struct virtio_blk *vblk,
 	vbr->out_hdr.type = cpu_to_virtio32(vblk->vdev, VIRTIO_BLK_T_ZONE_REPORT);
 	vbr->out_hdr.sector = cpu_to_virtio64(vblk->vdev, sector);
 
-	err = blk_rq_map_kern(req, report_buf, report_len, GFP_KERNEL);
+	err = blk_rq_map_kern(q, req, report_buf, report_len, GFP_KERNEL);
 	if (err)
 		goto out;
 
@@ -584,8 +585,7 @@ out:
 
 static int virtblk_parse_zone(struct virtio_blk *vblk,
 			       struct virtio_blk_zone_descriptor *entry,
-			       unsigned int idx,
-			       struct blk_report_zones_args *args)
+			       unsigned int idx, report_zones_cb cb, void *data)
 {
 	struct blk_zone zone = { };
 
@@ -651,12 +651,12 @@ static int virtblk_parse_zone(struct virtio_blk *vblk,
 	 * The callback below checks the validity of the reported
 	 * entry data, no need to further validate it here.
 	 */
-	return disk_report_zone(vblk->disk, &zone, idx, args);
+	return cb(&zone, idx, data);
 }
 
 static int virtblk_report_zones(struct gendisk *disk, sector_t sector,
-				 unsigned int nr_zones,
-				 struct blk_report_zones_args *args)
+				 unsigned int nr_zones, report_zones_cb cb,
+				 void *data)
 {
 	struct virtio_blk *vblk = disk->private_data;
 	struct virtio_blk_zone_report *report;
@@ -694,7 +694,7 @@ static int virtblk_report_zones(struct gendisk *disk, sector_t sector,
 
 		for (i = 0; i < nz && zone_idx < nr_zones; i++) {
 			ret = virtblk_parse_zone(vblk, &report->zones[i],
-						 zone_idx, args);
+						 zone_idx, cb, data);
 			if (ret)
 				goto fail_report;
 
@@ -779,7 +779,7 @@ static int virtblk_read_zoned_limits(struct virtio_blk *vblk,
 			wg, v);
 		return -ENODEV;
 	}
-	lim->max_hw_zone_append_sectors = v;
+	lim->max_zone_append_sectors = v;
 	dev_dbg(&vdev->dev, "max append sectors = %u\n", v);
 
 	return 0;
@@ -818,7 +818,7 @@ static int virtblk_get_id(struct gendisk *disk, char *id_str)
 	vbr->out_hdr.type = cpu_to_virtio32(vblk->vdev, VIRTIO_BLK_T_GET_ID);
 	vbr->out_hdr.sector = 0;
 
-	err = blk_rq_map_kern(req, id_str, VIRTIO_BLK_ID_BYTES, GFP_KERNEL);
+	err = blk_rq_map_kern(q, req, id_str, VIRTIO_BLK_ID_BYTES, GFP_KERNEL);
 	if (err)
 		goto out;
 
@@ -830,9 +830,9 @@ out:
 }
 
 /* We provide getgeo only to please some old bootloader/partitioning tools */
-static int virtblk_getgeo(struct gendisk *disk, struct hd_geometry *geo)
+static int virtblk_getgeo(struct block_device *bd, struct hd_geometry *geo)
 {
-	struct virtio_blk *vblk = disk->private_data;
+	struct virtio_blk *vblk = bd->bd_disk->private_data;
 	int ret = 0;
 
 	mutex_lock(&vblk->vdev_mutex);
@@ -854,7 +854,7 @@ static int virtblk_getgeo(struct gendisk *disk, struct hd_geometry *geo)
 		/* some standard values, similar to sd */
 		geo->heads = 1 << 6;
 		geo->sectors = 1 << 5;
-		geo->cylinders = get_capacity(disk) >> 11;
+		geo->cylinders = get_capacity(bd->bd_disk) >> 11;
 	}
 out:
 	mutex_unlock(&vblk->vdev_mutex);
@@ -977,8 +977,9 @@ static int init_vq(struct virtio_blk *vblk)
 		return -EINVAL;
 	}
 
-	num_vqs = blk_mq_num_possible_queues(
-			min_not_zero(num_request_queues, num_vqs));
+	num_vqs = min_t(unsigned int,
+			min_not_zero(num_request_queues, nr_cpu_ids),
+			num_vqs);
 
 	num_poll_vqs = min_t(unsigned int, poll_queues, num_vqs - 1);
 
@@ -991,12 +992,12 @@ static int init_vq(struct virtio_blk *vblk)
 				vblk->io_queues[HCTX_TYPE_READ],
 				vblk->io_queues[HCTX_TYPE_POLL]);
 
-	vblk->vqs = kmalloc_objs(*vblk->vqs, num_vqs);
+	vblk->vqs = kmalloc_array(num_vqs, sizeof(*vblk->vqs), GFP_KERNEL);
 	if (!vblk->vqs)
 		return -ENOMEM;
 
-	vqs_info = kzalloc_objs(*vqs_info, num_vqs);
-	vqs = kmalloc_objs(*vqs, num_vqs);
+	vqs_info = kcalloc(num_vqs, sizeof(*vqs_info), GFP_KERNEL);
+	vqs = kmalloc_array(num_vqs, sizeof(*vqs), GFP_KERNEL);
 	if (!vqs_info || !vqs) {
 		err = -ENOMEM;
 		goto out;
@@ -1027,13 +1028,8 @@ static int init_vq(struct virtio_blk *vblk)
 out:
 	kfree(vqs);
 	kfree(vqs_info);
-	if (err) {
+	if (err)
 		kfree(vblk->vqs);
-		/*
-		 * Set to NULL to prevent freeing vqs again during freezing.
-		 */
-		vblk->vqs = NULL;
-	}
 	return err;
 }
 
@@ -1183,8 +1179,7 @@ static void virtblk_map_queues(struct blk_mq_tag_set *set)
 		if (i == HCTX_TYPE_POLL)
 			blk_mq_map_queues(&set->map[i]);
 		else
-			blk_mq_map_hw_queues(&set->map[i],
-					     &vblk->vdev->dev, 0);
+			blk_mq_virtio_map_queues(&set->map[i], vblk->vdev, 0);
 	}
 }
 
@@ -1455,7 +1450,7 @@ static int virtblk_probe(struct virtio_device *vdev)
 		goto out;
 	index = err;
 
-	vdev->priv = vblk = kmalloc_obj(*vblk);
+	vdev->priv = vblk = kmalloc(sizeof(*vblk), GFP_KERNEL);
 	if (!vblk) {
 		err = -ENOMEM;
 		goto out_free_index;
@@ -1485,6 +1480,7 @@ static int virtblk_probe(struct virtio_device *vdev)
 	vblk->tag_set.ops = &virtio_mq_ops;
 	vblk->tag_set.queue_depth = queue_depth;
 	vblk->tag_set.numa_node = NUMA_NO_NODE;
+	vblk->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 	vblk->tag_set.cmd_size =
 		sizeof(struct virtblk_req) +
 		sizeof(struct scatterlist) * VIRTIO_BLK_INLINE_SG_CNT;
@@ -1585,16 +1581,16 @@ static void virtblk_remove(struct virtio_device *vdev)
 	put_disk(vblk->disk);
 }
 
-static int virtblk_freeze_priv(struct virtio_device *vdev)
+#ifdef CONFIG_PM_SLEEP
+static int virtblk_freeze(struct virtio_device *vdev)
 {
 	struct virtio_blk *vblk = vdev->priv;
 	struct request_queue *q = vblk->disk->queue;
-	unsigned int memflags;
 
 	/* Ensure no requests in virtqueues before deleting vqs. */
-	memflags = blk_mq_freeze_queue(q);
+	blk_mq_freeze_queue(q);
 	blk_mq_quiesce_queue_nowait(q);
-	blk_mq_unfreeze_queue(q, memflags);
+	blk_mq_unfreeze_queue(q);
 
 	/* Ensure we don't receive any more interrupts */
 	virtio_reset_device(vdev);
@@ -1604,17 +1600,11 @@ static int virtblk_freeze_priv(struct virtio_device *vdev)
 
 	vdev->config->del_vqs(vdev);
 	kfree(vblk->vqs);
-	/*
-	 * Set to NULL to prevent freeing vqs again after a failed vqs
-	 * allocation during resume. Note that kfree() already handles NULL
-	 * pointers safely.
-	 */
-	vblk->vqs = NULL;
 
 	return 0;
 }
 
-static int virtblk_restore_priv(struct virtio_device *vdev)
+static int virtblk_restore(struct virtio_device *vdev)
 {
 	struct virtio_blk *vblk = vdev->priv;
 	int ret;
@@ -1628,28 +1618,7 @@ static int virtblk_restore_priv(struct virtio_device *vdev)
 
 	return 0;
 }
-
-#ifdef CONFIG_PM_SLEEP
-static int virtblk_freeze(struct virtio_device *vdev)
-{
-	return virtblk_freeze_priv(vdev);
-}
-
-static int virtblk_restore(struct virtio_device *vdev)
-{
-	return virtblk_restore_priv(vdev);
-}
 #endif
-
-static int virtblk_reset_prepare(struct virtio_device *vdev)
-{
-	return virtblk_freeze_priv(vdev);
-}
-
-static int virtblk_reset_done(struct virtio_device *vdev)
-{
-	return virtblk_restore_priv(vdev);
-}
 
 static const struct virtio_device_id id_table[] = {
 	{ VIRTIO_ID_BLOCK, VIRTIO_DEV_ANY_ID },
@@ -1686,15 +1655,13 @@ static struct virtio_driver virtio_blk = {
 	.freeze				= virtblk_freeze,
 	.restore			= virtblk_restore,
 #endif
-	.reset_prepare			= virtblk_reset_prepare,
-	.reset_done			= virtblk_reset_done,
 };
 
 static int __init virtio_blk_init(void)
 {
 	int error;
 
-	virtblk_wq = alloc_workqueue("virtio-blk", WQ_PERCPU, 0);
+	virtblk_wq = alloc_workqueue("virtio-blk", 0, 0);
 	if (!virtblk_wq)
 		return -ENOMEM;
 

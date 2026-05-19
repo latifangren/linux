@@ -89,13 +89,13 @@ enum dpu_hw_cdwn_op_mode_method_h_v {
  */
 struct dpu_hw_cdm_ops {
 	/**
-	 * @enable: Enable the CDM module
+	 * Enable the CDM module
 	 * @cdm         Pointer to chroma down context
 	 */
 	int (*enable)(struct dpu_hw_cdm *cdm, struct dpu_hw_cdm_cfg *cfg);
 
 	/**
-	 * @bind_pingpong_blk: Enable/disable the connection with pingpong
+	 * Enable/disable the connection with pingpong
 	 * @cdm         Pointer to chroma down context
 	 * @pp          pingpong block id.
 	 */
@@ -122,6 +122,14 @@ struct dpu_hw_cdm {
 	struct dpu_hw_cdm_ops ops;
 };
 
+/**
+ * dpu_hw_cdm_init - initializes the cdm hw driver object.
+ * should be called once before accessing every cdm.
+ * @dev: DRM device handle
+ * @cdm: CDM catalog entry for which driver object is required
+ * @addr :   mapped register io address of MDSS
+ * @mdss_rev: mdss hw core revision
+ */
 struct dpu_hw_cdm *dpu_hw_cdm_init(struct drm_device *dev,
 				   const struct dpu_cdm_cfg *cdm, void __iomem *addr,
 				   const struct dpu_mdss_version *mdss_rev);

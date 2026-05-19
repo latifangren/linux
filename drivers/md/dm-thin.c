@@ -395,13 +395,13 @@ static void begin_discard(struct discard_op *op, struct thin_c *tc, struct bio *
 	op->bio = NULL;
 }
 
-static void issue_discard(struct discard_op *op, dm_block_t data_b, dm_block_t data_e)
+static int issue_discard(struct discard_op *op, dm_block_t data_b, dm_block_t data_e)
 {
 	struct thin_c *tc = op->tc;
 	sector_t s = block_to_sectors(tc->pool, data_b);
 	sector_t len = block_to_sectors(tc->pool, data_e - data_b);
 
-	__blkdev_issue_discard(tc->pool_dev->bdev, s, len, GFP_NOIO, &op->bio);
+	return __blkdev_issue_discard(tc->pool_dev->bdev, s, len, GFP_NOIO, &op->bio);
 }
 
 static void end_discard(struct discard_op *op, int r)
@@ -1113,7 +1113,9 @@ static void passdown_double_checking_shared_status(struct dm_thin_new_mapping *m
 				break;
 		}
 
-		issue_discard(&op, b, e);
+		r = issue_discard(&op, b, e);
+		if (r)
+			goto out;
 
 		b = e;
 	}
@@ -1186,8 +1188,8 @@ static void process_prepared_discard_passdown_pt1(struct dm_thin_new_mapping *m)
 		struct discard_op op;
 
 		begin_discard(&op, tc, discard_parent);
-		issue_discard(&op, m->data_block, data_end);
-		end_discard(&op, 0);
+		r = issue_discard(&op, m->data_block, data_end);
+		end_discard(&op, r);
 	}
 }
 
@@ -2840,7 +2842,7 @@ static void disable_discard_passdown_if_not_supported(struct pool_c *pt)
 {
 	struct pool *pool = pt->pool;
 	struct block_device *data_bdev = pt->data_dev->bdev;
-	struct queue_limits *data_limits = bdev_limits(data_bdev);
+	struct queue_limits *data_limits = &bdev_get_queue(data_bdev)->limits;
 	const char *reason = NULL;
 
 	if (!pt->adjusted_pf.discard_passdown)
@@ -2949,7 +2951,7 @@ static struct pool *pool_create(struct mapped_device *pool_md,
 		return ERR_CAST(pmd);
 	}
 
-	pool = kzalloc_obj(*pool);
+	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
 	if (!pool) {
 		*error = "Error allocating memory for pool";
 		err_p = ERR_PTR(-ENOMEM);
@@ -3029,8 +3031,8 @@ static struct pool *pool_create(struct mapped_device *pool_md,
 	}
 
 	pool->cell_sort_array =
-		vmalloc_array(CELL_SORT_ARRAY_SIZE,
-			      sizeof(*pool->cell_sort_array));
+		vmalloc(array_size(CELL_SORT_ARRAY_SIZE,
+				   sizeof(*pool->cell_sort_array)));
 	if (!pool->cell_sort_array) {
 		*error = "Error allocating cell sort array";
 		err_p = ERR_PTR(-ENOMEM);
@@ -3354,7 +3356,7 @@ static int pool_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto out;
 	}
 
-	pt = kzalloc_obj(*pt);
+	pt = kzalloc(sizeof(*pt), GFP_KERNEL);
 	if (!pt) {
 		r = -ENOMEM;
 		goto out;
@@ -4109,8 +4111,8 @@ static void pool_io_hints(struct dm_target *ti, struct queue_limits *limits)
 static struct target_type pool_target = {
 	.name = "thin-pool",
 	.features = DM_TARGET_SINGLETON | DM_TARGET_ALWAYS_WRITEABLE |
-		    DM_TARGET_IMMUTABLE | DM_TARGET_PASSES_CRYPTO,
-	.version = {1, 24, 0},
+		    DM_TARGET_IMMUTABLE,
+	.version = {1, 23, 0},
 	.module = THIS_MODULE,
 	.ctr = pool_ctr,
 	.dtr = pool_dtr,
@@ -4193,7 +4195,7 @@ static int thin_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		goto out_unlock;
 	}
 
-	tc = ti->private = kzalloc_obj(*tc);
+	tc = ti->private = kzalloc(sizeof(*tc), GFP_KERNEL);
 	if (!tc) {
 		ti->error = "Out of memory";
 		r = -ENOMEM;
@@ -4381,8 +4383,11 @@ static void thin_postsuspend(struct dm_target *ti)
 {
 	struct thin_c *tc = ti->private;
 
-	if (dm_noflush_suspending(ti))
-		noflush_work(tc, do_noflush_stop);
+	/*
+	 * The dm_noflush_suspending flag has been cleared by now, so
+	 * unfortunately we must always run this.
+	 */
+	noflush_work(tc, do_noflush_stop);
 }
 
 static int thin_preresume(struct dm_target *ti)
@@ -4492,8 +4497,7 @@ static void thin_io_hints(struct dm_target *ti, struct queue_limits *limits)
 
 static struct target_type thin_target = {
 	.name = "thin",
-	.features = DM_TARGET_PASSES_CRYPTO,
-	.version = {1, 24, 0},
+	.version = {1, 23, 0},
 	.module	= THIS_MODULE,
 	.ctr = thin_ctr,
 	.dtr = thin_dtr,

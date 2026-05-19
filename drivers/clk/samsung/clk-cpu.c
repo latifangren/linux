@@ -133,7 +133,7 @@ static void wait_until_divider_stable(void __iomem *div_reg, unsigned long mask)
 	if (!(readl(div_reg) & mask))
 		return;
 
-	pr_err("%s: timeout in divider stabilization\n", __func__);
+	pr_err("%s: timeout in divider stablization\n", __func__);
 }
 
 /*
@@ -243,7 +243,7 @@ static int exynos_cpuclk_pre_rate_change(struct clk_notifier_data *ndata,
 		if (cpuclk->flags & CLK_CPU_NEEDS_DEBUG_ALT_DIV) {
 			/*
 			 * In Exynos4210, ATB clock parent is also mout_core. So
-			 * ATB clock also needs to be maintained at safe speed.
+			 * ATB clock also needs to be mantained at safe speed.
 			 */
 			alt_div |= E4210_DIV0_ATB_MASK;
 			alt_div_mask |= E4210_DIV0_ATB_MASK;
@@ -567,14 +567,12 @@ static int exynos850_cpuclk_post_rate_change(struct clk_notifier_data *ndata,
 /* -------------------------------------------------------------------------- */
 
 /* Common round rate callback usable for all types of CPU clocks */
-static int exynos_cpuclk_determine_rate(struct clk_hw *hw,
-					struct clk_rate_request *req)
+static long exynos_cpuclk_round_rate(struct clk_hw *hw, unsigned long drate,
+				     unsigned long *prate)
 {
 	struct clk_hw *parent = clk_hw_get_parent(hw);
-	req->best_parent_rate = clk_hw_round_rate(parent, req->rate);
-	req->rate = req->best_parent_rate;
-
-	return 0;
+	*prate = clk_hw_round_rate(parent, drate);
+	return *prate;
 }
 
 /* Common recalc rate callback usable for all types of CPU clocks */
@@ -593,7 +591,7 @@ static unsigned long exynos_cpuclk_recalc_rate(struct clk_hw *hw,
 
 static const struct clk_ops exynos_cpuclk_clk_ops = {
 	.recalc_rate = exynos_cpuclk_recalc_rate,
-	.determine_rate = exynos_cpuclk_determine_rate,
+	.round_rate = exynos_cpuclk_round_rate,
 };
 
 /*
@@ -660,7 +658,7 @@ static int __init exynos_register_cpu_clock(struct samsung_clk_provider *ctx,
 		return -EINVAL;
 	}
 
-	cpuclk = kzalloc_obj(*cpuclk);
+	cpuclk = kzalloc(sizeof(*cpuclk), GFP_KERNEL);
 	if (!cpuclk)
 		return -ENOMEM;
 

@@ -918,7 +918,7 @@ static int dlfb_ops_open(struct fb_info *info, int user)
 
 		struct fb_deferred_io *fbdefio;
 
-		fbdefio = kzalloc_obj(struct fb_deferred_io);
+		fbdefio = kzalloc(sizeof(struct fb_deferred_io), GFP_KERNEL);
 
 		if (fbdefio) {
 			fbdefio->delay = DL_DEFIO_WRITE_DELAY;
@@ -1167,7 +1167,7 @@ static const struct fb_ops dlfb_ops = {
 
 static void dlfb_deferred_vfree(struct dlfb_data *dlfb, void *mem)
 {
-	struct dlfb_deferred_free *d = kmalloc_obj(struct dlfb_deferred_free);
+	struct dlfb_deferred_free *d = kmalloc(sizeof(struct dlfb_deferred_free), GFP_KERNEL);
 	if (!d)
 		return;
 	d->mem = mem;
@@ -1419,7 +1419,7 @@ static ssize_t metrics_cpu_kcycles_used_show(struct device *fbdev,
 
 static ssize_t edid_show(
 			struct file *filp,
-			struct kobject *kobj, const struct bin_attribute *a,
+			struct kobject *kobj, struct bin_attribute *a,
 			 char *buf, loff_t off, size_t count) {
 	struct device *fbdev = kobj_to_dev(kobj);
 	struct fb_info *fb_info = dev_get_drvdata(fbdev);
@@ -1441,7 +1441,7 @@ static ssize_t edid_show(
 
 static ssize_t edid_store(
 			struct file *filp,
-			struct kobject *kobj, const struct bin_attribute *a,
+			struct kobject *kobj, struct bin_attribute *a,
 			char *src, loff_t src_off, size_t src_size) {
 	struct device *fbdev = kobj_to_dev(kobj);
 	struct fb_info *fb_info = dev_get_drvdata(fbdev);
@@ -1609,7 +1609,7 @@ static int dlfb_usb_probe(struct usb_interface *intf,
 	static u8 out_ep[] = {OUT_EP_NUM + USB_DIR_OUT, 0};
 
 	/* usb initialization */
-	dlfb = kzalloc_obj(*dlfb);
+	dlfb = kzalloc(sizeof(*dlfb), GFP_KERNEL);
 	if (!dlfb) {
 		dev_err(&intf->dev, "%s: failed to allocate dlfb\n", __func__);
 		return -ENOMEM;
@@ -1855,7 +1855,7 @@ retry:
 	dlfb->urbs.available = 0;
 
 	while (dlfb->urbs.count * size < wanted_size) {
-		unode = kzalloc_obj(*unode);
+		unode = kzalloc(sizeof(*unode), GFP_KERNEL);
 		if (!unode)
 			break;
 		unode->dlfb = dlfb;

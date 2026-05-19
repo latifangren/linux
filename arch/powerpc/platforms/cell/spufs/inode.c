@@ -127,7 +127,7 @@ spufs_new_file(struct super_block *sb, struct dentry *dentry,
 	inode->i_fop = fops;
 	inode->i_size = size;
 	inode->i_private = SPUFS_I(inode)->i_ctx = get_spu_context(ctx);
-	d_make_persistent(dentry, inode);
+	d_add(dentry, inode);
 out:
 	return ret;
 }
@@ -143,13 +143,42 @@ spufs_evict_inode(struct inode *inode)
 		put_spu_gang(ei->i_gang);
 }
 
-/* Caller must hold parent->i_mutex */
-static void spufs_rmdir(struct inode *parent, struct dentry *dir)
+static void spufs_prune_dir(struct dentry *dir)
 {
-	struct spu_context *ctx = SPUFS_I(d_inode(dir))->i_ctx;
+	struct dentry *dentry;
+	struct hlist_node *n;
 
-	locked_recursive_removal(dir, NULL);
-	spu_forget(ctx);
+	inode_lock(d_inode(dir));
+	hlist_for_each_entry_safe(dentry, n, &dir->d_children, d_sib) {
+		spin_lock(&dentry->d_lock);
+		if (simple_positive(dentry)) {
+			dget_dlock(dentry);
+			__d_drop(dentry);
+			spin_unlock(&dentry->d_lock);
+			simple_unlink(d_inode(dir), dentry);
+			/* XXX: what was dcache_lock protecting here? Other
+			 * filesystems (IB, configfs) release dcache_lock
+			 * before unlink */
+			dput(dentry);
+		} else {
+			spin_unlock(&dentry->d_lock);
+		}
+	}
+	shrink_dcache_parent(dir);
+	inode_unlock(d_inode(dir));
+}
+
+/* Caller must hold parent->i_mutex */
+static int spufs_rmdir(struct inode *parent, struct dentry *dir)
+{
+	/* remove all entries */
+	int res;
+	spufs_prune_dir(dir);
+	d_drop(dir);
+	res = simple_rmdir(parent, dir);
+	/* We have to give up the mm_struct */
+	spu_forget(SPUFS_I(d_inode(dir))->i_ctx);
+	return res;
 }
 
 static int spufs_fill_dir(struct dentry *dir,
@@ -163,9 +192,10 @@ static int spufs_fill_dir(struct dentry *dir,
 			return -ENOMEM;
 		ret = spufs_new_file(dir->d_sb, dentry, files->ops,
 					files->mode & mode, files->size, ctx);
-		dput(dentry);
-		if (ret)
+		if (ret) {
+			dput(dentry);
 			return ret;
+		}
 		files++;
 	}
 	return 0;
@@ -192,13 +222,15 @@ static int spufs_dir_close(struct inode *inode, struct file *file)
 {
 	struct inode *parent;
 	struct dentry *dir;
+	int ret;
 
 	dir = file->f_path.dentry;
 	parent = d_inode(dir->d_parent);
 
 	inode_lock_nested(parent, I_MUTEX_PARENT);
-	spufs_rmdir(parent, dir);
+	ret = spufs_rmdir(parent, dir);
 	inode_unlock(parent);
+	WARN_ON(ret);
 
 	unuse_gang(dir->d_parent);
 	return dcache_dir_close(inode, file);
@@ -240,10 +272,11 @@ spufs_mkdir(struct inode *dir, struct dentry *dentry, unsigned int flags,
 
 	inode_lock(inode);
 
+	dget(dentry);
 	inc_nlink(dir);
 	inc_nlink(inode);
 
-	d_make_persistent(dentry, inode);
+	d_instantiate(dentry, inode);
 
 	if (flags & SPU_CREATE_NOSCHED)
 		ret = spufs_fill_dir(dentry, spufs_dir_nosched_contents,
@@ -255,21 +288,32 @@ spufs_mkdir(struct inode *dir, struct dentry *dentry, unsigned int flags,
 		ret = spufs_fill_dir(dentry, spufs_dir_debug_contents,
 				mode, ctx);
 
-	inode_unlock(inode);
-
 	if (ret)
 		spufs_rmdir(dir, dentry);
+
+	inode_unlock(inode);
 
 	return ret;
 }
 
 static int spufs_context_open(const struct path *path)
 {
-	FD_PREPARE(fdf, 0, dentry_open(path, O_RDONLY, current_cred()));
-	if (fdf.err)
-		return fdf.err;
-	fd_prepare_file(fdf)->f_op = &spufs_context_fops;
-	return fd_publish(fdf);
+	int ret;
+	struct file *filp;
+
+	ret = get_unused_fd_flags(0);
+	if (ret < 0)
+		return ret;
+
+	filp = dentry_open(path, O_RDONLY, current_cred());
+	if (IS_ERR(filp)) {
+		put_unused_fd(ret);
+		return PTR_ERR(filp);
+	}
+
+	filp->f_op = &spufs_context_fops;
+	fd_install(ret, filp);
+	return ret;
 }
 
 static struct spu_context *
@@ -431,7 +475,7 @@ spufs_create_context(struct inode *inode, struct dentry *dentry,
 
 	ret = spufs_context_open(&path);
 	if (ret < 0)
-		spufs_rmdir(inode, dentry);
+		WARN_ON(spufs_rmdir(inode, dentry));
 
 out_aff_unlock:
 	if (affinity)
@@ -466,9 +510,10 @@ spufs_mkgang(struct inode *dir, struct dentry *dentry, umode_t mode)
 	inode->i_op = &simple_dir_inode_operations;
 	inode->i_fop = &simple_dir_operations;
 
+	d_instantiate(dentry, inode);
+	dget(dentry);
 	inc_nlink(dir);
-	inc_nlink(inode);
-	d_make_persistent(dentry, inode);
+	inc_nlink(d_inode(dentry));
 	return ret;
 
 out_iput:
@@ -494,15 +539,26 @@ static const struct file_operations spufs_gang_fops = {
 
 static int spufs_gang_open(const struct path *path)
 {
+	int ret;
+	struct file *filp;
+
+	ret = get_unused_fd_flags(0);
+	if (ret < 0)
+		return ret;
+
 	/*
 	 * get references for dget and mntget, will be released
 	 * in error path of *_open().
 	 */
-	FD_PREPARE(fdf, 0, dentry_open(path, O_RDONLY, current_cred()));
-	if (fdf.err)
-		return fdf.err;
-	fd_prepare_file(fdf)->f_op = &spufs_gang_fops;
-	return fd_publish(fdf);
+	filp = dentry_open(path, O_RDONLY, current_cred());
+	if (IS_ERR(filp)) {
+		put_unused_fd(ret);
+		return PTR_ERR(filp);
+	}
+
+	filp->f_op = &spufs_gang_fops;
+	fd_install(ret, filp);
+	return ret;
 }
 
 static int spufs_create_gang(struct inode *inode,
@@ -727,11 +783,11 @@ static int spufs_init_fs_context(struct fs_context *fc)
 	struct spufs_fs_context *ctx;
 	struct spufs_sb_info *sbi;
 
-	ctx = kzalloc_obj(struct spufs_fs_context);
+	ctx = kzalloc(sizeof(struct spufs_fs_context), GFP_KERNEL);
 	if (!ctx)
 		goto nomem;
 
-	sbi = kzalloc_obj(struct spufs_sb_info);
+	sbi = kzalloc(sizeof(struct spufs_sb_info), GFP_KERNEL);
 	if (!sbi)
 		goto nomem_ctx;
 
@@ -755,7 +811,7 @@ static struct file_system_type spufs_type = {
 	.name = "spufs",
 	.init_fs_context = spufs_init_fs_context,
 	.parameters	= spufs_fs_parameters,
-	.kill_sb = kill_anon_super,
+	.kill_sb = kill_litter_super,
 };
 MODULE_ALIAS_FS("spufs");
 

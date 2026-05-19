@@ -14,9 +14,8 @@
 
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/svc.h>
-
-#include "lockd.h"
-#include "share.h"
+#include <linux/lockd/lockd.h>
+#include <linux/lockd/share.h>
 
 static inline int
 nlm_cmp_owner(struct nlm_share *share, struct xdr_netobj *oh)
@@ -25,34 +24,24 @@ nlm_cmp_owner(struct nlm_share *share, struct xdr_netobj *oh)
 	    && !memcmp(share->s_owner.data, oh->data, oh->len);
 }
 
-/**
- * nlmsvc_share_file - create a share
- * @host: Network client peer
- * @file: File to be shared
- * @oh: Share owner handle
- * @access: Requested access mode
- * @mode: Requested file sharing mode
- *
- * Returns an NLM status code.
- */
 __be32
 nlmsvc_share_file(struct nlm_host *host, struct nlm_file *file,
-		  struct xdr_netobj *oh, u32 access, u32 mode)
+			struct nlm_args *argp)
 {
 	struct nlm_share	*share;
+	struct xdr_netobj	*oh = &argp->lock.oh;
 	u8			*ohdata;
-
-	if (nlmsvc_file_cannot_lock(file))
-		return nlm_lck_denied_nolocks;
 
 	for (share = file->f_shares; share; share = share->s_next) {
 		if (share->s_host == host && nlm_cmp_owner(share, oh))
 			goto update;
-		if ((access & share->s_mode) || (mode & share->s_access))
+		if ((argp->fsm_access & share->s_mode)
+		 || (argp->fsm_mode   & share->s_access ))
 			return nlm_lck_denied;
 	}
 
-	share = kmalloc(sizeof(*share) + oh->len, GFP_KERNEL);
+	share = kmalloc(sizeof(*share) + oh->len,
+						GFP_KERNEL);
 	if (share == NULL)
 		return nlm_lck_denied_nolocks;
 
@@ -68,27 +57,20 @@ nlmsvc_share_file(struct nlm_host *host, struct nlm_file *file,
 	file->f_shares      = share;
 
 update:
-	share->s_access = access;
-	share->s_mode = mode;
+	share->s_access = argp->fsm_access;
+	share->s_mode   = argp->fsm_mode;
 	return nlm_granted;
 }
 
-/**
- * nlmsvc_unshare_file - delete a share
- * @host: Network client peer
- * @file: File to be unshared
- * @oh: Share owner handle
- *
- * Returns an NLM status code.
+/*
+ * Delete a share.
  */
 __be32
 nlmsvc_unshare_file(struct nlm_host *host, struct nlm_file *file,
-		    struct xdr_netobj *oh)
+			struct nlm_args *argp)
 {
 	struct nlm_share	*share, **shpp;
-
-	if (nlmsvc_file_cannot_lock(file))
-		return nlm_lck_denied_nolocks;
+	struct xdr_netobj	*oh = &argp->lock.oh;
 
 	for (shpp = &file->f_shares; (share = *shpp) != NULL;
 					shpp = &share->s_next) {

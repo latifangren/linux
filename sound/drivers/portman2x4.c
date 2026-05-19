@@ -88,7 +88,7 @@ static int portman_create(struct snd_card *card,
 
 	*rchip = NULL;
 
-	pm = kzalloc_obj(struct portman);
+	pm = kzalloc(sizeof(struct portman), GFP_KERNEL);
 	if (pm == NULL) 
 		return -ENOMEM;
 
@@ -496,25 +496,29 @@ static void snd_portman_midi_input_trigger(struct snd_rawmidi_substream *substre
 					   int up)
 {
 	struct portman *pm = substream->rmidi->private_data;
+	unsigned long flags;
 
-	guard(spinlock_irqsave)(&pm->reg_lock);
+	spin_lock_irqsave(&pm->reg_lock, flags);
 	if (up)
 		pm->mode[substream->number] |= PORTMAN2X4_MODE_INPUT_TRIGGERED;
 	else
 		pm->mode[substream->number] &= ~PORTMAN2X4_MODE_INPUT_TRIGGERED;
+	spin_unlock_irqrestore(&pm->reg_lock, flags);
 }
 
 static void snd_portman_midi_output_trigger(struct snd_rawmidi_substream *substream,
 					    int up)
 {
 	struct portman *pm = substream->rmidi->private_data;
+	unsigned long flags;
 	unsigned char byte;
 
-	guard(spinlock_irqsave)(&pm->reg_lock);
+	spin_lock_irqsave(&pm->reg_lock, flags);
 	if (up) {
 		while ((snd_rawmidi_transmit(substream, &byte, 1) == 1))
 			portman_write_midi(pm, substream->number, byte);
 	}
+	spin_unlock_irqrestore(&pm->reg_lock, flags);
 }
 
 static const struct snd_rawmidi_ops snd_portman_midi_output = {
@@ -545,7 +549,7 @@ static int snd_portman_rawmidi_create(struct snd_card *card)
 		return err;
 
 	rmidi->private_data = pm;
-	strscpy(rmidi->name, CARD_NAME);
+	strcpy(rmidi->name, CARD_NAME);
 	rmidi->info_flags = SNDRV_RAWMIDI_INFO_OUTPUT |
 		            SNDRV_RAWMIDI_INFO_INPUT |
                             SNDRV_RAWMIDI_INFO_DUPLEX;
@@ -586,7 +590,7 @@ static void snd_portman_interrupt(void *userdata)
 	unsigned char midivalue = 0;
 	struct portman *pm = ((struct snd_card*)userdata)->private_data;
 
-	guard(spinlock)(&pm->reg_lock);
+	spin_lock(&pm->reg_lock);
 
 	/* While any input data is waiting */
 	while ((portman_read_status(pm) & INT_REQ) == INT_REQ) {
@@ -613,6 +617,8 @@ static void snd_portman_interrupt(void *userdata)
 		}
 
 	}
+
+	spin_unlock(&pm->reg_lock);
 }
 
 static void snd_portman_attach(struct parport *p)
@@ -708,8 +714,8 @@ static int snd_portman_probe(struct platform_device *pdev)
 		dev_dbg(&pdev->dev, "Cannot create card\n");
 		return err;
 	}
-	strscpy(card->driver, DRIVER_NAME);
-	strscpy(card->shortname, CARD_NAME);
+	strcpy(card->driver, DRIVER_NAME);
+	strcpy(card->shortname, CARD_NAME);
 	sprintf(card->longname,  "%s at 0x%lx, irq %i", 
 		card->shortname, p->base, p->irq);
 
@@ -788,7 +794,7 @@ static void snd_portman_remove(struct platform_device *pdev)
 
 static struct platform_driver snd_portman_driver = {
 	.probe  = snd_portman_probe,
-	.remove = snd_portman_remove,
+	.remove_new = snd_portman_remove,
 	.driver = {
 		.name = PLATFORM_DRIVER,
 	}

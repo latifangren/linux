@@ -34,6 +34,8 @@ properties:
   vddio-supply:
     description: I/O voltage rail
 
+  port: true
+
 required:
   - compatible
   - reg

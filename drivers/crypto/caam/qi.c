@@ -181,7 +181,7 @@ static struct qman_fq *create_caam_req_fq(struct device *qidev,
 	struct qman_fq *req_fq;
 	struct qm_mcc_initfq opts;
 
-	req_fq = kzalloc_obj(*req_fq, GFP_ATOMIC);
+	req_fq = kzalloc(sizeof(*req_fq), GFP_ATOMIC);
 	if (!req_fq)
 		return ERR_PTR(-ENOMEM);
 
@@ -416,7 +416,7 @@ struct caam_drv_ctx *caam_drv_ctx_init(struct device *qidev,
 		return ERR_PTR(-EINVAL);
 	}
 
-	drv_ctx = kzalloc_obj(*drv_ctx, GFP_ATOMIC);
+	drv_ctx = kzalloc(sizeof(*drv_ctx), GFP_ATOMIC);
 	if (!drv_ctx)
 		return ERR_PTR(-ENOMEM);
 
@@ -442,8 +442,11 @@ struct caam_drv_ctx *caam_drv_ctx_init(struct device *qidev,
 	if (!cpumask_test_cpu(*cpu, cpus)) {
 		int *pcpu = &get_cpu_var(last_cpu);
 
-		*pcpu = cpumask_next_wrap(*pcpu, cpus);
+		*pcpu = cpumask_next(*pcpu, cpus);
+		if (*pcpu >= nr_cpu_ids)
+			*pcpu = cpumask_first(cpus);
 		*cpu = *pcpu;
+
 		put_cpu_var(last_cpu);
 	}
 	drv_ctx->cpu = *cpu;
@@ -619,7 +622,7 @@ static int alloc_rsp_fq_cpu(struct device *qidev, unsigned int cpu)
 	struct qman_fq *fq;
 	int ret;
 
-	fq = kzalloc_obj(*fq);
+	fq = kzalloc(sizeof(*fq), GFP_KERNEL);
 	if (!fq)
 		return -ENOMEM;
 
@@ -730,7 +733,7 @@ static void free_caam_qi_pcpu_netdev(const cpumask_t *cpus)
 int caam_qi_init(struct platform_device *caam_pdev)
 {
 	int err, i;
-	struct device *qidev = &caam_pdev->dev;
+	struct device *ctrldev = &caam_pdev->dev, *qidev;
 	struct caam_drv_private *ctrlpriv;
 	const cpumask_t *cpus = qman_affine_cpus();
 	cpumask_var_t clean_mask;
@@ -739,7 +742,8 @@ int caam_qi_init(struct platform_device *caam_pdev)
 	if (!zalloc_cpumask_var(&clean_mask, GFP_KERNEL))
 		goto fail_cpumask;
 
-	ctrlpriv = dev_get_drvdata(qidev);
+	ctrlpriv = dev_get_drvdata(ctrldev);
+	qidev = ctrldev;
 
 	/* Initialize the congestion detection */
 	err = init_cgr(qidev);

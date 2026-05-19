@@ -152,7 +152,7 @@ static int ch341_probe(struct usb_interface *intf,
 	if (ret)
 		return ret;
 
-	ctrl = devm_spi_alloc_host(&intf->dev, sizeof(struct ch341_spi_dev));
+	ctrl = devm_spi_alloc_master(&udev->dev, sizeof(struct ch341_spi_dev));
 	if (!ctrl)
 		return -ENOMEM;
 
@@ -163,7 +163,7 @@ static int ch341_probe(struct usb_interface *intf,
 	ch341->read_pipe = usb_rcvbulkpipe(udev, usb_endpoint_num(in));
 
 	ch341->rx_len = usb_endpoint_maxp(in);
-	ch341->rx_buf = devm_kzalloc(&intf->dev, ch341->rx_len, GFP_KERNEL);
+	ch341->rx_buf = devm_kzalloc(&udev->dev, ch341->rx_len, GFP_KERNEL);
 	if (!ch341->rx_buf)
 		return -ENOMEM;
 
@@ -171,18 +171,19 @@ static int ch341_probe(struct usb_interface *intf,
 	if (!ch341->rx_urb)
 		return -ENOMEM;
 
-	ch341->tx_buf = devm_kzalloc(&intf->dev, CH341_PACKET_LENGTH, GFP_KERNEL);
-	if (!ch341->tx_buf) {
-		ret = -ENOMEM;
-		goto err_free_urb;
-	}
+	ch341->tx_buf =
+		devm_kzalloc(&udev->dev, CH341_PACKET_LENGTH, GFP_KERNEL);
+	if (!ch341->tx_buf)
+		return -ENOMEM;
 
 	usb_fill_bulk_urb(ch341->rx_urb, udev, ch341->read_pipe, ch341->rx_buf,
 			  ch341->rx_len, ch341_recv, ch341);
 
 	ret = usb_submit_urb(ch341->rx_urb, GFP_KERNEL);
-	if (ret)
-		goto err_free_urb;
+	if (ret) {
+		usb_free_urb(ch341->rx_urb);
+		return -ENOMEM;
+	}
 
 	ctrl->bus_num = -1;
 	ctrl->mode_bits = SPI_CPHA;
@@ -194,34 +195,21 @@ static int ch341_probe(struct usb_interface *intf,
 
 	ret = ch341_config_stream(ch341);
 	if (ret)
-		goto err_kill_urb;
+		return ret;
 
 	ret = ch341_enable_pins(ch341, true);
 	if (ret)
-		goto err_kill_urb;
+		return ret;
 
 	ret = spi_register_controller(ctrl);
 	if (ret)
-		goto err_disable_pins;
+		return ret;
 
 	ch341->spidev = spi_new_device(ctrl, &chip);
-	if (!ch341->spidev) {
-		ret = -ENOMEM;
-		goto err_unregister;
-	}
+	if (!ch341->spidev)
+		return -ENOMEM;
 
 	return 0;
-
-err_unregister:
-	spi_unregister_controller(ctrl);
-err_disable_pins:
-	ch341_enable_pins(ch341, false);
-err_kill_urb:
-	usb_kill_urb(ch341->rx_urb);
-err_free_urb:
-	usb_free_urb(ch341->rx_urb);
-
-	return ret;
 }
 
 static void ch341_disconnect(struct usb_interface *intf)
@@ -231,7 +219,6 @@ static void ch341_disconnect(struct usb_interface *intf)
 	spi_unregister_device(ch341->spidev);
 	spi_unregister_controller(ch341->ctrl);
 	ch341_enable_pins(ch341, false);
-	usb_kill_urb(ch341->rx_urb);
 	usb_free_urb(ch341->rx_urb);
 }
 

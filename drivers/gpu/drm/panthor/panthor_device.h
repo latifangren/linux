@@ -24,12 +24,10 @@ struct panthor_device;
 struct panthor_gpu;
 struct panthor_group_pool;
 struct panthor_heap_pool;
-struct panthor_hw;
 struct panthor_job;
 struct panthor_mmu;
 struct panthor_fw;
 struct panthor_perfcnt;
-struct panthor_pwr;
 struct panthor_vm;
 struct panthor_vm_pool;
 
@@ -61,17 +59,6 @@ enum panthor_device_pm_state {
 	PANTHOR_DEVICE_PM_STATE_SUSPENDING,
 };
 
-enum panthor_irq_state {
-	/** @PANTHOR_IRQ_STATE_ACTIVE: IRQ is active and ready to process events. */
-	PANTHOR_IRQ_STATE_ACTIVE = 0,
-	/** @PANTHOR_IRQ_STATE_PROCESSING: IRQ is currently processing events. */
-	PANTHOR_IRQ_STATE_PROCESSING,
-	/** @PANTHOR_IRQ_STATE_SUSPENDED: IRQ is suspended. */
-	PANTHOR_IRQ_STATE_SUSPENDED,
-	/** @PANTHOR_IRQ_STATE_SUSPENDING: IRQ is being suspended. */
-	PANTHOR_IRQ_STATE_SUSPENDING,
-};
-
 /**
  * struct panthor_irq - IRQ data
  *
@@ -84,21 +71,11 @@ struct panthor_irq {
 	/** @irq: IRQ number. */
 	int irq;
 
-	/** @mask: Values to write to xxx_INT_MASK if active. */
+	/** @mask: Current mask being applied to xxx_INT_MASK. */
 	u32 mask;
 
-	/**
-	 * @mask_lock: protects modifications to _INT_MASK and @mask.
-	 *
-	 * In paths where _INT_MASK is updated based on a state
-	 * transition/check, it's crucial for the state update/check to be
-	 * inside the locked section, otherwise it introduces a race window
-	 * leading to potential _INT_MASK inconsistencies.
-	 */
-	spinlock_t mask_lock;
-
-	/** @state: one of &enum panthor_irq_state reflecting the current state. */
-	atomic_t state;
+	/** @suspended: Set to true when the IRQ is suspended. */
+	atomic_t suspended;
 };
 
 /**
@@ -156,12 +133,6 @@ struct panthor_device {
 
 	/** @csif_info: Command stream interface information. */
 	struct drm_panthor_csif_info csif_info;
-
-	/** @hw: GPU-specific data. */
-	struct panthor_hw *hw;
-
-	/** @pwr: Power control management data. */
-	struct panthor_pwr *pwr;
 
 	/** @gpu: GPU management data. */
 	struct panthor_gpu *gpu;
@@ -243,6 +214,9 @@ struct panthor_device {
 	/** @profile_mask: User-set profiling flags for job accounting. */
 	u32 profile_mask;
 
+	/** @current_frequency: Device clock frequency at present. Set by DVFS*/
+	unsigned long current_frequency;
+
 	/** @fast_rate: Maximum device clock frequency. Set by DVFS */
 	unsigned long fast_rate;
 
@@ -256,11 +230,6 @@ struct panthor_device {
 		struct list_head node;
 	} gems;
 #endif
-};
-
-struct panthor_gpu_usage {
-	u64 time;
-	u64 cycles;
 };
 
 /**
@@ -293,9 +262,6 @@ struct panthor_file {
 
 	/** @groups: Scheduling group pool attached to this file. */
 	struct panthor_group_pool *groups;
-
-	/** @stats: cycle and timestamp measures for job execution. */
-	struct panthor_gpu_usage stats;
 };
 
 int panthor_device_init(struct panthor_device *ptdev);
@@ -430,16 +396,10 @@ static irqreturn_t panthor_ ## __name ## _irq_raw_handler(int irq, void *data)		
 {												\
 	struct panthor_irq *pirq = data;							\
 	struct panthor_device *ptdev = pirq->ptdev;						\
-	enum panthor_irq_state old_state;							\
 												\
-	if (!gpu_read(ptdev, __reg_prefix ## _INT_STAT))					\
+	if (atomic_read(&pirq->suspended))							\
 		return IRQ_NONE;								\
-												\
-	guard(spinlock_irqsave)(&pirq->mask_lock);						\
-	old_state = atomic_cmpxchg(&pirq->state,						\
-				   PANTHOR_IRQ_STATE_ACTIVE,					\
-				   PANTHOR_IRQ_STATE_PROCESSING);				\
-	if (old_state != PANTHOR_IRQ_STATE_ACTIVE)						\
+	if (!gpu_read(ptdev, __reg_prefix ## _INT_STAT))					\
 		return IRQ_NONE;								\
 												\
 	gpu_write(ptdev, __reg_prefix ## _INT_MASK, 0);						\
@@ -453,14 +413,6 @@ static irqreturn_t panthor_ ## __name ## _irq_threaded_handler(int irq, void *da
 	irqreturn_t ret = IRQ_NONE;								\
 												\
 	while (true) {										\
-		/* It's safe to access pirq->mask without the lock held here. If a new		\
-		 * event gets added to the mask and the corresponding IRQ is pending,		\
-		 * we'll process it right away instead of adding an extra raw -> threaded	\
-		 * round trip. If an event is removed and the status bit is set, it will	\
-		 * be ignored, just like it would have been if the mask had been adjusted	\
-		 * right before the HW event kicks in. TLDR; it's all expected races we're	\
-		 * covered for.									\
-		 */										\
 		u32 status = gpu_read(ptdev, __reg_prefix ## _INT_RAWSTAT) & pirq->mask;	\
 												\
 		if (!status)									\
@@ -470,36 +422,26 @@ static irqreturn_t panthor_ ## __name ## _irq_threaded_handler(int irq, void *da
 		ret = IRQ_HANDLED;								\
 	}											\
 												\
-	scoped_guard(spinlock_irqsave, &pirq->mask_lock) {					\
-		enum panthor_irq_state old_state;						\
-												\
-		old_state = atomic_cmpxchg(&pirq->state,					\
-					   PANTHOR_IRQ_STATE_PROCESSING,			\
-					   PANTHOR_IRQ_STATE_ACTIVE);				\
-		if (old_state == PANTHOR_IRQ_STATE_PROCESSING)					\
-			gpu_write(ptdev, __reg_prefix ## _INT_MASK, pirq->mask);		\
-	}											\
+	if (!atomic_read(&pirq->suspended))							\
+		gpu_write(ptdev, __reg_prefix ## _INT_MASK, pirq->mask);			\
 												\
 	return ret;										\
 }												\
 												\
 static inline void panthor_ ## __name ## _irq_suspend(struct panthor_irq *pirq)			\
 {												\
-	scoped_guard(spinlock_irqsave, &pirq->mask_lock) {					\
-		atomic_set(&pirq->state, PANTHOR_IRQ_STATE_SUSPENDING);				\
-		gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, 0);				\
-	}											\
+	pirq->mask = 0;										\
+	gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, 0);					\
 	synchronize_irq(pirq->irq);								\
-	atomic_set(&pirq->state, PANTHOR_IRQ_STATE_SUSPENDED);					\
+	atomic_set(&pirq->suspended, true);							\
 }												\
 												\
-static inline void panthor_ ## __name ## _irq_resume(struct panthor_irq *pirq)			\
+static inline void panthor_ ## __name ## _irq_resume(struct panthor_irq *pirq, u32 mask)	\
 {												\
-	guard(spinlock_irqsave)(&pirq->mask_lock);						\
-												\
-	atomic_set(&pirq->state, PANTHOR_IRQ_STATE_ACTIVE);					\
-	gpu_write(pirq->ptdev, __reg_prefix ## _INT_CLEAR, pirq->mask);				\
-	gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, pirq->mask);				\
+	atomic_set(&pirq->suspended, false);							\
+	pirq->mask = mask;									\
+	gpu_write(pirq->ptdev, __reg_prefix ## _INT_CLEAR, mask);				\
+	gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, mask);				\
 }												\
 												\
 static int panthor_request_ ## __name ## _irq(struct panthor_device *ptdev,			\
@@ -508,43 +450,13 @@ static int panthor_request_ ## __name ## _irq(struct panthor_device *ptdev,			\
 {												\
 	pirq->ptdev = ptdev;									\
 	pirq->irq = irq;									\
-	pirq->mask = mask;									\
-	spin_lock_init(&pirq->mask_lock);							\
-	panthor_ ## __name ## _irq_resume(pirq);						\
+	panthor_ ## __name ## _irq_resume(pirq, mask);						\
 												\
 	return devm_request_threaded_irq(ptdev->base.dev, irq,					\
 					 panthor_ ## __name ## _irq_raw_handler,		\
 					 panthor_ ## __name ## _irq_threaded_handler,		\
 					 IRQF_SHARED, KBUILD_MODNAME "-" # __name,		\
 					 pirq);							\
-}												\
-												\
-static inline void panthor_ ## __name ## _irq_enable_events(struct panthor_irq *pirq, u32 mask)	\
-{												\
-	guard(spinlock_irqsave)(&pirq->mask_lock);						\
-	pirq->mask |= mask;									\
-												\
-	/* The only situation where we need to write the new mask is if the IRQ is active.	\
-	 * If it's being processed, the mask will be restored for us in _irq_threaded_handler()	\
-	 * on the PROCESSING -> ACTIVE transition.						\
-	 * If the IRQ is suspended/suspending, the mask is restored at resume time.		\
-	 */											\
-	if (atomic_read(&pirq->state) == PANTHOR_IRQ_STATE_ACTIVE)				\
-		gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, pirq->mask);			\
-}												\
-												\
-static inline void panthor_ ## __name ## _irq_disable_events(struct panthor_irq *pirq, u32 mask)\
-{												\
-	guard(spinlock_irqsave)(&pirq->mask_lock);						\
-	pirq->mask &= ~mask;									\
-												\
-	/* The only situation where we need to write the new mask is if the IRQ is active.	\
-	 * If it's being processed, the mask will be restored for us in _irq_threaded_handler()	\
-	 * on the PROCESSING -> ACTIVE transition.						\
-	 * If the IRQ is suspended/suspending, the mask is restored at resume time.		\
-	 */											\
-	if (atomic_read(&pirq->state) == PANTHOR_IRQ_STATE_ACTIVE)				\
-		gpu_write(pirq->ptdev, __reg_prefix ## _INT_MASK, pirq->mask);			\
 }
 
 extern struct workqueue_struct *panthor_cleanup_wq;

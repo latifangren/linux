@@ -170,7 +170,7 @@
 
 &i2c0 {
 	/* pull-ups and devices require AXP221 DLDO3 */
-	status = "fail";
+	status = "failed";
 };
 
 &i2c1 {

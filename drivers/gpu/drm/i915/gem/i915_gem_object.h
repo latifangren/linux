@@ -1,5 +1,6 @@
-/* SPDX-License-Identifier: MIT */
 /*
+ * SPDX-License-Identifier: MIT
+ *
  * Copyright © 2016 Intel Corporation
  */
 
@@ -17,8 +18,6 @@
 #include "i915_vma_types.h"
 
 enum intel_region_id;
-struct drm_scanout_buffer;
-struct intel_panic;
 
 #define obj_to_i915(obj__) to_i915((obj__)->base.dev)
 
@@ -284,7 +283,9 @@ bool i915_gem_object_has_iomem(const struct drm_i915_gem_object *obj);
 static inline bool
 i915_gem_object_is_shrinkable(const struct drm_i915_gem_object *obj)
 {
-	return i915_gem_object_type_has(obj, I915_GEM_OBJECT_IS_SHRINKABLE);
+	/* TODO: make DPT shrinkable when it has no bound vmas */
+	return i915_gem_object_type_has(obj, I915_GEM_OBJECT_IS_SHRINKABLE) &&
+		!obj->is_dpt;
 }
 
 static inline bool
@@ -693,11 +694,6 @@ i915_gem_object_unpin_pages(struct drm_i915_gem_object *obj)
 int __i915_gem_object_put_pages(struct drm_i915_gem_object *obj);
 int i915_gem_object_truncate(struct drm_i915_gem_object *obj);
 
-struct intel_panic *i915_gem_object_alloc_panic(void);
-int i915_gem_object_panic_setup(struct intel_panic *panic, struct drm_scanout_buffer *sb,
-				struct drm_gem_object *_obj, bool panic_tiling);
-void i915_gem_object_panic_finish(struct intel_panic *panic);
-
 /**
  * i915_gem_object_pin_map - return a contiguous mapping of the entire object
  * @obj: the object to map into kernel address space
@@ -782,7 +778,7 @@ i915_gem_object_set_to_cpu_domain(struct drm_i915_gem_object *obj, bool write);
 struct i915_vma * __must_check
 i915_gem_object_pin_to_display_plane(struct drm_i915_gem_object *obj,
 				     struct i915_gem_ww_ctx *ww,
-				     u32 alignment, unsigned int guard,
+				     u32 alignment,
 				     const struct i915_gtt_view *view,
 				     unsigned int flags);
 
@@ -802,7 +798,6 @@ static inline void __start_cpu_write(struct drm_i915_gem_object *obj)
 
 void i915_gem_fence_wait_priority(struct dma_fence *fence,
 				  const struct i915_sched_attr *attr);
-void i915_gem_fence_wait_priority_display(struct dma_fence *fence);
 
 int i915_gem_object_wait(struct drm_i915_gem_object *obj,
 			 unsigned int flags,

@@ -10,13 +10,12 @@
 
 /* The Magic number for signal context frame header. */
 #define RISCV_V_MAGIC	0x53465457
-#define RISCV_ZICFISS_MAGIC		0x9487
 #define END_MAGIC	0x0
 
 /* The size of END signal context header. */
 #define END_HDR_SIZE	0x0
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 struct __sc_riscv_v_state {
 	struct __riscv_v_ext_state v_state;
@@ -36,6 +35,6 @@ struct sigcontext {
 	};
 };
 
-#endif /*!__ASSEMBLER__*/
+#endif /*!__ASSEMBLY__*/
 
 #endif /* _UAPI_ASM_RISCV_SIGCONTEXT_H */

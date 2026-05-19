@@ -104,7 +104,7 @@ struct aq_vec_s *aq_vec_alloc(struct aq_nic_s *aq_nic, unsigned int idx,
 {
 	struct aq_vec_s *self = NULL;
 
-	self = kzalloc_obj(*self);
+	self = kzalloc(sizeof(*self), GFP_KERNEL);
 	if (!self)
 		goto err_exit;
 

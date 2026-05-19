@@ -197,7 +197,7 @@ __sync_alloc_leaf(struct i915_syncmap *parent, u64 id)
 {
 	struct i915_syncmap *p;
 
-	p = kmalloc_flex(*p, seqno, KSYNCMAP);
+	p = kmalloc(struct_size(p, seqno, KSYNCMAP), GFP_KERNEL);
 	if (unlikely(!p))
 		return NULL;
 
@@ -279,7 +279,8 @@ static noinline int __sync_set(struct i915_syncmap **root, u64 id, u32 seqno)
 			unsigned int above;
 
 			/* Insert a join above the current layer */
-			next = kzalloc_flex(*next, child, KSYNCMAP);
+			next = kzalloc(struct_size(next, child, KSYNCMAP),
+				       GFP_KERNEL);
 			if (unlikely(!next))
 				return -ENOMEM;
 

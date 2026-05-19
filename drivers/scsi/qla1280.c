@@ -406,11 +406,9 @@ static int qla1280_device_reset(struct scsi_qla_host *, int, int);
 static int qla1280_abort_command(struct scsi_qla_host *, struct srb *, int);
 static int qla1280_abort_isp(struct scsi_qla_host *);
 #ifdef QLA_64BIT_PTR
-static enum scsi_qc_status qla1280_64bit_start_scsi(struct scsi_qla_host *,
-						    struct srb *);
+static int qla1280_64bit_start_scsi(struct scsi_qla_host *, struct srb *);
 #else
-static enum scsi_qc_status qla1280_32bit_start_scsi(struct scsi_qla_host *,
-						    struct srb *);
+static int qla1280_32bit_start_scsi(struct scsi_qla_host *, struct srb *);
 #endif
 static void qla1280_nv_write(struct scsi_qla_host *, uint16_t);
 static void qla1280_poll(struct scsi_qla_host *);
@@ -503,7 +501,7 @@ struct qla_boards {
 };
 
 /* NOTE: the last argument in each entry is used to index ql1280_board_tbl */
-static const struct pci_device_id qla1280_pci_tbl[] = {
+static struct pci_device_id qla1280_pci_tbl[] = {
 	{PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP12160,
 		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_QLOGIC_ISP1020,
@@ -684,12 +682,12 @@ qla1280_info(struct Scsi_Host *host)
  * handling).   Unfortunately, it sometimes calls the scheduler in interrupt
  * context which is a big NO! NO!.
  **************************************************************************/
-static enum scsi_qc_status qla1280_queuecommand_lck(struct scsi_cmnd *cmd)
+static int qla1280_queuecommand_lck(struct scsi_cmnd *cmd)
 {
 	struct Scsi_Host *host = cmd->device->host;
 	struct scsi_qla_host *ha = (struct scsi_qla_host *)host->hostdata;
 	struct srb *sp = scsi_cmd_priv(cmd);
-	enum scsi_qc_status status;
+	int status;
 
 	sp->cmd = cmd;
 	sp->flags = 0;
@@ -723,7 +721,7 @@ enum action {
 
 static void qla1280_mailbox_timeout(struct timer_list *t)
 {
-	struct scsi_qla_host *ha = timer_container_of(ha, t, mailbox_timer);
+	struct scsi_qla_host *ha = from_timer(ha, t, mailbox_timer);
 	struct device_reg __iomem *reg;
 	reg = ha->iobase;
 
@@ -1025,7 +1023,7 @@ qla1280_eh_adapter_reset(struct scsi_cmnd *cmd)
 }
 
 static int
-qla1280_biosparam(struct scsi_device *sdev, struct gendisk *unused,
+qla1280_biosparam(struct scsi_device *sdev, struct block_device *bdev,
 		  sector_t capacity, int geom[])
 {
 	int heads, sectors, cylinders;
@@ -1161,7 +1159,7 @@ qla1280_set_target_parameters(struct scsi_qla_host *ha, int bus, int target)
 
 
 /**************************************************************************
- *   qla1280_sdev_configure
+ *   qla1280_slave_configure
  *
  * Description:
  *   Determines the queue depth for a given device.  There are two ways
@@ -1172,7 +1170,7 @@ qla1280_set_target_parameters(struct scsi_qla_host *ha, int bus, int target)
  *   default queue depth (dependent on the number of hardware SCBs).
  **************************************************************************/
 static int
-qla1280_sdev_configure(struct scsi_device *device, struct queue_limits *lim)
+qla1280_slave_configure(struct scsi_device *device)
 {
 	struct scsi_qla_host *ha;
 	int default_depth = 3;
@@ -2456,7 +2454,7 @@ qla1280_mailbox_command(struct scsi_qla_host *ha, uint8_t mr, uint16_t *mb)
 	qla1280_debounce_register(&reg->istatus);
 
 	wait_for_completion(&wait);
-	timer_delete_sync(&ha->mailbox_timer);
+	del_timer_sync(&ha->mailbox_timer);
 
 	spin_lock_irq(ha->host->host_lock);
 
@@ -2732,7 +2730,7 @@ qla1280_marker(struct scsi_qla_host *ha, int bus, int id, int lun, u8 type)
  *      0 = success, was able to issue command.
  */
 #ifdef QLA_64BIT_PTR
-static enum scsi_qc_status
+static int
 qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 {
 	struct device_reg __iomem *reg = ha->iobase;
@@ -2740,7 +2738,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 	cmd_a64_entry_t *pkt;
 	__le32 *dword_ptr;
 	dma_addr_t dma_handle;
-	enum scsi_qc_status status = 0;
+	int status = 0;
 	int cnt;
 	int req_cnt;
 	int seg_cnt;
@@ -2801,7 +2799,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 
 	dprintk(2, "start: cmd=%p sp=%p CDB=%xm, handle %lx\n", cmd, sp,
 		cmd->cmnd[0], (long)CMD_HANDLE(sp->cmd));
-	dprintk(2, "             bus %i, target %i, lun %llu\n",
+	dprintk(2, "             bus %i, target %i, lun %i\n",
 		SCSI_BUS_32(cmd), SCSI_TCN_32(cmd), SCSI_LUN_32(cmd));
 	qla1280_dump_buffer(2, cmd->cmnd, MAX_COMMAND_SIZE);
 
@@ -2873,7 +2871,7 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 			remseg--;
 		}
 		dprintk(5, "qla1280_64bit_start_scsi: Scatter/gather "
-			"command packet data - b %i, t %i, l %llu\n",
+			"command packet data - b %i, t %i, l %i \n",
 			SCSI_BUS_32(cmd), SCSI_TCN_32(cmd),
 			SCSI_LUN_32(cmd));
 		qla1280_dump_buffer(5, (char *)pkt,
@@ -2931,14 +2929,14 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 			remseg -= cnt;
 			dprintk(5, "qla1280_64bit_start_scsi: "
 				"continuation packet data - b %i, t "
-				"%i, l %llu\n", SCSI_BUS_32(cmd),
+				"%i, l %i \n", SCSI_BUS_32(cmd),
 				SCSI_TCN_32(cmd), SCSI_LUN_32(cmd));
 			qla1280_dump_buffer(5, (char *)pkt,
 					    REQUEST_ENTRY_SIZE);
 		}
 	} else {	/* No data transfer */
 		dprintk(5, "qla1280_64bit_start_scsi: No data, command "
-			"packet data - b %i, t %i, l %llu\n",
+			"packet data - b %i, t %i, l %i \n",
 			SCSI_BUS_32(cmd), SCSI_TCN_32(cmd), SCSI_LUN_32(cmd));
 		qla1280_dump_buffer(5, (char *)pkt, REQUEST_ENTRY_SIZE);
 	}
@@ -2986,14 +2984,14 @@ qla1280_64bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
  * Returns:
  *      0 = success, was able to issue command.
  */
-static enum scsi_qc_status
+static int
 qla1280_32bit_start_scsi(struct scsi_qla_host *ha, struct srb * sp)
 {
 	struct device_reg __iomem *reg = ha->iobase;
 	struct scsi_cmnd *cmd = sp->cmd;
 	struct cmd_entry *pkt;
 	__le32 *dword_ptr;
-	enum scsi_qc_status status = 0;
+	int status = 0;
 	int cnt;
 	int req_cnt;
 	int seg_cnt;
@@ -3657,7 +3655,7 @@ qla1280_status_entry(struct scsi_qla_host *ha, struct response *pkt,
 
 			dprintk(2, "qla1280_status_entry: Check "
 				"condition Sense data, b %i, t %i, "
-				"l %llu\n", SCSI_BUS_32(cmd), SCSI_TCN_32(cmd),
+				"l %i\n", SCSI_BUS_32(cmd), SCSI_TCN_32(cmd),
 				SCSI_LUN_32(cmd));
 			if (sense_sz)
 				qla1280_dump_buffer(2,
@@ -3957,7 +3955,7 @@ __qla1280_print_scsi_cmd(struct scsi_cmnd *cmd)
 
 	sp = scsi_cmd_priv(cmd);
 	printk("SCSI Command @= 0x%p, Handle=0x%p\n", cmd, CMD_HANDLE(cmd));
-	printk("  chan=%d, target = 0x%02x, lun = 0x%02llx, cmd_len = 0x%02x\n",
+	printk("  chan=%d, target = 0x%02x, lun = 0x%02x, cmd_len = 0x%02x\n",
 	       SCSI_BUS_32(cmd), SCSI_TCN_32(cmd), SCSI_LUN_32(cmd),
 	       CMD_CDBLEN(cmd));
 	printk(" CDB = ");
@@ -3977,6 +3975,29 @@ __qla1280_print_scsi_cmd(struct scsi_cmnd *cmd)
 	       scsi_cmd_to_rq(cmd)->tag, cmd->transfersize);
 	printk(" underflow size = 0x%x, direction=0x%x\n",
 	       cmd->underflow, cmd->sc_data_direction);
+}
+
+/**************************************************************************
+ *   ql1280_dump_device
+ *
+ **************************************************************************/
+static void
+ql1280_dump_device(struct scsi_qla_host *ha)
+{
+
+	struct scsi_cmnd *cp;
+	struct srb *sp;
+	int i;
+
+	printk(KERN_DEBUG "Outstanding Commands on controller:\n");
+
+	for (i = 0; i < MAX_OUTSTANDING_COMMANDS; i++) {
+		if ((sp = ha->outstanding_cmds[i]) == NULL)
+			continue;
+		if ((cp = sp->cmd) == NULL)
+			continue;
+		qla1280_print_scsi_cmd(1, cp);
+	}
 }
 #endif
 
@@ -4100,7 +4121,7 @@ static const struct scsi_host_template qla1280_driver_template = {
 	.proc_name		= "qla1280",
 	.name			= "Qlogic ISP 1280/12160",
 	.info			= qla1280_info,
-	.sdev_configure		= qla1280_sdev_configure,
+	.slave_configure	= qla1280_slave_configure,
 	.queuecommand		= qla1280_queuecommand,
 	.eh_abort_handler	= qla1280_eh_abort,
 	.eh_device_reset_handler= qla1280_eh_device_reset,

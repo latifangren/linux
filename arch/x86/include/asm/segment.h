@@ -233,7 +233,7 @@
 #define VDSO_CPUNODE_BITS		12
 #define VDSO_CPUNODE_MASK		0xfff
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 /* Helper functions to store/load CPU and node numbers */
 
@@ -265,7 +265,7 @@ static inline void vdso_read_cpunode(unsigned *cpu, unsigned *node)
 		*node = (p >> VDSO_CPUNODE_BITS);
 }
 
-#endif /* !__ASSEMBLER__ */
+#endif /* !__ASSEMBLY__ */
 
 #ifdef __KERNEL__
 
@@ -286,7 +286,7 @@ static inline void vdso_read_cpunode(unsigned *cpu, unsigned *node)
  */
 #define XEN_EARLY_IDT_HANDLER_SIZE (8 + ENDBR_INSN_SIZE)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 extern const char early_idt_handler_array[NUM_EXCEPTION_VECTORS][EARLY_IDT_HANDLER_SIZE];
 extern void early_ignore_irq(void);
@@ -302,17 +302,19 @@ extern const char xen_early_idt_handler_array[NUM_EXCEPTION_VECTORS][XEN_EARLY_I
  * failure to fully clear the cached descriptor is only observable for
  * FS and GS.
  */
-#define LOAD_SEGMENT(seg)						\
-static inline void __loadsegment_##seg(u16 value)			\
-{									\
-	asm volatile("1:	movl %k0,%%" #seg "\n"			\
+#define __loadsegment_simple(seg, value)				\
+do {									\
+	unsigned short __val = (value);					\
+									\
+	asm volatile("						\n"	\
+		     "1:	movl %k0,%%" #seg "		\n"	\
 		     _ASM_EXTABLE_TYPE_REG(1b, 1b, EX_TYPE_ZERO_REG, %k0)\
-		     : "+r" (value) : : "memory");			\
-}
+		     : "+r" (__val) : : "memory");			\
+} while (0)
 
-LOAD_SEGMENT(ss)
-LOAD_SEGMENT(ds)
-LOAD_SEGMENT(es)
+#define __loadsegment_ss(value) __loadsegment_simple(ss, (value))
+#define __loadsegment_ds(value) __loadsegment_simple(ds, (value))
+#define __loadsegment_es(value) __loadsegment_simple(es, (value))
 
 #ifdef CONFIG_X86_32
 
@@ -320,50 +322,35 @@ LOAD_SEGMENT(es)
  * On 32-bit systems, the hidden parts of FS and GS are unobservable if
  * the selector is NULL, so there's no funny business here.
  */
-LOAD_SEGMENT(fs)
-LOAD_SEGMENT(gs)
+#define __loadsegment_fs(value) __loadsegment_simple(fs, (value))
+#define __loadsegment_gs(value) __loadsegment_simple(gs, (value))
 
 #else
 
-static inline void __loadsegment_fs(u16 value)
+static inline void __loadsegment_fs(unsigned short value)
 {
-	asm volatile("1:	movw %0, %%fs\n"
-		     "2:\n"
+	asm volatile("						\n"
+		     "1:	movw %0, %%fs			\n"
+		     "2:					\n"
+
 		     _ASM_EXTABLE_TYPE(1b, 2b, EX_TYPE_CLEAR_FS)
-		     : : ASM_INPUT_RM (value) : "memory");
+
+		     : : "rm" (value) : "memory");
 }
 
 /* __loadsegment_gs is intentionally undefined.  Use load_gs_index instead. */
 
 #endif
 
-#undef LOAD_SEGMENT
-
-#define loadsegment(seg, val) __loadsegment_##seg(val)
+#define loadsegment(seg, value) __loadsegment_ ## seg (value)
 
 /*
  * Save a segment register away:
  */
-#define SAVE_SEGMENT(seg)				\
-static inline unsigned long __savesegment_##seg(void)	\
-{							\
-	unsigned long v;				\
-	asm volatile("movl %%" #seg ",%k0" : "=r" (v));	\
-	return v;					\
-}
+#define savesegment(seg, value)				\
+	asm("mov %%" #seg ",%0":"=r" (value) : : "memory")
 
-SAVE_SEGMENT(cs)
-SAVE_SEGMENT(ss)
-SAVE_SEGMENT(ds)
-SAVE_SEGMENT(es)
-SAVE_SEGMENT(fs)
-SAVE_SEGMENT(gs)
-
-#undef SAVE_SEGMENT
-
-#define savesegment(seg, var) ((var) = __savesegment_##seg())
-
-#endif /* !__ASSEMBLER__ */
+#endif /* !__ASSEMBLY__ */
 #endif /* __KERNEL__ */
 
 #endif /* _ASM_X86_SEGMENT_H */

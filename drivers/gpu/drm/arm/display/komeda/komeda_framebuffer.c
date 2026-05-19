@@ -4,14 +4,11 @@
  * Author: James.Qian.Wang <james.qian.wang@arm.com>
  *
  */
-#include <linux/overflow.h>
-
 #include <drm/drm_device.h>
 #include <drm/drm_fb_dma_helper.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
-#include <drm/drm_print.h>
 
 #include "komeda_framebuffer.h"
 #include "komeda_dev.h"
@@ -95,9 +92,7 @@ komeda_fb_afbc_size_check(struct komeda_fb *kfb, struct drm_file *file,
 	kfb->afbc_size = kfb->offset_payload + n_blocks *
 			 ALIGN(bpp * AFBC_SUPERBLK_PIXELS / 8,
 			       AFBC_SUPERBLK_ALIGNMENT);
-	if (check_add_overflow(kfb->afbc_size, fb->offsets[0], &min_size)) {
-		goto check_failed;
-	}
+	min_size = kfb->afbc_size + fb->offsets[0];
 	if (min_size > obj->size) {
 		DRM_DEBUG_KMS("afbc size check failed, obj_size: 0x%zx. min_size 0x%llx.\n",
 			      obj->size, min_size);
@@ -162,14 +157,13 @@ komeda_fb_none_afbc_size_check(struct komeda_dev *mdev, struct komeda_fb *kfb,
 
 struct drm_framebuffer *
 komeda_fb_create(struct drm_device *dev, struct drm_file *file,
-		 const struct drm_format_info *info,
 		 const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct komeda_dev *mdev = dev->dev_private;
 	struct komeda_fb *kfb;
 	int ret = 0, i;
 
-	kfb = kzalloc_obj(*kfb);
+	kfb = kzalloc(sizeof(*kfb), GFP_KERNEL);
 	if (!kfb)
 		return ERR_PTR(-ENOMEM);
 
@@ -183,7 +177,7 @@ komeda_fb_create(struct drm_device *dev, struct drm_file *file,
 		return ERR_PTR(-EINVAL);
 	}
 
-	drm_helper_mode_fill_fb_struct(dev, &kfb->base, info, mode_cmd);
+	drm_helper_mode_fill_fb_struct(dev, &kfb->base, mode_cmd);
 
 	if (kfb->base.modifier)
 		ret = komeda_fb_afbc_size_check(kfb, file, mode_cmd);

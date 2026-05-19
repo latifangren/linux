@@ -11,6 +11,7 @@
 #include <sound/jack.h>
 #include <sound/soc-acpi.h>
 #include <linux/clk.h>
+#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
@@ -18,7 +19,6 @@
 #include <linux/io.h>
 #include <linux/acpi.h>
 #include <linux/dmi.h>
-#include <linux/string_choices.h>
 #include "../acp-mach.h"
 #include "acp3x-es83xx.h"
 
@@ -158,8 +158,7 @@ static int acp3x_es83xx_configure_widgets(struct snd_soc_card *card)
 static int acp3x_es83xx_headphone_power_event(struct snd_soc_dapm_widget *w,
 					      struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
-	struct acp3x_es83xx_private *priv = get_mach_priv(card);
+	struct acp3x_es83xx_private *priv = get_mach_priv(w->dapm->card);
 
 	dev_dbg(priv->codec_dev, "headphone power event = %d\n", event);
 	if (SND_SOC_DAPM_EVENT_ON(event))
@@ -176,8 +175,7 @@ static int acp3x_es83xx_headphone_power_event(struct snd_soc_dapm_widget *w,
 static int acp3x_es83xx_speaker_power_event(struct snd_soc_dapm_widget *w,
 					    struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_card *card = snd_soc_dapm_to_card(w->dapm);
-	struct acp3x_es83xx_private *priv = get_mach_priv(card);
+	struct acp3x_es83xx_private *priv = get_mach_priv(w->dapm->card);
 
 	dev_dbg(priv->codec_dev, "speaker power event: %d\n", event);
 	if (SND_SOC_DAPM_EVENT_ON(event))
@@ -243,9 +241,9 @@ static int acp3x_es83xx_configure_gpios(struct acp3x_es83xx_private *priv)
 
 	dev_info(priv->codec_dev, "speaker gpio %d active %s, headphone gpio %d active %s\n",
 		 priv->enable_spk_gpio.crs_entry_index,
-		 str_low_high(priv->enable_spk_gpio.active_low),
+		 priv->enable_spk_gpio.active_low ? "low" : "high",
 		 priv->enable_hp_gpio.crs_entry_index,
-		 str_low_high(priv->enable_hp_gpio.active_low));
+		 priv->enable_hp_gpio.active_low ? "low" : "high");
 	return 0;
 }
 
@@ -315,9 +313,7 @@ static int acp3x_es83xx_init(struct snd_soc_pcm_runtime *runtime)
 
 	num_routes = acp3x_es83xx_configure_mics(priv);
 	if (num_routes > 0) {
-		struct snd_soc_dapm_context *dapm = snd_soc_card_to_dapm(card);
-
-		ret = snd_soc_dapm_add_routes(dapm, priv->mic_map, num_routes);
+		ret = snd_soc_dapm_add_routes(&card->dapm, priv->mic_map, num_routes);
 		if (ret != 0)
 			device_remove_software_node(priv->codec_dev);
 	}

@@ -1,16 +1,7 @@
 .. SPDX-License-Identifier: GPL-2.0
 
-.. include:: <isonum.txt>
-
 The mgb4 driver
 ===============
-
-Copyright |copy| 2023 - 2025 Digiteq Automotive
-    author: Martin Tůma <martin.tuma@digiteqautomotive.com>
-
-This is a v4l2 device driver for the Digiteq Automotive FrameGrabber 4, a PCIe
-card capable of capturing and generating FPD-Link III and GMSL2/3 video streams
-as used in the automotive industry.
 
 sysfs interface
 ---------------
@@ -31,11 +22,7 @@ Global (PCI card) parameters
 
     | 0 - No module present
     | 1 - FPDL3
-    | 2 - GMSL3 (one serializer, two daisy chained deserializers)
-    | 3 - GMSL3 (one serializer, two deserializers)
-    | 4 - GMSL3 (two deserializers with two daisy chain outputs)
-    | 6 - GMSL1
-    | 8 - GMSL3 coax
+    | 2 - GMSL
 
 **module_version** (R):
     Module version number. Zero in case of a missing module.
@@ -44,8 +31,7 @@ Global (PCI card) parameters
     Firmware type.
 
     | 1 - FPDL3
-    | 2 - GMSL3
-    | 3 - GMSL1
+    | 2 - GMSL
 
 **fw_version** (R):
     Firmware version number.
@@ -74,7 +60,6 @@ Common FPDL3/GMSL input parameters
 
     | 0 - OLDI/JEIDA
     | 1 - SPWG/VESA (default)
-    | 2 - ZDML
 
 **link_status** (R):
     Video link status. If the link is locked, chips are properly connected and
@@ -240,13 +225,6 @@ Common FPDL3/GMSL output parameters
 
     *Note: This parameter can not be changed while the output v4l2 device is
     open.*
-
-**color_mapping** (RW):
-    Mapping of the outgoing bits in the signal to the colour bits of the pixels.
-
-    | 0 - OLDI/JEIDA
-    | 1 - SPWG/VESA (default)
-    | 2 - ZDML
 
 **frame_rate** (RW):
     Output video signal frame rate limit in frames per second. Due to

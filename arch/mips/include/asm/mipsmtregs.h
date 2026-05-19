@@ -10,7 +10,7 @@
 
 #include <asm/mipsregs.h>
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 /*
  * C macros
@@ -176,7 +176,7 @@
 /* TCHalt */
 #define TCHALT_H		(_ULCAST_(1))
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 static inline unsigned core_nvpes(void)
 {
@@ -469,6 +469,6 @@ do {									\
 
 __BUILD_SET_C0(mvpcontrol)
 
-#endif /* Not __ASSEMBLER__ */
+#endif /* Not __ASSEMBLY__ */
 
 #endif

@@ -406,7 +406,20 @@ void __init prom_meminit(void)
 	}
 }
 
-void __init arch_zone_limits_init(unsigned long *max_zone_pfns)
+extern void setup_zero_pages(void);
+
+void __init paging_init(void)
 {
-	max_zone_pfns[ZONE_NORMAL] = max_low_pfn;
+	unsigned long zones_size[MAX_NR_ZONES] = {0, };
+
+	pagetable_init();
+	zones_size[ZONE_NORMAL] = max_low_pfn;
+	free_area_init(zones_size);
+}
+
+void __init mem_init(void)
+{
+	high_memory = (void *) __va(get_num_physpages() << PAGE_SHIFT);
+	memblock_free_all();
+	setup_zero_pages();	/* This comes from node 0 */
 }

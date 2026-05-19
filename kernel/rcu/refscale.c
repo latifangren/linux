@@ -36,7 +36,6 @@
 #include <linux/slab.h>
 #include <linux/torture.h>
 #include <linux/types.h>
-#include <linux/sched/clock.h>
 
 #include "rcu.h"
 
@@ -76,9 +75,6 @@ MODULE_PARM_DESC(scale_type, "Type of test (rcu, srcu, refcnt, rwsem, rwlock.");
 torture_param(int, verbose, 0, "Enable verbose debugging printk()s");
 torture_param(int, verbose_batched, 0, "Batch verbose debugging printk()s");
 
-// Number of seconds to extend warm-up and cool-down for multiple guest OSes
-torture_param(long, guest_os_delay, 0,
-	      "Number of seconds to extend warm-up/cool-down for multiple guest OSes.");
 // Wait until there are multiple CPUs before starting test.
 torture_param(int, holdoff, IS_BUILTIN(CONFIG_RCU_REF_SCALE_TEST) ? 10 : 0,
 	      "Holdoff time before test start (s)");
@@ -92,9 +88,15 @@ torture_param(int, nreaders, -1, "Number of readers, -1 for 75% of CPUs.");
 torture_param(int, nruns, 30, "Number of experiments to run.");
 // Reader delay in nanoseconds, 0 for no delay.
 torture_param(int, readdelay, 0, "Read-side delay in nanoseconds.");
-// Maximum shutdown delay in seconds, or zero for no shutdown.
-torture_param(int, shutdown_secs, !IS_MODULE(CONFIG_REPRO_TEST) * 300,
-	      "Shutdown at end of scalability tests or at specified timeout (s).");
+
+#ifdef MODULE
+# define REFSCALE_SHUTDOWN 0
+#else
+# define REFSCALE_SHUTDOWN 1
+#endif
+
+torture_param(bool, shutdown, REFSCALE_SHUTDOWN,
+	      "Shutdown at end of scalability tests.");
 
 struct reader_task {
 	struct task_struct *task;
@@ -103,8 +105,12 @@ struct reader_task {
 	u64 last_duration_ns;
 };
 
+static struct task_struct *shutdown_task;
+static wait_queue_head_t shutdown_wq;
+
 static struct task_struct *main_task;
 static wait_queue_head_t main_wq;
+static int shutdown_start;
 
 static struct reader_task *reader_tasks;
 
@@ -126,7 +132,6 @@ struct ref_scale_ops {
 	void (*cleanup)(void);
 	void (*readsection)(const int nloops);
 	void (*delaysection)(const int nloops, const int udl, const int ndl);
-	bool enable_irqs;
 	const char *name;
 };
 
@@ -175,8 +180,6 @@ static const struct ref_scale_ops rcu_ops = {
 
 // Definitions for SRCU ref scale testing.
 DEFINE_STATIC_SRCU(srcu_refctl_scale);
-DEFINE_STATIC_SRCU_FAST(srcu_fast_refctl_scale);
-DEFINE_STATIC_SRCU_FAST_UPDOWN(srcu_fast_updown_refctl_scale);
 static struct srcu_struct *srcu_ctlp = &srcu_refctl_scale;
 
 static void srcu_ref_scale_read_section(const int nloops)
@@ -207,78 +210,6 @@ static const struct ref_scale_ops srcu_ops = {
 	.readsection	= srcu_ref_scale_read_section,
 	.delaysection	= srcu_ref_scale_delay_section,
 	.name		= "srcu"
-};
-
-static bool srcu_fast_sync_scale_init(void)
-{
-	srcu_ctlp = &srcu_fast_refctl_scale;
-	return true;
-}
-
-static void srcu_fast_ref_scale_read_section(const int nloops)
-{
-	int i;
-	struct srcu_ctr __percpu *scp;
-
-	for (i = nloops; i >= 0; i--) {
-		scp = srcu_read_lock_fast(srcu_ctlp);
-		srcu_read_unlock_fast(srcu_ctlp, scp);
-	}
-}
-
-static void srcu_fast_ref_scale_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-	struct srcu_ctr __percpu *scp;
-
-	for (i = nloops; i >= 0; i--) {
-		scp = srcu_read_lock_fast(srcu_ctlp);
-		un_delay(udl, ndl);
-		srcu_read_unlock_fast(srcu_ctlp, scp);
-	}
-}
-
-static const struct ref_scale_ops srcu_fast_ops = {
-	.init		= srcu_fast_sync_scale_init,
-	.readsection	= srcu_fast_ref_scale_read_section,
-	.delaysection	= srcu_fast_ref_scale_delay_section,
-	.name		= "srcu-fast"
-};
-
-static bool srcu_fast_updown_sync_scale_init(void)
-{
-	srcu_ctlp = &srcu_fast_updown_refctl_scale;
-	return true;
-}
-
-static void srcu_fast_updown_ref_scale_read_section(const int nloops)
-{
-	int i;
-	struct srcu_ctr __percpu *scp;
-
-	for (i = nloops; i >= 0; i--) {
-		scp = srcu_read_lock_fast_updown(srcu_ctlp);
-		srcu_read_unlock_fast_updown(srcu_ctlp, scp);
-	}
-}
-
-static void srcu_fast_updown_ref_scale_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-	struct srcu_ctr __percpu *scp;
-
-	for (i = nloops; i >= 0; i--) {
-		scp = srcu_read_lock_fast_updown(srcu_ctlp);
-		un_delay(udl, ndl);
-		srcu_read_unlock_fast_updown(srcu_ctlp, scp);
-	}
-}
-
-static const struct ref_scale_ops srcu_fast_updown_ops = {
-	.init		= srcu_fast_updown_sync_scale_init,
-	.readsection	= srcu_fast_updown_ref_scale_read_section,
-	.delaysection	= srcu_fast_updown_ref_scale_delay_section,
-	.name		= "srcu-fast-updown"
 };
 
 #ifdef CONFIG_TASKS_RCU
@@ -358,9 +289,6 @@ static const struct ref_scale_ops rcu_trace_ops = {
 // Definitions for reference count
 static atomic_t refcnt;
 
-// Definitions acquire-release.
-static DEFINE_PER_CPU(unsigned long, test_acqrel);
-
 static void ref_refcnt_section(const int nloops)
 {
 	int i;
@@ -387,184 +315,6 @@ static const struct ref_scale_ops refcnt_ops = {
 	.readsection	= ref_refcnt_section,
 	.delaysection	= ref_refcnt_delay_section,
 	.name		= "refcnt"
-};
-
-static void ref_percpuinc_section(const int nloops)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		this_cpu_inc(test_acqrel);
-		this_cpu_dec(test_acqrel);
-	}
-}
-
-static void ref_percpuinc_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		this_cpu_inc(test_acqrel);
-		un_delay(udl, ndl);
-		this_cpu_dec(test_acqrel);
-	}
-}
-
-static const struct ref_scale_ops percpuinc_ops = {
-	.init		= rcu_sync_scale_init,
-	.readsection	= ref_percpuinc_section,
-	.delaysection	= ref_percpuinc_delay_section,
-	.name		= "percpuinc"
-};
-
-// Note that this can lose counts in preemptible kernels.
-static void ref_incpercpu_section(const int nloops)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap = this_cpu_ptr(&test_acqrel);
-
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-	}
-}
-
-static void ref_incpercpu_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap = this_cpu_ptr(&test_acqrel);
-
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		un_delay(udl, ndl);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-	}
-}
-
-static const struct ref_scale_ops incpercpu_ops = {
-	.init		= rcu_sync_scale_init,
-	.readsection	= ref_incpercpu_section,
-	.delaysection	= ref_incpercpu_delay_section,
-	.name		= "incpercpu"
-};
-
-static void ref_incpercpupreempt_section(const int nloops)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		preempt_disable();
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		preempt_enable();
-	}
-}
-
-static void ref_incpercpupreempt_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		preempt_disable();
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		un_delay(udl, ndl);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		preempt_enable();
-	}
-}
-
-static const struct ref_scale_ops incpercpupreempt_ops = {
-	.init		= rcu_sync_scale_init,
-	.readsection	= ref_incpercpupreempt_section,
-	.delaysection	= ref_incpercpupreempt_delay_section,
-	.name		= "incpercpupreempt"
-};
-
-static void ref_incpercpubh_section(const int nloops)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		local_bh_disable();
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		local_bh_enable();
-	}
-}
-
-static void ref_incpercpubh_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		local_bh_disable();
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		un_delay(udl, ndl);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		local_bh_enable();
-	}
-}
-
-static const struct ref_scale_ops incpercpubh_ops = {
-	.init		= rcu_sync_scale_init,
-	.readsection	= ref_incpercpubh_section,
-	.delaysection	= ref_incpercpubh_delay_section,
-	.enable_irqs	= true,
-	.name		= "incpercpubh"
-};
-
-static void ref_incpercpuirqsave_section(const int nloops)
-{
-	int i;
-	unsigned long flags;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		local_irq_save(flags);
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		local_irq_restore(flags);
-	}
-}
-
-static void ref_incpercpuirqsave_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-	unsigned long flags;
-
-	for (i = nloops; i >= 0; i--) {
-		unsigned long *tap;
-
-		local_irq_save(flags);
-		tap = this_cpu_ptr(&test_acqrel);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) + 1);
-		un_delay(udl, ndl);
-		WRITE_ONCE(*tap, READ_ONCE(*tap) - 1);
-		local_irq_restore(flags);
-	}
-}
-
-static const struct ref_scale_ops incpercpuirqsave_ops = {
-	.init		= rcu_sync_scale_init,
-	.readsection	= ref_incpercpuirqsave_section,
-	.delaysection	= ref_incpercpuirqsave_delay_section,
-	.name		= "incpercpuirqsave"
 };
 
 // Definitions for rwlock
@@ -710,6 +460,9 @@ static const struct ref_scale_ops lock_irq_ops = {
 	.name		= "lock-irq"
 };
 
+// Definitions acquire-release.
+static DEFINE_PER_CPU(unsigned long, test_acqrel);
+
 static void ref_acqrel_section(const int nloops)
 {
 	unsigned long x;
@@ -744,39 +497,6 @@ static const struct ref_scale_ops acqrel_ops = {
 };
 
 static volatile u64 stopopts;
-
-static void ref_sched_clock_section(const int nloops)
-{
-	u64 x = 0;
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--)
-		x += sched_clock();
-	preempt_enable();
-	stopopts = x;
-}
-
-static void ref_sched_clock_delay_section(const int nloops, const int udl, const int ndl)
-{
-	u64 x = 0;
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		x += sched_clock();
-		un_delay(udl, ndl);
-	}
-	preempt_enable();
-	stopopts = x;
-}
-
-static const struct ref_scale_ops sched_clock_ops = {
-	.readsection	= ref_sched_clock_section,
-	.delaysection	= ref_sched_clock_delay_section,
-	.name		= "sched-clock"
-};
-
 
 static void ref_clock_section(const int nloops)
 {
@@ -840,133 +560,6 @@ static const struct ref_scale_ops jiffies_ops = {
 	.readsection	= ref_jiffies_section,
 	.delaysection	= ref_jiffies_delay_section,
 	.name		= "jiffies"
-};
-
-static void ref_preempt_section(const int nloops)
-{
-	int i;
-
-	migrate_disable();
-	for (i = nloops; i >= 0; i--) {
-		preempt_disable();
-		preempt_enable();
-	}
-	migrate_enable();
-}
-
-static void ref_preempt_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	migrate_disable();
-	for (i = nloops; i >= 0; i--) {
-		preempt_disable();
-		un_delay(udl, ndl);
-		preempt_enable();
-	}
-	migrate_enable();
-}
-
-static const struct ref_scale_ops preempt_ops = {
-	.readsection	= ref_preempt_section,
-	.delaysection	= ref_preempt_delay_section,
-	.name		= "preempt"
-};
-
-static void ref_bh_section(const int nloops)
-{
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_bh_disable();
-		local_bh_enable();
-	}
-	preempt_enable();
-}
-
-static void ref_bh_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_bh_disable();
-		un_delay(udl, ndl);
-		local_bh_enable();
-	}
-	preempt_enable();
-}
-
-static const struct ref_scale_ops bh_ops = {
-	.readsection	= ref_bh_section,
-	.delaysection	= ref_bh_delay_section,
-	.enable_irqs	= true,
-	.name		= "bh"
-};
-
-static void ref_irq_section(const int nloops)
-{
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_irq_disable();
-		local_irq_enable();
-	}
-	preempt_enable();
-}
-
-static void ref_irq_delay_section(const int nloops, const int udl, const int ndl)
-{
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_irq_disable();
-		un_delay(udl, ndl);
-		local_irq_enable();
-	}
-	preempt_enable();
-}
-
-static const struct ref_scale_ops irq_ops = {
-	.readsection	= ref_irq_section,
-	.delaysection	= ref_irq_delay_section,
-	.name		= "irq"
-};
-
-static void ref_irqsave_section(const int nloops)
-{
-	unsigned long flags;
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_irq_save(flags);
-		local_irq_restore(flags);
-	}
-	preempt_enable();
-}
-
-static void ref_irqsave_delay_section(const int nloops, const int udl, const int ndl)
-{
-	unsigned long flags;
-	int i;
-
-	preempt_disable();
-	for (i = nloops; i >= 0; i--) {
-		local_irq_save(flags);
-		un_delay(udl, ndl);
-		local_irq_restore(flags);
-	}
-	preempt_enable();
-}
-
-static const struct ref_scale_ops irqsave_ops = {
-	.readsection	= ref_irqsave_section,
-	.delaysection	= ref_irqsave_delay_section,
-	.name		= "irqsave"
 };
 
 ////////////////////////////////////////////////////////////////////////
@@ -1133,7 +726,7 @@ static bool typesafe_init(void)
 	else if (si == 0)
 		si = nr_cpu_ids;
 	rtsarray_size = si;
-	rtsarray = kzalloc_objs(*rtsarray, si);
+	rtsarray = kcalloc(si, sizeof(*rtsarray), GFP_KERNEL);
 	if (!rtsarray)
 		return false;
 	for (idx = 0; idx < rtsarray_size; idx++) {
@@ -1208,18 +801,6 @@ static void rcu_scale_one_reader(void)
 		cur_ops->delaysection(loops, readdelay / 1000, readdelay % 1000);
 }
 
-// Warm up cache, or, if needed run a series of rcu_scale_one_reader()
-// to allow multiple rcuscale guest OSes to collect mutually valid data.
-static void rcu_scale_warm_cool(void)
-{
-	unsigned long jdone = jiffies + (guest_os_delay > 0 ? guest_os_delay * HZ : -1);
-
-	do {
-		rcu_scale_one_reader();
-		cond_resched();
-	} while (time_before(jiffies, jdone));
-}
-
 // Reader kthread.  Repeatedly does empty RCU read-side
 // critical section, minimizing update-side interference.
 static int
@@ -1248,7 +829,7 @@ repeat:
 		goto end;
 
 	// Make sure that the CPU is affinitized appropriately during testing.
-	WARN_ON_ONCE(raw_smp_processor_id() != me % nr_cpu_ids);
+	WARN_ON_ONCE(raw_smp_processor_id() != me);
 
 	WRITE_ONCE(rt->start_reader, 0);
 	if (!atomic_dec_return(&n_started))
@@ -1264,18 +845,15 @@ repeat:
 	if (!atomic_dec_return(&n_warmedup))
 		while (atomic_read_acquire(&n_warmedup))
 			rcu_scale_one_reader();
-	// Also keep interrupts disabled when it is safe to do so, which
-	// it is not for local_bh_enable().  This also has the effect of
-	// preventing entries into slow path for rcu_read_unlock().
-	if (!cur_ops->enable_irqs)
-		local_irq_save(flags);
+	// Also keep interrupts disabled.  This also has the effect
+	// of preventing entries into slow path for rcu_read_unlock().
+	local_irq_save(flags);
 	start = ktime_get_mono_fast_ns();
 
 	rcu_scale_one_reader();
 
 	duration = ktime_get_mono_fast_ns() - start;
-	if (!cur_ops->enable_irqs)
-		local_irq_restore(flags);
+	local_irq_restore(flags);
 
 	rt->last_duration_ns = WARN_ON_ONCE(duration < 0) ? 0 : duration;
 	// To reduce runtime-skew noise, do maintain-load invocations until
@@ -1347,8 +925,6 @@ static u64 process_durations(int n)
 	return sum;
 }
 
-static void ref_scale_cleanup(void);
-
 // The main_func is the main orchestrator, it performs a bunch of
 // experiments.  For every experiment, it orders all the readers
 // involved to start and waits for them to finish the experiment. It
@@ -1366,7 +942,7 @@ static int main_func(void *arg)
 	set_user_nice(current, MAX_NICE);
 
 	VERBOSE_SCALEOUT("main_func task started");
-	result_avg = kcalloc(nruns, sizeof(*result_avg), GFP_KERNEL);
+	result_avg = kzalloc(nruns * sizeof(*result_avg), GFP_KERNEL);
 	buf = kzalloc(800 + 64, GFP_KERNEL);
 	if (!result_avg || !buf) {
 		SCALEOUT_ERRSTRING("out of memory");
@@ -1381,7 +957,6 @@ static int main_func(void *arg)
 		schedule_timeout_uninterruptible(1);
 
 	// Start exp readers up per experiment
-	rcu_scale_warm_cool();
 	for (exp = 0; exp < nruns && !torture_must_stop(); exp++) {
 		if (torture_must_stop())
 			goto end;
@@ -1412,7 +987,6 @@ static int main_func(void *arg)
 
 		result_avg[exp] = div_u64(1000 * process_durations(nreaders), nreaders * loops);
 	}
-	rcu_scale_warm_cool();
 
 	// Print the average of all experiments
 	SCALEOUT("END OF TEST. Calculating average duration per loop (nanoseconds)...\n");
@@ -1435,10 +1009,9 @@ static int main_func(void *arg)
 
 oom_exit:
 	// This will shutdown everything including us.
-	if (shutdown_secs) {
-		main_task = NULL;  // Avoid self-kill deadlock.
-		ref_scale_cleanup();
-		kernel_power_off();
+	if (shutdown) {
+		shutdown_start = 1;
+		wake_up(&shutdown_wq);
 	}
 
 	// Wait for torture to stop us
@@ -1456,8 +1029,8 @@ static void
 ref_scale_print_module_parms(const struct ref_scale_ops *cur_ops, const char *tag)
 {
 	pr_alert("%s" SCALE_FLAG
-		 "--- %s:  verbose=%d verbose_batched=%d shutdown_secs=%d holdoff=%d lookup_instances=%ld loops=%d nreaders=%d nruns=%d readdelay=%d\n", scale_type, tag,
-		 verbose, verbose_batched, shutdown_secs, holdoff, lookup_instances, loops, nreaders, nruns, readdelay);
+		 "--- %s:  verbose=%d verbose_batched=%d shutdown=%d holdoff=%d lookup_instances=%ld loops=%d nreaders=%d nruns=%d readdelay=%d\n", scale_type, tag,
+		 verbose, verbose_batched, shutdown, holdoff, lookup_instances, loops, nreaders, nruns, readdelay);
 }
 
 static void
@@ -1479,9 +1052,9 @@ ref_scale_cleanup(void)
 					     reader_tasks[i].task);
 	}
 	kfree(reader_tasks);
-	reader_tasks = NULL;
 
 	torture_stop_kthread("main_task", main_task);
+	kfree(main_task);
 
 	// Do scale-type-specific cleanup operations.
 	if (cur_ops->cleanup != NULL)
@@ -1490,19 +1063,27 @@ ref_scale_cleanup(void)
 	torture_cleanup_end();
 }
 
+// Shutdown kthread.  Just waits to be awakened, then shuts down system.
+static int
+ref_scale_shutdown(void *arg)
+{
+	wait_event_idle(shutdown_wq, shutdown_start);
+
+	smp_mb(); // Wake before output.
+	ref_scale_cleanup();
+	kernel_power_off();
+
+	return -EINVAL;
+}
+
 static int __init
 ref_scale_init(void)
 {
 	long i;
 	int firsterr = 0;
 	static const struct ref_scale_ops *scale_ops[] = {
-		&rcu_ops, &srcu_ops, &srcu_fast_ops, &srcu_fast_updown_ops,
-		RCU_TRACE_OPS RCU_TASKS_OPS
-		&refcnt_ops, &percpuinc_ops, &incpercpu_ops, &incpercpupreempt_ops,
-		&incpercpubh_ops, &incpercpuirqsave_ops,
-		&rwlock_ops, &rwsem_ops, &lock_ops, &lock_irq_ops, &acqrel_ops,
-		&sched_clock_ops, &clock_ops, &jiffies_ops,
-		&preempt_ops, &bh_ops, &irq_ops, &irqsave_ops,
+		&rcu_ops, &srcu_ops, RCU_TRACE_OPS RCU_TASKS_OPS &refcnt_ops, &rwlock_ops,
+		&rwsem_ops, &lock_ops, &lock_irq_ops, &acqrel_ops, &clock_ops, &jiffies_ops,
 		&typesafe_ref_ops, &typesafe_lock_ops, &typesafe_seqlock_ops,
 	};
 
@@ -1533,10 +1114,13 @@ ref_scale_init(void)
 	ref_scale_print_module_parms(cur_ops, "Start of test");
 
 	// Shutdown task
-	if (shutdown_secs) {
-		firsterr = torture_shutdown_init(shutdown_secs, ref_scale_cleanup);
+	if (shutdown) {
+		init_waitqueue_head(&shutdown_wq);
+		firsterr = torture_create_kthread(ref_scale_shutdown, NULL,
+						  shutdown_task);
 		if (torture_init_error(firsterr))
 			goto unwind;
+		schedule_timeout_uninterruptible(1);
 	}
 
 	// Reader tasks (default to ~75% of online CPUs).
@@ -1552,7 +1136,8 @@ ref_scale_init(void)
 		      "%s: nreaders * loops will overflow, adjusted loops to %d",
 		      __func__, INT_MAX / nreaders))
 		loops = INT_MAX / nreaders;
-	reader_tasks = kzalloc_objs(reader_tasks[0], nreaders);
+	reader_tasks = kcalloc(nreaders, sizeof(reader_tasks[0]),
+			       GFP_KERNEL);
 	if (!reader_tasks) {
 		SCALEOUT_ERRSTRING("out of memory");
 		firsterr = -ENOMEM;
@@ -1581,7 +1166,7 @@ ref_scale_init(void)
 unwind:
 	torture_init_end();
 	ref_scale_cleanup();
-	if (shutdown_secs) {
+	if (shutdown) {
 		WARN_ON(!IS_MODULE(CONFIG_RCU_REF_SCALE_TEST));
 		kernel_power_off();
 	}

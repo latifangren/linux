@@ -150,7 +150,7 @@ static struct clk * __init cpg_mstp_clock_register(const char *name,
 	struct mstp_clock *clock;
 	struct clk *clk;
 
-	clock = kzalloc_obj(*clock);
+	clock = kzalloc(sizeof(*clock), GFP_KERNEL);
 	if (!clock)
 		return ERR_PTR(-ENOMEM);
 
@@ -184,7 +184,7 @@ static void __init cpg_mstp_clocks_init(struct device_node *np)
 	struct clk **clks;
 	unsigned int i;
 
-	group = kzalloc_flex(*group, clks, MSTP_MAX_CLOCKS);
+	group = kzalloc(struct_size(group, clks, MSTP_MAX_CLOCKS), GFP_KERNEL);
 	if (!group)
 		return;
 
@@ -303,9 +303,6 @@ void cpg_mstp_detach_dev(struct generic_pm_domain *unused, struct device *dev)
 		pm_clk_destroy(dev);
 }
 
-static struct device_node *cpg_mstp_pd_np __initdata = NULL;
-static struct generic_pm_domain *cpg_mstp_pd_genpd __initdata = NULL;
-
 void __init cpg_mstp_add_clk_domain(struct device_node *np)
 {
 	struct generic_pm_domain *pd;
@@ -316,7 +313,7 @@ void __init cpg_mstp_add_clk_domain(struct device_node *np)
 		return;
 	}
 
-	pd = kzalloc_obj(*pd);
+	pd = kzalloc(sizeof(*pd), GFP_KERNEL);
 	if (!pd)
 		return;
 
@@ -327,20 +324,5 @@ void __init cpg_mstp_add_clk_domain(struct device_node *np)
 	pd->detach_dev = cpg_mstp_detach_dev;
 	pm_genpd_init(pd, &pm_domain_always_on_gov, false);
 
-	cpg_mstp_pd_np = of_node_get(np);
-	cpg_mstp_pd_genpd = pd;
+	of_genpd_add_provider_simple(np, pd);
 }
-
-static int __init cpg_mstp_pd_init_provider(void)
-{
-	int error;
-
-	if (!cpg_mstp_pd_np)
-		return -ENODEV;
-
-	error = of_genpd_add_provider_simple(cpg_mstp_pd_np, cpg_mstp_pd_genpd);
-
-	of_node_put(cpg_mstp_pd_np);
-	return error;
-}
-postcore_initcall(cpg_mstp_pd_init_provider);

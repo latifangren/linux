@@ -120,6 +120,7 @@ struct edt_ft5x06_ts_data {
 	struct regmap *regmap;
 
 #if defined(CONFIG_DEBUG_FS)
+	struct dentry *debug_dir;
 	u8 *raw_buffer;
 	size_t raw_bufsize;
 #endif
@@ -814,21 +815,23 @@ static const struct file_operations debugfs_raw_data_fops = {
 	.read = edt_ft5x06_debugfs_raw_data_read,
 };
 
-static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata)
+static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata,
+					  const char *debugfs_name)
 {
-	struct dentry *debug_dir = tsdata->client->debugfs;
+	tsdata->debug_dir = debugfs_create_dir(debugfs_name, NULL);
 
-	debugfs_create_u16("num_x", S_IRUSR, debug_dir, &tsdata->num_x);
-	debugfs_create_u16("num_y", S_IRUSR, debug_dir, &tsdata->num_y);
+	debugfs_create_u16("num_x", S_IRUSR, tsdata->debug_dir, &tsdata->num_x);
+	debugfs_create_u16("num_y", S_IRUSR, tsdata->debug_dir, &tsdata->num_y);
 
 	debugfs_create_file("mode", S_IRUSR | S_IWUSR,
-			    debug_dir, tsdata, &debugfs_mode_fops);
+			    tsdata->debug_dir, tsdata, &debugfs_mode_fops);
 	debugfs_create_file("raw_data", S_IRUSR,
-			    debug_dir, tsdata, &debugfs_raw_data_fops);
+			    tsdata->debug_dir, tsdata, &debugfs_raw_data_fops);
 }
 
 static void edt_ft5x06_ts_teardown_debugfs(struct edt_ft5x06_ts_data *tsdata)
 {
+	debugfs_remove_recursive(tsdata->debug_dir);
 	kfree(tsdata->raw_buffer);
 }
 
@@ -839,7 +842,8 @@ static int edt_ft5x06_factory_mode(struct edt_ft5x06_ts_data *tsdata)
 	return -ENOSYS;
 }
 
-static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata)
+static void edt_ft5x06_ts_prepare_debugfs(struct edt_ft5x06_ts_data *tsdata,
+					  const char *debugfs_name)
 {
 }
 
@@ -1233,7 +1237,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	}
 
 	/*
-	 * Check which sleep modes we can support. Power-off requires the
+	 * Check which sleep modes we can support. Power-off requieres the
 	 * reset-pin to ensure correct power-down/power-up behaviour. Start with
 	 * the EDT_PMODE_POWEROFF test since this is the deepest possible sleep
 	 * mode.
@@ -1345,7 +1349,7 @@ static int edt_ft5x06_ts_probe(struct i2c_client *client)
 	if (error)
 		return error;
 
-	edt_ft5x06_ts_prepare_debugfs(tsdata);
+	edt_ft5x06_ts_prepare_debugfs(tsdata, dev_driver_string(&client->dev));
 
 	dev_dbg(&client->dev,
 		"EDT FT5x06 initialized: IRQ %d, WAKE pin %d, Reset pin %d.\n",
@@ -1475,10 +1479,6 @@ static const struct edt_i2c_chip_data edt_ft5x06_data = {
 	.max_support_points = 5,
 };
 
-static const struct edt_i2c_chip_data edt_ft3518_data = {
-	.max_support_points = 10,
-};
-
 static const struct edt_i2c_chip_data edt_ft5452_data = {
 	.max_support_points = 5,
 };
@@ -1495,10 +1495,6 @@ static const struct edt_i2c_chip_data edt_ft8201_data = {
 	.max_support_points = 10,
 };
 
-static const struct edt_i2c_chip_data edt_ft8716_data = {
-	.max_support_points = 10,
-};
-
 static const struct edt_i2c_chip_data edt_ft8719_data = {
 	.max_support_points = 10,
 };
@@ -1507,12 +1503,10 @@ static const struct i2c_device_id edt_ft5x06_ts_id[] = {
 	{ .name = "edt-ft5x06", .driver_data = (long)&edt_ft5x06_data },
 	{ .name = "edt-ft5506", .driver_data = (long)&edt_ft5506_data },
 	{ .name = "ev-ft5726", .driver_data = (long)&edt_ft5506_data },
-	{ .name = "ft3518", .driver_data = (long)&edt_ft3518_data },
 	{ .name = "ft5452", .driver_data = (long)&edt_ft5452_data },
 	/* Note no edt- prefix for compatibility with the ft6236.c driver */
 	{ .name = "ft6236", .driver_data = (long)&edt_ft6236_data },
 	{ .name = "ft8201", .driver_data = (long)&edt_ft8201_data },
-	{ .name = "ft8716", .driver_data = (long)&edt_ft8716_data },
 	{ .name = "ft8719", .driver_data = (long)&edt_ft8719_data },
 	{ /* sentinel */ }
 };
@@ -1524,13 +1518,11 @@ static const struct of_device_id edt_ft5x06_of_match[] = {
 	{ .compatible = "edt,edt-ft5406", .data = &edt_ft5x06_data },
 	{ .compatible = "edt,edt-ft5506", .data = &edt_ft5506_data },
 	{ .compatible = "evervision,ev-ft5726", .data = &edt_ft5506_data },
-	{ .compatible = "focaltech,ft3518", .data = &edt_ft3518_data },
 	{ .compatible = "focaltech,ft5426", .data = &edt_ft5506_data },
 	{ .compatible = "focaltech,ft5452", .data = &edt_ft5452_data },
 	/* Note focaltech vendor prefix for compatibility with ft6236.c */
 	{ .compatible = "focaltech,ft6236", .data = &edt_ft6236_data },
 	{ .compatible = "focaltech,ft8201", .data = &edt_ft8201_data },
-	{ .compatible = "focaltech,ft8716", .data = &edt_ft8716_data },
 	{ .compatible = "focaltech,ft8719", .data = &edt_ft8719_data },
 	{ /* sentinel */ }
 };

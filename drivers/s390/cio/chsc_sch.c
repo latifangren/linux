@@ -9,6 +9,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/compat.h>
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -81,7 +82,7 @@ static int chsc_subchannel_probe(struct subchannel *sch)
 	CHSC_MSG(6, "Detected chsc subchannel 0.%x.%04x\n",
 		 sch->schid.ssid, sch->schid.sch_no);
 	sch->isc = CHSC_SCH_ISC;
-	private = kzalloc_obj(*private);
+	private = kzalloc(sizeof(*private), GFP_KERNEL);
 	if (!private)
 		return -ENOMEM;
 	dev_set_drvdata(&sch->dev, private);
@@ -295,7 +296,7 @@ static int chsc_ioctl_start(void __user *user_area)
 	chsc_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!chsc_area)
 		return -ENOMEM;
-	request = kzalloc_obj(*request);
+	request = kzalloc(sizeof(*request), GFP_KERNEL);
 	if (!request) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -335,7 +336,7 @@ static int chsc_ioctl_on_close_set(void __user *user_area)
 		ret = -EBUSY;
 		goto out_unlock;
 	}
-	on_close_request = kzalloc_obj(*on_close_request);
+	on_close_request = kzalloc(sizeof(*on_close_request), GFP_KERNEL);
 	if (!on_close_request) {
 		ret = -ENOMEM;
 		goto out_unlock;
@@ -441,7 +442,7 @@ static int chsc_ioctl_info_channel_path(void __user *user_cd)
 	scpcd_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!scpcd_area)
 		return -ENOMEM;
-	cd = kzalloc_obj(*cd);
+	cd = kzalloc(sizeof(*cd), GFP_KERNEL);
 	if (!cd) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -503,7 +504,7 @@ static int chsc_ioctl_info_cu(void __user *user_cd)
 	scucd_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!scucd_area)
 		return -ENOMEM;
-	cd = kzalloc_obj(*cd);
+	cd = kzalloc(sizeof(*cd), GFP_KERNEL);
 	if (!cd) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -566,7 +567,7 @@ static int chsc_ioctl_info_sch_cu(void __user *user_cud)
 	sscud_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!sscud_area)
 		return -ENOMEM;
-	cud = kzalloc_obj(*cud);
+	cud = kzalloc(sizeof(*cud), GFP_KERNEL);
 	if (!cud) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -628,7 +629,7 @@ static int chsc_ioctl_conf_info(void __user *user_ci)
 	sci_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!sci_area)
 		return -ENOMEM;
-	ci = kzalloc_obj(*ci);
+	ci = kzalloc(sizeof(*ci), GFP_KERNEL);
 	if (!ci) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -699,7 +700,7 @@ static int chsc_ioctl_conf_comp_list(void __user *user_ccl)
 	sccl_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!sccl_area)
 		return -ENOMEM;
-	ccl = kzalloc_obj(*ccl);
+	ccl = kzalloc(sizeof(*ccl), GFP_KERNEL);
 	if (!ccl) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -755,7 +756,7 @@ static int chsc_ioctl_chpd(void __user *user_chpd)
 	struct chsc_cpd_info *chpd;
 	int ret;
 
-	chpd = kzalloc_obj(*chpd);
+	chpd = kzalloc(sizeof(*chpd), GFP_KERNEL);
 	scpd_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!scpd_area || !chpd) {
 		ret = -ENOMEM;
@@ -799,7 +800,7 @@ static int chsc_ioctl_dcal(void __user *user_dcal)
 	sdcal_area = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!sdcal_area)
 		return -ENOMEM;
-	dcal = kzalloc_obj(*dcal);
+	dcal = kzalloc(sizeof(*dcal), GFP_KERNEL);
 	if (!dcal) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -844,7 +845,10 @@ static long chsc_ioctl(struct file *filp, unsigned int cmd,
 	void __user *argp;
 
 	CHSC_MSG(2, "chsc_ioctl called, cmd=%x\n", cmd);
-	argp = (void __user *)arg;
+	if (is_compat_task())
+		argp = compat_ptr(arg);
+	else
+		argp = (void __user *)arg;
 	switch (cmd) {
 	case CHSC_START:
 		return chsc_ioctl_start(argp);
@@ -919,6 +923,7 @@ static const struct file_operations chsc_fops = {
 	.open = chsc_open,
 	.release = chsc_release,
 	.unlocked_ioctl = chsc_ioctl,
+	.compat_ioctl = chsc_ioctl,
 };
 
 static struct miscdevice chsc_misc_device = {

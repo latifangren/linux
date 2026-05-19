@@ -265,8 +265,8 @@ static int zynq_gpio_get_value(struct gpio_chip *chip, unsigned int pin)
  * upper 16 bits) based on the given pin number and sets the state of a
  * gpio pin to the specified value. The state is either 0 or non-zero.
  */
-static int zynq_gpio_set_value(struct gpio_chip *chip, unsigned int pin,
-			       int state)
+static void zynq_gpio_set_value(struct gpio_chip *chip, unsigned int pin,
+				int state)
 {
 	unsigned int reg_offset, bank_num, bank_pin_num;
 	struct zynq_gpio *gpio = gpiochip_get_data(chip);
@@ -290,8 +290,6 @@ static int zynq_gpio_set_value(struct gpio_chip *chip, unsigned int pin,
 		((state << bank_pin_num) | ZYNQ_GPIO_UPPER_MASK);
 
 	writel_relaxed(state, gpio->base_addr + reg_offset);
-
-	return 0;
 }
 
 /**
@@ -735,7 +733,7 @@ static void zynq_gpio_restore_context(struct zynq_gpio *gpio)
 	}
 }
 
-static int zynq_gpio_suspend(struct device *dev)
+static int __maybe_unused zynq_gpio_suspend(struct device *dev)
 {
 	struct zynq_gpio *gpio = dev_get_drvdata(dev);
 	struct irq_data *data = irq_get_irq_data(gpio->irq);
@@ -756,7 +754,7 @@ static int zynq_gpio_suspend(struct device *dev)
 	return 0;
 }
 
-static int zynq_gpio_resume(struct device *dev)
+static int __maybe_unused zynq_gpio_resume(struct device *dev)
 {
 	struct zynq_gpio *gpio = dev_get_drvdata(dev);
 	struct irq_data *data = irq_get_irq_data(gpio->irq);
@@ -779,7 +777,7 @@ static int zynq_gpio_resume(struct device *dev)
 	return 0;
 }
 
-static int zynq_gpio_runtime_suspend(struct device *dev)
+static int __maybe_unused zynq_gpio_runtime_suspend(struct device *dev)
 {
 	struct zynq_gpio *gpio = dev_get_drvdata(dev);
 
@@ -788,7 +786,7 @@ static int zynq_gpio_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int zynq_gpio_runtime_resume(struct device *dev)
+static int __maybe_unused zynq_gpio_runtime_resume(struct device *dev)
 {
 	struct zynq_gpio *gpio = dev_get_drvdata(dev);
 
@@ -814,8 +812,9 @@ static void zynq_gpio_free(struct gpio_chip *chip, unsigned int offset)
 }
 
 static const struct dev_pm_ops zynq_gpio_dev_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(zynq_gpio_suspend, zynq_gpio_resume)
-	RUNTIME_PM_OPS(zynq_gpio_runtime_suspend, zynq_gpio_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(zynq_gpio_suspend, zynq_gpio_resume)
+	SET_RUNTIME_PM_OPS(zynq_gpio_runtime_suspend,
+			   zynq_gpio_runtime_resume, NULL)
 };
 
 static const struct zynq_platform_data versal_gpio_def = {
@@ -903,16 +902,18 @@ static int zynq_gpio_probe(struct platform_device *pdev)
 	struct zynq_gpio *gpio;
 	struct gpio_chip *chip;
 	struct gpio_irq_chip *girq;
+	const struct of_device_id *match;
 
 	gpio = devm_kzalloc(&pdev->dev, sizeof(*gpio), GFP_KERNEL);
 	if (!gpio)
 		return -ENOMEM;
 
-	gpio->p_data = device_get_match_data(&pdev->dev);
-	if (!gpio->p_data)
-		return dev_err_probe(&pdev->dev, -EINVAL,
-				     "device_get_match_data() failed\n");
-
+	match = of_match_node(zynq_gpio_of_match, pdev->dev.of_node);
+	if (!match) {
+		dev_err(&pdev->dev, "of_match_node() failed\n");
+		return -EINVAL;
+	}
+	gpio->p_data = match->data;
 	platform_set_drvdata(pdev, gpio);
 
 	gpio->base_addr = devm_platform_ioremap_resource(pdev, 0);
@@ -1019,11 +1020,11 @@ static void zynq_gpio_remove(struct platform_device *pdev)
 static struct platform_driver zynq_gpio_driver = {
 	.driver	= {
 		.name = DRIVER_NAME,
-		.pm = pm_ptr(&zynq_gpio_dev_pm_ops),
+		.pm = &zynq_gpio_dev_pm_ops,
 		.of_match_table = zynq_gpio_of_match,
 	},
 	.probe = zynq_gpio_probe,
-	.remove = zynq_gpio_remove,
+	.remove_new = zynq_gpio_remove,
 };
 
 module_platform_driver(zynq_gpio_driver);

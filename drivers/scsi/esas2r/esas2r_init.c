@@ -103,7 +103,8 @@ static void esas2r_initmem_free(struct esas2r_adapter *a,
 static bool alloc_vda_req(struct esas2r_adapter *a,
 			  struct esas2r_request *rq)
 {
-	struct esas2r_mem_desc *memdesc = kzalloc_obj(struct esas2r_mem_desc);
+	struct esas2r_mem_desc *memdesc = kzalloc(
+		sizeof(struct esas2r_mem_desc), GFP_KERNEL);
 
 	if (memdesc == NULL) {
 		esas2r_hdebug("could not alloc mem for vda request memdesc\n");
@@ -438,7 +439,7 @@ static void esas2r_adapter_power_down(struct esas2r_adapter *a,
 	if ((test_bit(AF2_INIT_DONE, &a->flags2))
 	    &&  (!test_bit(AF_DEGRADED_MODE, &a->flags))) {
 		if (!power_management) {
-			timer_delete_sync(&a->timer);
+			del_timer_sync(&a->timer);
 			tasklet_kill(&a->tasklet);
 		}
 		esas2r_power_down(a);
@@ -782,7 +783,8 @@ bool esas2r_init_adapter_struct(struct esas2r_adapter *a,
 
 	/* allocate requests for asynchronous events */
 	a->first_ae_req =
-		kzalloc_objs(struct esas2r_request, num_ae_requests);
+		kcalloc(num_ae_requests, sizeof(struct esas2r_request),
+			GFP_KERNEL);
 
 	if (a->first_ae_req == NULL) {
 		esas2r_log(ESAS2R_LOG_CRIT,
@@ -791,7 +793,8 @@ bool esas2r_init_adapter_struct(struct esas2r_adapter *a,
 	}
 
 	/* allocate the S/G list memory descriptors */
-	a->sg_list_mds = kzalloc_objs(struct esas2r_mem_desc, num_sg_lists);
+	a->sg_list_mds = kcalloc(num_sg_lists, sizeof(struct esas2r_mem_desc),
+				 GFP_KERNEL);
 
 	if (a->sg_list_mds == NULL) {
 		esas2r_log(ESAS2R_LOG_CRIT,
@@ -801,8 +804,9 @@ bool esas2r_init_adapter_struct(struct esas2r_adapter *a,
 
 	/* allocate the request table */
 	a->req_table =
-		kzalloc_objs(struct esas2r_request *,
-			     num_requests + num_ae_requests + 1);
+		kcalloc(num_requests + num_ae_requests + 1,
+			sizeof(struct esas2r_request *),
+			GFP_KERNEL);
 
 	if (a->req_table == NULL) {
 		esas2r_log(ESAS2R_LOG_CRIT,

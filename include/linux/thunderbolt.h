@@ -11,13 +11,6 @@
 #ifndef THUNDERBOLT_H_
 #define THUNDERBOLT_H_
 
-#include <linux/types.h>
-
-struct fwnode_handle;
-struct device;
-
-#if IS_REACHABLE(CONFIG_USB4)
-
 #include <linux/device.h>
 #include <linux/idr.h>
 #include <linux/list.h>
@@ -213,7 +206,7 @@ enum tb_link_width {
  *		queried first
  * @service_ids: Used to generate IDs for the services
  * @in_hopids: Input HopIDs for DMA tunneling
- * @out_hopids: Output HopIDs for DMA tunneling
+ * @out_hopids; Output HopIDs for DMA tunneling
  * @local_property_block: Local block of properties
  * @local_property_block_gen: Generation of @local_property_block
  * @local_property_block_len: Length of the @local_property_block in dwords
@@ -356,7 +349,7 @@ int tb_xdomain_request(struct tb_xdomain *xd, const void *request,
 		       unsigned int timeout_msec);
 
 /**
- * struct tb_protocol_handler - Protocol specific handler
+ * tb_protocol_handler - Protocol specific handler
  * @uuid: XDomain messages with this UUID are dispatched to this handler
  * @callback: Callback called with the XDomain message. Returning %1
  *	      here tells the XDomain core that the message was handled
@@ -437,7 +430,7 @@ static inline struct tb_service *tb_to_service(struct device *dev)
 }
 
 /**
- * struct tb_service_driver - Thunderbolt service driver
+ * tb_service_driver - Thunderbolt service driver
  * @driver: Driver structure
  * @probe: Called when the driver is probed
  * @remove: Called when the driver is removed (optional)
@@ -519,7 +512,6 @@ struct tb_nhi {
  * @head: Head of the ring (write next descriptor here)
  * @tail: Tail of the ring (complete next descriptor here)
  * @descriptors: Allocated descriptors for this ring
- * @descriptors_dma: DMA address of descriptors for this ring
  * @queue: Queue holding frames to be transferred over this ring
  * @in_flight: Queue holding frames that are currently in flight
  * @work: Interrupt work structure
@@ -572,12 +564,12 @@ typedef void (*ring_cb)(struct tb_ring *, struct ring_frame *, bool canceled);
 
 /**
  * enum ring_desc_flags - Flags for DMA ring descriptor
- * @RING_DESC_ISOCH: Enable isonchronous DMA (Tx only)
- * @RING_DESC_CRC_ERROR: In frame mode CRC check failed for the frame (Rx only)
- * @RING_DESC_COMPLETED: Descriptor completed (set by NHI)
- * @RING_DESC_POSTED: Always set this
- * @RING_DESC_BUFFER_OVERRUN: RX buffer overrun
- * @RING_DESC_INTERRUPT: Request an interrupt on completion
+ * %RING_DESC_ISOCH: Enable isonchronous DMA (Tx only)
+ * %RING_DESC_CRC_ERROR: In frame mode CRC check failed for the frame (Rx only)
+ * %RING_DESC_COMPLETED: Descriptor completed (set by NHI)
+ * %RING_DESC_POSTED: Always set this
+ * %RING_DESC_BUFFER_OVERRUN: RX buffer overrun
+ * %RING_DESC_INTERRUPT: Request an interrupt on completion
  */
 enum ring_desc_flags {
 	RING_DESC_ISOCH = 0x1,
@@ -637,7 +629,7 @@ int __tb_ring_enqueue(struct tb_ring *ring, struct ring_frame *frame);
  * If ring_stop() is called after the packet has been enqueued
  * @frame->callback will be called with canceled set to true.
  *
- * Return: %-ESHUTDOWN if ring_stop() has been called, %0 otherwise.
+ * Return: Returns %-ESHUTDOWN if ring_stop has been called. Zero otherwise.
  */
 static inline int tb_ring_rx(struct tb_ring *ring, struct ring_frame *frame)
 {
@@ -658,7 +650,7 @@ static inline int tb_ring_rx(struct tb_ring *ring, struct ring_frame *frame)
  * If ring_stop() is called after the packet has been enqueued @frame->callback
  * will be called with canceled set to true.
  *
- * Return: %-ESHUTDOWN if ring_stop has been called, %0 otherwise.
+ * Return: Returns %-ESHUTDOWN if ring_stop has been called. Zero otherwise.
  */
 static inline int tb_ring_tx(struct tb_ring *ring, struct ring_frame *frame)
 {
@@ -676,23 +668,10 @@ void tb_ring_poll_complete(struct tb_ring *ring);
  *
  * Use this function when you are mapping DMA for buffers that are
  * passed to the ring for sending/receiving.
- *
- * Return: Pointer to device used for DMA mapping.
  */
 static inline struct device *tb_ring_dma_device(struct tb_ring *ring)
 {
 	return &ring->nhi->pdev->dev;
 }
-
-bool usb4_usb3_port_match(struct device *usb4_port_dev,
-			  const struct fwnode_handle *usb3_port_fwnode);
-
-#else /* CONFIG_USB4 */
-static inline bool usb4_usb3_port_match(struct device *usb4_port_dev,
-					const struct fwnode_handle *usb3_port_fwnode)
-{
-	return false;
-}
-#endif /* CONFIG_USB4 */
 
 #endif /* THUNDERBOLT_H_ */

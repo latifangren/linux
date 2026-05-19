@@ -371,13 +371,6 @@ static const struct key_entry dell_wmi_keymap_type_0012[] = {
 	/* Backlight brightness change event */
 	{ KE_IGNORE, 0x0003, { KEY_RESERVED } },
 
-	/*
-	 * Electronic privacy screen toggled, extended data gives state,
-	 * separate entries for on/off see handling in dell_wmi_process_key().
-	 */
-	{ KE_KEY, 0x000c, { KEY_EPRIVACY_SCREEN_OFF } },
-	{ KE_KEY, 0x000c, { KEY_EPRIVACY_SCREEN_ON } },
-
 	/* Ultra-performance mode switch request */
 	{ KE_IGNORE, 0x000d, { KEY_RESERVED } },
 
@@ -448,11 +441,6 @@ static int dell_wmi_process_key(struct wmi_device *wdev, int type, int code, u16
 				      "Dell tablet mode switch",
 				      SW_TABLET_MODE, !buffer[0]);
 		return 1;
-	} else if (type == 0x0012 && code == 0x000c && remaining > 0) {
-		/* Eprivacy toggle, switch to "on" key entry for on events */
-		if (buffer[0] == 2)
-			key++;
-		used = 1;
 	} else if (type == 0x0012 && code == 0x000d && remaining > 0) {
 		value = (buffer[2] == 2);
 		used = 1;
@@ -592,7 +580,7 @@ static void handle_dmi_entry(const struct dmi_header *dm, void *opaque)
 		return;
 	}
 
-	keymap = kzalloc_objs(struct key_entry, hotkey_num);
+	keymap = kcalloc(hotkey_num, sizeof(struct key_entry), GFP_KERNEL);
 	if (!keymap) {
 		results->err = -ENOMEM;
 		return;
@@ -662,8 +650,13 @@ static int dell_wmi_input_setup(struct wmi_device *wdev)
 		goto err_free_dev;
 	}
 
-	keymap = kzalloc_objs(struct key_entry,
-			      dmi_results.keymap_size + ARRAY_SIZE(dell_wmi_keymap_type_0000) + ARRAY_SIZE(dell_wmi_keymap_type_0010) + ARRAY_SIZE(dell_wmi_keymap_type_0011) + ARRAY_SIZE(dell_wmi_keymap_type_0012) + 1);
+	keymap = kcalloc(dmi_results.keymap_size +
+			 ARRAY_SIZE(dell_wmi_keymap_type_0000) +
+			 ARRAY_SIZE(dell_wmi_keymap_type_0010) +
+			 ARRAY_SIZE(dell_wmi_keymap_type_0011) +
+			 ARRAY_SIZE(dell_wmi_keymap_type_0012) +
+			 1,
+			 sizeof(struct key_entry), GFP_KERNEL);
 	if (!keymap) {
 		kfree(dmi_results.keymap);
 		err = -ENOMEM;
@@ -774,7 +767,7 @@ static int dell_wmi_events_set_enabled(bool enable)
 	struct calling_interface_buffer *buffer;
 	int ret;
 
-	buffer = kzalloc_obj(struct calling_interface_buffer);
+	buffer = kzalloc(sizeof(struct calling_interface_buffer), GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
 	buffer->cmd_class = CLASS_INFO;
@@ -825,7 +818,6 @@ static struct wmi_driver dell_wmi_driver = {
 		.name = "dell-wmi",
 	},
 	.id_table = dell_wmi_id_table,
-	.min_event_size = sizeof(u16),
 	.probe = dell_wmi_probe,
 	.remove = dell_wmi_remove,
 	.notify = dell_wmi_notify,

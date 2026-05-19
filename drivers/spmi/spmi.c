@@ -418,7 +418,7 @@ struct spmi_device *spmi_device_alloc(struct spmi_controller *ctrl)
 {
 	struct spmi_device *sdev;
 
-	sdev = kzalloc_obj(*sdev);
+	sdev = kzalloc(sizeof(*sdev), GFP_KERNEL);
 	if (!sdev)
 		return NULL;
 
@@ -517,7 +517,7 @@ static void of_spmi_register_devices(struct spmi_controller *ctrl)
 		if (!sdev)
 			continue;
 
-		device_set_node(&sdev->dev, of_fwnode_handle(node));
+		sdev->dev.of_node = node;
 		sdev->usid = (u8)reg[0];
 
 		err = spmi_device_add(sdev);

@@ -216,7 +216,7 @@ static int snd_virmidi_output_open(struct snd_rawmidi_substream *substream)
 	struct snd_rawmidi_runtime *runtime = substream->runtime;
 	struct snd_virmidi *vmidi;
 
-	vmidi = kzalloc_obj(*vmidi);
+	vmidi = kzalloc(sizeof(*vmidi), GFP_KERNEL);
 	if (vmidi == NULL)
 		return -ENOMEM;
 	vmidi->substream = substream;
@@ -361,13 +361,13 @@ static int snd_virmidi_dev_attach_seq(struct snd_virmidi_dev *rdev)
 {
 	int client;
 	struct snd_seq_port_callback pcallbacks;
+	struct snd_seq_port_info *pinfo __free(kfree) = NULL;
 	int err;
 
 	if (rdev->client >= 0)
 		return 0;
 
-	struct snd_seq_port_info *pinfo __free(kfree) =
-		kzalloc_obj(*pinfo);
+	pinfo = kzalloc(sizeof(*pinfo), GFP_KERNEL);
 	if (!pinfo)
 		return -ENOMEM;
 
@@ -497,8 +497,8 @@ int snd_virmidi_new(struct snd_card *card, int device, struct snd_rawmidi **rrmi
 			      &rmidi);
 	if (err < 0)
 		return err;
-	strscpy(rmidi->name, rmidi->id);
-	rdev = kzalloc_obj(*rdev);
+	strcpy(rmidi->name, rmidi->id);
+	rdev = kzalloc(sizeof(*rdev), GFP_KERNEL);
 	if (rdev == NULL) {
 		snd_device_free(card, rmidi);
 		return -ENOMEM;

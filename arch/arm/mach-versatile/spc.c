@@ -395,7 +395,7 @@ static int ve_spc_populate_opps(uint32_t cluster)
 	uint32_t data = 0, off, ret, idx;
 	struct ve_spc_opp *opps;
 
-	opps = kzalloc_objs(*opps, MAX_OPPS);
+	opps = kcalloc(MAX_OPPS, sizeof(*opps), GFP_KERNEL);
 	if (!opps)
 		return -ENOMEM;
 
@@ -442,7 +442,7 @@ static int ve_init_opp_table(struct device *cpu_dev)
 int __init ve_spc_init(void __iomem *baseaddr, u32 a15_clusid, int irq)
 {
 	int ret;
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -459,8 +459,8 @@ int __init ve_spc_init(void __iomem *baseaddr, u32 a15_clusid, int irq)
 
 	readl_relaxed(info->baseaddr + PWC_STATUS);
 
-	ret = request_irq(irq, ve_spc_irq_handler, IRQF_TRIGGER_HIGH,
-			  "vexpress-spc", info);
+	ret = request_irq(irq, ve_spc_irq_handler, IRQF_TRIGGER_HIGH
+				| IRQF_ONESHOT, "vexpress-spc", info);
 	if (ret) {
 		pr_err(SPCLOG "IRQ %d request failed\n", irq);
 		kfree(info);
@@ -497,13 +497,12 @@ static unsigned long spc_recalc_rate(struct clk_hw *hw,
 	return freq * 1000;
 }
 
-static int spc_determine_rate(struct clk_hw *hw, struct clk_rate_request *req)
+static long spc_round_rate(struct clk_hw *hw, unsigned long drate,
+		unsigned long *parent_rate)
 {
 	struct clk_spc *spc = to_clk_spc(hw);
 
-	req->rate = ve_spc_round_performance(spc->cluster, req->rate);
-
-	return 0;
+	return ve_spc_round_performance(spc->cluster, drate);
 }
 
 static int spc_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -516,7 +515,7 @@ static int spc_set_rate(struct clk_hw *hw, unsigned long rate,
 
 static struct clk_ops clk_spc_ops = {
 	.recalc_rate = spc_recalc_rate,
-	.determine_rate = spc_determine_rate,
+	.round_rate = spc_round_rate,
 	.set_rate = spc_set_rate,
 };
 
@@ -525,7 +524,7 @@ static struct clk *ve_spc_clk_register(struct device *cpu_dev)
 	struct clk_init_data init;
 	struct clk_spc *spc;
 
-	spc = kzalloc_obj(*spc);
+	spc = kzalloc(sizeof(*spc), GFP_KERNEL);
 	if (!spc)
 		return ERR_PTR(-ENOMEM);
 

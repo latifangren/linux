@@ -33,7 +33,8 @@ static inline int arch_futex_atomic_op_inuser(int op, int oparg, int *oval,
 {
 	int oldval = 0, ret;
 
-	uaddr = masked_user_access_begin(uaddr);
+	if (!user_access_begin(uaddr, sizeof(u32)))
+		return -EFAULT;
 
 	switch (op) {
 	case FUTEX_OP_SET:
@@ -68,7 +69,8 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
 	int ret = 0;
 	u32 prev;
 
-	uaddr = masked_user_access_begin(uaddr);
+	if (!user_access_begin(uaddr, sizeof(u32)))
+		return -EFAULT;
 
         __asm__ __volatile__ (
         PPC_ATOMIC_ENTRY_BARRIER

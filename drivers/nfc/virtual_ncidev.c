@@ -2,7 +2,7 @@
 /*
  * Virtual NCI device simulation driver
  *
- * Copyright (C) 2020 Samsung Electronics
+ * Copyright (C) 2020 Samsung Electrnoics
  * Bongsu Jeon <bongsu.jeon@samsung.com>
  */
 
@@ -135,7 +135,7 @@ static int virtual_ncidev_open(struct inode *inode, struct file *file)
 	int ret = 0;
 	struct virtual_nci_dev *vdev;
 
-	vdev = kzalloc_obj(*vdev);
+	vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
 	if (!vdev)
 		return -ENOMEM;
 	vdev->ndev = nci_allocate_device(&virtual_nci_ops,

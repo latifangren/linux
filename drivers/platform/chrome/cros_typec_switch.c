@@ -211,8 +211,9 @@ static int cros_typec_register_switches(struct cros_typec_switch_data *sdata)
 	struct cros_typec_port *port;
 	struct device *dev = sdata->dev;
 	struct fwnode_handle *fwnode;
+	struct acpi_device *adev;
+	unsigned long long index;
 	int nports, ret;
-	u64 index;
 
 	nports = device_get_child_node_count(dev);
 	if (nports == 0) {
@@ -227,9 +228,17 @@ static int cros_typec_register_switches(struct cros_typec_switch_data *sdata)
 			goto err_switch;
 		}
 
-		ret = acpi_get_local_u64_address(ACPI_HANDLE_FWNODE(fwnode), &index);
-		if (ret) {
+		adev = to_acpi_device_node(fwnode);
+		if (!adev) {
+			dev_err(dev, "Couldn't get ACPI device handle for %pfwP\n", fwnode);
+			ret = -ENODEV;
+			goto err_switch;
+		}
+
+		ret = acpi_evaluate_integer(adev->handle, "_ADR", NULL, &index);
+		if (ACPI_FAILURE(ret)) {
 			dev_err(dev, "_ADR wasn't evaluated for %pfwP\n", fwnode);
+			ret = -ENODATA;
 			goto err_switch;
 		}
 
@@ -309,7 +318,7 @@ static struct platform_driver cros_typec_switch_driver = {
 		.acpi_match_table = ACPI_PTR(cros_typec_switch_acpi_id),
 	},
 	.probe = cros_typec_switch_probe,
-	.remove = cros_typec_switch_remove,
+	.remove_new = cros_typec_switch_remove,
 };
 
 module_platform_driver(cros_typec_switch_driver);

@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0
-syscall-y += syscall_table_32.h
 syscall-y += syscall_table_64.h
 generated-y += orc_hash.h
 
@@ -11,4 +10,4 @@ generic-y += user.h
 generic-y += ioctl.h
 generic-y += mmzone.h
 generic-y += statfs.h
-generic-y += text-patching.h
+generic-y += param.h

@@ -866,24 +866,33 @@ void snd_oxfw_stream_lock_changed(struct snd_oxfw *oxfw)
 
 int snd_oxfw_stream_lock_try(struct snd_oxfw *oxfw)
 {
-	guard(spinlock_irq)(&oxfw->lock);
+	int err;
+
+	spin_lock_irq(&oxfw->lock);
 
 	/* user land lock this */
-	if (oxfw->dev_lock_count < 0)
-		return -EBUSY;
+	if (oxfw->dev_lock_count < 0) {
+		err = -EBUSY;
+		goto end;
+	}
 
 	/* this is the first time */
 	if (oxfw->dev_lock_count++ == 0)
 		snd_oxfw_stream_lock_changed(oxfw);
-	return 0;
+	err = 0;
+end:
+	spin_unlock_irq(&oxfw->lock);
+	return err;
 }
 
 void snd_oxfw_stream_lock_release(struct snd_oxfw *oxfw)
 {
-	guard(spinlock_irq)(&oxfw->lock);
+	spin_lock_irq(&oxfw->lock);
 
 	if (WARN_ON(oxfw->dev_lock_count <= 0))
-		return;
+		goto end;
 	if (--oxfw->dev_lock_count == 0)
 		snd_oxfw_stream_lock_changed(oxfw);
+end:
+	spin_unlock_irq(&oxfw->lock);
 }

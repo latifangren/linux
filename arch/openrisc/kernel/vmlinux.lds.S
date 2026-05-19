@@ -50,7 +50,6 @@ SECTIONS
         .text                   : AT(ADDR(.text) - LOAD_OFFSET)
 	{
           _stext = .;
-	  HEAD_TEXT
 	  TEXT_TEXT
 	  SCHED_TEXT
 	  LOCK_TEXT
@@ -84,6 +83,8 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 	__init_begin = .;
 
+	HEAD_TEXT_SECTION
+
 	/* Page aligned */
 	INIT_TEXT_SECTION(PAGE_SIZE)
 
@@ -101,7 +102,6 @@ SECTIONS
 	/* Throw in the debugging sections */
 	STABS_DEBUG
 	DWARF_DEBUG
-	MODINFO
 	ELF_DETAILS
 
         /* Sections to be discarded -- must be last */

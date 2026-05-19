@@ -197,8 +197,7 @@ static int erdma_set_ceq_irq(struct erdma_dev *dev, u16 ceqn)
 	tasklet_init(&dev->ceqs[ceqn].tasklet, erdma_intr_ceq_task,
 		     (unsigned long)&dev->ceqs[ceqn]);
 
-	cpumask_set_cpu(cpumask_local_spread(ceqn + 1,
-					     dev_to_node(&dev->pdev->dev)),
+	cpumask_set_cpu(cpumask_local_spread(ceqn + 1, dev->attrs.numa_node),
 			&eqc->irq.affinity_hint_mask);
 
 	err = request_irq(eqc->irq.msix_vector, erdma_intr_ceq_handler, 0,
@@ -237,8 +236,7 @@ static int create_eq_cmd(struct erdma_dev *dev, u32 eqn, struct erdma_eq *eq)
 	req.db_dma_addr_l = lower_32_bits(eq->dbrec_dma);
 	req.db_dma_addr_h = upper_32_bits(eq->dbrec_dma);
 
-	return erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL,
-				   false);
+	return erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 }
 
 static int erdma_ceq_init_one(struct erdma_dev *dev, u16 ceqn)
@@ -280,8 +278,7 @@ static void erdma_ceq_uninit_one(struct erdma_dev *dev, u16 ceqn)
 	req.qtype = ERDMA_EQ_TYPE_CEQ;
 	req.vector_idx = ceqn + 1;
 
-	err = erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL,
-				  false);
+	err = erdma_post_cmd_wait(&dev->cmdq, &req, sizeof(req), NULL, NULL);
 	if (err)
 		return;
 

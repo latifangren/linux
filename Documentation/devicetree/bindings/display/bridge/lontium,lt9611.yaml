@@ -44,28 +44,21 @@ properties:
       port@0:
         $ref: /schemas/graph.yaml#/properties/port
         description:
-          DSI Port A input. directly drives the display, or works in
-          combination with Port B for higher resolution displays.
+          Primary MIPI port-1 for MIPI input
 
       port@1:
         $ref: /schemas/graph.yaml#/properties/port
         description:
-          DSI Port B input. Can be used alone if DSI is physically
-          connected to Port B, or in combination with Port A for higher
-          resolution displays.
+          Additional MIPI port-2 for MIPI input, used in combination
+          with primary MIPI port-1 to drive higher resolution displays
 
       port@2:
         $ref: /schemas/graph.yaml#/properties/port
         description:
           HDMI port for HDMI output
 
-    anyOf:
-      - required:
-          - port@0
-      - required:
-          - port@1
-
     required:
+      - port@0
       - port@2
 
 required:
@@ -76,10 +69,7 @@ required:
   - vcc-supply
   - ports
 
-allOf:
-  - $ref: /schemas/sound/dai-common.yaml#
-
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

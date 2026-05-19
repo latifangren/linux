@@ -24,10 +24,19 @@ struct zstd_params {
 /*
  * For C/D dictionaries we need to provide zstd with zstd_custom_mem,
  * which zstd uses internally to allocate/free memory when needed.
+ *
+ * This means that allocator.customAlloc() can be called from zcomp_compress()
+ * under local-lock (per-CPU compression stream), in which case we must use
+ * GFP_ATOMIC.
+ *
+ * Another complication here is that we can be configured as a swap device.
  */
 static void *zstd_custom_alloc(void *opaque, size_t size)
 {
-	return kvzalloc(size, GFP_NOIO | __GFP_NOWARN);
+	if (!preemptible())
+		return kvzalloc(size, GFP_ATOMIC);
+
+	return kvzalloc(size, __GFP_KSWAPD_RECLAIM | __GFP_NOWARN);
 }
 
 static void zstd_custom_free(void *opaque, void *address)
@@ -53,12 +62,12 @@ static int zstd_setup_params(struct zcomp_params *params)
 	zstd_compression_parameters prm;
 	struct zstd_params *zp;
 
-	zp = kzalloc_obj(*zp);
+	zp = kzalloc(sizeof(*zp), GFP_KERNEL);
 	if (!zp)
 		return -ENOMEM;
 
 	params->drv_data = zp;
-	if (params->level == ZCOMP_PARAM_NOT_SET)
+	if (params->level == ZCOMP_PARAM_NO_LEVEL)
 		params->level = zstd_default_clevel();
 
 	zp->cprm = zstd_get_params(params->level, PAGE_SIZE);
@@ -122,7 +131,7 @@ static int zstd_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
 	zstd_parameters prm;
 	size_t sz;
 
-	zctx = kzalloc_obj(*zctx);
+	zctx = kzalloc(sizeof(*zctx), GFP_KERNEL);
 	if (!zctx)
 		return -ENOMEM;
 

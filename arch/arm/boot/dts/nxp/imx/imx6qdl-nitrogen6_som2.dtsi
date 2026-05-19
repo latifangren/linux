@@ -47,38 +47,38 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_keys>;
 
-		key-power {
+		power {
 			label = "Power Button";
 			gpios = <&gpio2 3 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_POWER>;
 			wakeup-source;
 		};
 
-		key-menu {
+		menu {
 			label = "Menu";
 			gpios = <&gpio2 1 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_MENU>;
 		};
 
-		key-home {
+		home {
 			label = "Home";
 			gpios = <&gpio2 4 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_HOME>;
 		};
 
-		key-back {
+		back {
 			label = "Back";
 			gpios = <&gpio2 2 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_BACK>;
 		};
 
-		key-volume-up {
+		volume-up {
 			label = "Volume Up";
 			gpios = <&gpio7 13 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
 		};
 
-		key-volume-down {
+		volume-down {
 			label = "Volume Down";
 			gpios = <&gpio7 1 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEDOWN>;
@@ -114,7 +114,6 @@
 	panel-lcd {
 		compatible = "okaya,rs800480t-7x0gp";
 		backlight = <&backlight_lcd>;
-		power-supply = <&reg_3p3v>;
 
 		port {
 			lcd_panel_in: endpoint {
@@ -126,7 +125,6 @@
 	panel-lvds0 {
 		compatible = "hannstar,hsd100pxn1";
 		backlight = <&backlight_lvds0>;
-		power-supply = <&reg_3p3v>;
 
 		port {
 			panel_in_lvds0: endpoint {
@@ -138,7 +136,6 @@
 	panel-lvds1 {
 		compatible = "hannstar,hsd100pxn1";
 		backlight = <&backlight_lvds1>;
-		power-supply = <&reg_3p3v>;
 
 		port {
 			panel_in_lvds1: endpoint {

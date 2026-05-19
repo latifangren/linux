@@ -91,7 +91,7 @@ static int pcf8574_kp_probe(struct i2c_client *client)
 		return -ENODEV;
 	}
 
-	lp = kzalloc_obj(*lp);
+	lp = kzalloc(sizeof(*lp), GFP_KERNEL);
 	if (!lp)
 		return -ENOMEM;
 

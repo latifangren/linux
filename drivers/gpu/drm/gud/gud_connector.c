@@ -16,6 +16,7 @@
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_simple_kms_helper.h>
 #include <drm/gud.h>
 
 #include "gud_internal.h"
@@ -246,7 +247,7 @@ static int gud_connector_get_modes(struct drm_connector *connector)
 	if (drm_edid && edid_ctx.edid_override)
 		goto out;
 
-	reqmodes = kmalloc_objs(*reqmodes, GUD_CONNECTOR_MAX_NUM_MODES);
+	reqmodes = kmalloc_array(GUD_CONNECTOR_MAX_NUM_MODES, sizeof(*reqmodes), GFP_KERNEL);
 	if (!reqmodes)
 		goto out;
 
@@ -479,7 +480,7 @@ static int gud_connector_add_properties(struct gud_device *gdrm, struct gud_conn
 	unsigned int i, num_properties;
 	int ret;
 
-	properties = kzalloc_objs(*properties, GUD_CONNECTOR_PROPERTIES_MAX_NUM);
+	properties = kcalloc(GUD_CONNECTOR_PROPERTIES_MAX_NUM, sizeof(*properties), GFP_KERNEL);
 	if (!properties)
 		return -ENOMEM;
 
@@ -561,11 +562,11 @@ static int gud_connector_add_properties(struct gud_device *gdrm, struct gud_conn
 			continue; /* not a DRM property */
 
 		property = gud_connector_property_lookup(connector, prop);
-		if (drm_WARN_ON(drm, IS_ERR(property)))
+		if (WARN_ON(IS_ERR(property)))
 			continue;
 
 		state_val = gud_connector_tv_state_val(prop, &gconn->initial_tv_state);
-		if (drm_WARN_ON(drm, IS_ERR(state_val)))
+		if (WARN_ON(IS_ERR(state_val)))
 			continue;
 
 		*state_val = val;
@@ -593,7 +594,7 @@ int gud_connector_fill_properties(struct drm_connector_state *connector_state,
 			unsigned int *state_val;
 
 			state_val = gud_connector_tv_state_val(prop, &connector_state->tv);
-			if (drm_WARN_ON_ONCE(connector_state->connector->dev, IS_ERR(state_val)))
+			if (WARN_ON_ONCE(IS_ERR(state_val)))
 				return PTR_ERR(state_val);
 
 			val = *state_val;
@@ -606,20 +607,17 @@ int gud_connector_fill_properties(struct drm_connector_state *connector_state,
 	return gconn->num_properties;
 }
 
-static const struct drm_encoder_funcs gud_drm_simple_encoder_funcs_cleanup = {
-	.destroy = drm_encoder_cleanup,
-};
-
 static int gud_connector_create(struct gud_device *gdrm, unsigned int index,
 				struct gud_connector_descriptor_req *desc)
 {
 	struct drm_device *drm = &gdrm->drm;
 	struct gud_connector *gconn;
 	struct drm_connector *connector;
+	struct drm_encoder *encoder;
 	int ret, connector_type;
 	u32 flags;
 
-	gconn = kzalloc_obj(*gconn);
+	gconn = kzalloc(sizeof(*gconn), GFP_KERNEL);
 	if (!gconn)
 		return -ENOMEM;
 
@@ -667,7 +665,7 @@ static int gud_connector_create(struct gud_device *gdrm, unsigned int index,
 		return ret;
 	}
 
-	if (drm_WARN_ON(drm, connector->index != index))
+	if (WARN_ON(connector->index != index))
 		return -EINVAL;
 
 	if (flags & GUD_CONNECTOR_FLAGS_POLL_STATUS)
@@ -683,13 +681,20 @@ static int gud_connector_create(struct gud_device *gdrm, unsigned int index,
 		return ret;
 	}
 
-	gconn->encoder.possible_crtcs = drm_crtc_mask(&gdrm->crtc);
-	ret = drm_encoder_init(drm, &gconn->encoder, &gud_drm_simple_encoder_funcs_cleanup,
-			       DRM_MODE_ENCODER_NONE, NULL);
-	if (ret)
-		return ret;
+	/* The first connector is attached to the existing simple pipe encoder */
+	if (!connector->index) {
+		encoder = &gdrm->pipe.encoder;
+	} else {
+		encoder = &gconn->encoder;
 
-	return drm_connector_attach_encoder(connector, &gconn->encoder);
+		ret = drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_NONE);
+		if (ret)
+			return ret;
+
+		encoder->possible_crtcs = 1;
+	}
+
+	return drm_connector_attach_encoder(connector, encoder);
 }
 
 int gud_get_connectors(struct gud_device *gdrm)
@@ -698,7 +703,7 @@ int gud_get_connectors(struct gud_device *gdrm)
 	unsigned int i, num_connectors;
 	int ret;
 
-	descs = kmalloc_objs(*descs, GUD_CONNECTORS_MAX_NUM);
+	descs = kmalloc_array(GUD_CONNECTORS_MAX_NUM, sizeof(*descs), GFP_KERNEL);
 	if (!descs)
 		return -ENOMEM;
 

@@ -7,7 +7,6 @@
 
 #include <linux/capability.h>
 #include <linux/compat.h>
-#include <linux/string.h>
 
 #include "autofs_i.h"
 
@@ -16,8 +15,8 @@ static int autofs_dir_symlink(struct mnt_idmap *, struct inode *,
 			      struct dentry *, const char *);
 static int autofs_dir_unlink(struct inode *, struct dentry *);
 static int autofs_dir_rmdir(struct inode *, struct dentry *);
-static struct dentry *autofs_dir_mkdir(struct mnt_idmap *, struct inode *,
-				       struct dentry *, umode_t);
+static int autofs_dir_mkdir(struct mnt_idmap *, struct inode *,
+			    struct dentry *, umode_t);
 static long autofs_root_ioctl(struct file *, unsigned int, unsigned long);
 #ifdef CONFIG_COMPAT
 static long autofs_root_compat_ioctl(struct file *,
@@ -342,14 +341,6 @@ static struct vfsmount *autofs_d_automount(struct path *path)
 	if (autofs_oz_mode(sbi))
 		return NULL;
 
-	/* Refuse to trigger mount if current namespace is not the owner
-	 * and the mount is propagation private.
-	 */
-	if (sbi->mnt_ns_id != to_ns_common(current->nsproxy->mnt_ns)->ns_id) {
-		if (vfsmount_to_propagation_flags(path->mnt) & MS_PRIVATE)
-			return ERR_PTR(-EPERM);
-	}
-
 	/*
 	 * If an expire request is pending everyone must wait.
 	 * If the expire fails we're still mounted so continue
@@ -579,6 +570,7 @@ static int autofs_dir_symlink(struct mnt_idmap *idmap,
 	struct autofs_info *ino = autofs_dentry_ino(dentry);
 	struct autofs_info *p_ino;
 	struct inode *inode;
+	size_t size = strlen(symname);
 	char *cp;
 
 	pr_debug("%s <- %pd\n", symname, dentry);
@@ -589,9 +581,11 @@ static int autofs_dir_symlink(struct mnt_idmap *idmap,
 
 	autofs_del_active(dentry);
 
-	cp = kstrdup(symname, GFP_KERNEL);
+	cp = kmalloc(size + 1, GFP_KERNEL);
 	if (!cp)
 		return -ENOMEM;
+
+	strcpy(cp, symname);
 
 	inode = autofs_get_inode(dir->i_sb, S_IFLNK | 0555);
 	if (!inode) {
@@ -599,9 +593,10 @@ static int autofs_dir_symlink(struct mnt_idmap *idmap,
 		return -ENOMEM;
 	}
 	inode->i_private = cp;
-	inode->i_size = strlen(cp);
+	inode->i_size = size;
+	d_add(dentry, inode);
 
-	d_make_persistent(dentry, inode);
+	dget(dentry);
 	p_ino = autofs_dentry_ino(dentry->d_parent);
 	p_ino->count++;
 
@@ -628,11 +623,12 @@ static int autofs_dir_symlink(struct mnt_idmap *idmap,
 static int autofs_dir_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct autofs_sb_info *sbi = autofs_sbi(dir->i_sb);
+	struct autofs_info *ino = autofs_dentry_ino(dentry);
 	struct autofs_info *p_ino;
 
 	p_ino = autofs_dentry_ino(dentry->d_parent);
 	p_ino->count--;
-	d_make_discardable(dentry);
+	dput(ino->dentry);
 
 	d_inode(dentry)->i_size = 0;
 	clear_nlink(d_inode(dentry));
@@ -714,7 +710,7 @@ static int autofs_dir_rmdir(struct inode *dir, struct dentry *dentry)
 
 	p_ino = autofs_dentry_ino(dentry->d_parent);
 	p_ino->count--;
-	d_make_discardable(dentry);
+	dput(ino->dentry);
 	d_inode(dentry)->i_size = 0;
 	clear_nlink(d_inode(dentry));
 
@@ -724,9 +720,9 @@ static int autofs_dir_rmdir(struct inode *dir, struct dentry *dentry)
 	return 0;
 }
 
-static struct dentry *autofs_dir_mkdir(struct mnt_idmap *idmap,
-				       struct inode *dir, struct dentry *dentry,
-				       umode_t mode)
+static int autofs_dir_mkdir(struct mnt_idmap *idmap,
+			    struct inode *dir, struct dentry *dentry,
+			    umode_t mode)
 {
 	struct autofs_sb_info *sbi = autofs_sbi(dir->i_sb);
 	struct autofs_info *ino = autofs_dentry_ino(dentry);
@@ -743,18 +739,19 @@ static struct dentry *autofs_dir_mkdir(struct mnt_idmap *idmap,
 
 	inode = autofs_get_inode(dir->i_sb, S_IFDIR | mode);
 	if (!inode)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
+	d_add(dentry, inode);
 
 	if (sbi->version < 5)
 		autofs_set_leaf_automount_flags(dentry);
 
-	d_make_persistent(dentry, inode);
+	dget(dentry);
 	p_ino = autofs_dentry_ino(dentry->d_parent);
 	p_ino->count++;
 	inc_nlink(dir);
 	inode_set_mtime_to_ts(dir, inode_set_ctime_current(dir));
 
-	return NULL;
+	return 0;
 }
 
 /* Get/set timeout ioctl() operation */

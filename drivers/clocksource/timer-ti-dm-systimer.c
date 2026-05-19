@@ -202,10 +202,10 @@ static bool __init dmtimer_is_preferred(struct device_node *np)
 
 	/* Secure gptimer12 is always clocked with a fixed source */
 	if (!of_property_read_bool(np, "ti,timer-secure")) {
-		if (!of_property_present(np, "assigned-clocks"))
+		if (!of_property_read_bool(np, "assigned-clocks"))
 			return false;
 
-		if (!of_property_present(np, "assigned-clock-parents"))
+		if (!of_property_read_bool(np, "assigned-clock-parents"))
 			return false;
 	}
 
@@ -600,7 +600,7 @@ static int __init dmtimer_clockevent_init(struct device_node *np)
 	struct dmtimer_clockevent *clkevt;
 	int error;
 
-	clkevt = kzalloc_obj(*clkevt);
+	clkevt = kzalloc(sizeof(*clkevt), GFP_KERNEL);
 	if (!clkevt)
 		return -ENOMEM;
 
@@ -757,7 +757,7 @@ static int __init dmtimer_clocksource_init(struct device_node *np)
 	struct clocksource *dev;
 	int error;
 
-	clksrc = kzalloc_obj(*clksrc);
+	clksrc = kzalloc(sizeof(*clksrc), GFP_KERNEL);
 	if (!clksrc)
 		return -ENOMEM;
 

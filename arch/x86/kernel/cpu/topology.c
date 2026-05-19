@@ -29,9 +29,7 @@
 #include <asm/apic.h>
 #include <asm/io_apic.h>
 #include <asm/mpspec.h>
-#include <asm/msr.h>
 #include <asm/smp.h>
-#include <asm/numa.h>
 
 #include "cpu.h"
 
@@ -75,11 +73,15 @@ bool arch_match_cpu_phys_id(int cpu, u64 phys_id)
 	return phys_id == (u64)cpuid_to_apicid[cpu];
 }
 
+#ifdef CONFIG_SMP
 static void cpu_mark_primary_thread(unsigned int cpu, unsigned int apicid)
 {
 	if (!(apicid & (__max_threads_per_core - 1)))
 		cpumask_set_cpu(cpu, &__cpu_primary_thread_mask);
 }
+#else
+static inline void cpu_mark_primary_thread(unsigned int cpu, unsigned int apicid) { }
+#endif
 
 /*
  * Convert the APIC ID to a domain level ID by masking out the low bits
@@ -151,7 +153,7 @@ static __init bool check_for_real_bsp(u32 apic_id)
 	 * kernel must rely on the firmware enumeration order.
 	 */
 	if (has_apic_base) {
-		rdmsrq(MSR_IA32_APICBASE, msr);
+		rdmsrl(MSR_IA32_APICBASE, msr);
 		is_bsp = !!(msr & MSR_IA32_APICBASE_BSP);
 	}
 
@@ -204,11 +206,15 @@ fwbug:
 static unsigned int topo_unit_count(u32 lvlid, enum x86_topology_domains at_level,
 				    unsigned long *map)
 {
-	unsigned int end;
+	unsigned int id, end, cnt = 0;
 
 	/* Calculate the exclusive end */
 	end = lvlid + (1U << x86_topo_system.dom_shifts[at_level]);
-	return bitmap_weight_from(map, lvlid, end);
+
+	/* Unfortunately there is no bitmap_weight_range() */
+	for (id = find_next_bit(map, end, lvlid); id < end; id = find_next_bit(map, end, ++id))
+		cnt++;
+	return cnt;
 }
 
 static __init void topo_register_apic(u32 apic_id, u32 acpi_id, bool present)
@@ -350,19 +356,6 @@ unsigned int topology_unit_count(u32 apicid, enum x86_topology_domains which_uni
 	return topo_unit_count(lvlid, at_level, apic_maps[which_units].map);
 }
 
-#ifdef CONFIG_SMP
-int topology_get_primary_thread(unsigned int cpu)
-{
-	u32 apic_id = cpuid_to_apicid[cpu];
-
-	/*
-	 * Get the core domain level APIC id, which is the primary thread
-	 * and return the CPU number assigned to it.
-	 */
-	return topo_lookup_cpuid(topo_apicid(apic_id, TOPO_CORE_DOMAIN));
-}
-#endif
-
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 /**
  * topology_hotplug_apic - Handle a physical hotplugged APIC after boot
@@ -420,7 +413,7 @@ void __init topology_apply_cmdline_limits_early(void)
 {
 	unsigned int possible = nr_cpu_ids;
 
-	/* 'maxcpus=0' 'nosmp' 'nolapic' */
+	/* 'maxcpus=0' 'nosmp' 'nolapic' 'disableapic' */
 	if (!setup_max_cpus || apic_is_disabled)
 		possible = 1;
 
@@ -489,19 +482,11 @@ void __init topology_init_possible_cpus(void)
 	set_nr_cpu_ids(allowed);
 
 	cnta = domain_weight(TOPO_PKG_DOMAIN);
-	__max_logical_packages = cnta;
-
-	pr_info("Max. logical packages: %3u\n", __max_logical_packages);
-
-	cntb = num_phys_nodes();
-	__num_nodes_per_package = DIV_ROUND_UP(cntb, cnta);
-
-	pr_info("Max. logical nodes:    %3u\n", cntb);
-	pr_info("Num. nodes per package:%3u\n", __num_nodes_per_package);
-
 	cntb = domain_weight(TOPO_DIE_DOMAIN);
+	__max_logical_packages = cnta;
 	__max_dies_per_package = 1U << (get_count_order(cntb) - get_count_order(cnta));
 
+	pr_info("Max. logical packages: %3u\n", cnta);
 	pr_info("Max. logical dies:     %3u\n", cntb);
 	pr_info("Max. dies per package: %3u\n", __max_dies_per_package);
 

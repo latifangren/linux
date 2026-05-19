@@ -64,6 +64,7 @@ r8a73a4_cpg_register_clock(struct device_node *np, struct r8a73a4_cpg *cpg,
 	unsigned int mult = 1;
 	unsigned int div = 1;
 
+
 	if (!strcmp(name, "main")) {
 		u32 ckscr = readl(base + CPG_CKSCR);
 
@@ -196,8 +197,8 @@ static void __init r8a73a4_cpg_clocks_init(struct device_node *np)
 		return;
 	}
 
-	cpg = kzalloc_obj(*cpg);
-	clks = kzalloc_objs(*clks, num_clks);
+	cpg = kzalloc(sizeof(*cpg), GFP_KERNEL);
+	clks = kcalloc(num_clks, sizeof(*clks), GFP_KERNEL);
 	if (cpg == NULL || clks == NULL) {
 		/* We're leaking memory on purpose, there's no point in cleaning
 		 * up as the system won't boot anyway.

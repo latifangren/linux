@@ -176,7 +176,7 @@ struct clk *rockchip_clk_register_halfdiv(const char *name,
 			     *gate_ops = NULL;
 
 	if (num_parents > 1) {
-		mux = kzalloc_obj(*mux);
+		mux = kzalloc(sizeof(*mux), GFP_KERNEL);
 		if (!mux)
 			return ERR_PTR(-ENOMEM);
 
@@ -190,7 +190,7 @@ struct clk *rockchip_clk_register_halfdiv(const char *name,
 	}
 
 	if (gate_offset >= 0) {
-		gate = kzalloc_obj(*gate);
+		gate = kzalloc(sizeof(*gate), GFP_KERNEL);
 		if (!gate)
 			goto err_gate;
 
@@ -202,7 +202,7 @@ struct clk *rockchip_clk_register_halfdiv(const char *name,
 	}
 
 	if (div_width > 0) {
-		div = kzalloc_obj(*div);
+		div = kzalloc(sizeof(*div), GFP_KERNEL);
 		if (!div)
 			goto err_div;
 

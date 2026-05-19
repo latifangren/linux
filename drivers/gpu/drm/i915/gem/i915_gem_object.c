@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 /*
  * Copyright © 2017 Intel Corporation
  *
@@ -27,7 +26,6 @@
 #include <linux/sched/mm.h>
 
 #include <drm/drm_cache.h>
-#include <drm/drm_print.h>
 
 #include "display/intel_frontbuffer.h"
 #include "pxp/intel_pxp.h"
@@ -372,12 +370,12 @@ void __i915_gem_object_pages_fini(struct drm_i915_gem_object *obj)
 	 * and ttm_bo_cleanup_memtype_use() shouldn't be invoked for
 	 * dma-buf, so it's safe to take the lock.
 	 */
-	if (drm_gem_is_imported(&obj->base))
+	if (obj->base.import_attach)
 		i915_gem_object_lock(obj, NULL);
 
 	__i915_gem_object_put_pages(obj);
 
-	if (drm_gem_is_imported(&obj->base))
+	if (obj->base.import_attach)
 		i915_gem_object_unlock(obj);
 
 	GEM_BUG_ON(i915_gem_object_has_pages(obj));
@@ -391,7 +389,7 @@ void __i915_gem_free_object(struct drm_i915_gem_object *obj)
 
 	bitmap_free(obj->bit_17);
 
-	if (drm_gem_is_imported(&obj->base))
+	if (obj->base.import_attach)
 		drm_prime_gem_destroy(&obj->base, NULL);
 
 	drm_gem_free_mmap_offset(&obj->base);
@@ -460,8 +458,8 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 	atomic_inc(&i915->mm.free_count);
 
 	/*
-	 * Since we require blocking on drm_i915_gem_object->vma.lock to unbind
-	 * the freed object from the GPU before releasing resources back to the
+	 * Since we require blocking on struct_mutex to unbind the freed
+	 * object from the GPU before releasing resources back to the
 	 * system, we can not do that directly from the RCU callback (which may
 	 * be a softirq context), but must instead then defer that work onto a
 	 * kthread. We use the RCU callback rather than move the freed object
@@ -472,6 +470,30 @@ static void i915_gem_free_object(struct drm_gem_object *gem_obj)
 
 	if (llist_add(&obj->freed, &i915->mm.free_list))
 		queue_work(i915->wq, &i915->mm.free_work);
+}
+
+void __i915_gem_object_flush_frontbuffer(struct drm_i915_gem_object *obj,
+					 enum fb_op_origin origin)
+{
+	struct intel_frontbuffer *front;
+
+	front = i915_gem_object_get_frontbuffer(obj);
+	if (front) {
+		intel_frontbuffer_flush(front, origin);
+		intel_frontbuffer_put(front);
+	}
+}
+
+void __i915_gem_object_invalidate_frontbuffer(struct drm_i915_gem_object *obj,
+					      enum fb_op_origin origin)
+{
+	struct intel_frontbuffer *front;
+
+	front = i915_gem_object_get_frontbuffer(obj);
+	if (front) {
+		intel_frontbuffer_invalidate(front, origin);
+		intel_frontbuffer_put(front);
+	}
 }
 
 static void
@@ -851,30 +873,6 @@ bool i915_gem_object_needs_ccs_pages(struct drm_i915_gem_object *obj)
 	return lmem_placement;
 }
 
-static int i915_gem_vmap_object(struct drm_gem_object *gem_obj,
-				struct iosys_map *map)
-{
-	struct drm_i915_gem_object *obj = to_intel_bo(gem_obj);
-	void *vaddr;
-
-	vaddr = i915_gem_object_pin_map(obj, I915_MAP_WB);
-	if (IS_ERR(vaddr))
-		return PTR_ERR(vaddr);
-
-	iosys_map_set_vaddr(map, vaddr);
-
-	return 0;
-}
-
-static void i915_gem_vunmap_object(struct drm_gem_object *gem_obj,
-				   struct iosys_map *map)
-{
-	struct drm_i915_gem_object *obj = to_intel_bo(gem_obj);
-
-	i915_gem_object_flush_map(obj);
-	i915_gem_object_unpin_map(obj);
-}
-
 void i915_gem_init__objects(struct drm_i915_private *i915)
 {
 	INIT_WORK(&i915->mm.free_work, __i915_gem_free_work);
@@ -898,8 +896,6 @@ static const struct drm_gem_object_funcs i915_gem_object_funcs = {
 	.free = i915_gem_free_object,
 	.close = i915_gem_close_object,
 	.export = i915_gem_prime_export,
-	.vmap = i915_gem_vmap_object,
-	.vunmap = i915_gem_vunmap_object,
 };
 
 /**

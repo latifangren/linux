@@ -468,10 +468,6 @@
 	};
 };
 
-&dispcc {
-	status = "disabled";
-};
-
 &gpi_dma0 {
 	status = "okay";
 };
@@ -781,8 +777,11 @@
 };
 
 &usb_1 {
-	dr_mode = "peripheral";
 	status = "okay";
+};
+
+&usb_1_dwc3 {
+	dr_mode = "peripheral";
 };
 
 &usb_1_hsphy {

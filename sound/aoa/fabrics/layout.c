@@ -55,7 +55,7 @@ struct codec_connection {
 
 struct codec_connect_info {
 	char *name;
-	const struct codec_connection *connections;
+	struct codec_connection *connections;
 };
 
 #define LAYOUT_FLAG_COMBO_LINEOUT_SPDIF	(1<<0)
@@ -116,7 +116,7 @@ MODULE_ALIAS("aoa-device-id-35");
 MODULE_ALIAS("aoa-device-id-44");
 
 /* onyx with all but microphone connected */
-static const struct codec_connection onyx_connections_nomic[] = {
+static struct codec_connection onyx_connections_nomic[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE | CC_LINEOUT,
 		.codec_bit = 0,
@@ -133,7 +133,7 @@ static const struct codec_connection onyx_connections_nomic[] = {
 };
 
 /* onyx on machines without headphone */
-static const struct codec_connection onyx_connections_noheadphones[] = {
+static struct codec_connection onyx_connections_noheadphones[] = {
 	{
 		.connected = CC_SPEAKERS | CC_LINEOUT |
 			     CC_LINEOUT_LABELLED_HEADPHONE,
@@ -157,7 +157,7 @@ static const struct codec_connection onyx_connections_noheadphones[] = {
 };
 
 /* onyx on machines with real line-out */
-static const struct codec_connection onyx_connections_reallineout[] = {
+static struct codec_connection onyx_connections_reallineout[] = {
 	{
 		.connected = CC_SPEAKERS | CC_LINEOUT | CC_HEADPHONE,
 		.codec_bit = 0,
@@ -174,7 +174,7 @@ static const struct codec_connection onyx_connections_reallineout[] = {
 };
 
 /* tas on machines without line out */
-static const struct codec_connection tas_connections_nolineout[] = {
+static struct codec_connection tas_connections_nolineout[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE,
 		.codec_bit = 0,
@@ -191,7 +191,7 @@ static const struct codec_connection tas_connections_nolineout[] = {
 };
 
 /* tas on machines with neither line out nor line in */
-static const struct codec_connection tas_connections_noline[] = {
+static struct codec_connection tas_connections_noline[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE,
 		.codec_bit = 0,
@@ -204,7 +204,7 @@ static const struct codec_connection tas_connections_noline[] = {
 };
 
 /* tas on machines without microphone */
-static const struct codec_connection tas_connections_nomic[] = {
+static struct codec_connection tas_connections_nomic[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE | CC_LINEOUT,
 		.codec_bit = 0,
@@ -217,7 +217,7 @@ static const struct codec_connection tas_connections_nomic[] = {
 };
 
 /* tas on machines with everything connected */
-static const struct codec_connection tas_connections_all[] = {
+static struct codec_connection tas_connections_all[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE | CC_LINEOUT,
 		.codec_bit = 0,
@@ -233,7 +233,7 @@ static const struct codec_connection tas_connections_all[] = {
 	{} /* terminate array by .connected == 0 */
 };
 
-static const struct codec_connection toonie_connections[] = {
+static struct codec_connection toonie_connections[] = {
 	{
 		.connected = CC_SPEAKERS | CC_HEADPHONE,
 		.codec_bit = 0,
@@ -241,7 +241,7 @@ static const struct codec_connection toonie_connections[] = {
 	{} /* terminate array by .connected == 0 */
 };
 
-static const struct codec_connection topaz_input[] = {
+static struct codec_connection topaz_input[] = {
 	{
 		.connected = CC_DIGITALIN,
 		.codec_bit = 0,
@@ -249,7 +249,7 @@ static const struct codec_connection topaz_input[] = {
 	{} /* terminate array by .connected == 0 */
 };
 
-static const struct codec_connection topaz_output[] = {
+static struct codec_connection topaz_output[] = {
 	{
 		.connected = CC_DIGITALOUT,
 		.codec_bit = 1,
@@ -257,7 +257,7 @@ static const struct codec_connection topaz_output[] = {
 	{} /* terminate array by .connected == 0 */
 };
 
-static const struct codec_connection topaz_inout[] = {
+static struct codec_connection topaz_inout[] = {
 	{
 		.connected = CC_DIGITALIN,
 		.codec_bit = 0,
@@ -772,7 +772,7 @@ static int check_codec(struct aoa_codec *codec,
 {
 	const u32 *ref;
 	char propname[32];
-	const struct codec_connection *cc;
+	struct codec_connection *cc;
 
 	/* if the codec has a 'codec' node, we require a reference */
 	if (of_node_name_eq(codec->node, "codec")) {
@@ -895,7 +895,7 @@ static void layout_notify(void *data)
 
 static void layout_attached_codec(struct aoa_codec *codec)
 {
-	const struct codec_connection *cc;
+	struct codec_connection *cc;
 	struct snd_kcontrol *ctl;
 	int headphones, lineout;
 	struct layout_dev *ldev = layout_device;
@@ -949,7 +949,8 @@ static void layout_attached_codec(struct aoa_codec *codec)
 				ldev->gpio.methods->set_lineout(codec->gpio, 1);
 			ctl = snd_ctl_new1(&lineout_ctl, codec->gpio);
 			if (cc->connected & CC_LINEOUT_LABELLED_HEADPHONE)
-				strscpy(ctl->id.name, "Headphone Switch");
+				strscpy(ctl->id.name,
+					"Headphone Switch", sizeof(ctl->id.name));
 			ldev->lineout_ctrl = ctl;
 			aoa_snd_ctl_add(ctl);
 			ldev->have_lineout_detect =
@@ -963,13 +964,15 @@ static void layout_attached_codec(struct aoa_codec *codec)
 						   ldev);
 				if (cc->connected & CC_LINEOUT_LABELLED_HEADPHONE)
 					strscpy(ctl->id.name,
-						"Headphone Detect Autoswitch");
+						"Headphone Detect Autoswitch",
+						sizeof(ctl->id.name));
 				aoa_snd_ctl_add(ctl);
 				ctl = snd_ctl_new1(&lineout_detected,
 						   ldev);
 				if (cc->connected & CC_LINEOUT_LABELLED_HEADPHONE)
 					strscpy(ctl->id.name,
-						"Headphone Detected");
+						"Headphone Detected",
+						sizeof(ctl->id.name));
 				ldev->lineout_detected_ctrl = ctl;
 				aoa_snd_ctl_add(ctl);
 			}
@@ -1025,7 +1028,7 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
 		goto outnodev;
 	}
 
-	ldev = kzalloc_obj(struct layout_dev);
+	ldev = kzalloc(sizeof(struct layout_dev), GFP_KERNEL);
 	if (!ldev)
 		goto outnodev;
 

@@ -168,10 +168,10 @@ static int neigh_check_cb(struct neighbour *n)
 
 static void idle_timer_check(struct timer_list *unused)
 {
-	spin_lock(&arp_tbl.lock);
+	write_lock(&arp_tbl.lock);
 	__neigh_for_each_release(&arp_tbl, neigh_check_cb);
 	mod_timer(&idle_timer, jiffies + CLIP_CHECK_INTERVAL * HZ);
-	spin_unlock(&arp_tbl.lock);
+	write_unlock(&arp_tbl.lock);
 }
 
 static int clip_arp_rcv(struct sk_buff *skb)
@@ -431,7 +431,7 @@ static int clip_mkip(struct atm_vcc *vcc, int timeout)
 		return -EBADFD;
 	if (vcc->user_back)
 		return -EINVAL;
-	clip_vcc = kmalloc_obj(struct clip_vcc);
+	clip_vcc = kmalloc(sizeof(struct clip_vcc), GFP_KERNEL);
 	if (!clip_vcc)
 		return -ENOMEM;
 	pr_debug("%p vcc %p\n", clip_vcc, vcc);
@@ -935,7 +935,7 @@ static void atm_clip_exit_noproc(void)
 	/* First, stop the idle timer, so it stops banging
 	 * on the table.
 	 */
-	timer_delete_sync(&idle_timer);
+	del_timer_sync(&idle_timer);
 
 	dev = clip_devs;
 	while (dev) {

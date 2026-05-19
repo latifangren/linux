@@ -43,7 +43,6 @@
 #define CQ_INT_CONVERGE_EN		0xb0
 #define CFG_AGING_TIME			0xbc
 #define HGC_DFX_CFG2			0xc0
-#define CFG_ICT_TIMER_STEP_TRSH		0xc8
 #define CFG_ABT_SET_QUERY_IPTT	0xd4
 #define CFG_SET_ABORTED_IPTT_OFF	0
 #define CFG_SET_ABORTED_IPTT_MSK	(0xfff << CFG_SET_ABORTED_IPTT_OFF)
@@ -432,7 +431,7 @@
 #define CMPLT_HDR_IPTT_OFF		0
 #define CMPLT_HDR_IPTT_MSK		(0xffff << CMPLT_HDR_IPTT_OFF)
 #define CMPLT_HDR_DEV_ID_OFF		16
-#define CMPLT_HDR_DEV_ID_MSK		(0xffffU << CMPLT_HDR_DEV_ID_OFF)
+#define CMPLT_HDR_DEV_ID_MSK		(0xffff << CMPLT_HDR_DEV_ID_OFF)
 /* dw3 */
 #define SATA_DISK_IN_ERROR_STATUS_OFF	8
 #define SATA_DISK_IN_ERROR_STATUS_MSK	(0x1 << SATA_DISK_IN_ERROR_STATUS_OFF)
@@ -444,7 +443,7 @@
 #define FIS_ATA_STATUS_ERR_OFF		18
 #define FIS_ATA_STATUS_ERR_MSK		(0x1 << FIS_ATA_STATUS_ERR_OFF)
 #define FIS_TYPE_SDB_OFF		31
-#define FIS_TYPE_SDB_MSK		(0x1U << FIS_TYPE_SDB_OFF)
+#define FIS_TYPE_SDB_MSK		(0x1 << FIS_TYPE_SDB_OFF)
 
 /* ITCT header */
 /* qw0 */
@@ -686,12 +685,9 @@ static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 	hisi_sas_write32(hisi_hba, TRANS_LOCK_ICT_TIME, 0x4A817C80);
 	hisi_sas_write32(hisi_hba, HGC_SAS_TXFAIL_RETRY_CTRL, 0x108);
 	hisi_sas_write32(hisi_hba, CFG_AGING_TIME, 0x1);
-	hisi_sas_write32(hisi_hba, CFG_ICT_TIMER_STEP_TRSH, 0xf4240);
-	hisi_sas_write32(hisi_hba, INT_COAL_EN, 0x3);
-	/* configure the interrupt coalescing timeout period 10us */
-	hisi_sas_write32(hisi_hba, OQ_INT_COAL_TIME, 0xa);
-	/* configure the count of CQ entries 10 */
-	hisi_sas_write32(hisi_hba, OQ_INT_COAL_CNT, 0xa);
+	hisi_sas_write32(hisi_hba, INT_COAL_EN, 0x1);
+	hisi_sas_write32(hisi_hba, OQ_INT_COAL_TIME, 0x1);
+	hisi_sas_write32(hisi_hba, OQ_INT_COAL_CNT, 0x1);
 	hisi_sas_write32(hisi_hba, CQ_INT_CONVERGE_EN,
 			 hisi_sas_intr_conv);
 	hisi_sas_write32(hisi_hba, OQ_INT_SRC, 0xffff);
@@ -733,7 +729,7 @@ static void init_reg_v3_hw(struct hisi_hba *hisi_hba)
 		hisi_sas_phy_write32(hisi_hba, i, PHY_CTRL_RDY_MSK, 0x0);
 		hisi_sas_phy_write32(hisi_hba, i, PHYCTRL_DWS_RESET_MSK, 0x0);
 		hisi_sas_phy_write32(hisi_hba, i, PHYCTRL_OOB_RESTART_MSK, 0x1);
-		hisi_sas_phy_write32(hisi_hba, i, STP_LINK_TIMER, 0x7ffffff);
+		hisi_sas_phy_write32(hisi_hba, i, STP_LINK_TIMER, 0x7f7a120);
 		hisi_sas_phy_write32(hisi_hba, i, CON_CFG_DRIVER, 0x2a0a01);
 		hisi_sas_phy_write32(hisi_hba, i, SAS_EC_INT_COAL_TIME,
 				     0x30f4240);
@@ -874,6 +870,7 @@ static void setup_itct_v3_hw(struct hisi_hba *hisi_hba,
 	struct device *dev = hisi_hba->dev;
 	u64 qw0, device_id = sas_dev->device_id;
 	struct hisi_sas_itct *itct = &hisi_hba->itct[device_id];
+	struct domain_device *parent_dev = device->parent;
 	struct asd_sas_port *sas_port = device->port;
 	struct hisi_sas_port *port = to_hisi_sas_port(sas_port);
 	u64 sas_addr;
@@ -890,13 +887,13 @@ static void setup_itct_v3_hw(struct hisi_hba *hisi_hba,
 		break;
 	case SAS_SATA_DEV:
 	case SAS_SATA_PENDING:
-		if (dev_parent_is_expander(device))
+		if (parent_dev && dev_is_expander(parent_dev->dev_type))
 			qw0 = HISI_SAS_DEV_TYPE_STP << ITCT_HDR_DEV_TYPE_OFF;
 		else
 			qw0 = HISI_SAS_DEV_TYPE_SATA << ITCT_HDR_DEV_TYPE_OFF;
 		break;
 	default:
-		dev_warn(dev, "setup itct: unsupported dev type (%u)\n",
+		dev_warn(dev, "setup itct: unsupported dev type (%d)\n",
 			 sas_dev->dev_type);
 	}
 
@@ -1351,8 +1348,8 @@ static void prep_ssp_v3_hw(struct hisi_hba *hisi_hba,
 	/* map itct entry */
 	dw1 |= sas_dev->device_id << CMD_HDR_DEV_ID_OFF;
 
-	dw2 = (((sizeof(struct ssp_command_iu) + sizeof(struct ssp_frame_hdr) +
-	         3) / BYTE_TO_DW) << CMD_HDR_CFL_OFF) |
+	dw2 = (((sizeof(struct ssp_command_iu) + sizeof(struct ssp_frame_hdr)
+	      + 3) / BYTE_TO_DW) << CMD_HDR_CFL_OFF) |
 	      ((HISI_SAS_MAX_SSP_RESP_SZ / BYTE_TO_DW) << CMD_HDR_MRFL_OFF) |
 	      (HDR_SG_MOD << CMD_HDR_SG_MOD_OFF);
 	hdr->dw2 = cpu_to_le32(dw2);
@@ -1475,6 +1472,7 @@ static void prep_ata_v3_hw(struct hisi_hba *hisi_hba,
 {
 	struct sas_task *task = slot->task;
 	struct domain_device *device = task->dev;
+	struct domain_device *parent_dev = device->parent;
 	struct hisi_sas_device *sas_dev = device->lldd_dev;
 	struct hisi_sas_cmd_hdr *hdr = slot->cmd_hdr;
 	struct asd_sas_port *sas_port = device->port;
@@ -1485,7 +1483,7 @@ static void prep_ata_v3_hw(struct hisi_hba *hisi_hba,
 	u32 dw1 = 0, dw2 = 0;
 
 	hdr->dw0 = cpu_to_le32(port->id << CMD_HDR_PORT_OFF);
-	if (dev_parent_is_expander(device)) {
+	if (parent_dev && dev_is_expander(parent_dev->dev_type)) {
 		hdr->dw0 |= cpu_to_le32(3 << CMD_HDR_CMD_OFF);
 	} else {
 		phy_id = device->phy->identify.phy_identifier;
@@ -1512,7 +1510,9 @@ static void prep_ata_v3_hw(struct hisi_hba *hisi_hba,
 			(task->ata_task.fis.control & ATA_SRST))
 		dw1 |= 1 << CMD_HDR_RESET_OFF;
 
-	dw1 |= (hisi_sas_get_ata_protocol(task)) << CMD_HDR_FRAME_TYPE_OFF;
+	dw1 |= (hisi_sas_get_ata_protocol(
+		&task->ata_task.fis, task->data_dir))
+		<< CMD_HDR_FRAME_TYPE_OFF;
 	dw1 |= sas_dev->device_id << CMD_HDR_DEV_ID_OFF;
 
 	if (FIS_CMD_IS_UNCONSTRAINED(task->ata_task.fis))
@@ -1666,7 +1666,7 @@ static irqreturn_t phy_up_v3_hw(int phy_no, struct hisi_hba *hisi_hba)
 	phy->port_id = port_id;
 	spin_lock(&phy->lock);
 	/* Delete timer and set phy_attached atomically */
-	timer_delete(&phy->timer);
+	del_timer(&phy->timer);
 	phy->phy_attached = 1;
 	spin_unlock(&phy->lock);
 
@@ -1700,7 +1700,7 @@ static irqreturn_t phy_down_v3_hw(int phy_no, struct hisi_hba *hisi_hba)
 
 	atomic_inc(&phy->down_cnt);
 
-	timer_delete(&phy->timer);
+	del_timer(&phy->timer);
 	hisi_sas_phy_write32(hisi_hba, phy_no, PHYCTRL_NOT_RDY_MSK, 1);
 
 	phy_state = hisi_sas_read32(hisi_hba, PHY_STATE);
@@ -1748,7 +1748,7 @@ static irqreturn_t int_phy_up_down_bcast_v3_hw(int irq_no, void *p)
 	irq_msk = hisi_sas_read32(hisi_hba, CHNL_INT_STATUS)
 				& 0x11111111;
 	while (irq_msk) {
-		if (irq_msk & 1) {
+		if (irq_msk  & 1) {
 			u32 irq_value = hisi_sas_phy_read32(hisi_hba, phy_no,
 							    CHL_INT0);
 			u32 phy_state = hisi_sas_read32(hisi_hba, PHY_STATE);
@@ -1971,7 +1971,8 @@ static irqreturn_t int_chnl_int_v3_hw(int irq_no, void *p)
 	u32 irq_msk;
 	int phy_no = 0;
 
-	irq_msk = hisi_sas_read32(hisi_hba, CHNL_INT_STATUS) & CHNL_INT_STS_MSK;
+	irq_msk = hisi_sas_read32(hisi_hba, CHNL_INT_STATUS)
+		  & CHNL_INT_STS_MSK;
 
 	while (irq_msk) {
 		if (irq_msk & (CHNL_INT_STS_INT0_MSK << (phy_no * CHNL_WIDTH)))
@@ -2407,7 +2408,7 @@ static void slot_complete_v3_hw(struct hisi_hba *hisi_hba,
 
 		if (slot_err_v3_hw(hisi_hba, task, slot)) {
 			if (ts->stat != SAS_DATA_UNDERRUN)
-				dev_info(dev, "erroneous completion iptt=%d task=%p dev id=%d addr=%016llx CQ hdr: 0x%x 0x%x 0x%x 0x%x Error info: 0x%x 0x%x 0x%x 0x%x\n",
+				dev_info(dev, "erroneous completion iptt=%d task=%pK dev id=%d addr=%016llx CQ hdr: 0x%x 0x%x 0x%x 0x%x Error info: 0x%x 0x%x 0x%x 0x%x\n",
 					slot->idx, task, sas_dev->device_id,
 					SAS_ADDR(device->sas_addr),
 					dw0, dw1, complete_hdr->act, dw3,
@@ -2468,7 +2469,7 @@ out:
 	spin_lock_irqsave(&task->task_state_lock, flags);
 	if (task->task_state_flags & SAS_TASK_STATE_ABORTED) {
 		spin_unlock_irqrestore(&task->task_state_lock, flags);
-		dev_info(dev, "slot complete: task(%p) aborted\n", task);
+		dev_info(dev, "slot complete: task(%pK) aborted\n", task);
 		return;
 	}
 	task->task_state_flags |= SAS_TASK_STATE_DONE;
@@ -2479,7 +2480,7 @@ out:
 		spin_lock_irqsave(&device->done_lock, flags);
 		if (test_bit(SAS_HA_FROZEN, &ha->state)) {
 			spin_unlock_irqrestore(&device->done_lock, flags);
-			dev_info(dev, "slot complete: task(%p) ignored\n",
+			dev_info(dev, "slot complete: task(%pK) ignored\n",
 				 task);
 			return;
 		}
@@ -2615,6 +2616,7 @@ static int interrupt_preinit_v3_hw(struct hisi_hba *hisi_hba)
 						 &desc);
 	if (vectors < 0)
 		return -ENOENT;
+
 
 	hisi_hba->cq_nvecs = vectors - BASE_VECTORS_V3_HW - hisi_hba->iopoll_q_cnt;
 	shost->nr_hw_queues = hisi_hba->cq_nvecs + hisi_hba->iopoll_q_cnt;
@@ -2847,7 +2849,7 @@ static void wait_cmds_complete_timeout_v3_hw(struct hisi_hba *hisi_hba,
 static ssize_t intr_conv_v3_hw_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", hisi_sas_intr_conv);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", hisi_sas_intr_conv);
 }
 static DEVICE_ATTR_RO(intr_conv_v3_hw);
 
@@ -2855,15 +2857,14 @@ static void config_intr_coal_v3_hw(struct hisi_hba *hisi_hba)
 {
 	/* config those registers between enable and disable PHYs */
 	hisi_sas_stop_phys(hisi_hba);
-	hisi_sas_write32(hisi_hba, INT_COAL_EN, 0x3);
 
 	if (hisi_hba->intr_coal_ticks == 0 ||
 	    hisi_hba->intr_coal_count == 0) {
-		/* configure the interrupt coalescing timeout period 10us */
-		hisi_sas_write32(hisi_hba, OQ_INT_COAL_TIME, 0xa);
-		/* configure the count of CQ entries 10 */
-		hisi_sas_write32(hisi_hba, OQ_INT_COAL_CNT, 0xa);
+		hisi_sas_write32(hisi_hba, INT_COAL_EN, 0x1);
+		hisi_sas_write32(hisi_hba, OQ_INT_COAL_TIME, 0x1);
+		hisi_sas_write32(hisi_hba, OQ_INT_COAL_CNT, 0x1);
 	} else {
+		hisi_sas_write32(hisi_hba, INT_COAL_EN, 0x3);
 		hisi_sas_write32(hisi_hba, OQ_INT_COAL_TIME,
 				 hisi_hba->intr_coal_ticks);
 		hisi_sas_write32(hisi_hba, OQ_INT_COAL_CNT,
@@ -2962,12 +2963,12 @@ static ssize_t iopoll_q_cnt_v3_hw_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(iopoll_q_cnt_v3_hw);
 
-static int sdev_configure_v3_hw(struct scsi_device *sdev,
-				struct queue_limits *lim)
+static int device_configure_v3_hw(struct scsi_device *sdev,
+		struct queue_limits *lim)
 {
 	struct Scsi_Host *shost = dev_to_shost(&sdev->sdev_gendev);
 	struct hisi_hba *hisi_hba = shost_priv(shost);
-	int ret = hisi_sas_sdev_configure(sdev, lim);
+	int ret = hisi_sas_device_configure(sdev, lim);
 	struct device *dev = hisi_hba->dev;
 
 	if (ret)
@@ -3293,7 +3294,7 @@ static int debugfs_set_bist_v3_hw(struct hisi_hba *hisi_hba, bool enable)
 	u32 *fix_code = &hisi_hba->debugfs_bist_fixed_code[0];
 	struct device *dev = hisi_hba->dev;
 
-	dev_info(dev, "BIST info:phy%u link_rate=%u code_mode=%u path_mode=%u ffe={0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x} fixed_code={0x%x, 0x%x}\n",
+	dev_info(dev, "BIST info:phy%d link_rate=%d code_mode=%d path_mode=%d ffe={0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x} fixed_code={0x%x, 0x%x}\n",
 		 phy_no, linkrate, code_mode, path_mode,
 		 ffe[FFE_SAS_1_5_GBPS], ffe[FFE_SAS_3_0_GBPS],
 		 ffe[FFE_SAS_6_0_GBPS], ffe[FFE_SAS_12_0_GBPS],
@@ -3306,7 +3307,7 @@ static int debugfs_set_bist_v3_hw(struct hisi_hba *hisi_hba, bool enable)
 		/* some preparations before bist test */
 		hisi_sas_bist_test_prep_v3_hw(hisi_hba);
 
-		/* set linkrate of bit test */
+		/* set linkrate of bit test*/
 		reg_val = hisi_sas_phy_read32(hisi_hba, phy_no,
 					      PROG_PHY_LINK_RATE);
 		reg_val &= ~CFG_PROG_OOB_PHY_LINK_RATE_MSK;
@@ -3394,17 +3395,17 @@ static void hisi_sas_map_queues(struct Scsi_Host *shost)
 
 static const struct scsi_host_template sht_v3_hw = {
 	LIBSAS_SHT_BASE_NO_SLAVE_INIT
-	.sdev_configure		= sdev_configure_v3_hw,
+	.device_configure	= device_configure_v3_hw,
 	.scan_finished		= hisi_sas_scan_finished,
 	.scan_start		= hisi_sas_scan_start,
 	.map_queues		= hisi_sas_map_queues,
 	.sg_tablesize		= HISI_SAS_SGE_PAGE_CNT,
 	.sg_prot_tablesize	= HISI_SAS_SGE_PAGE_CNT,
-	.sdev_init		= hisi_sas_sdev_init,
+	.slave_alloc		= hisi_sas_slave_alloc,
 	.shost_groups		= host_v3_hw_groups,
 	.sdev_groups		= sdev_groups_v3_hw,
-	.tag_alloc_policy_rr	= true,
-	.host_reset		= hisi_sas_host_reset,
+	.tag_alloc_policy	= BLK_TAG_ALLOC_RR,
+	.host_reset             = hisi_sas_host_reset,
 	.host_tagset		= 1,
 	.mq_poll		= queue_complete_v3_hw,
 };
@@ -3435,23 +3436,6 @@ static const struct hisi_sas_hw hisi_sas_v3_hw = {
 	.debugfs_snapshot_regs = debugfs_snapshot_regs_v3_hw,
 };
 
-static int check_fw_info_v3_hw(struct hisi_hba *hisi_hba)
-{
-	struct device *dev = hisi_hba->dev;
-
-	if (hisi_hba->n_phy < 0 || hisi_hba->n_phy > 8) {
-		dev_err(dev, "invalid phy number from FW\n");
-		return -EINVAL;
-	}
-
-	if (hisi_hba->queue_count < 0 || hisi_hba->queue_count > 16) {
-		dev_err(dev, "invalid queue count from FW\n");
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static struct Scsi_Host *
 hisi_sas_shost_alloc_pci(struct pci_dev *pdev)
 {
@@ -3480,9 +3464,6 @@ hisi_sas_shost_alloc_pci(struct pci_dev *pdev)
 		hisi_hba->prot_mask = prot_mask;
 
 	if (hisi_sas_get_fw_info(hisi_hba) < 0)
-		goto err_out;
-
-	if (check_fw_info_v3_hw(hisi_hba) < 0)
 		goto err_out;
 
 	if (experimental_iopoll_q_cnt < 0 ||
@@ -3650,11 +3631,12 @@ static void debugfs_print_reg_v3_hw(u32 *regs_val, struct seq_file *s,
 	int i;
 
 	for (i = 0; i < reg->count; i++) {
-		u32 off = i * HISI_SAS_REG_MEM_SIZE;
+		int off = i * HISI_SAS_REG_MEM_SIZE;
 		const char *name;
 
 		name = debugfs_to_reg_name_v3_hw(off, reg->base_off,
 						 reg->lu);
+
 		if (name)
 			seq_printf(s, "0x%08x 0x%08x %s\n", off,
 				   regs_val[i], name);
@@ -4556,7 +4538,7 @@ static int debugfs_fifo_data_v3_hw_show(struct seq_file *s, void *p)
 
 	debugfs_show_row_32_v3_hw(s, 0,
 			HISI_SAS_FIFO_DATA_DW_SIZE * HISI_SAS_REG_MEM_SIZE,
-			(__le32 *)phy->fifo.rd_data);
+			phy->fifo.rd_data);
 
 	return 0;
 }
@@ -4878,29 +4860,12 @@ static void debugfs_bist_init_v3_hw(struct hisi_hba *hisi_hba)
 	hisi_hba->debugfs_bist_linkrate = SAS_LINK_RATE_1_5_GBPS;
 }
 
-static int debugfs_dump_index_v3_hw_show(struct seq_file *s, void *p)
-{
-	int *debugfs_dump_index = s->private;
-
-	if (*debugfs_dump_index > 0)
-		seq_printf(s, "%d\n", *debugfs_dump_index - 1);
-	else
-		seq_puts(s, "dump not triggered\n");
-
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(debugfs_dump_index_v3_hw);
-
 static void debugfs_dump_init_v3_hw(struct hisi_hba *hisi_hba)
 {
 	int i;
 
 	hisi_hba->debugfs_dump_dentry =
 			debugfs_create_dir("dump", hisi_hba->debugfs_dir);
-
-	debugfs_create_file("latest_dump", 0400, hisi_hba->debugfs_dump_dentry,
-			    &hisi_hba->debugfs_dump_index,
-			    &debugfs_dump_index_v3_hw_fops);
 
 	for (i = 0; i < hisi_sas_debugfs_dump_count; i++)
 		debugfs_create_files_v3_hw(hisi_hba, i);
@@ -4918,6 +4883,11 @@ static void debugfs_init_v3_hw(struct hisi_hba *hisi_hba)
 
 	hisi_hba->debugfs_dir = debugfs_create_dir(dev_name(dev),
 						   hisi_sas_debugfs_dir);
+	debugfs_create_file("trigger_dump", 0200,
+			    hisi_hba->debugfs_dir,
+			    hisi_hba,
+			    &debugfs_trigger_dump_v3_hw_fops);
+
 	/* create bist structures */
 	debugfs_bist_init_v3_hw(hisi_hba);
 
@@ -4925,10 +4895,6 @@ static void debugfs_init_v3_hw(struct hisi_hba *hisi_hba)
 
 	debugfs_phy_down_cnt_init_v3_hw(hisi_hba);
 	debugfs_fifo_init_v3_hw(hisi_hba);
-	debugfs_create_file("trigger_dump", 0200,
-			    hisi_hba->debugfs_dir,
-			    hisi_hba,
-			    &debugfs_trigger_dump_v3_hw_fops);
 }
 
 static int
@@ -5021,13 +4987,16 @@ hisi_sas_v3_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 					    SHOST_DIX_GUARD_CRC);
 	}
 
+	if (hisi_sas_debugfs_enable)
+		debugfs_init_v3_hw(hisi_hba);
+
 	rc = interrupt_preinit_v3_hw(hisi_hba);
 	if (rc)
-		goto err_out_free_host;
+		goto err_out_undo_debugfs;
 
 	rc = scsi_add_host(shost, dev);
 	if (rc)
-		goto err_out_free_host;
+		goto err_out_undo_debugfs;
 
 	rc = sas_register_ha(sha);
 	if (rc)
@@ -5038,8 +5007,6 @@ hisi_sas_v3_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_out_unregister_ha;
 
 	scsi_scan_host(shost);
-	if (hisi_sas_debugfs_enable)
-		debugfs_init_v3_hw(hisi_hba);
 
 	pm_runtime_set_autosuspend_delay(dev, 5000);
 	pm_runtime_use_autosuspend(dev);
@@ -5060,6 +5027,9 @@ err_out_unregister_ha:
 	sas_unregister_ha(sha);
 err_out_remove_host:
 	scsi_remove_host(shost);
+err_out_undo_debugfs:
+	if (hisi_sas_debugfs_enable)
+		debugfs_exit_v3_hw(hisi_hba);
 err_out_free_host:
 	hisi_sas_free(hisi_hba);
 	scsi_host_put(shost);
@@ -5092,8 +5062,6 @@ static void hisi_sas_v3_remove(struct pci_dev *pdev)
 	struct Scsi_Host *shost = sha->shost;
 
 	pm_runtime_get_noresume(dev);
-	if (hisi_sas_debugfs_enable)
-		debugfs_exit_v3_hw(hisi_hba);
 
 	sas_unregister_ha(sha);
 	flush_workqueue(hisi_hba->wq);
@@ -5101,6 +5069,9 @@ static void hisi_sas_v3_remove(struct pci_dev *pdev)
 
 	hisi_sas_v3_destroy_irqs(pdev, hisi_hba);
 	hisi_sas_free(hisi_hba);
+	if (hisi_sas_debugfs_enable)
+		debugfs_exit_v3_hw(hisi_hba);
+
 	scsi_host_put(shost);
 }
 
@@ -5108,11 +5079,9 @@ static void hisi_sas_reset_prepare_v3_hw(struct pci_dev *pdev)
 {
 	struct sas_ha_struct *sha = pci_get_drvdata(pdev);
 	struct hisi_hba *hisi_hba = sha->lldd_ha;
-	struct Scsi_Host *shost = hisi_hba->shost;
 	struct device *dev = hisi_hba->dev;
 	int rc;
 
-	wait_event(shost->host_wait, !scsi_host_in_recovery(shost));
 	dev_info(dev, "FLR prepare\n");
 	down(&hisi_hba->sem);
 	set_bit(HISI_SAS_RESETTING_BIT, &hisi_hba->flags);
@@ -5193,8 +5162,7 @@ static int _suspend_v3_hw(struct device *device)
 	interrupt_disable_v3_hw(hisi_hba);
 
 #ifdef CONFIG_PM
-	if ((device->power.runtime_status == RPM_SUSPENDING) &&
-	    atomic_read(&device->power.usage_count)) {
+	if (atomic_read(&device->power.usage_count)) {
 		dev_err(dev, "PM suspend: host status cannot be suspended\n");
 		rc = -EBUSY;
 		goto err_out;

@@ -35,8 +35,6 @@ int pinctrl_gpio_direction_output(struct gpio_chip *gc,
 				  unsigned int offset);
 int pinctrl_gpio_set_config(struct gpio_chip *gc, unsigned int offset,
 				unsigned long config);
-int pinctrl_gpio_get_config(struct gpio_chip *gc, unsigned int offset,
-			    unsigned long *config);
 
 struct pinctrl * __must_check pinctrl_get(struct device *dev);
 void pinctrl_put(struct pinctrl *p);
@@ -99,13 +97,6 @@ pinctrl_gpio_direction_input(struct gpio_chip *gc, unsigned int offset)
 
 static inline int
 pinctrl_gpio_direction_output(struct gpio_chip *gc, unsigned int offset)
-{
-	return 0;
-}
-
-static inline int
-pinctrl_gpio_get_config(struct gpio_chip *gc, unsigned int offset,
-			unsigned long *config)
 {
 	return 0;
 }

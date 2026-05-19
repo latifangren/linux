@@ -31,7 +31,7 @@ static int add_policy(struct netlink_policy_dump_state **statep,
 	struct netlink_policy_dump_state *state = *statep;
 	unsigned int old_n_alloc, n_alloc, i;
 
-	if (!policy)
+	if (!policy || !maxtype)
 		return 0;
 
 	for (i = 0; i < state->n_alloc; i++) {
@@ -85,7 +85,7 @@ int netlink_policy_dump_get_policy_idx(struct netlink_policy_dump_state *state,
 {
 	unsigned int i;
 
-	if (WARN_ON(!policy))
+	if (WARN_ON(!policy || !maxtype))
                 return 0;
 
 	for (i = 0; i < state->n_alloc; i++) {
@@ -102,7 +102,8 @@ static struct netlink_policy_dump_state *alloc_state(void)
 {
 	struct netlink_policy_dump_state *state;
 
-	state = kzalloc_flex(*state, policies, INITIAL_POLICIES_ALLOC);
+	state = kzalloc(struct_size(state, policies, INITIAL_POLICIES_ALLOC),
+			GFP_KERNEL);
 	if (!state)
 		return ERR_PTR(-ENOMEM);
 	state->n_alloc = INITIAL_POLICIES_ALLOC;
@@ -310,8 +311,6 @@ __netlink_policy_dump_write_attr(struct netlink_policy_dump_state *state,
 					      NL_POLICY_TYPE_ATTR_PAD))
 				goto nla_put_failure;
 			break;
-		} else if (pt->validation_type == NLA_VALIDATE_FUNCTION) {
-			break;
 		}
 
 		nla_get_range_unsigned(pt, &range);
@@ -340,9 +339,6 @@ __netlink_policy_dump_write_attr(struct netlink_policy_dump_state *state,
 			type = NL_ATTR_TYPE_S64;
 		else
 			type = NL_ATTR_TYPE_SINT;
-
-		if (pt->validation_type == NLA_VALIDATE_FUNCTION)
-			break;
 
 		nla_get_range_signed(pt, &range);
 

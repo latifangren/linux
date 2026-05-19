@@ -141,8 +141,10 @@ static int kempld_create_platform_device(const struct kempld_platform_data *pdat
 	};
 
 	kempld_pdev = platform_device_register_full(&pdevinfo);
+	if (IS_ERR(kempld_pdev))
+		return PTR_ERR(kempld_pdev);
 
-	return PTR_ERR_OR_ZERO(kempld_pdev);
+	return 0;
 }
 
 /**
@@ -484,7 +486,7 @@ static struct platform_driver kempld_driver = {
 		.dev_groups	  = pld_groups,
 	},
 	.probe		= kempld_probe,
-	.remove		= kempld_remove,
+	.remove_new	= kempld_remove,
 };
 
 static const struct dmi_system_id kempld_dmi_table[] __initconst = {

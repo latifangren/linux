@@ -69,7 +69,6 @@
 #include <linux/can/skb.h>
 #include <linux/can/isotp.h>
 #include <linux/slab.h>
-#include <net/can.h>
 #include <net/sock.h>
 #include <net/net_namespace.h>
 
@@ -215,20 +214,13 @@ static int isotp_send_fc(struct sock *sk, int ae, u8 flowstatus)
 {
 	struct net_device *dev;
 	struct sk_buff *nskb;
-	struct can_skb_ext *csx;
 	struct canfd_frame *ncf;
 	struct isotp_sock *so = isotp_sk(sk);
 	int can_send_ret;
 
-	nskb = alloc_skb(so->ll.mtu, gfp_any());
+	nskb = alloc_skb(so->ll.mtu + sizeof(struct can_skb_priv), gfp_any());
 	if (!nskb)
 		return 1;
-
-	csx = can_skb_ext_add(nskb);
-	if (!csx) {
-		kfree_skb(nskb);
-		return 1;
-	}
 
 	dev = dev_get_by_index(sock_net(sk), so->ifindex);
 	if (!dev) {
@@ -236,7 +228,10 @@ static int isotp_send_fc(struct sock *sk, int ae, u8 flowstatus)
 		return 1;
 	}
 
-	csx->can_iif = dev->ifindex;
+	can_skb_reserve(nskb);
+	can_skb_prv(nskb)->ifindex = dev->ifindex;
+	can_skb_prv(nskb)->skbcnt = 0;
+
 	nskb->dev = dev;
 	can_skb_set_owner(nskb, sk);
 	ncf = (struct canfd_frame *)nskb->data;
@@ -283,7 +278,6 @@ static int isotp_send_fc(struct sock *sk, int ae, u8 flowstatus)
 static void isotp_rcv_skb(struct sk_buff *skb, struct sock *sk)
 {
 	struct sockaddr_can *addr = (struct sockaddr_can *)skb->cb;
-	enum skb_drop_reason reason;
 
 	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(struct sockaddr_can));
 
@@ -291,9 +285,8 @@ static void isotp_rcv_skb(struct sk_buff *skb, struct sock *sk)
 	addr->can_family = AF_CAN;
 	addr->can_ifindex = skb->dev->ifindex;
 
-	reason = sock_queue_rcv_skb_reason(sk, skb);
-	if (reason)
-		sk_skb_reason_drop(sk, skb, reason);
+	if (sock_queue_rcv_skb(sk, skb) < 0)
+		kfree_skb(skb);
 }
 
 static u8 padlen(u8 datalen)
@@ -769,7 +762,6 @@ static void isotp_send_cframe(struct isotp_sock *so)
 {
 	struct sock *sk = &so->sk;
 	struct sk_buff *skb;
-	struct can_skb_ext *csx;
 	struct net_device *dev;
 	struct canfd_frame *cf;
 	int can_send_ret;
@@ -779,20 +771,15 @@ static void isotp_send_cframe(struct isotp_sock *so)
 	if (!dev)
 		return;
 
-	skb = alloc_skb(so->ll.mtu, GFP_ATOMIC);
+	skb = alloc_skb(so->ll.mtu + sizeof(struct can_skb_priv), GFP_ATOMIC);
 	if (!skb) {
 		dev_put(dev);
 		return;
 	}
 
-	csx = can_skb_ext_add(skb);
-	if (!csx) {
-		kfree_skb(skb);
-		netdev_put(dev, NULL);
-		return;
-	}
-
-	csx->can_iif = dev->ifindex;
+	can_skb_reserve(skb);
+	can_skb_prv(skb)->ifindex = dev->ifindex;
+	can_skb_prv(skb)->skbcnt = 0;
 
 	cf = (struct canfd_frame *)skb->data;
 	skb_put_zero(skb, so->ll.mtu);
@@ -952,7 +939,6 @@ static int isotp_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 	struct sock *sk = sock->sk;
 	struct isotp_sock *so = isotp_sk(sk);
 	struct sk_buff *skb;
-	struct can_skb_ext *csx;
 	struct net_device *dev;
 	struct canfd_frame *cf;
 	int ae = (so->opt.flags & CAN_ISOTP_EXTEND_ADDR) ? 1 : 0;
@@ -1013,22 +999,16 @@ static int isotp_sendmsg(struct socket *sock, struct msghdr *msg, size_t size)
 		goto err_out_drop;
 	}
 
-	skb = sock_alloc_send_skb(sk, so->ll.mtu, msg->msg_flags & MSG_DONTWAIT,
-				  &err);
+	skb = sock_alloc_send_skb(sk, so->ll.mtu + sizeof(struct can_skb_priv),
+				  msg->msg_flags & MSG_DONTWAIT, &err);
 	if (!skb) {
 		dev_put(dev);
 		goto err_out_drop;
 	}
 
-	csx = can_skb_ext_add(skb);
-	if (!csx) {
-		kfree_skb(skb);
-		netdev_put(dev, NULL);
-		err = -ENOMEM;
-		goto err_out_drop;
-	}
-
-	csx->can_iif = dev->ifindex;
+	can_skb_reserve(skb);
+	can_skb_prv(skb)->ifindex = dev->ifindex;
+	can_skb_prv(skb)->skbcnt = 0;
 
 	so->tx.len = size;
 	so->tx.idx = 0;
@@ -1253,13 +1233,12 @@ static int isotp_release(struct socket *sock)
 	sock->sk = NULL;
 
 	release_sock(sk);
-	sock_prot_inuse_add(net, sk->sk_prot, -1);
 	sock_put(sk);
 
 	return 0;
 }
 
-static int isotp_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int len)
+static int isotp_bind(struct socket *sock, struct sockaddr *uaddr, int len)
 {
 	struct sockaddr_can *addr = (struct sockaddr_can *)uaddr;
 	struct sock *sk = sock->sk;
@@ -1326,7 +1305,7 @@ static int isotp_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int l
 		err = -ENODEV;
 		goto out;
 	}
-	if (READ_ONCE(dev->mtu) < so->ll.mtu) {
+	if (dev->mtu < so->ll.mtu) {
 		dev_put(dev);
 		err = -EINVAL;
 		goto out;
@@ -1664,10 +1643,12 @@ static int isotp_init(struct sock *sk)
 	so->rx.buflen = ARRAY_SIZE(so->rx.sbuf);
 	so->tx.buflen = ARRAY_SIZE(so->tx.sbuf);
 
-	hrtimer_setup(&so->rxtimer, isotp_rx_timer_handler, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
-	hrtimer_setup(&so->txtimer, isotp_tx_timer_handler, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
-	hrtimer_setup(&so->txfrtimer, isotp_txfr_timer_handler, CLOCK_MONOTONIC,
-		      HRTIMER_MODE_REL_SOFT);
+	hrtimer_init(&so->rxtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+	so->rxtimer.function = isotp_rx_timer_handler;
+	hrtimer_init(&so->txtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+	so->txtimer.function = isotp_tx_timer_handler;
+	hrtimer_init(&so->txfrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+	so->txfrtimer.function = isotp_txfr_timer_handler;
 
 	init_waitqueue_head(&so->wait);
 	spin_lock_init(&so->rx_lock);

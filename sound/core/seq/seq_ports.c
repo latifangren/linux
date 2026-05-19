@@ -129,7 +129,7 @@ int snd_seq_create_port(struct snd_seq_client *client, int port,
 	}
 
 	/* create a new port */
-	new_port = kzalloc_obj(*new_port);
+	new_port = kzalloc(sizeof(*new_port), GFP_KERNEL);
 	if (!new_port)
 		return -ENOMEM;	/* failure, out of memory */
 	/* init port data */
@@ -178,10 +178,17 @@ static int unsubscribe_port(struct snd_seq_client *client,
 static struct snd_seq_client_port *get_client_port(struct snd_seq_addr *addr,
 						   struct snd_seq_client **cp)
 {
+	struct snd_seq_client_port *p;
 	*cp = snd_seq_client_use_ptr(addr->client);
-	if (!*cp)
-		return NULL;
-	return snd_seq_port_use_ptr(*cp, addr->port);
+	if (*cp) {
+		p = snd_seq_port_use_ptr(*cp, addr->port);
+		if (! p) {
+			snd_seq_client_unlock(*cp);
+			*cp = NULL;
+		}
+		return p;
+	}
+	return NULL;
 }
 
 static void delete_and_unsubscribe_port(struct snd_seq_client *client,
@@ -211,13 +218,14 @@ static void clear_subscriber_list(struct snd_seq_client *client,
 
 	list_for_each_safe(p, n, &grp->list_head) {
 		struct snd_seq_subscribers *subs;
+		struct snd_seq_client *c;
+		struct snd_seq_client_port *aport;
 
 		subs = get_subscriber(p, is_src);
-		struct snd_seq_client *c __free(snd_seq_client) = NULL;
-		struct snd_seq_client_port *aport __free(snd_seq_port) =
-			is_src ?
-			get_client_port(&subs->info.dest, &c) :
-			get_client_port(&subs->info.sender, &c);
+		if (is_src)
+			aport = get_client_port(&subs->info.dest, &c);
+		else
+			aport = get_client_port(&subs->info.sender, &c);
 		delete_and_unsubscribe_port(client, port, subs, is_src, false);
 
 		if (!aport) {
@@ -233,6 +241,8 @@ static void clear_subscriber_list(struct snd_seq_client *client,
 		/* ok we got the connected port */
 		delete_and_unsubscribe_port(c, aport, subs, !is_src, true);
 		kfree(subs);
+		snd_seq_port_unlock(aport);
+		snd_seq_client_unlock(c);
 	}
 }
 
@@ -572,7 +582,7 @@ int snd_seq_port_connect(struct snd_seq_client *connector,
 	bool exclusive;
 	int err;
 
-	subs = kzalloc_obj(*subs);
+	subs = kzalloc(sizeof(*subs), GFP_KERNEL);
 	if (!subs)
 		return -ENOMEM;
 

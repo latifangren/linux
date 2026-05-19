@@ -33,18 +33,14 @@ select:
   properties:
     compatible:
       contains:
-        enum:
-          - st,stm32mp21-rifsc
-          - st,stm32mp25-rifsc
+        const: st,stm32mp25-rifsc
   required:
     - compatible
 
 properties:
   compatible:
     items:
-      - enum:
-          - st,stm32mp21-rifsc
-          - st,stm32mp25-rifsc
+      - const: st,stm32mp25-rifsc
       - const: simple-bus
 
   reg:
@@ -54,7 +50,7 @@ properties:
     const: 1
 
   "#size-cells":
-    enum: [ 1, 2 ]
+    const: 1
 
   ranges: true
 
@@ -64,7 +60,7 @@ properties:
       Contains the firewall ID associated to the peripheral.
 
 patternProperties:
-  "@[0-9a-f]+$":
+  "^.*@[0-9a-f]+$":
     description: Peripherals
     type: object
 

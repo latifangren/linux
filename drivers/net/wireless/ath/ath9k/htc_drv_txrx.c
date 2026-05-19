@@ -664,8 +664,8 @@ void ath9k_htc_txstatus(struct ath9k_htc_priv *priv, void *wmi_event)
 			 * Store this event, so that the TX cleanup
 			 * routine can check later for the needed packet.
 			 */
-			tx_pend = kzalloc_obj(struct ath9k_htc_tx_event,
-					      GFP_ATOMIC);
+			tx_pend = kzalloc(sizeof(struct ath9k_htc_tx_event),
+					  GFP_ATOMIC);
 			if (!tx_pend)
 				continue;
 
@@ -760,8 +760,7 @@ static void ath9k_htc_tx_cleanup_queue(struct ath9k_htc_priv *priv,
 
 void ath9k_htc_tx_cleanup_timer(struct timer_list *t)
 {
-	struct ath9k_htc_priv *priv = timer_container_of(priv, t,
-							 tx.cleanup_timer);
+	struct ath9k_htc_priv *priv = from_timer(priv, t, tx.cleanup_timer);
 	struct ath_common *common = ath9k_hw_common(priv->ah);
 	struct ath9k_htc_tx_event *event, *tmp;
 	struct sk_buff *skb;
@@ -1193,7 +1192,7 @@ int ath9k_rx_init(struct ath9k_htc_priv *priv)
 
 	for (i = 0; i < ATH9K_HTC_RXBUF; i++) {
 		struct ath9k_htc_rxbuf *rxbuf =
-			kzalloc_obj(struct ath9k_htc_rxbuf);
+			kzalloc(sizeof(struct ath9k_htc_rxbuf), GFP_KERNEL);
 		if (rxbuf == NULL)
 			goto err;
 

@@ -756,6 +756,8 @@ static const struct vb2_ops solo_enc_video_qops = {
 	.buf_finish	= solo_enc_buf_finish,
 	.start_streaming = solo_enc_start_streaming,
 	.stop_streaming = solo_enc_stop_streaming,
+	.wait_prepare	= vb2_ops_wait_prepare,
+	.wait_finish	= vb2_ops_wait_finish,
 };
 
 static int solo_enc_querycap(struct file *file, void  *priv,
@@ -1208,7 +1210,7 @@ static struct solo_enc_dev *solo_enc_alloc(struct solo_dev *solo_dev,
 	struct v4l2_ctrl_handler *hdl;
 	int ret;
 
-	solo_enc = kzalloc_obj(*solo_enc);
+	solo_enc = kzalloc(sizeof(*solo_enc), GFP_KERNEL);
 	if (!solo_enc)
 		return ERR_PTR(-ENOMEM);
 

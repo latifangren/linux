@@ -47,48 +47,39 @@
 /* Check if current bios is an ATOM BIOS.
  * Return true if it is ATOM BIOS. Otherwise, return false.
  */
-static bool check_atom_bios(struct amdgpu_device *adev, size_t size)
+static bool check_atom_bios(uint8_t *bios, size_t size)
 {
 	uint16_t tmp, bios_header_start;
-	uint8_t *bios = adev->bios;
 
 	if (!bios || size < 0x49) {
-		dev_dbg(adev->dev, "VBIOS mem is null or mem size is wrong\n");
+		DRM_INFO("vbios mem is null or mem size is wrong\n");
 		return false;
 	}
 
 	if (!AMD_IS_VALID_VBIOS(bios)) {
-		dev_dbg(adev->dev, "VBIOS signature incorrect %x %x\n", bios[0],
-			bios[1]);
+		DRM_INFO("BIOS signature incorrect %x %x\n", bios[0], bios[1]);
 		return false;
 	}
 
 	bios_header_start = bios[0x48] | (bios[0x49] << 8);
 	if (!bios_header_start) {
-		dev_dbg(adev->dev, "Can't locate VBIOS header\n");
+		DRM_INFO("Can't locate bios header\n");
 		return false;
 	}
 
 	tmp = bios_header_start + 4;
 	if (size < tmp) {
-		dev_dbg(adev->dev, "VBIOS header is broken\n");
+		DRM_INFO("BIOS header is broken\n");
 		return false;
 	}
 
 	if (!memcmp(bios + tmp, "ATOM", 4) ||
 	    !memcmp(bios + tmp, "MOTA", 4)) {
-		dev_dbg(adev->dev, "ATOMBIOS detected\n");
+		DRM_DEBUG("ATOMBIOS detected\n");
 		return true;
 	}
 
 	return false;
-}
-
-void amdgpu_bios_release(struct amdgpu_device *adev)
-{
-	kfree(adev->bios);
-	adev->bios = NULL;
-	adev->bios_size = 0;
 }
 
 /* If you boot an IGP board with a discrete card as the primary,
@@ -96,14 +87,13 @@ void amdgpu_bios_release(struct amdgpu_device *adev)
  * part of the system bios.  On boot, the system bios puts a
  * copy of the igp rom at the start of vram if a discrete card is
  * present.
- * For SR-IOV, if dynamic critical region is not enabled,
- * the vbios image is also put at the start of VRAM in the VF.
+ * For SR-IOV, the vbios image is also put in VRAM in the VF.
  */
 static bool amdgpu_read_bios_from_vram(struct amdgpu_device *adev)
 {
-	uint8_t __iomem *bios = NULL;
+	uint8_t __iomem *bios;
 	resource_size_t vram_base;
-	u32 size = 256U * 1024U; /* ??? */
+	resource_size_t size = 256 * 1024; /* ??? */
 
 	if (!(adev->flags & AMD_IS_APU))
 		if (amdgpu_device_need_post(adev))
@@ -115,36 +105,21 @@ static bool amdgpu_read_bios_from_vram(struct amdgpu_device *adev)
 
 	adev->bios = NULL;
 	vram_base = pci_resource_start(adev->pdev, 0);
-
-	adev->bios = kmalloc(size, GFP_KERNEL);
-	if (!adev->bios)
+	bios = ioremap_wc(vram_base, size);
+	if (!bios)
 		return false;
 
-	/* For SRIOV with dynamic critical region is enabled,
-	 * the vbios image is put at a dynamic offset of VRAM in the VF.
-	 * If dynamic critical region is disabled, follow the existing logic as on baremetal.
-	 */
-	if (amdgpu_sriov_vf(adev) && adev->virt.is_dynamic_crit_regn_enabled) {
-		if (amdgpu_virt_get_dynamic_data_info(adev,
-				AMD_SRIOV_MSG_VBIOS_IMG_TABLE_ID, adev->bios, &size)) {
-			amdgpu_bios_release(adev);
-			return false;
-		}
-	} else {
-		bios = ioremap_wc(vram_base, size);
-		if (!bios) {
-			amdgpu_bios_release(adev);
-			return false;
-		}
-
-		memcpy_fromio(adev->bios, bios, size);
+	adev->bios = kmalloc(size, GFP_KERNEL);
+	if (!adev->bios) {
 		iounmap(bios);
+		return false;
 	}
-
 	adev->bios_size = size;
+	memcpy_fromio(adev->bios, bios, size);
+	iounmap(bios);
 
-	if (!check_atom_bios(adev, size)) {
-		amdgpu_bios_release(adev);
+	if (!check_atom_bios(adev->bios, size)) {
+		kfree(adev->bios);
 		return false;
 	}
 
@@ -171,8 +146,8 @@ bool amdgpu_read_bios(struct amdgpu_device *adev)
 	memcpy_fromio(adev->bios, bios, size);
 	pci_unmap_rom(adev->pdev, bios);
 
-	if (!check_atom_bios(adev, size)) {
-		amdgpu_bios_release(adev);
+	if (!check_atom_bios(adev->bios, size)) {
+		kfree(adev->bios);
 		return false;
 	}
 
@@ -211,8 +186,8 @@ static bool amdgpu_read_bios_from_rom(struct amdgpu_device *adev)
 	/* read complete BIOS */
 	amdgpu_asic_read_bios_from_rom(adev, adev->bios, len);
 
-	if (!check_atom_bios(adev, len)) {
-		amdgpu_bios_release(adev);
+	if (!check_atom_bios(adev->bios, len)) {
+		kfree(adev->bios);
 		return false;
 	}
 
@@ -241,15 +216,14 @@ static bool amdgpu_read_platform_bios(struct amdgpu_device *adev)
 	memcpy_fromio(adev->bios, bios, romlen);
 	iounmap(bios);
 
-	if (!check_atom_bios(adev, romlen))
+	if (!check_atom_bios(adev->bios, romlen))
 		goto free_bios;
 
 	adev->bios_size = romlen;
 
 	return true;
 free_bios:
-	amdgpu_bios_release(adev);
-
+	kfree(adev->bios);
 	return false;
 }
 
@@ -350,8 +324,8 @@ static bool amdgpu_atrm_get_bios(struct amdgpu_device *adev)
 			break;
 	}
 
-	if (!check_atom_bios(adev, size)) {
-		amdgpu_bios_release(adev);
+	if (!check_atom_bios(adev->bios, size)) {
+		kfree(adev->bios);
 		return false;
 	}
 	adev->bios_size = size;
@@ -415,8 +389,8 @@ static bool amdgpu_acpi_vfct_bios(struct amdgpu_device *adev)
 					     vhdr->ImageLength,
 					     GFP_KERNEL);
 
-			if (!check_atom_bios(adev, vhdr->ImageLength)) {
-				amdgpu_bios_release(adev);
+			if (!check_atom_bios(adev->bios, vhdr->ImageLength)) {
+				kfree(adev->bios);
 				return false;
 			}
 			adev->bios_size = vhdr->ImageLength;

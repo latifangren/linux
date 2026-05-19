@@ -189,12 +189,14 @@ devlink_trap_group_stats_put(struct sk_buff *msg,
 	if (!attr)
 		return -EMSGSIZE;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_PACKETS,
-			       u64_stats_read(&stats.rx_packets)))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_PACKETS,
+			      u64_stats_read(&stats.rx_packets),
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_BYTES,
-			       u64_stats_read(&stats.rx_bytes)))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_BYTES,
+			      u64_stats_read(&stats.rx_bytes),
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
 	nla_nest_end(msg, attr);
@@ -229,15 +231,18 @@ static int devlink_trap_stats_put(struct sk_buff *msg, struct devlink *devlink,
 		return -EMSGSIZE;
 
 	if (devlink->ops->trap_drop_counter_get &&
-	    devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_DROPPED, drops))
+	    nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_DROPPED, drops,
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_PACKETS,
-			       u64_stats_read(&stats.rx_packets)))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_PACKETS,
+			      u64_stats_read(&stats.rx_packets),
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_BYTES,
-			       u64_stats_read(&stats.rx_bytes)))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_BYTES,
+			      u64_stats_read(&stats.rx_bytes),
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
 	nla_nest_end(msg, attr);
@@ -745,7 +750,8 @@ devlink_trap_policer_stats_put(struct sk_buff *msg, struct devlink *devlink,
 	if (!attr)
 		return -EMSGSIZE;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_STATS_RX_DROPPED, drops))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_STATS_RX_DROPPED, drops,
+			      DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
 	nla_nest_end(msg, attr);
@@ -777,12 +783,12 @@ devlink_nl_trap_policer_fill(struct sk_buff *msg, struct devlink *devlink,
 			policer_item->policer->id))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_TRAP_POLICER_RATE,
-			       policer_item->rate))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_TRAP_POLICER_RATE,
+			      policer_item->rate, DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
-	if (devlink_nl_put_u64(msg, DEVLINK_ATTR_TRAP_POLICER_BURST,
-			       policer_item->burst))
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_TRAP_POLICER_BURST,
+			      policer_item->burst, DEVLINK_ATTR_PAD))
 		goto nla_put_failure;
 
 	err = devlink_trap_policer_stats_put(msg, devlink,
@@ -1271,7 +1277,7 @@ devlink_trap_register(struct devlink *devlink,
 	if (devlink_trap_item_lookup(devlink, trap->name))
 		return -EEXIST;
 
-	trap_item = kzalloc_obj(*trap_item);
+	trap_item = kzalloc(sizeof(*trap_item), GFP_KERNEL);
 	if (!trap_item)
 		return -ENOMEM;
 
@@ -1545,7 +1551,7 @@ devlink_trap_group_register(struct devlink *devlink,
 	if (devlink_trap_group_item_lookup(devlink, group->name))
 		return -EEXIST;
 
-	group_item = kzalloc_obj(*group_item);
+	group_item = kzalloc(sizeof(*group_item), GFP_KERNEL);
 	if (!group_item)
 		return -ENOMEM;
 
@@ -1751,7 +1757,7 @@ devlink_trap_policer_register(struct devlink *devlink,
 	if (devlink_trap_policer_item_lookup(devlink, policer->id))
 		return -EEXIST;
 
-	policer_item = kzalloc_obj(*policer_item);
+	policer_item = kzalloc(sizeof(*policer_item), GFP_KERNEL);
 	if (!policer_item)
 		return -ENOMEM;
 

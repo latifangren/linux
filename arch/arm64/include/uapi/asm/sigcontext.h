@@ -17,7 +17,7 @@
 #ifndef _UAPI__ASM_SIGCONTEXT_H
 #define _UAPI__ASM_SIGCONTEXT_H
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #include <linux/types.h>
 
@@ -183,16 +183,7 @@ struct zt_context {
 	__u16 __reserved[3];
 };
 
-#define GCS_MAGIC	0x47435300
-
-struct gcs_context {
-	struct _aarch64_ctx head;
-	__u64 gcspr;
-	__u64 features_enabled;
-	__u64 reserved;
-};
-
-#endif /* !__ASSEMBLER__ */
+#endif /* !__ASSEMBLY__ */
 
 #include <asm/sve_context.h>
 

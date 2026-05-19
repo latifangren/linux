@@ -251,14 +251,15 @@ static void byd_report_input(struct psmouse *psmouse)
 
 static void byd_clear_touch(struct timer_list *t)
 {
-	struct byd_data *priv = timer_container_of(priv, t, timer);
+	struct byd_data *priv = from_timer(priv, t, timer);
 	struct psmouse *psmouse = priv->psmouse;
 
-	guard(serio_pause_rx)(psmouse->ps2dev.serio);
-
+	serio_pause_rx(psmouse->ps2dev.serio);
 	priv->touch = false;
 
 	byd_report_input(psmouse);
+
+	serio_continue_rx(psmouse->ps2dev.serio);
 
 	/*
 	 * Move cursor back to center of pad when we lose touch - this
@@ -314,8 +315,10 @@ static psmouse_ret_t byd_process_byte(struct psmouse *psmouse)
 		break;
 	}
 	default:
-		psmouse_warn(psmouse, "Unrecognized Z: pkt = %*ph\n",
-			     4, psmouse->packet);
+		psmouse_warn(psmouse,
+			     "Unrecognized Z: pkt = %02x %02x %02x %02x\n",
+			     psmouse->packet[0], psmouse->packet[1],
+			     psmouse->packet[2], psmouse->packet[3]);
 		return PSMOUSE_BAD_DATA;
 	}
 
@@ -423,7 +426,7 @@ static void byd_disconnect(struct psmouse *psmouse)
 	struct byd_data *priv = psmouse->private;
 
 	if (priv) {
-		timer_delete(&priv->timer);
+		del_timer(&priv->timer);
 		kfree(psmouse->private);
 		psmouse->private = NULL;
 	}
@@ -469,7 +472,7 @@ int byd_init(struct psmouse *psmouse)
 	if (byd_reset_touchpad(psmouse))
 		return -EIO;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 

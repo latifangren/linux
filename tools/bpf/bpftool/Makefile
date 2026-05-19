@@ -7,6 +7,12 @@ srctree := $(patsubst %/,%,$(dir $(srctree)))
 srctree := $(patsubst %/,%,$(dir $(srctree)))
 endif
 
+ifeq ($(V),1)
+  Q =
+else
+  Q = @
+endif
+
 BPF_DIR = $(srctree)/tools/lib/bpf
 
 ifneq ($(OUTPUT),)
@@ -65,12 +71,7 @@ prefix ?= /usr/local
 bash_compdir ?= /usr/share/bash-completion/completions
 
 CFLAGS += -O2
-CFLAGS += -W
-CFLAGS += -Wall
-CFLAGS += -Wextra
-CFLAGS += -Wformat-signedness
-CFLAGS += -Wno-unused-parameter
-CFLAGS += -Wno-missing-field-initializers
+CFLAGS += -W -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
 CFLAGS += $(filter-out -Wswitch-enum -Wnested-externs,$(EXTRA_WARNINGS))
 CFLAGS += -DPACKAGE='"bpftool"' -D__EXPORTED_HEADERS__ \
 	-I$(or $(OUTPUT),.) \
@@ -97,15 +98,6 @@ RM ?= rm -f
 
 FEATURE_USER = .bpftool
 
-# Skip optional dependencies: LLVM (JIT disasm), libbfd (fallback
-# disasm), libcrypto (program signing).
-SKIP_LLVM ?=
-SKIP_LIBBFD ?=
-SKIP_CRYPTO ?=
-ifneq ($(SKIP_CRYPTO),1)
-  CRYPTO_LIBS := -lcrypto
-endif
-
 FEATURE_TESTS := clang-bpf-co-re
 FEATURE_TESTS += llvm
 FEATURE_TESTS += libcap
@@ -114,7 +106,6 @@ FEATURE_TESTS += libbfd-liberty
 FEATURE_TESTS += libbfd-liberty-z
 FEATURE_TESTS += disassembler-four-args
 FEATURE_TESTS += disassembler-init-styled
-FEATURE_TESTS += libelf-zstd
 
 FEATURE_DISPLAY := clang-bpf-co-re
 FEATURE_DISPLAY += llvm
@@ -139,14 +130,8 @@ include $(FEATURES_DUMP)
 endif
 endif
 
-LIBS = $(LIBBPF) -lelf $(CRYPTO_LIBS) -lz
-LIBS_BOOTSTRAP = $(LIBBPF_BOOTSTRAP) -lelf $(CRYPTO_LIBS) -lz
-
-ifeq ($(feature-libelf-zstd),1)
-LIBS += -lzstd
-LIBS_BOOTSTRAP += -lzstd
-endif
-
+LIBS = $(LIBBPF) -lelf -lz
+LIBS_BOOTSTRAP = $(LIBBPF_BOOTSTRAP) -lelf -lz
 ifeq ($(feature-libcap), 1)
 CFLAGS += -DUSE_LIBCAP
 LIBS += -lcap
@@ -159,19 +144,10 @@ all: $(OUTPUT)bpftool
 SRCS := $(wildcard *.c)
 
 ifeq ($(feature-llvm),1)
-ifneq ($(SKIP_LLVM),1)
-HAS_LLVM := 1
-endif
-endif
-
-ifeq ($(HAS_LLVM),1)
+  # If LLVM is available, use it for JIT disassembly
   CFLAGS  += -DHAVE_LLVM_SUPPORT
   LLVM_CONFIG_LIB_COMPONENTS := mcdisassembler all-targets
-  # llvm-config always adds -D_GNU_SOURCE, however, it may already be in CFLAGS
-  # (e.g. when bpftool build is called from selftests build as selftests
-  # Makefile includes lib.mk which sets -D_GNU_SOURCE) which would cause
-  # compilation error due to redefinition. Let's filter it out here.
-  CFLAGS  += $(filter-out -D_GNU_SOURCE,$(shell $(LLVM_CONFIG) --cflags))
+  CFLAGS  += $(shell $(LLVM_CONFIG) --cflags)
   LIBS    += $(shell $(LLVM_CONFIG) --libs $(LLVM_CONFIG_LIB_COMPONENTS))
   ifeq ($(shell $(LLVM_CONFIG) --shared-mode),static)
     LIBS += $(shell $(LLVM_CONFIG) --system-libs $(LLVM_CONFIG_LIB_COMPONENTS))
@@ -179,7 +155,6 @@ ifeq ($(HAS_LLVM),1)
   endif
   LDFLAGS += $(shell $(LLVM_CONFIG) --ldflags)
 else
-  ifneq ($(SKIP_LIBBFD),1)
   # Fall back on libbfd
   ifeq ($(feature-libbfd),1)
     LIBS += -lbfd -ldl -lopcodes
@@ -201,22 +176,15 @@ else
       CFLAGS += -DDISASM_INIT_STYLED
     endif
   endif
-  endif # SKIP_LIBBFD
 endif
 ifeq ($(filter -DHAVE_LLVM_SUPPORT -DHAVE_LIBBFD_SUPPORT,$(CFLAGS)),)
   # No support for JIT disassembly
   SRCS := $(filter-out jit_disasm.c,$(SRCS))
 endif
 
-ifeq ($(SKIP_CRYPTO),1)
-  CFLAGS += -DBPFTOOL_WITHOUT_CRYPTO
-  HOST_CFLAGS += -DBPFTOOL_WITHOUT_CRYPTO
-  SRCS := $(filter-out sign.c,$(SRCS))
-endif
-
 BPFTOOL_BOOTSTRAP := $(BOOTSTRAP_OUTPUT)bpftool
 
-BOOTSTRAP_OBJS = $(addprefix $(BOOTSTRAP_OUTPUT),main.o common.o json_writer.o gen.o btf.o $(if $(CRYPTO_LIBS),sign.o))
+BOOTSTRAP_OBJS = $(addprefix $(BOOTSTRAP_OUTPUT),main.o common.o json_writer.o gen.o btf.o)
 $(BOOTSTRAP_OBJS): $(LIBBPF_BOOTSTRAP)
 
 OBJS = $(patsubst %.c,$(OUTPUT)%.o,$(SRCS)) $(OUTPUT)disasm.o
@@ -246,8 +214,6 @@ endif
 
 $(OUTPUT)%.bpf.o: skeleton/%.bpf.c $(OUTPUT)vmlinux.h $(LIBBPF_BOOTSTRAP)
 	$(QUIET_CLANG)$(CLANG) \
-		-Wno-microsoft-anon-tag \
-		-fms-extensions \
 		-I$(or $(OUTPUT),.) \
 		-I$(srctree)/tools/include/uapi/ \
 		-I$(LIBBPF_BOOTSTRAP_INCLUDE) \

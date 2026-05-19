@@ -27,7 +27,6 @@ int enter_vmx_usercopy(void)
 
 	return 1;
 }
-EXPORT_SYMBOL(enter_vmx_usercopy);
 
 /*
  * This function must return 0 because we tail call optimise when calling
@@ -46,11 +45,10 @@ int exit_vmx_usercopy(void)
 	 * set and we are preemptible. The hack here is to schedule a
 	 * decrementer to fire here and reschedule for us if necessary.
 	 */
-	if (need_irq_preemption() && need_resched())
+	if (IS_ENABLED(CONFIG_PREEMPT) && need_resched())
 		set_dec(1);
 	return 0;
 }
-EXPORT_SYMBOL(exit_vmx_usercopy);
 
 int enter_vmx_ops(void)
 {

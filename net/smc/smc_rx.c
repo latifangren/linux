@@ -168,17 +168,17 @@ static int smc_rx_splice(struct pipe_inode_info *pipe, char *src, size_t len,
 	nr_pages = !lgr->is_smcd && smc->conn.rmb_desc->is_vm ?
 		   PAGE_ALIGN(len + offset) / PAGE_SIZE : 1;
 
-	pages = kzalloc_objs(*pages, nr_pages);
+	pages = kcalloc(nr_pages, sizeof(*pages), GFP_KERNEL);
 	if (!pages)
 		goto out;
-	partial = kzalloc_objs(*partial, nr_pages);
+	partial = kcalloc(nr_pages, sizeof(*partial), GFP_KERNEL);
 	if (!partial)
 		goto out_page;
-	priv = kzalloc_objs(*priv, nr_pages);
+	priv = kcalloc(nr_pages, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		goto out_part;
 	for (i = 0; i < nr_pages; i++) {
-		priv[i] = kzalloc_obj(**priv);
+		priv[i] = kzalloc(sizeof(**priv), GFP_KERNEL);
 		if (!priv[i])
 			goto out_priv;
 	}
@@ -204,7 +204,7 @@ static int smc_rx_splice(struct pipe_inode_info *pipe, char *src, size_t len,
 			partial[i].offset = offset;
 			partial[i].len = size;
 			partial[i].private = (unsigned long)priv[i];
-			buf += size;
+			buf += size / sizeof(*buf);
 			left -= size;
 			offset = 0;
 		}

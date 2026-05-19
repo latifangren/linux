@@ -21,22 +21,19 @@ void _rtw_open_pktfile(struct sk_buff *pktptr, struct pkt_file *pfile)
 	pfile->cur_buffer = pfile->buf_start;
 }
 
-int _rtw_pktfile_read(struct pkt_file *pfile, u8 *rmem, unsigned int rlen)
+uint _rtw_pktfile_read(struct pkt_file *pfile, u8 *rmem, uint rlen)
 {
-	int ret;
+	uint	len = 0;
 
-	if (rtw_remainder_len(pfile) < rlen)
-		return -EINVAL;
+	len =  rtw_remainder_len(pfile);
+	len = (rlen > len) ? len : rlen;
 
-	if (rmem) {
-		ret = skb_copy_bits(pfile->pkt, pfile->buf_len - pfile->pkt_len, rmem, rlen);
-		if (ret < 0)
-			return ret;
-	}
+	if (rmem)
+		skb_copy_bits(pfile->pkt, pfile->buf_len - pfile->pkt_len, rmem, len);
 
-	pfile->cur_addr += rlen;
-	pfile->pkt_len -= rlen;
-	return rlen;
+	pfile->cur_addr += len;
+	pfile->pkt_len -= len;
+	return len;
 }
 
 signed int rtw_endofpktfile(struct pkt_file *pfile)
@@ -49,7 +46,7 @@ signed int rtw_endofpktfile(struct pkt_file *pfile)
 int rtw_os_xmit_resource_alloc(struct adapter *padapter, struct xmit_buf *pxmitbuf, u32 alloc_sz, u8 flag)
 {
 	if (alloc_sz > 0) {
-		pxmitbuf->pallocated_buf = kzalloc(alloc_sz, GFP_KERNEL);
+		pxmitbuf->pallocated_buf = rtw_zmalloc(alloc_sz);
 		if (!pxmitbuf->pallocated_buf)
 			return _FAIL;
 
@@ -162,7 +159,8 @@ static int rtw_mlcst2unicst(struct adapter *padapter, struct sk_buff *skb)
 		    !memcmp(psta->hwaddr, bc_addr, 6))
 			continue;
 
-		newskb = skb_copy(skb, GFP_ATOMIC);
+		newskb = rtw_skb_copy(skb);
+
 		if (newskb) {
 			memcpy(newskb->data, psta->hwaddr, 6);
 			res = rtw_xmit(padapter, &newskb);
@@ -193,9 +191,12 @@ void _rtw_xmit_entry(struct sk_buff *pkt, struct net_device *pnetdev)
 
 	rtw_check_xmit_resource(padapter, pkt);
 
-	if (!rtw_mc2u_disable && check_fwstate(pmlmepriv, WIFI_AP_STATE) &&
-	    (IP_MCAST_MAC(pkt->data) || ICMPV6_MCAST_MAC(pkt->data)) &&
-	    !padapter->registrypriv.wifi_spec) {
+	if (!rtw_mc2u_disable
+		&& check_fwstate(pmlmepriv, WIFI_AP_STATE) == true
+		&& (IP_MCAST_MAC(pkt->data)
+			|| ICMPV6_MCAST_MAC(pkt->data)
+			)
+		&& padapter->registrypriv.wifi_spec == 0) {
 		if (pxmitpriv->free_xmitframe_cnt > (NR_XMITFRAME / 4)) {
 			res = rtw_mlcst2unicst(padapter, pkt);
 			if (res)

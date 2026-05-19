@@ -2,6 +2,8 @@
 #ifndef _PARISC_BUG_H
 #define _PARISC_BUG_H
 
+#include <linux/kernel.h>	/* for BUGFLAG_TAINT */
+
 /*
  * Tell the user there is some problem.
  * The offending file and line are encoded in the __bug_table section.
@@ -48,7 +50,7 @@
 #endif
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE
-#define __WARN_FLAGS(cond_str, flags)					\
+#define __WARN_FLAGS(flags)						\
 	do {								\
 		asm volatile("\n"					\
 			     "1:\t" PARISC_BUG_BREAK_ASM "\n"		\
@@ -59,12 +61,12 @@
 			     "\t.short %1, %2\n"			\
 			     "\t.blockz %3-2*4-2*2\n"			\
 			     "\t.popsection"				\
-			     : : "i" (WARN_CONDITION_STR(cond_str) __FILE__), "i" (__LINE__), \
+			     : : "i" (__FILE__), "i" (__LINE__),	\
 			     "i" (BUGFLAG_WARNING|(flags)),		\
 			     "i" (sizeof(struct bug_entry)) );		\
 	} while(0)
 #else
-#define __WARN_FLAGS(cond_str, flags)					\
+#define __WARN_FLAGS(flags)						\
 	do {								\
 		asm volatile("\n"					\
 			     "1:\t" PARISC_BUG_BREAK_ASM "\n"		\

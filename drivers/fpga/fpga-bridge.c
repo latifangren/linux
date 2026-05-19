@@ -346,7 +346,7 @@ __fpga_bridge_register(struct device *parent, const char *name,
 		return ERR_PTR(-EINVAL);
 	}
 
-	bridge = kzalloc_obj(*bridge);
+	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
 	if (!bridge)
 		return ERR_PTR(-ENOMEM);
 

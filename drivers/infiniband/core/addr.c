@@ -41,6 +41,7 @@
 #include <net/neighbour.h>
 #include <net/route.h>
 #include <net/netevent.h>
+#include <net/ipv6_stubs.h>
 #include <net/ip6_route.h>
 #include <rdma/ib_addr.h>
 #include <rdma/ib_cache.h>
@@ -320,14 +321,11 @@ static int dst_fetch_ha(const struct dst_entry *dst,
 	if (!n)
 		return -ENODATA;
 
-	read_lock_bh(&n->lock);
 	if (!(n->nud_state & NUD_VALID)) {
-		read_unlock_bh(&n->lock);
 		neigh_event_send(n, NULL);
 		ret = -ENODATA;
 	} else {
 		neigh_ha_snapshot(dev_addr->dst_dev_addr, n, dst->dev);
-		read_unlock_bh(&n->lock);
 	}
 
 	neigh_release(n);
@@ -413,7 +411,7 @@ static int addr6_resolve(struct sockaddr *src_sock,
 	fl6.saddr = src_in->sin6_addr;
 	fl6.flowi6_oif = addr->bound_dev_if;
 
-	dst = ip6_dst_lookup_flow(addr->net, NULL, &fl6, NULL);
+	dst = ipv6_stub->ipv6_dst_lookup_flow(addr->net, NULL, &fl6, NULL);
 	if (IS_ERR(dst))
 		return PTR_ERR(dst);
 
@@ -435,56 +433,32 @@ static int addr6_resolve(struct sockaddr *src_sock,
 }
 #endif
 
-static bool is_dst_local(const struct dst_entry *dst)
-{
-	if (dst->ops->family == AF_INET)
-		return !!(dst_rtable(dst)->rt_type & RTN_LOCAL);
-	else if (dst->ops->family == AF_INET6)
-		return !!(dst_rt6_info(dst)->rt6i_flags & RTF_LOCAL);
-	else
-		return false;
-}
-
 static int addr_resolve_neigh(const struct dst_entry *dst,
 			      const struct sockaddr *dst_in,
 			      struct rdma_dev_addr *addr,
+			      unsigned int ndev_flags,
 			      u32 seq)
 {
-	if (is_dst_local(dst)) {
-		/* When the destination is local entry, source and destination
-		 * are same. Skip the neighbour lookup.
-		 */
-		memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
-		return 0;
-	}
+	int ret = 0;
 
-	return fetch_ha(dst, addr, dst_in, seq);
+	if (ndev_flags & IFF_LOOPBACK)
+		memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
+	else
+		ret = fetch_ha(dst, addr, dst_in, seq);
+	return ret;
 }
 
-static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
-				 const struct sockaddr *dst_in,
-				 const struct dst_entry *dst)
+static int copy_src_l2_addr(struct rdma_dev_addr *dev_addr,
+			    const struct sockaddr *dst_in,
+			    const struct dst_entry *dst,
+			    const struct net_device *ndev)
 {
-	struct net_device *ndev = READ_ONCE(dst->dev);
+	int ret = 0;
 
-	/* A physical device must be the RDMA device to use */
-	if (is_dst_local(dst)) {
-		int ret;
-		/*
-		 * RDMA (IB/RoCE, iWarp) doesn't run on lo interface or
-		 * loopback IP address. So if route is resolved to loopback
-		 * interface, translate that to a real ndev based on non
-		 * loopback IP address.
-		 */
-		ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(ndev), dst_in);
-		if (IS_ERR(ndev))
-			return -ENODEV;
+	if (dst->dev->flags & IFF_LOOPBACK)
 		ret = rdma_translate_ip(dst_in, dev_addr);
-		if (ret)
-			return ret;
-	} else {
+	else
 		rdma_copy_src_l2_addr(dev_addr, dst->dev);
-	}
 
 	/*
 	 * If there's a gateway and type of device not ARPHRD_INFINIBAND,
@@ -499,7 +473,31 @@ static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
 	else
 		dev_addr->network = RDMA_NETWORK_IB;
 
-	return 0;
+	return ret;
+}
+
+static int rdma_set_src_addr_rcu(struct rdma_dev_addr *dev_addr,
+				 unsigned int *ndev_flags,
+				 const struct sockaddr *dst_in,
+				 const struct dst_entry *dst)
+{
+	struct net_device *ndev = READ_ONCE(dst->dev);
+
+	*ndev_flags = ndev->flags;
+	/* A physical device must be the RDMA device to use */
+	if (ndev->flags & IFF_LOOPBACK) {
+		/*
+		 * RDMA (IB/RoCE, iWarp) doesn't run on lo interface or
+		 * loopback IP address. So if route is resolved to loopback
+		 * interface, translate that to a real ndev based on non
+		 * loopback IP address.
+		 */
+		ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(ndev), dst_in);
+		if (IS_ERR(ndev))
+			return -ENODEV;
+	}
+
+	return copy_src_l2_addr(dev_addr, dst_in, dst, ndev);
 }
 
 static int set_addr_netns_by_gid_rcu(struct rdma_dev_addr *addr)
@@ -536,6 +534,7 @@ static int addr_resolve(struct sockaddr *src_in,
 			u32 seq)
 {
 	struct dst_entry *dst = NULL;
+	unsigned int ndev_flags = 0;
 	struct rtable *rt = NULL;
 	int ret;
 
@@ -572,7 +571,7 @@ static int addr_resolve(struct sockaddr *src_in,
 		rcu_read_unlock();
 		goto done;
 	}
-	ret = rdma_set_src_addr_rcu(addr, dst_in, dst);
+	ret = rdma_set_src_addr_rcu(addr, &ndev_flags, dst_in, dst);
 	rcu_read_unlock();
 
 	/*
@@ -580,7 +579,7 @@ static int addr_resolve(struct sockaddr *src_in,
 	 * only if src addr translation didn't fail.
 	 */
 	if (!ret && resolve_neigh)
-		ret = addr_resolve_neigh(dst, dst_in, addr, seq);
+		ret = addr_resolve_neigh(dst, dst_in, addr, ndev_flags, seq);
 
 	if (src_in->sa_family == AF_INET)
 		ip_rt_put(rt);
@@ -648,7 +647,7 @@ int rdma_resolve_ip(struct sockaddr *src_addr, const struct sockaddr *dst_addr,
 	struct addr_req *req;
 	int ret = 0;
 
-	req = kzalloc_obj(*req);
+	req = kzalloc(sizeof *req, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 

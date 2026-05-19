@@ -24,11 +24,6 @@
  * ABI and the associated &NAME, that may be used in code or debugfs/sysfs::
  *
  *	define(TAG, NAME)
- *
- * If required, KLVs can be labeled with GuC firmware version that added them::
- *
- *	define(TAG, NAME, MAJOR, MINOR)
- *	define(TAG, NAME, MAJOR, MINOR, PATCH)
  */
 #define MAKE_XE_GUC_KLV_THRESHOLDS_SET(define)		\
 	define(CAT_ERR, cat_error_count)		\
@@ -37,7 +32,6 @@
 	define(H2G_STORM, guc_time_us)			\
 	define(IRQ_STORM, irq_time_us)			\
 	define(DOORBELL_STORM, doorbell_time_us)	\
-	define(MULTI_LRC_COUNT, multi_lrc_count, 70, 53)\
 	/* end */
 
 /**

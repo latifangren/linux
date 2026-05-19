@@ -297,7 +297,7 @@ static void __init kirkwood_clk_muxing_setup(struct device_node *np,
 	if (WARN_ON(!base))
 		return;
 
-	ctrl = kzalloc_obj(*ctrl);
+	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
 	if (WARN_ON(!ctrl))
 		goto ctrl_out;
 
@@ -309,7 +309,8 @@ static void __init kirkwood_clk_muxing_setup(struct device_node *np,
 		n++;
 
 	ctrl->num_muxes = n;
-	ctrl->muxes = kzalloc_objs(struct clk *, ctrl->num_muxes);
+	ctrl->muxes = kcalloc(ctrl->num_muxes, sizeof(struct clk *),
+			GFP_KERNEL);
 	if (WARN_ON(!ctrl->muxes))
 		goto muxes_out;
 

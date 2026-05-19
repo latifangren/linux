@@ -22,7 +22,7 @@
  * struct clk_imx_acm_pm_domains - structure for multi power domain
  * @pd_dev: power domain device
  * @pd_dev_link: power domain device link
- * @num_domains: power domain number
+ * @num_domains: power domain nummber
  */
 struct clk_imx_acm_pm_domains {
 	struct device **pd_dev;
@@ -371,8 +371,7 @@ static int imx8_acm_clk_probe(struct platform_device *pdev)
 	for (i = 0; i < priv->soc_data->num_sels; i++) {
 		hws[sels[i].clkid] = devm_clk_hw_register_mux_parent_data_table(dev,
 										sels[i].name, sels[i].parents,
-										sels[i].num_parents,
-										CLK_SET_RATE_NO_REPARENT,
+										sels[i].num_parents, 0,
 										base + sels[i].reg,
 										sels[i].shift, sels[i].width,
 										0, NULL, NULL);

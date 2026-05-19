@@ -36,8 +36,6 @@
 #include "amdgpu_gem.h"
 #include "amdgpu_dma_buf.h"
 #include "amdgpu_xgmi.h"
-#include "amdgpu_vm.h"
-#include "amdgpu_ttm.h"
 #include <drm/amdgpu_drm.h>
 #include <drm/ttm/ttm_tt.h>
 #include <linux/dma-buf.h>
@@ -82,7 +80,6 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 	struct drm_gem_object *obj = dmabuf->priv;
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	int r;
 
 	/*
 	 * Disable peer-to-peer access for DCC-enabled VRAM surfaces on GFX12+.
@@ -100,14 +97,6 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 	    pci_p2pdma_distance(adev->pdev, attach->dev, false) < 0)
 		attach->peer2peer = false;
 
-	r = dma_resv_lock(bo->tbo.base.resv, NULL);
-	if (r)
-		return r;
-
-	amdgpu_vm_bo_update_shared(bo);
-
-	dma_resv_unlock(bo->tbo.base.resv);
-
 	return 0;
 }
 
@@ -120,31 +109,11 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
  */
 static int amdgpu_dma_buf_pin(struct dma_buf_attachment *attach)
 {
-	struct dma_buf *dmabuf = attach->dmabuf;
-	struct amdgpu_bo *bo = gem_to_amdgpu_bo(dmabuf->priv);
-	u32 domains = bo->allowed_domains;
+	struct drm_gem_object *obj = attach->dmabuf->priv;
+	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 
-	dma_resv_assert_held(dmabuf->resv);
-
-	/* Try pinning into VRAM to allow P2P with RDMA NICs without ODP
-	 * support if all attachments can do P2P. If any attachment can't do
-	 * P2P just pin into GTT instead.
-	 *
-	 * To avoid with conflicting pinnings between GPUs and RDMA when move
-	 * notifiers are disabled, only allow pinning in VRAM when move
-	 * notiers are enabled.
-	 */
-	list_for_each_entry(attach, &dmabuf->attachments, node)
-		if (!attach->peer2peer)
-			domains &= ~AMDGPU_GEM_DOMAIN_VRAM;
-
-	if (domains & AMDGPU_GEM_DOMAIN_VRAM)
-		bo->flags |= AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED;
-
-	if (WARN_ON(!domains))
-		return -EINVAL;
-
-	return amdgpu_bo_pin(bo, domains);
+	/* pin buffer into GTT */
+	return amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT);
 }
 
 /**
@@ -199,6 +168,9 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
 		r = ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 		if (r)
 			return ERR_PTR(r);
+
+	} else if (bo->tbo.resource->mem_type != TTM_PL_TT) {
+		return ERR_PTR(-EBUSY);
 	}
 
 	switch (bo->tbo.resource->mem_type) {
@@ -215,25 +187,12 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
 		break;
 
 	case TTM_PL_VRAM:
-		/* XGMI-accessible memory should never be DMA-mapped */
-		if (WARN_ON(amdgpu_dmabuf_is_xgmi_accessible(
-				dma_buf_attach_adev(attach), bo)))
-			return ERR_PTR(-EINVAL);
-
 		r = amdgpu_vram_mgr_alloc_sgt(adev, bo->tbo.resource, 0,
 					      bo->tbo.base.size, attach->dev,
 					      dir, &sgt);
 		if (r)
 			return ERR_PTR(r);
 		break;
-
-	case AMDGPU_PL_MMIO_REMAP:
-		r = amdgpu_ttm_mmio_remap_alloc_sgt(adev, bo->tbo.resource,
-						    attach->dev, dir, &sgt);
-		if (r)
-			return ERR_PTR(r);
-		break;
-
 	default:
 		return ERR_PTR(-EINVAL);
 	}
@@ -259,15 +218,6 @@ static void amdgpu_dma_buf_unmap(struct dma_buf_attachment *attach,
 				 struct sg_table *sgt,
 				 enum dma_data_direction dir)
 {
-	struct drm_gem_object *obj = attach->dmabuf->priv;
-	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
-
-	if (bo->tbo.resource &&
-	    bo->tbo.resource->mem_type == AMDGPU_PL_MMIO_REMAP) {
-		amdgpu_ttm_mmio_remap_free_sgt(attach->dev, dir, sgt);
-		return;
-	}
-
 	if (sg_page(sgt->sgl)) {
 		dma_unmap_sgtable(attach->dev, sgt, dir, 0);
 		sg_free_table(sgt);
@@ -318,36 +268,6 @@ static int amdgpu_dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 	return ret;
 }
 
-static int amdgpu_dma_buf_vmap(struct dma_buf *dma_buf, struct iosys_map *map)
-{
-	struct drm_gem_object *obj = dma_buf->priv;
-	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
-	int ret;
-
-	/*
-	 * Pin to keep buffer in place while it's vmap'ed. The actual
-	 * domain is not that important as long as it's mapable. Using
-	 * GTT and VRAM should be compatible with most use cases.
-	 */
-	ret = amdgpu_bo_pin(bo, AMDGPU_GEM_DOMAIN_GTT | AMDGPU_GEM_DOMAIN_VRAM);
-	if (ret)
-		return ret;
-	ret = drm_gem_dmabuf_vmap(dma_buf, map);
-	if (ret)
-		amdgpu_bo_unpin(bo);
-
-	return ret;
-}
-
-static void amdgpu_dma_buf_vunmap(struct dma_buf *dma_buf, struct iosys_map *map)
-{
-	struct drm_gem_object *obj = dma_buf->priv;
-	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
-
-	drm_gem_dmabuf_vunmap(dma_buf, map);
-	amdgpu_bo_unpin(bo);
-}
-
 const struct dma_buf_ops amdgpu_dmabuf_ops = {
 	.attach = amdgpu_dma_buf_attach,
 	.pin = amdgpu_dma_buf_pin,
@@ -357,8 +277,8 @@ const struct dma_buf_ops amdgpu_dmabuf_ops = {
 	.release = drm_gem_dmabuf_release,
 	.begin_cpu_access = amdgpu_dma_buf_begin_cpu_access,
 	.mmap = drm_gem_dmabuf_mmap,
-	.vmap = amdgpu_dma_buf_vmap,
-	.vunmap = amdgpu_dma_buf_vunmap,
+	.vmap = drm_gem_dmabuf_vmap,
+	.vunmap = drm_gem_dmabuf_vunmap,
 };
 
 /**
@@ -376,22 +296,10 @@ struct dma_buf *amdgpu_gem_prime_export(struct drm_gem_object *gobj,
 {
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(gobj);
 	struct dma_buf *buf;
-	struct ttm_operation_ctx ctx = {
-		.interruptible = true,
-		.no_wait_gpu = true,
-		/* We opt to avoid OOM on system pages allocations */
-		.gfp_retry_mayfail = true,
-		.allow_res_evict = false,
-	};
-	int ret;
 
 	if (amdgpu_ttm_tt_get_usermm(bo->tbo.ttm) ||
 	    bo->flags & AMDGPU_GEM_CREATE_VM_ALWAYS_VALID)
 		return ERR_PTR(-EPERM);
-
-	ret = ttm_bo_setup_export(&bo->tbo, &ctx);
-	if (ret)
-		return ERR_PTR(ret);
 
 	buf = drm_gem_prime_export(gobj, flags);
 	if (!IS_ERR(buf))
@@ -452,7 +360,7 @@ error:
 }
 
 /**
- * amdgpu_dma_buf_move_notify - &attach.invalidate_mappings implementation
+ * amdgpu_dma_buf_move_notify - &attach.move_notify implementation
  *
  * @attach: the DMA-buf attachment
  *
@@ -474,7 +382,7 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 	/* FIXME: This should be after the "if", but needs a fix to make sure
 	 * DMABuf imports are initialized in the right VM list.
 	 */
-	amdgpu_vm_bo_invalidate(bo, false);
+	amdgpu_vm_bo_invalidate(adev, bo, false);
 	if (!bo->tbo.resource || bo->tbo.resource->mem_type == TTM_PL_SYSTEM)
 		return;
 
@@ -530,7 +438,7 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 
 static const struct dma_buf_attach_ops amdgpu_dma_buf_attach_ops = {
 	.allow_peer2peer = true,
-	.invalidate_mappings = amdgpu_dma_buf_move_notify
+	.move_notify = amdgpu_dma_buf_move_notify
 };
 
 /**
@@ -595,7 +503,7 @@ bool amdgpu_dmabuf_is_xgmi_accessible(struct amdgpu_device *adev,
 	if (!adev)
 		return false;
 
-	if (drm_gem_is_imported(obj)) {
+	if (obj->import_attach) {
 		struct dma_buf *dma_buf = obj->import_attach->dmabuf;
 
 		if (dma_buf->ops != &amdgpu_dmabuf_ops)

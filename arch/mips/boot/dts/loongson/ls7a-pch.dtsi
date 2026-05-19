@@ -199,8 +199,7 @@
 					     <13 IRQ_TYPE_LEVEL_HIGH>;
 				interrupt-names = "macirq", "eth_lpi";
 				interrupt-parent = <&pic>;
-				phy-mode = "rgmii-id";
-				phy-handle = <&phy0>;
+				phy-mode = "rgmii";
 				mdio {
 					#address-cells = <1>;
 					#size-cells = <0>;
@@ -223,8 +222,7 @@
 					     <15 IRQ_TYPE_LEVEL_HIGH>;
 				interrupt-names = "macirq", "eth_lpi";
 				interrupt-parent = <&pic>;
-				phy-mode = "rgmii-id";
-				phy-handle = <&phy1>;
+				phy-mode = "rgmii";
 				mdio {
 					#address-cells = <1>;
 					#size-cells = <0>;

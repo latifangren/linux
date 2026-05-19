@@ -29,8 +29,6 @@
  *
  */
 
-#include <drm/drm_print.h>
-
 #include "intel_display_types.h"
 #include "intel_dvo_dev.h"
 
@@ -269,7 +267,7 @@ static bool ivch_init(struct intel_dvo_device *dvo,
 	u16 temp;
 	int i;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (priv == NULL)
 		return false;
 
@@ -316,7 +314,7 @@ static enum drm_connector_status ivch_detect(struct intel_dvo_device *dvo)
 }
 
 static enum drm_mode_status ivch_mode_valid(struct intel_dvo_device *dvo,
-					    const struct drm_display_mode *mode)
+					    struct drm_display_mode *mode)
 {
 	if (mode->clock > 112000)
 		return MODE_CLOCK_HIGH;

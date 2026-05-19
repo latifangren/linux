@@ -13,10 +13,10 @@
 #ifndef __ASM_POWERPC_MPC52xx_H__
 #define __ASM_POWERPC_MPC52xx_H__
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <asm/types.h>
 #include <asm/mpc5xxx.h>
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #include <linux/suspend.h>
 
@@ -30,7 +30,7 @@
 /* Structures mapping of some unit register set                             */
 /* ======================================================================== */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 /* Memory Mapping Control */
 struct mpc52xx_mmap_ctl {
@@ -258,14 +258,14 @@ struct mpc52xx_intr {
 	u32 per_error;		/* INTR + 0x38 */
 };
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 
 /* ========================================================================= */
 /* Prototypes for MPC52xx sysdev                                             */
 /* ========================================================================= */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 struct device_node;
 
@@ -297,7 +297,7 @@ extern void __init mpc52xx_setup_pci(void);
 static inline void mpc52xx_setup_pci(void) { }
 #endif
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #ifdef CONFIG_PM
 struct mpc52xx_suspend {

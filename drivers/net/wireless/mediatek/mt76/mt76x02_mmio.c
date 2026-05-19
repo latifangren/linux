@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: ISC
 /*
  * Copyright (C) 2016 Felix Fietkau <nbd@nbd.name>
  * Copyright (C) 2018 Lorenzo Bianconi <lorenzo.bianconi83@gmail.com>
@@ -174,6 +174,7 @@ static int mt76x02_poll_tx(struct napi_struct *napi, int budget)
 
 int mt76x02_dma_init(struct mt76x02_dev *dev)
 {
+	struct mt76_txwi_cache __maybe_unused *t;
 	int i, ret, fifo_size;
 	struct mt76_queue *q;
 	void *status_fifo;
@@ -422,7 +423,7 @@ static void mt76x02_reset_state(struct mt76x02_dev *dev)
 		priv = msta->vif;
 		vif = container_of(priv, struct ieee80211_vif, drv_priv);
 
-		__mt76_sta_remove(&dev->mphy, vif, sta);
+		__mt76_sta_remove(&dev->mt76, vif, sta);
 		memset(msta, 0, sizeof(*msta));
 	}
 
@@ -503,14 +504,12 @@ static void mt76x02_watchdog_reset(struct mt76x02_dev *dev)
 	mt76_worker_enable(&dev->mt76.tx_worker);
 	tasklet_enable(&dev->mt76.pre_tbtt_tasklet);
 
+	local_bh_disable();
 	napi_enable(&dev->mt76.tx_napi);
+	napi_schedule(&dev->mt76.tx_napi);
+
 	mt76_for_each_q_rx(&dev->mt76, i) {
 		napi_enable(&dev->mt76.napi[i]);
-	}
-
-	local_bh_disable();
-	napi_schedule(&dev->mt76.tx_napi);
-	mt76_for_each_q_rx(&dev->mt76, i) {
 		napi_schedule(&dev->mt76.napi[i]);
 	}
 	local_bh_enable();
@@ -534,7 +533,6 @@ void mt76x02_reconfig_complete(struct ieee80211_hw *hw,
 		return;
 
 	clear_bit(MT76_RESTART, &dev->mphy.state);
-	ieee80211_wake_queues(hw);
 }
 EXPORT_SYMBOL_GPL(mt76x02_reconfig_complete);
 

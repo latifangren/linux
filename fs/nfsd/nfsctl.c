@@ -11,7 +11,7 @@
 #include <linux/fs_context.h>
 
 #include <linux/sunrpc/svcsock.h>
-#include <linux/lockd/bind.h>
+#include <linux/lockd/lockd.h>
 #include <linux/sunrpc/addr.h>
 #include <linux/sunrpc/gss_api.h>
 #include <linux/sunrpc/rpc_pipe_fs.h>
@@ -48,6 +48,7 @@ enum {
 	NFSD_Versions,
 	NFSD_Ports,
 	NFSD_MaxBlkSize,
+	NFSD_MaxConnections,
 	NFSD_Filecache,
 	NFSD_Leasetime,
 	NFSD_Gracetime,
@@ -67,6 +68,7 @@ static ssize_t write_pool_threads(struct file *file, char *buf, size_t size);
 static ssize_t write_versions(struct file *file, char *buf, size_t size);
 static ssize_t write_ports(struct file *file, char *buf, size_t size);
 static ssize_t write_maxblksize(struct file *file, char *buf, size_t size);
+static ssize_t write_maxconn(struct file *file, char *buf, size_t size);
 #ifdef CONFIG_NFSD_V4
 static ssize_t write_leasetime(struct file *file, char *buf, size_t size);
 static ssize_t write_gracetime(struct file *file, char *buf, size_t size);
@@ -85,6 +87,7 @@ static ssize_t (*const write_op[])(struct file *, char *, size_t) = {
 	[NFSD_Versions] = write_versions,
 	[NFSD_Ports] = write_ports,
 	[NFSD_MaxBlkSize] = write_maxblksize,
+	[NFSD_MaxConnections] = write_maxconn,
 #ifdef CONFIG_NFSD_V4
 	[NFSD_Leasetime] = write_leasetime,
 	[NFSD_Gracetime] = write_gracetime,
@@ -295,7 +298,6 @@ static ssize_t write_unlock_fs(struct file *file, char *buf, size_t size)
 	 * 2.  Is that directory a mount point, or
 	 * 3.  Is that directory the root of an exported file system?
 	 */
-	nfsd4_cancel_copy_by_sb(netns(file), path.dentry->d_sb);
 	error = nlmsvc_unlock_all_by_sb(path.dentry->d_sb);
 	mutex_lock(&nfsd_mutex);
 	nn = net_generic(netns(file), nfsd_net_id);
@@ -387,15 +389,15 @@ static ssize_t write_filehandle(struct file *file, char *buf, size_t size)
 }
 
 /*
- * write_threads - Start NFSD, or report the configured number of threads
+ * write_threads - Start NFSD, or report the current number of running threads
  *
  * Input:
  *			buf:		ignored
  *			size:		zero
  * Output:
  *	On success:	passed-in buffer filled with '\n'-terminated C
- *			string numeric value representing the configured
- *			number of NFSD threads;
+ *			string numeric value representing the number of
+ *			running NFSD threads;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero
  *
@@ -409,8 +411,8 @@ static ssize_t write_filehandle(struct file *file, char *buf, size_t size)
  * Output:
  *	On success:	NFS service is started;
  *			passed-in buffer filled with '\n'-terminated C
- *			string numeric value representing the configured
- *			number of NFSD threads;
+ *			string numeric value representing the number of
+ *			running NFSD threads;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero or a negative errno value
  */
@@ -440,7 +442,7 @@ static ssize_t write_threads(struct file *file, char *buf, size_t size)
 }
 
 /*
- * write_pool_threads - Set or report the configured number of threads per pool
+ * write_pool_threads - Set or report the current number of threads per pool
  *
  * Input:
  *			buf:		ignored
@@ -457,7 +459,7 @@ static ssize_t write_threads(struct file *file, char *buf, size_t size)
  * Output:
  *	On success:	passed-in buffer filled with '\n'-terminated C
  *			string containing integer values representing the
- *			configured number of NFSD threads in each pool;
+ *			number of NFSD threads in each pool;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero or a negative errno value
  */
@@ -487,7 +489,7 @@ static ssize_t write_pool_threads(struct file *file, char *buf, size_t size)
 		return strlen(buf);
 	}
 
-	nthreads = kzalloc_objs(int, npools);
+	nthreads = kcalloc(npools, sizeof(int), GFP_KERNEL);
 	rv = -ENOMEM;
 	if (nthreads == NULL)
 		goto out_free;
@@ -917,6 +919,44 @@ static ssize_t write_maxblksize(struct file *file, char *buf, size_t size)
 							nfsd_max_blksize);
 }
 
+/*
+ * write_maxconn - Set or report the current max number of connections
+ *
+ * Input:
+ *			buf:		ignored
+ *			size:		zero
+ * OR
+ *
+ * Input:
+ *			buf:		C string containing an unsigned
+ *					integer value representing the new
+ *					number of max connections
+ *			size:		non-zero length of C string in @buf
+ * Output:
+ *	On success:	passed-in buffer filled with '\n'-terminated C string
+ *			containing numeric value of max_connections setting
+ *			for this net namespace;
+ *			return code is the size in bytes of the string
+ *	On error:	return code is zero or a negative errno value
+ */
+static ssize_t write_maxconn(struct file *file, char *buf, size_t size)
+{
+	char *mesg = buf;
+	struct nfsd_net *nn = net_generic(netns(file), nfsd_net_id);
+	unsigned int maxconn = nn->max_connections;
+
+	if (size > 0) {
+		int rv = get_uint(&mesg, &maxconn);
+
+		if (rv)
+			return rv;
+		trace_nfsd_ctl_maxconn(netns(file), maxconn);
+		nn->max_connections = maxconn;
+	}
+
+	return scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%u\n", maxconn);
+}
+
 #ifdef CONFIG_NFSD_V4
 static ssize_t __nfsd4_write_time(struct file *file, char *buf, size_t size,
 				  time64_t *time, struct nfsd_net *nn)
@@ -1120,48 +1160,89 @@ static ssize_t write_v4_end_grace(struct file *file, char *buf, size_t size)
  *	populating the filesystem.
  */
 
+/* Basically copying rpc_get_inode. */
 static struct inode *nfsd_get_inode(struct super_block *sb, umode_t mode)
 {
 	struct inode *inode = new_inode(sb);
-	if (inode) {
-		/* Following advice from simple_fill_super documentation: */
-		inode->i_ino = iunique(sb, NFSD_MaxReserved);
-		inode->i_mode = mode;
-		simple_inode_init_ts(inode);
+	if (!inode)
+		return NULL;
+	/* Following advice from simple_fill_super documentation: */
+	inode->i_ino = iunique(sb, NFSD_MaxReserved);
+	inode->i_mode = mode;
+	simple_inode_init_ts(inode);
+	switch (mode & S_IFMT) {
+	case S_IFDIR:
+		inode->i_fop = &simple_dir_operations;
+		inode->i_op = &simple_dir_inode_operations;
+		inc_nlink(inode);
+		break;
+	case S_IFLNK:
+		inode->i_op = &simple_symlink_inode_operations;
+		break;
+	default:
+		break;
 	}
 	return inode;
+}
+
+static int __nfsd_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode, struct nfsdfs_client *ncl)
+{
+	struct inode *inode;
+
+	inode = nfsd_get_inode(dir->i_sb, mode);
+	if (!inode)
+		return -ENOMEM;
+	if (ncl) {
+		inode->i_private = ncl;
+		kref_get(&ncl->cl_ref);
+	}
+	d_add(dentry, inode);
+	inc_nlink(dir);
+	fsnotify_mkdir(dir, dentry);
+	return 0;
 }
 
 static struct dentry *nfsd_mkdir(struct dentry *parent, struct nfsdfs_client *ncl, char *name)
 {
 	struct inode *dir = parent->d_inode;
 	struct dentry *dentry;
-	struct inode *inode;
+	int ret = -ENOMEM;
 
-	inode = nfsd_get_inode(parent->d_sb, S_IFDIR | 0600);
-	if (!inode)
-		return ERR_PTR(-ENOMEM);
-
-	dentry = simple_start_creating(parent, name);
-	if (IS_ERR(dentry)) {
-		iput(inode);
-		return dentry;
-	}
-	inode->i_fop = &simple_dir_operations;
-	inode->i_op = &simple_dir_inode_operations;
-	inc_nlink(inode);
-	if (ncl) {
-		inode->i_private = ncl;
-		kref_get(&ncl->cl_ref);
-	}
-	d_make_persistent(dentry, inode);
-	inc_nlink(dir);
-	fsnotify_mkdir(dir, dentry);
-	simple_done_creating(dentry);
-	return dentry;	// borrowed
+	inode_lock(dir);
+	dentry = d_alloc_name(parent, name);
+	if (!dentry)
+		goto out_err;
+	ret = __nfsd_mkdir(d_inode(parent), dentry, S_IFDIR | 0600, ncl);
+	if (ret)
+		goto out_err;
+out:
+	inode_unlock(dir);
+	return dentry;
+out_err:
+	dput(dentry);
+	dentry = ERR_PTR(ret);
+	goto out;
 }
 
 #if IS_ENABLED(CONFIG_SUNRPC_GSS)
+static int __nfsd_symlink(struct inode *dir, struct dentry *dentry,
+			  umode_t mode, const char *content)
+{
+	struct inode *inode;
+
+	inode = nfsd_get_inode(dir->i_sb, mode);
+	if (!inode)
+		return -ENOMEM;
+
+	inode->i_link = (char *)content;
+	inode->i_size = strlen(content);
+
+	d_add(dentry, inode);
+	inc_nlink(dir);
+	fsnotify_create(dir, dentry);
+	return 0;
+}
+
 /*
  * @content is assumed to be a NUL-terminated string that lives
  * longer than the symlink itself.
@@ -1170,26 +1251,18 @@ static void _nfsd_symlink(struct dentry *parent, const char *name,
 			  const char *content)
 {
 	struct inode *dir = parent->d_inode;
-	struct inode *inode;
 	struct dentry *dentry;
+	int ret;
 
-	inode = nfsd_get_inode(dir->i_sb, S_IFLNK | 0777);
-	if (!inode)
-		return;
-
-	dentry = simple_start_creating(parent, name);
-	if (IS_ERR(dentry)) {
-		iput(inode);
-		return;
-	}
-
-	inode->i_op = &simple_symlink_inode_operations;
-	inode->i_link = (char *)content;
-	inode->i_size = strlen(content);
-
-	d_make_persistent(dentry, inode);
-	fsnotify_create(dir, dentry);
-	simple_done_creating(dentry);
+	inode_lock(dir);
+	dentry = d_alloc_name(parent, name);
+	if (!dentry)
+		goto out;
+	ret = __nfsd_symlink(d_inode(parent), dentry, S_IFLNK | 0777, content);
+	if (ret)
+		dput(dentry);
+out:
+	inode_unlock(dir);
 }
 #else
 static inline void _nfsd_symlink(struct dentry *parent, const char *name,
@@ -1224,34 +1297,40 @@ struct nfsdfs_client *get_nfsdfs_client(struct inode *inode)
 
 /* XXX: cut'n'paste from simple_fill_super; figure out if we could share
  * code instead. */
-static int nfsdfs_create_files(struct dentry *root,
+static  int nfsdfs_create_files(struct dentry *root,
 				const struct tree_descr *files,
 				struct nfsdfs_client *ncl,
 				struct dentry **fdentries)
 {
 	struct inode *dir = d_inode(root);
+	struct inode *inode;
 	struct dentry *dentry;
+	int i;
 
-	for (int i = 0; files->name && files->name[0]; i++, files++) {
-		struct inode *inode = nfsd_get_inode(root->d_sb,
-						     S_IFREG | files->mode);
-		if (!inode)
-			return -ENOMEM;
-		dentry = simple_start_creating(root, files->name);
-		if (IS_ERR(dentry)) {
-			iput(inode);
-			return PTR_ERR(dentry);
+	inode_lock(dir);
+	for (i = 0; files->name && files->name[0]; i++, files++) {
+		dentry = d_alloc_name(root, files->name);
+		if (!dentry)
+			goto out;
+		inode = nfsd_get_inode(d_inode(root)->i_sb,
+					S_IFREG | files->mode);
+		if (!inode) {
+			dput(dentry);
+			goto out;
 		}
 		kref_get(&ncl->cl_ref);
 		inode->i_fop = files->ops;
 		inode->i_private = ncl;
-		d_make_persistent(dentry, inode);
+		d_add(dentry, inode);
 		fsnotify_create(dir, dentry);
 		if (fdentries)
-			fdentries[i] = dentry; // borrowed
-		simple_done_creating(dentry);
+			fdentries[i] = dentry;
 	}
+	inode_unlock(dir);
 	return 0;
+out:
+	inode_unlock(dir);
+	return -ENOMEM;
 }
 
 /* on success, returns positive number unique to that client. */
@@ -1309,6 +1388,7 @@ static int nfsd_fill_super(struct super_block *sb, struct fs_context *fc)
 		[NFSD_Versions] = {"versions", &transaction_ops, S_IWUSR|S_IRUSR},
 		[NFSD_Ports] = {"portlist", &transaction_ops, S_IWUSR|S_IRUGO},
 		[NFSD_MaxBlkSize] = {"max_block_size", &transaction_ops, S_IWUSR|S_IRUGO},
+		[NFSD_MaxConnections] = {"max_connections", &transaction_ops, S_IWUSR|S_IRUGO},
 		[NFSD_Filecache] = {"filecache", &nfsd_file_cache_stats_fops, S_IRUGO},
 #ifdef CONFIG_NFSD_V4
 		[NFSD_Leasetime] = {"nfsv4leasetime", &transaction_ops, S_IWUSR|S_IRUSR},
@@ -1363,7 +1443,7 @@ static void nfsd_umount(struct super_block *sb)
 
 	nfsd_shutdown_threads(net);
 
-	kill_anon_super(sb);
+	kill_litter_super(sb);
 	put_net(net);
 }
 
@@ -1414,7 +1494,7 @@ unsigned int nfsd_net_id;
 
 static int nfsd_genl_rpc_status_compose_msg(struct sk_buff *skb,
 					    struct netlink_callback *cb,
-					    struct nfsd_genl_rqstp *genl_rqstp)
+					    struct nfsd_genl_rqstp *rqstp)
 {
 	void *hdr;
 	u32 i;
@@ -1424,22 +1504,22 @@ static int nfsd_genl_rpc_status_compose_msg(struct sk_buff *skb,
 	if (!hdr)
 		return -ENOBUFS;
 
-	if (nla_put_be32(skb, NFSD_A_RPC_STATUS_XID, genl_rqstp->rq_xid) ||
-	    nla_put_u32(skb, NFSD_A_RPC_STATUS_FLAGS, genl_rqstp->rq_flags) ||
-	    nla_put_u32(skb, NFSD_A_RPC_STATUS_PROG, genl_rqstp->rq_prog) ||
-	    nla_put_u32(skb, NFSD_A_RPC_STATUS_PROC, genl_rqstp->rq_proc) ||
-	    nla_put_u8(skb, NFSD_A_RPC_STATUS_VERSION, genl_rqstp->rq_vers) ||
+	if (nla_put_be32(skb, NFSD_A_RPC_STATUS_XID, rqstp->rq_xid) ||
+	    nla_put_u32(skb, NFSD_A_RPC_STATUS_FLAGS, rqstp->rq_flags) ||
+	    nla_put_u32(skb, NFSD_A_RPC_STATUS_PROG, rqstp->rq_prog) ||
+	    nla_put_u32(skb, NFSD_A_RPC_STATUS_PROC, rqstp->rq_proc) ||
+	    nla_put_u8(skb, NFSD_A_RPC_STATUS_VERSION, rqstp->rq_vers) ||
 	    nla_put_s64(skb, NFSD_A_RPC_STATUS_SERVICE_TIME,
-			ktime_to_us(genl_rqstp->rq_stime),
+			ktime_to_us(rqstp->rq_stime),
 			NFSD_A_RPC_STATUS_PAD))
 		return -ENOBUFS;
 
-	switch (genl_rqstp->rq_saddr.sa_family) {
+	switch (rqstp->rq_saddr.sa_family) {
 	case AF_INET: {
 		const struct sockaddr_in *s_in, *d_in;
 
-		s_in = (const struct sockaddr_in *)&genl_rqstp->rq_saddr;
-		d_in = (const struct sockaddr_in *)&genl_rqstp->rq_daddr;
+		s_in = (const struct sockaddr_in *)&rqstp->rq_saddr;
+		d_in = (const struct sockaddr_in *)&rqstp->rq_daddr;
 		if (nla_put_in_addr(skb, NFSD_A_RPC_STATUS_SADDR4,
 				    s_in->sin_addr.s_addr) ||
 		    nla_put_in_addr(skb, NFSD_A_RPC_STATUS_DADDR4,
@@ -1454,8 +1534,8 @@ static int nfsd_genl_rpc_status_compose_msg(struct sk_buff *skb,
 	case AF_INET6: {
 		const struct sockaddr_in6 *s_in, *d_in;
 
-		s_in = (const struct sockaddr_in6 *)&genl_rqstp->rq_saddr;
-		d_in = (const struct sockaddr_in6 *)&genl_rqstp->rq_daddr;
+		s_in = (const struct sockaddr_in6 *)&rqstp->rq_saddr;
+		d_in = (const struct sockaddr_in6 *)&rqstp->rq_daddr;
 		if (nla_put_in6_addr(skb, NFSD_A_RPC_STATUS_SADDR6,
 				     &s_in->sin6_addr) ||
 		    nla_put_in6_addr(skb, NFSD_A_RPC_STATUS_DADDR6,
@@ -1469,9 +1549,9 @@ static int nfsd_genl_rpc_status_compose_msg(struct sk_buff *skb,
 	}
 	}
 
-	for (i = 0; i < genl_rqstp->rq_opcnt; i++)
+	for (i = 0; i < rqstp->rq_opcnt; i++)
 		if (nla_put_u32(skb, NFSD_A_RPC_STATUS_COMPOUND_OPS,
-				genl_rqstp->rq_opnum[i]))
+				rqstp->rq_opnum[i]))
 			return -ENOBUFS;
 
 	genlmsg_end(skb, hdr);
@@ -1547,8 +1627,7 @@ int nfsd_nl_rpc_status_get_dumpit(struct sk_buff *skb,
 				int j;
 
 				args = rqstp->rq_argp;
-				genl_rqstp.rq_opcnt = min_t(u32, args->opcnt,
-							    ARRAY_SIZE(genl_rqstp.rq_opnum));
+				genl_rqstp.rq_opcnt = args->opcnt;
 				for (j = 0; j < genl_rqstp.rq_opcnt; j++)
 					genl_rqstp.rq_opnum[j] =
 						args->ops[j].opnum;
@@ -1582,32 +1661,6 @@ out_unlock:
 }
 
 /**
- * nfsd_nl_fh_key_set - helper to copy fh_key from userspace
- * @attr: nlattr NFSD_A_SERVER_FH_KEY
- * @nn: nfsd_net
- *
- * Callers should hold nfsd_mutex, returns 0 on success or negative errno.
- * Callers must ensure the server is shut down (sv_nrthreads == 0),
- * userspace documentation asserts the key may only be set when the server
- * is not running.
- */
-static int nfsd_nl_fh_key_set(const struct nlattr *attr, struct nfsd_net *nn)
-{
-	siphash_key_t *fh_key = nn->fh_key;
-
-	if (!fh_key) {
-		fh_key = kmalloc(sizeof(siphash_key_t), GFP_KERNEL);
-		if (!fh_key)
-			return -ENOMEM;
-		nn->fh_key = fh_key;
-	}
-
-	fh_key->key[0] = get_unaligned_le64(nla_data(attr));
-	fh_key->key[1] = get_unaligned_le64(nla_data(attr) + 8);
-	return 0;
-}
-
-/**
  * nfsd_nl_threads_set_doit - set the number of running threads
  * @skb: reply buffer
  * @info: netlink metadata and command arguments
@@ -1626,30 +1679,31 @@ int nfsd_nl_threads_set_doit(struct sk_buff *skb, struct genl_info *info)
 		return -EINVAL;
 
 	/* count number of SERVER_THREADS values */
-	nlmsg_for_each_attr_type(attr, NFSD_A_SERVER_THREADS, info->nlhdr,
-				 GENL_HDRLEN, rem)
-		nrpools++;
+	nlmsg_for_each_attr(attr, info->nlhdr, GENL_HDRLEN, rem) {
+		if (nla_type(attr) == NFSD_A_SERVER_THREADS)
+			nrpools++;
+	}
 
 	mutex_lock(&nfsd_mutex);
 
-	nthreads = kzalloc_objs(int, nrpools);
+	nthreads = kcalloc(nrpools, sizeof(int), GFP_KERNEL);
 	if (!nthreads) {
 		ret = -ENOMEM;
 		goto out_unlock;
 	}
 
 	i = 0;
-	nlmsg_for_each_attr_type(attr, NFSD_A_SERVER_THREADS, info->nlhdr,
-				 GENL_HDRLEN, rem) {
-		nthreads[i++] = nla_get_u32(attr);
-		if (i >= nrpools)
-			break;
+	nlmsg_for_each_attr(attr, info->nlhdr, GENL_HDRLEN, rem) {
+		if (nla_type(attr) == NFSD_A_SERVER_THREADS) {
+			nthreads[i++] = nla_get_u32(attr);
+			if (i >= nrpools)
+				break;
+		}
 	}
 
 	if (info->attrs[NFSD_A_SERVER_GRACETIME] ||
 	    info->attrs[NFSD_A_SERVER_LEASETIME] ||
-	    info->attrs[NFSD_A_SERVER_SCOPE] ||
-	    info->attrs[NFSD_A_SERVER_FH_KEY]) {
+	    info->attrs[NFSD_A_SERVER_SCOPE]) {
 		ret = -EBUSY;
 		if (nn->nfsd_serv && nn->nfsd_serv->sv_nrthreads)
 			goto out_unlock;
@@ -1678,19 +1732,7 @@ int nfsd_nl_threads_set_doit(struct sk_buff *skb, struct genl_info *info)
 		attr = info->attrs[NFSD_A_SERVER_SCOPE];
 		if (attr)
 			scope = nla_data(attr);
-
-		attr = info->attrs[NFSD_A_SERVER_FH_KEY];
-		if (attr) {
-			ret = nfsd_nl_fh_key_set(attr, nn);
-			trace_nfsd_ctl_fh_key_set((const char *)nn->fh_key, ret);
-			if (ret)
-				goto out_unlock;
-		}
 	}
-
-	attr = info->attrs[NFSD_A_SERVER_MIN_THREADS];
-	if (attr)
-		nn->min_threads = nla_get_u32(attr);
 
 	ret = nfsd_svc(nrpools, nthreads, net, current_cred(), scope);
 	if (ret > 0)
@@ -1702,7 +1744,7 @@ out_unlock:
 }
 
 /**
- * nfsd_nl_threads_get_doit - get the maximum number of running threads
+ * nfsd_nl_threads_get_doit - get the number of running threads
  * @skb: reply buffer
  * @info: netlink metadata and command arguments
  *
@@ -1731,8 +1773,6 @@ int nfsd_nl_threads_get_doit(struct sk_buff *skb, struct genl_info *info)
 			  nn->nfsd4_grace) ||
 	      nla_put_u32(skb, NFSD_A_SERVER_LEASETIME,
 			  nn->nfsd4_lease) ||
-	      nla_put_u32(skb, NFSD_A_SERVER_MIN_THREADS,
-			  nn->min_threads) ||
 	      nla_put_string(skb, NFSD_A_SERVER_SCOPE,
 			  nn->nfsd_name);
 	if (err)
@@ -1745,7 +1785,7 @@ int nfsd_nl_threads_get_doit(struct sk_buff *skb, struct genl_info *info)
 			struct svc_pool *sp = &nn->nfsd_serv->sv_pools[i];
 
 			err = nla_put_u32(skb, NFSD_A_SERVER_THREADS,
-					  sp->sp_nrthrmax);
+					  sp->sp_nrthreads);
 			if (err)
 				goto err_unlock;
 		}
@@ -1799,11 +1839,13 @@ int nfsd_nl_version_set_doit(struct sk_buff *skb, struct genl_info *info)
 	for (i = 0; i <= NFSD_SUPPORTED_MINOR_VERSION; i++)
 		nfsd_minorversion(nn, i, NFSD_CLEAR);
 
-	nlmsg_for_each_attr_type(attr, NFSD_A_SERVER_PROTO_VERSION, info->nlhdr,
-				 GENL_HDRLEN, rem) {
+	nlmsg_for_each_attr(attr, info->nlhdr, GENL_HDRLEN, rem) {
 		struct nlattr *tb[NFSD_A_VERSION_MAX + 1];
 		u32 major, minor = 0;
 		bool enabled;
+
+		if (nla_type(attr) != NFSD_A_SERVER_PROTO_VERSION)
+			continue;
 
 		if (nla_parse_nested(tb, NFSD_A_VERSION_MAX, attr,
 				     nfsd_version_nl_policy, info->extack) < 0)
@@ -1955,11 +1997,13 @@ int nfsd_nl_listener_set_doit(struct sk_buff *skb, struct genl_info *info)
 	 * Walk the list of server_socks from userland and move any that match
 	 * back to sv_permsocks
 	 */
-	nlmsg_for_each_attr_type(attr, NFSD_A_SERVER_SOCK_ADDR, info->nlhdr,
-				 GENL_HDRLEN, rem) {
+	nlmsg_for_each_attr(attr, info->nlhdr, GENL_HDRLEN, rem) {
 		struct nlattr *tb[NFSD_A_SOCK_MAX + 1];
 		const char *xcl_name;
 		struct sockaddr *sa;
+
+		if (nla_type(attr) != NFSD_A_SERVER_SOCK_ADDR)
+			continue;
 
 		if (nla_parse_nested(tb, NFSD_A_SOCK_MAX, attr,
 				     nfsd_sock_nl_policy, info->extack) < 0)
@@ -2012,15 +2056,17 @@ int nfsd_nl_listener_set_doit(struct sk_buff *skb, struct genl_info *info)
 	 * remaining listeners and recreate the list.
 	 */
 	if (delete)
-		svc_xprt_destroy_all(serv, net, false);
+		svc_xprt_destroy_all(serv, net);
 
 	/* walk list of addrs again, open any that still don't exist */
-	nlmsg_for_each_attr_type(attr, NFSD_A_SERVER_SOCK_ADDR, info->nlhdr,
-				 GENL_HDRLEN, rem) {
+	nlmsg_for_each_attr(attr, info->nlhdr, GENL_HDRLEN, rem) {
 		struct nlattr *tb[NFSD_A_SOCK_MAX + 1];
 		const char *xcl_name;
 		struct sockaddr *sa;
 		int ret;
+
+		if (nla_type(attr) != NFSD_A_SERVER_SOCK_ADDR)
+			continue;
 
 		if (nla_parse_nested(tb, NFSD_A_SOCK_MAX, attr,
 				     nfsd_sock_nl_policy, info->extack) < 0)
@@ -2203,9 +2249,6 @@ static __net_init int nfsd_net_init(struct net *net)
 	int retval;
 	int i;
 
-	retval = nfsd_net_cb_init(nn);
-	if (retval)
-		return retval;
 	retval = nfsd_export_init(net);
 	if (retval)
 		goto out_export_error;
@@ -2234,7 +2277,6 @@ static __net_init int nfsd_net_init(struct net *net)
 	get_random_bytes(&nn->siphash_key, sizeof(nn->siphash_key));
 	seqlock_init(&nn->writeverf_lock);
 #if IS_ENABLED(CONFIG_NFS_LOCALIO)
-	spin_lock_init(&nn->local_clients_lock);
 	INIT_LIST_HEAD(&nn->local_clients);
 #endif
 	return 0;
@@ -2246,7 +2288,6 @@ out_repcache_error:
 out_idmap_error:
 	nfsd_export_shutdown(net);
 out_export_error:
-	nfsd_net_cb_shutdown(nn);
 	return retval;
 }
 
@@ -2255,15 +2296,14 @@ out_export_error:
  * nfsd_net_pre_exit - Disconnect localio clients from net namespace
  * @net: a network namespace that is about to be destroyed
  *
- * This invalidates ->net pointers held by localio clients
+ * This invalidated ->net pointers held by localio clients
  * while they can still safely access nn->counter.
  */
 static __net_exit void nfsd_net_pre_exit(struct net *net)
 {
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
-	nfs_localio_invalidate_clients(&nn->local_clients,
-				       &nn->local_clients_lock);
+	nfs_uuid_invalidate_clients(&nn->local_clients);
 }
 #endif
 
@@ -2276,8 +2316,6 @@ static __net_exit void nfsd_net_exit(struct net *net)
 {
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
-	kfree_sensitive(nn->fh_key);
-	nfsd_net_cb_shutdown(nn);
 	nfsd_proc_stat_shutdown(net);
 	percpu_counter_destroy_many(nn->counter, NFSD_STATS_COUNTERS_NUM);
 	nfsd_idmap_shutdown(net);
@@ -2298,8 +2336,6 @@ static int __init init_nfsd(void)
 {
 	int retval;
 
-	nfsd_debugfs_init();
-
 	retval = nfsd4_init_slabs();
 	if (retval)
 		return retval;
@@ -2310,12 +2346,9 @@ static int __init init_nfsd(void)
 	if (retval)
 		goto out_free_pnfs;
 	nfsd_lockd_init();	/* lockd->nfsd callbacks */
-	retval = nfsd_export_wq_init();
-	if (retval)
-		goto out_free_lockd;
 	retval = register_pernet_subsys(&nfsd_net_ops);
 	if (retval < 0)
-		goto out_free_export_wq;
+		goto out_free_lockd;
 	retval = register_cld_notifier();
 	if (retval)
 		goto out_free_subsys;
@@ -2344,8 +2377,6 @@ out_free_cld:
 	unregister_cld_notifier();
 out_free_subsys:
 	unregister_pernet_subsys(&nfsd_net_ops);
-out_free_export_wq:
-	nfsd_export_wq_shutdown();
 out_free_lockd:
 	nfsd_lockd_shutdown();
 	nfsd_drc_slab_free();
@@ -2353,7 +2384,6 @@ out_free_pnfs:
 	nfsd4_exit_pnfs();
 out_free_slabs:
 	nfsd4_free_slabs();
-	nfsd_debugfs_exit();
 	return retval;
 }
 
@@ -2366,12 +2396,10 @@ static void __exit exit_nfsd(void)
 	nfsd4_destroy_laundry_wq();
 	unregister_cld_notifier();
 	unregister_pernet_subsys(&nfsd_net_ops);
-	nfsd_export_wq_shutdown();
 	nfsd_drc_slab_free();
 	nfsd_lockd_shutdown();
 	nfsd4_free_slabs();
 	nfsd4_exit_pnfs();
-	nfsd_debugfs_exit();
 }
 
 MODULE_AUTHOR("Olaf Kirch <okir@monad.swb.de>");

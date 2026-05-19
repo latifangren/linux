@@ -212,7 +212,8 @@ static int fjes_hw_setup(struct fjes_hw *hw)
 	hw->hw_info.max_epid = &hw->max_epid;
 	hw->hw_info.my_epid = &hw->my_epid;
 
-	buf = kzalloc_objs(struct ep_share_mem_info, hw->max_epid);
+	buf = kcalloc(hw->max_epid, sizeof(struct ep_share_mem_info),
+		      GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 

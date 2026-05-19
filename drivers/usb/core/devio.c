@@ -238,14 +238,11 @@ static int usbdev_mmap(struct file *file, struct vm_area_struct *vma)
 	dma_addr_t dma_handle = DMA_MAPPING_ERROR;
 	int ret;
 
-	if (!(file->f_mode & FMODE_WRITE))
-		return -EPERM;
-
 	ret = usbfs_increase_memory_usage(size + sizeof(struct usb_memory));
 	if (ret)
 		goto error;
 
-	usbm = kzalloc_obj(struct usb_memory);
+	usbm = kzalloc(sizeof(struct usb_memory), GFP_KERNEL);
 	if (!usbm) {
 		ret = -ENOMEM;
 		goto error_decrease_mem;
@@ -402,7 +399,7 @@ static struct async *alloc_async(unsigned int numisoframes)
 {
 	struct async *as;
 
-	as = kzalloc_obj(struct async);
+	as = kzalloc(sizeof(struct async), GFP_KERNEL);
 	if (!as)
 		return NULL;
 	as->urb = usb_alloc_urb(numisoframes, GFP_KERNEL);
@@ -970,7 +967,7 @@ static int parse_usbdevfs_streams(struct usb_dev_state *ps,
 	if (num_streams_ret && (num_streams < 2 || num_streams > 65536))
 		return -EINVAL;
 
-	eps = kmalloc_objs(*eps, num_eps);
+	eps = kmalloc_array(num_eps, sizeof(*eps), GFP_KERNEL);
 	if (!eps)
 		return -ENOMEM;
 
@@ -1039,7 +1036,7 @@ static int usbdev_open(struct inode *inode, struct file *file)
 	int ret;
 
 	ret = -ENOMEM;
-	ps = kzalloc_obj(struct usb_dev_state);
+	ps = kzalloc(sizeof(struct usb_dev_state), GFP_KERNEL);
 	if (!ps)
 		goto out_free_ps;
 
@@ -1196,7 +1193,7 @@ static int do_proc_control(struct usb_dev_state *ps,
 	urb = usb_alloc_urb(0, GFP_NOIO);
 	if (!urb)
 		goto done;
-	dr = kmalloc_obj(struct usb_ctrlrequest, GFP_NOIO);
+	dr = kmalloc(sizeof(struct usb_ctrlrequest), GFP_NOIO);
 	if (!dr)
 		goto done;
 
@@ -1298,7 +1295,7 @@ static int do_proc_bulk(struct usb_dev_state *ps,
 		return ret;
 
 	len1 = bulk->len;
-	if (len1 >= (INT_MAX - sizeof(struct urb)))
+	if (len1 < 0 || len1 >= (INT_MAX - sizeof(struct urb)))
 		return -EINVAL;
 
 	if (bulk->ep & USB_DIR_IN)
@@ -1670,7 +1667,7 @@ static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb
 		/* min 8 byte setup packet */
 		if (uurb->buffer_length < 8)
 			return -EINVAL;
-		dr = kmalloc_obj(struct usb_ctrlrequest);
+		dr = kmalloc(sizeof(struct usb_ctrlrequest), GFP_KERNEL);
 		if (!dr)
 			return -ENOMEM;
 		if (copy_from_user(dr, uurb->buffer, 8)) {
@@ -1805,8 +1802,9 @@ static int proc_do_submiturb(struct usb_dev_state *ps, struct usbdevfs_urb *uurb
 	as->mem_usage = u;
 
 	if (num_sgs) {
-		as->urb->sg = kmalloc_objs(struct scatterlist, num_sgs,
-					   GFP_KERNEL | __GFP_NOWARN);
+		as->urb->sg = kmalloc_array(num_sgs,
+					    sizeof(struct scatterlist),
+					    GFP_KERNEL | __GFP_NOWARN);
 		if (!as->urb->sg) {
 			ret = -ENOMEM;
 			goto error;

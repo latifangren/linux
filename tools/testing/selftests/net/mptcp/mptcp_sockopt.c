@@ -25,7 +25,6 @@
 #include <netinet/in.h>
 
 #include <linux/tcp.h>
-#include <linux/compiler.h>
 
 static int pf = AF_INET;
 
@@ -128,7 +127,7 @@ struct so_state {
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
-static void __noreturn die_perror(const char *msg)
+static void die_perror(const char *msg)
 {
 	perror(msg);
 	exit(1);
@@ -140,7 +139,7 @@ static void die_usage(int r)
 	exit(r);
 }
 
-static void __noreturn xerror(const char *fmt, ...)
+static void xerror(const char *fmt, ...)
 {
 	va_list ap;
 
@@ -160,22 +159,13 @@ static const char *getxinfo_strerr(int err)
 }
 
 static void xgetaddrinfo(const char *node, const char *service,
-			 struct addrinfo *hints,
+			 const struct addrinfo *hints,
 			 struct addrinfo **res)
 {
-	int err;
+	int err = getaddrinfo(node, service, hints, res);
 
-again:
-	err = getaddrinfo(node, service, hints, res);
 	if (err) {
-		const char *errstr;
-
-		if (err == EAI_SOCKTYPE) {
-			hints->ai_protocol = IPPROTO_TCP;
-			goto again;
-		}
-
-		errstr = getxinfo_strerr(err);
+		const char *errstr = getxinfo_strerr(err);
 
 		fprintf(stderr, "Fatal: getaddrinfo(%s:%s): %s\n",
 			node ? node : "", service ? service : "", errstr);
@@ -188,7 +178,7 @@ static int sock_listen_mptcp(const char * const listenaddr,
 {
 	int sock = -1;
 	struct addrinfo hints = {
-		.ai_protocol = IPPROTO_MPTCP,
+		.ai_protocol = IPPROTO_TCP,
 		.ai_socktype = SOCK_STREAM,
 		.ai_flags = AI_PASSIVE | AI_NUMERICHOST
 	};
@@ -233,7 +223,7 @@ static int sock_connect_mptcp(const char * const remoteaddr,
 			      const char * const port, int proto)
 {
 	struct addrinfo hints = {
-		.ai_protocol = IPPROTO_MPTCP,
+		.ai_protocol = IPPROTO_TCP,
 		.ai_socktype = SOCK_STREAM,
 	};
 	struct addrinfo *a, *addr;
@@ -727,7 +717,6 @@ static int server(int pipefd)
 
 	process_one_client(r, pipefd);
 
-	close(fd);
 	return 0;
 }
 
@@ -853,12 +842,8 @@ int main(int argc, char *argv[])
 		die_perror("pipe");
 
 	s = xfork();
-	if (s == 0) {
-		close(pipefds[0]);
-		ret = server(pipefds[1]);
-		close(pipefds[1]);
-		return ret;
-	}
+	if (s == 0)
+		return server(pipefds[1]);
 
 	close(pipefds[1]);
 

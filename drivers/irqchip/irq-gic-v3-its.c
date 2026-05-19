@@ -41,8 +41,7 @@
 #include <asm/exception.h>
 
 #include "irq-gic-common.h"
-#include "irq-gic-its-msi-parent.h"
-#include <linux/irqchip/irq-msi-lib.h>
+#include "irq-msi-lib.h"
 
 #define ITS_FLAGS_CMDQ_NEEDS_FLUSHING		(1ULL << 0)
 #define ITS_FLAGS_WORKAROUND_CAVIUM_22375	(1ULL << 1)
@@ -125,8 +124,6 @@ struct its_node {
 	u32			pre_its_base; /* for Socionext Synquacer */
 	int			vlpi_redist_offset;
 };
-
-static DEFINE_PER_CPU(struct its_node *, local_4_1_its);
 
 #define is_v4(its)		(!!((its)->typer & GITS_TYPER_VLPIS))
 #define is_v4_1(its)		(!!((its)->typer & GITS_TYPER_VMAPP))
@@ -1814,10 +1811,17 @@ static u64 its_irq_get_msi_base(struct its_device *its_dev)
 static void its_irq_compose_msi_msg(struct irq_data *d, struct msi_msg *msg)
 {
 	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
+	struct its_node *its;
+	u64 addr;
 
-	msg->data = its_get_event_id(d);
-	msi_msg_set_addr(irq_data_get_msi_desc(d), msg,
-			 its_dev->its->get_msi_base(its_dev));
+	its = its_dev->its;
+	addr = its->get_msi_base(its_dev);
+
+	msg->address_lo		= lower_32_bits(addr);
+	msg->address_hi		= upper_32_bits(addr);
+	msg->data		= its_get_event_id(d);
+
+	iommu_dma_compose_msi_msg(irq_data_get_msi_desc(d), msg);
 }
 
 static int its_irq_set_irqchip_state(struct irq_data *d,
@@ -1926,8 +1930,8 @@ static int its_vlpi_map(struct irq_data *d, struct its_cmd_info *info)
 	if (!its_dev->event_map.vm) {
 		struct its_vlpi_map *maps;
 
-		maps = kzalloc_objs(*maps, its_dev->event_map.nr_lpis,
-				    GFP_ATOMIC);
+		maps = kcalloc(its_dev->event_map.nr_lpis, sizeof(*maps),
+			       GFP_ATOMIC);
 		if (!maps)
 			return -ENOMEM;
 
@@ -2108,7 +2112,7 @@ static struct lpi_range *mk_lpi_range(u32 base, u32 span)
 {
 	struct lpi_range *range;
 
-	range = kmalloc_obj(*range);
+	range = kmalloc(sizeof(*range), GFP_KERNEL);
 	if (range) {
 		range->base_id = base;
 		range->span = span;
@@ -2781,7 +2785,6 @@ static u64 inherit_vpe_l1_table_from_its(void)
 		}
 		val |= FIELD_PREP(GICR_VPROPBASER_4_1_SIZE, GITS_BASER_NR_PAGES(baser) - 1);
 
-		*this_cpu_ptr(&local_4_1_its) = its;
 		return val;
 	}
 
@@ -2819,7 +2822,6 @@ static u64 inherit_vpe_l1_table_from_rd(cpumask_t **mask)
 		gic_data_rdist()->vpe_l1_base = gic_data_rdist_cpu(cpu)->vpe_l1_base;
 		*mask = gic_data_rdist_cpu(cpu)->vpe_table_mask;
 
-		*this_cpu_ptr(&local_4_1_its) = *per_cpu_ptr(&local_4_1_its, cpu);
 		return val;
 	}
 
@@ -2927,7 +2929,7 @@ static int allocate_vpe_l1_table(void)
 	if (val & GICR_VPROPBASER_4_1_VALID)
 		goto out;
 
-	gic_data_rdist()->vpe_table_mask = kzalloc_obj(cpumask_t, GFP_ATOMIC);
+	gic_data_rdist()->vpe_table_mask = kzalloc(sizeof(cpumask_t), GFP_ATOMIC);
 	if (!gic_data_rdist()->vpe_table_mask)
 		return -ENOMEM;
 
@@ -3025,7 +3027,8 @@ static int its_alloc_collections(struct its_node *its)
 {
 	int i;
 
-	its->collections = kzalloc_objs(*its->collections, nr_cpu_ids);
+	its->collections = kcalloc(nr_cpu_ids, sizeof(*its->collections),
+				   GFP_KERNEL);
 	if (!its->collections)
 		return -ENOMEM;
 
@@ -3496,7 +3499,7 @@ static struct its_device *its_create_device(struct its_node *its, u32 dev_id,
 
 	itt = itt_alloc_pool(its->numa_node, sz);
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 
 	if (alloc_lpis) {
 		lpi_map = its_lpi_alloc(nvecs, &lpi_base, &nr_lpis);
@@ -3628,33 +3631,8 @@ out:
 	return err;
 }
 
-static void its_msi_teardown(struct irq_domain *domain, msi_alloc_info_t *info)
-{
-	struct its_device *its_dev = info->scratchpad[0].ptr;
-
-	guard(mutex)(&its_dev->its->dev_alloc_lock);
-
-	/* If the device is shared, keep everything around */
-	if (its_dev->shared)
-		return;
-
-	/* LPIs should have been already unmapped at this stage */
-	if (WARN_ON_ONCE(!bitmap_empty(its_dev->event_map.lpi_map,
-				       its_dev->event_map.nr_lpis)))
-		return;
-
-	its_lpi_free(its_dev->event_map.lpi_map,
-		     its_dev->event_map.lpi_base,
-		     its_dev->event_map.nr_lpis);
-
-	/* Unmap device/itt, and get rid of the tracking */
-	its_send_mapd(its_dev, 0);
-	its_free_device(its_dev);
-}
-
 static struct msi_domain_ops its_msi_domain_ops = {
 	.msi_prepare	= its_msi_prepare,
-	.msi_teardown	= its_msi_teardown,
 };
 
 static int its_irq_gic_domain_alloc(struct irq_domain *domain,
@@ -3755,6 +3733,7 @@ static void its_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 {
 	struct irq_data *d = irq_domain_get_irq_data(domain, virq);
 	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
+	struct its_node *its = its_dev->its;
 	int i;
 
 	bitmap_release_region(its_dev->event_map.lpi_map,
@@ -3767,6 +3746,26 @@ static void its_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 		/* Nuke the entry in the domain */
 		irq_domain_reset_irq_data(data);
 	}
+
+	mutex_lock(&its->dev_alloc_lock);
+
+	/*
+	 * If all interrupts have been freed, start mopping the
+	 * floor. This is conditioned on the device not being shared.
+	 */
+	if (!its_dev->shared &&
+	    bitmap_empty(its_dev->event_map.lpi_map,
+			 its_dev->event_map.nr_lpis)) {
+		its_lpi_free(its_dev->event_map.lpi_map,
+			     its_dev->event_map.lpi_base,
+			     its_dev->event_map.nr_lpis);
+
+		/* Unmap device/itt */
+		its_send_mapd(its_dev, 0);
+		its_free_device(its_dev);
+	}
+
+	mutex_unlock(&its->dev_alloc_lock);
 
 	irq_domain_free_irqs_parent(domain, virq, nr_irqs);
 }
@@ -4192,7 +4191,7 @@ static struct irq_chip its_vpe_irq_chip = {
 
 static struct its_node *find_4_1_its(void)
 {
-	struct its_node *its = *this_cpu_ptr(&local_4_1_its);
+	static struct its_node *its = NULL;
 
 	if (!its) {
 		list_for_each_entry(its, &its_nodes, entry) {
@@ -4995,7 +4994,7 @@ static void its_enable_quirks(struct its_node *its)
 				     its_quirks, its);
 }
 
-static int its_save_disable(void *data)
+static int its_save_disable(void)
 {
 	struct its_node *its;
 	int err = 0;
@@ -5031,7 +5030,7 @@ err:
 	return err;
 }
 
-static void its_restore_enable(void *data)
+static void its_restore_enable(void)
 {
 	struct its_node *its;
 	int ret;
@@ -5091,13 +5090,9 @@ static void its_restore_enable(void *data)
 	raw_spin_unlock(&its_lock);
 }
 
-static const struct syscore_ops its_syscore_ops = {
+static struct syscore_ops its_syscore_ops = {
 	.suspend = its_save_disable,
 	.resume = its_restore_enable,
-};
-
-static struct syscore its_syscore = {
-	.ops = &its_syscore_ops,
 };
 
 static void __init __iomem *its_map_one(struct resource *res, int *err)
@@ -5134,26 +5129,30 @@ out_unmap:
 
 static int its_init_domain(struct its_node *its)
 {
-	struct irq_domain_info dom_info = {
-		.fwnode		= its->fwnode_handle,
-		.ops		= &its_domain_ops,
-		.domain_flags	= its->msi_domain_flags,
-		.parent		= its_parent,
-	};
+	struct irq_domain *inner_domain;
 	struct msi_domain_info *info;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	info->ops = &its_msi_domain_ops;
 	info->data = its;
-	dom_info.host_data = info;
 
-	if (!msi_create_parent_irq_domain(&dom_info, &gic_v3_its_msi_parent_ops)) {
+	inner_domain = irq_domain_create_hierarchy(its_parent,
+						   its->msi_domain_flags, 0,
+						   its->fwnode_handle, &its_domain_ops,
+						   info);
+	if (!inner_domain) {
 		kfree(info);
 		return -ENOMEM;
 	}
+
+	irq_domain_update_bus_token(inner_domain, DOMAIN_BUS_NEXUS);
+
+	inner_domain->msi_parent_ops = &gic_v3_its_msi_parent_ops;
+	inner_domain->flags |= IRQ_DOMAIN_FLAG_MSI_PARENT;
+
 	return 0;
 }
 
@@ -5172,7 +5171,8 @@ static int its_init_vpe_domain(void)
 	its = list_first_entry(&its_nodes, struct its_node, entry);
 
 	entries = roundup_pow_of_two(nr_cpu_ids);
-	vpe_proxy.vpes = kzalloc_objs(*vpe_proxy.vpes, entries);
+	vpe_proxy.vpes = kcalloc(entries, sizeof(*vpe_proxy.vpes),
+				 GFP_KERNEL);
 	if (!vpe_proxy.vpes)
 		return -ENOMEM;
 
@@ -5516,7 +5516,7 @@ static struct its_node __init *its_node_init(struct resource *res,
 
 	pr_info("ITS %pR\n", res);
 
-	its = kzalloc_obj(*its);
+	its = kzalloc(sizeof(*its), GFP_KERNEL);
 	if (!its)
 		goto out_unmap;
 
@@ -5529,7 +5529,7 @@ static struct its_node __init *its_node_init(struct resource *res,
 	its->base = its_base;
 	its->phys_base = res->start;
 	its->get_msi_base = its_irq_get_msi_base;
-	its->msi_domain_flags = IRQ_DOMAIN_FLAG_ISOLATED_MSI | IRQ_DOMAIN_FLAG_MSI_IMMUTABLE;
+	its->msi_domain_flags = IRQ_DOMAIN_FLAG_ISOLATED_MSI;
 
 	its->numa_node = numa_node;
 	its->fwnode_handle = handle;
@@ -5682,7 +5682,8 @@ static void __init acpi_table_parse_srat_its(void)
 	if (count <= 0)
 		return;
 
-	its_srat_maps = kmalloc_objs(struct its_srat_map, count);
+	its_srat_maps = kmalloc_array(count, sizeof(struct its_srat_map),
+				      GFP_KERNEL);
 	if (!its_srat_maps)
 		return;
 
@@ -5869,7 +5870,7 @@ int __init its_init(struct fwnode_handle *handle, struct rdists *rdists,
 		}
 	}
 
-	register_syscore(&its_syscore);
+	register_syscore_ops(&its_syscore_ops);
 
 	return 0;
 }

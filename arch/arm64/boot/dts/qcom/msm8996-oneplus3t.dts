@@ -28,10 +28,10 @@
 
 &gpu {
 	status = "okay";
-};
 
-&gpu_zap_shader {
-	firmware-name = "qcom/msm8996/oneplus3t/a530_zap.mbn";
+	zap-shader {
+		firmware-name = "qcom/msm8996/oneplus3t/a530_zap.mbn";
+	};
 };
 
 &mss_pil {
@@ -42,8 +42,6 @@
 
 &slpi_pil {
 	firmware-name = "qcom/msm8996/oneplus3t/slpi.mbn";
-	px-supply = <&vreg_lvs2a>;
-
 	status = "okay";
 };
 

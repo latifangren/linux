@@ -32,7 +32,6 @@
 
 #include <net/ip.h>
 #include <net/ipv6.h>
-#include <net/ip6_route.h>
 #include <net/addrconf.h>
 #include <net/dst_metadata.h>
 #include <net/route.h>
@@ -374,8 +373,8 @@ static int br_nf_pre_routing_finish(struct net *net, struct sock *sk, struct sk_
 	struct nf_bridge_info *nf_bridge = nf_bridge_info_get(skb);
 	struct net_device *dev = skb->dev, *br_indev;
 	const struct iphdr *iph = ip_hdr(skb);
-	enum skb_drop_reason reason;
 	struct rtable *rt;
+	int err;
 
 	br_indev = nf_bridge_get_physindev(skb, net);
 	if (!br_indev) {
@@ -391,13 +390,40 @@ static int br_nf_pre_routing_finish(struct net *net, struct sock *sk, struct sk_
 	}
 	nf_bridge->in_prerouting = 0;
 	if (br_nf_ipv4_daddr_was_changed(skb, nf_bridge)) {
-		reason = ip_route_input(skb, iph->daddr, iph->saddr,
-					ip4h_dscp(iph), dev);
-		if (reason) {
-			kfree_skb_reason(skb, reason);
+		err = ip_route_input(skb, iph->daddr, iph->saddr,
+				     ip4h_dscp(iph), dev);
+		if (err) {
+			struct in_device *in_dev = __in_dev_get_rcu(dev);
+
+			/* If err equals -EHOSTUNREACH the error is due to a
+			 * martian destination or due to the fact that
+			 * forwarding is disabled. For most martian packets,
+			 * ip_route_output_key() will fail. It won't fail for 2 types of
+			 * martian destinations: loopback destinations and destination
+			 * 0.0.0.0. In both cases the packet will be dropped because the
+			 * destination is the loopback device and not the bridge. */
+			if (err != -EHOSTUNREACH || !in_dev || IN_DEV_FORWARD(in_dev))
+				goto free_skb;
+
+			rt = ip_route_output(net, iph->daddr, 0,
+					     iph->tos & INET_DSCP_MASK, 0,
+					     RT_SCOPE_UNIVERSE);
+			if (!IS_ERR(rt)) {
+				/* - Bridged-and-DNAT'ed traffic doesn't
+				 *   require ip_forwarding. */
+				if (rt->dst.dev == dev) {
+					skb_dst_drop(skb);
+					skb_dst_set(skb, &rt->dst);
+					goto bridged_dnat;
+				}
+				ip_rt_put(rt);
+			}
+free_skb:
+			kfree_skb(skb);
 			return 0;
 		} else {
 			if (skb_dst(skb)->dev == dev) {
+bridged_dnat:
 				skb->dev = br_indev;
 				nf_bridge_update_protocol(skb);
 				nf_bridge_push_encap_header(skb);
@@ -891,6 +917,7 @@ static int br_nf_dev_queue_xmit(struct net *net, struct sock *sk, struct sk_buff
 	}
 	if (IS_ENABLED(CONFIG_NF_DEFRAG_IPV6) &&
 	    skb->protocol == htons(ETH_P_IPV6)) {
+		const struct nf_ipv6_ops *v6ops = nf_get_ipv6_ops();
 		struct brnf_frag_data *data;
 
 		if (br_validate_ipv6(net, skb))
@@ -906,9 +933,15 @@ static int br_nf_dev_queue_xmit(struct net *net, struct sock *sk, struct sk_buff
 		skb_copy_from_linear_data_offset(skb, -data->size, data->mac,
 						 data->size);
 
-		ret = ip6_fragment(net, sk, skb, br_nf_push_frag_xmit);
+		if (v6ops) {
+			ret = v6ops->fragment(net, sk, skb, br_nf_push_frag_xmit);
+			local_unlock_nested_bh(&brnf_frag_data_storage.bh_lock);
+			return ret;
+		}
 		local_unlock_nested_bh(&brnf_frag_data_storage.bh_lock);
-		return ret;
+
+		kfree_skb(skb);
+		return -EMSGSIZE;
 	}
 	nf_bridge_info_free(skb);
 	return br_dev_queue_push_xmit(net, sk, skb);

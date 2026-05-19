@@ -132,9 +132,8 @@ static int softnet_seq_show(struct seq_file *seq, void *v)
 
 	rcu_read_lock();
 	fl = rcu_dereference(sd->flow_limit);
-	/* Pairs with WRITE_ONCE() in skb_flow_limit() */
 	if (fl)
-		flow_limit_count = READ_ONCE(fl->count);
+		flow_limit_count = fl->count;
 	rcu_read_unlock();
 #endif
 
@@ -145,12 +144,11 @@ static int softnet_seq_show(struct seq_file *seq, void *v)
 	seq_printf(seq,
 		   "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x "
 		   "%08x %08x\n",
-		   READ_ONCE(sd->processed),
-		   numa_drop_read(&sd->drop_counters),
-		   READ_ONCE(sd->time_squeeze), 0,
+		   sd->processed, atomic_read(&sd->dropped),
+		   sd->time_squeeze, 0,
 		   0, 0, 0, 0, /* was fastroute */
 		   0,	/* was cpu_collision */
-		   READ_ONCE(sd->received_rps), flow_limit_count,
+		   sd->received_rps, flow_limit_count,
 		   input_qlen + process_qlen, (int)seq->index,
 		   input_qlen, process_qlen);
 	return 0;
@@ -197,13 +195,7 @@ static void *ptype_get_idx(struct seq_file *seq, loff_t pos)
 
 	iter->dev = NULL;
 
-	list_for_each_entry_rcu(pt, &seq_file_net(seq)->ptype_all, list) {
-		if (i == pos)
-			return pt;
-		++i;
-	}
-
-	list_for_each_entry_rcu(pt, &seq_file_net(seq)->ptype_specific, list) {
+	list_for_each_entry_rcu(pt, &net_hotdata.ptype_all, list) {
 		if (i == pos)
 			return pt;
 		++i;
@@ -229,7 +221,6 @@ static void *ptype_seq_start(struct seq_file *seq, loff_t *pos)
 static void *ptype_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct ptype_iter_state *iter = seq->private;
-	struct net *net = seq_file_net(seq);
 	struct net_device *dev;
 	struct packet_type *pt;
 	struct list_head *nxt;
@@ -254,22 +245,14 @@ static void *ptype_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 			}
 		}
 		iter->dev = NULL;
-		nxt = READ_ONCE(net->ptype_all.next);
-		goto net_ptype_all;
+		nxt = READ_ONCE(net_hotdata.ptype_all.next);
+		goto ptype_all;
 	}
 
-	if (pt->af_packet_net) {
-net_ptype_all:
-		if (nxt != &net->ptype_all && nxt != &net->ptype_specific)
+	if (pt->type == htons(ETH_P_ALL)) {
+ptype_all:
+		if (nxt != &net_hotdata.ptype_all)
 			goto found;
-
-		if (nxt == &net->ptype_all) {
-			/* continue with ->ptype_specific if it's not empty */
-			nxt = READ_ONCE(net->ptype_specific.next);
-			if (nxt != &net->ptype_specific)
-				goto found;
-		}
-
 		hash = 0;
 		nxt = READ_ONCE(ptype_base[0].next);
 	} else

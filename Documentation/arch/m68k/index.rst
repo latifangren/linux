@@ -11,3 +11,10 @@ m68k Architecture
    buddha-driver
 
    features
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

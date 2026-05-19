@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (use_small_folio) {
-		mem2 = aligned_alloc_mem(MEMSIZE_SMALLFOLIO, ALIGNMENT_SMALLFOLIO);
+		mem2 = aligned_alloc_mem(MEMSIZE_SMALLFOLIO, ALIGNMENT_MTHP);
 		if (mem2 == NULL) {
 			fprintf(stderr, "Failed to allocate small folios memory\n");
 			free(mem1);

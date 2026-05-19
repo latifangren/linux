@@ -13,9 +13,8 @@
 #include <linux/phy.h>
 #include <linux/bitfield.h>
 #include <linux/gpio/driver.h>
-#include <linux/phy_port.h>
+#include <linux/sfp.h>
 
-#include "../phylib.h"
 #include "qcom.h"
 
 #define QCA807X_CHIP_CONFIGURATION				0x1f
@@ -124,7 +123,6 @@ struct qca807x_priv {
 	bool dac_full_amplitude;
 	bool dac_full_bias_current;
 	bool dac_disable_bias_current_tweak;
-	struct qcom_phy_hw_stats hw_stats;
 };
 
 static int qca807x_cable_test_start(struct phy_device *phydev)
@@ -375,10 +373,10 @@ static int qca807x_gpio_get(struct gpio_chip *gc, unsigned int offset)
 	reg = QCA807X_MMD7_LED_FORCE_CTRL(offset);
 	val = phy_read_mmd(priv->phy, MDIO_MMD_AN, reg);
 
-	return !!FIELD_GET(QCA807X_GPIO_FORCE_MODE_MASK, val);
+	return FIELD_GET(QCA807X_GPIO_FORCE_MODE_MASK, val);
 }
 
-static int qca807x_gpio_set(struct gpio_chip *gc, unsigned int offset, int value)
+static void qca807x_gpio_set(struct gpio_chip *gc, unsigned int offset, int value)
 {
 	struct qca807x_gpio_priv *priv = gpiochip_get_data(gc);
 	u16 reg;
@@ -387,19 +385,18 @@ static int qca807x_gpio_set(struct gpio_chip *gc, unsigned int offset, int value
 	reg = QCA807X_MMD7_LED_FORCE_CTRL(offset);
 
 	val = phy_read_mmd(priv->phy, MDIO_MMD_AN, reg);
-	if (val < 0)
-		return val;
-
 	val &= ~QCA807X_GPIO_FORCE_MODE_MASK;
 	val |= QCA807X_GPIO_FORCE_EN;
 	val |= FIELD_PREP(QCA807X_GPIO_FORCE_MODE_MASK, value);
 
-	return phy_write_mmd(priv->phy, MDIO_MMD_AN, reg, val);
+	phy_write_mmd(priv->phy, MDIO_MMD_AN, reg, val);
 }
 
 static int qca807x_gpio_dir_out(struct gpio_chip *gc, unsigned int offset, int value)
 {
-	return qca807x_gpio_set(gc, offset, value);
+	qca807x_gpio_set(gc, offset, value);
+
+	return 0;
 }
 
 static int qca807x_gpio(struct phy_device *phydev)
@@ -489,13 +486,13 @@ static int qca807x_read_status(struct phy_device *phydev)
 
 static int qca807x_phy_package_probe_once(struct phy_device *phydev)
 {
-	struct qca807x_shared_priv *priv = phy_package_get_priv(phydev);
-	struct device_node *np = phy_package_get_node(phydev);
+	struct phy_package_shared *shared = phydev->shared;
+	struct qca807x_shared_priv *priv = shared->priv;
 	unsigned int tx_drive_strength;
 	const char *package_mode_name;
 
 	/* Default to 600mw if not defined */
-	if (of_property_read_u32(np, "qcom,tx-drive-strength-milliwatt",
+	if (of_property_read_u32(shared->np, "qcom,tx-drive-strength-milliwatt",
 				 &tx_drive_strength))
 		tx_drive_strength = 600;
 
@@ -544,7 +541,7 @@ static int qca807x_phy_package_probe_once(struct phy_device *phydev)
 	}
 
 	priv->package_mode = PHY_INTERFACE_MODE_NA;
-	if (!of_property_read_string(np, "qcom,package-mode",
+	if (!of_property_read_string(shared->np, "qcom,package-mode",
 				     &package_mode_name)) {
 		if (!strcasecmp(package_mode_name,
 				phy_modes(PHY_INTERFACE_MODE_PSGMII)))
@@ -561,7 +558,8 @@ static int qca807x_phy_package_probe_once(struct phy_device *phydev)
 
 static int qca807x_phy_package_config_init_once(struct phy_device *phydev)
 {
-	struct qca807x_shared_priv *priv = phy_package_get_priv(phydev);
+	struct phy_package_shared *shared = phydev->shared;
+	struct qca807x_shared_priv *priv = shared->priv;
 	int val, ret;
 
 	/* Make sure PHY follow PHY package mode if enforced */
@@ -643,59 +641,74 @@ exit:
 	return ret;
 }
 
-static int qca807x_configure_serdes(struct phy_port *port, bool enable,
-				    phy_interface_t interface)
+static int qca807x_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
 {
-	struct phy_device *phydev = port_phydev(port);
+	struct phy_device *phydev = upstream;
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(support) = { 0, };
+	phy_interface_t iface;
 	int ret;
+	DECLARE_PHY_INTERFACE_MASK(interfaces);
 
-	if (!phydev)
-		return -ENODEV;
+	sfp_parse_support(phydev->sfp_bus, id, support, interfaces);
+	iface = sfp_select_interface(phydev->sfp_bus, support);
 
-	if (enable) {
+	dev_info(&phydev->mdio.dev, "%s SFP module inserted\n", phy_modes(iface));
+
+	switch (iface) {
+	case PHY_INTERFACE_MODE_1000BASEX:
+	case PHY_INTERFACE_MODE_100BASEX:
 		/* Set PHY mode to PSGMII combo (1/4 copper + combo ports) mode */
 		ret = phy_modify(phydev,
 				 QCA807X_CHIP_CONFIGURATION,
 				 QCA807X_CHIP_CONFIGURATION_MODE_CFG_MASK,
 				 QCA807X_CHIP_CONFIGURATION_MODE_PSGMII_FIBER);
-		if (ret)
-			return ret;
 		/* Enable fiber mode autodection (1000Base-X or 100Base-FX) */
 		ret = phy_set_bits_mmd(phydev,
 				       MDIO_MMD_AN,
 				       QCA807X_MMD7_FIBER_MODE_AUTO_DETECTION,
 				       QCA807X_MMD7_FIBER_MODE_AUTO_DETECTION_EN);
-		if (ret)
-			return ret;
+		/* Select fiber page */
+		ret = phy_clear_bits(phydev,
+				     QCA807X_CHIP_CONFIGURATION,
+				     QCA807X_BT_BX_REG_SEL);
+
+		phydev->port = PORT_FIBRE;
+		break;
+	default:
+		dev_err(&phydev->mdio.dev, "Incompatible SFP module inserted\n");
+		return -EINVAL;
 	}
 
-	phydev->port = enable ? PORT_FIBRE : PORT_TP;
-
-	return phy_modify(phydev, QCA807X_CHIP_CONFIGURATION,
-			  QCA807X_BT_BX_REG_SEL,
-			  enable ? 0 : QCA807X_BT_BX_REG_SEL);
+	return ret;
 }
 
-static const struct phy_port_ops qca807x_serdes_port_ops = {
-	.configure_mii = qca807x_configure_serdes,
-};
-
-static int qca807x_attach_mii_port(struct phy_device *phydev,
-				   struct phy_port *port)
+static void qca807x_sfp_remove(void *upstream)
 {
-	__set_bit(PHY_INTERFACE_MODE_1000BASEX, port->interfaces);
-	__set_bit(PHY_INTERFACE_MODE_100BASEX, port->interfaces);
+	struct phy_device *phydev = upstream;
 
-	port->ops = &qca807x_serdes_port_ops;
+	/* Select copper page */
+	phy_set_bits(phydev,
+		     QCA807X_CHIP_CONFIGURATION,
+		     QCA807X_BT_BX_REG_SEL);
 
-	return 0;
+	phydev->port = PORT_TP;
 }
+
+static const struct sfp_upstream_ops qca807x_sfp_ops = {
+	.attach = phy_sfp_attach,
+	.detach = phy_sfp_detach,
+	.module_insert = qca807x_sfp_insert,
+	.module_remove = qca807x_sfp_remove,
+	.connect_phy = phy_sfp_connect_phy,
+	.disconnect_phy = phy_sfp_disconnect_phy,
+};
 
 static int qca807x_probe(struct phy_device *phydev)
 {
 	struct device_node *node = phydev->mdio.dev.of_node;
 	struct qca807x_shared_priv *shared_priv;
 	struct device *dev = &phydev->mdio.dev;
+	struct phy_package_shared *shared;
 	struct qca807x_priv *priv;
 	int ret;
 
@@ -709,7 +722,8 @@ static int qca807x_probe(struct phy_device *phydev)
 			return ret;
 	}
 
-	shared_priv = phy_package_get_priv(phydev);
+	shared = phydev->shared;
+	shared_priv = shared->priv;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -731,8 +745,9 @@ static int qca807x_probe(struct phy_device *phydev)
 
 	/* Attach SFP bus on combo port*/
 	if (phy_read(phydev, QCA807X_CHIP_CONFIGURATION)) {
-		phydev->max_n_ports = 2;
-
+		ret = phy_sfp_probe(phydev, &qca807x_sfp_ops);
+		if (ret)
+			return ret;
 		linkmode_set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, phydev->supported);
 		linkmode_set_bit(ETHTOOL_LINK_MODE_FIBRE_BIT, phydev->advertising);
 	}
@@ -754,10 +769,6 @@ static int qca807x_config_init(struct phy_device *phydev)
 			return ret;
 	}
 
-	ret = qcom_phy_counter_config(phydev);
-	if (ret)
-		return ret;
-
 	control_dac = phy_read_mmd(phydev, MDIO_MMD_AN,
 				   QCA807X_MMD7_1000BASE_T_POWER_SAVE_PER_CABLE_LENGTH);
 	control_dac &= ~QCA807X_CONTROL_DAC_MASK;
@@ -770,22 +781,6 @@ static int qca807x_config_init(struct phy_device *phydev)
 	return phy_write_mmd(phydev, MDIO_MMD_AN,
 			     QCA807X_MMD7_1000BASE_T_POWER_SAVE_PER_CABLE_LENGTH,
 			     control_dac);
-}
-
-static int qca807x_update_stats(struct phy_device *phydev)
-{
-	struct qca807x_priv *priv = phydev->priv;
-
-	return qcom_phy_update_stats(phydev, &priv->hw_stats);
-}
-
-static void qca807x_get_phy_stats(struct phy_device *phydev,
-				  struct ethtool_eth_phy_stats *eth_stats,
-				  struct ethtool_phy_stats *stats)
-{
-	struct qca807x_priv *priv = phydev->priv;
-
-	qcom_phy_get_stats(stats, priv->hw_stats);
 }
 
 static struct phy_driver qca807x_drivers[] = {
@@ -806,11 +801,6 @@ static struct phy_driver qca807x_drivers[] = {
 		.suspend	= genphy_suspend,
 		.cable_test_start	= qca807x_cable_test_start,
 		.cable_test_get_status	= qca808x_cable_test_get_status,
-		.update_stats		= qca807x_update_stats,
-		.get_phy_stats		= qca807x_get_phy_stats,
-		.set_wol		= at8031_set_wol,
-		.get_wol		= at803x_get_wol,
-		.attach_mii_port	= qca807x_attach_mii_port,
 	},
 	{
 		PHY_ID_MATCH_EXACT(PHY_ID_QCA8075),
@@ -834,16 +824,11 @@ static struct phy_driver qca807x_drivers[] = {
 		.led_hw_is_supported = qca807x_led_hw_is_supported,
 		.led_hw_control_set = qca807x_led_hw_control_set,
 		.led_hw_control_get = qca807x_led_hw_control_get,
-		.update_stats		= qca807x_update_stats,
-		.get_phy_stats		= qca807x_get_phy_stats,
-		.set_wol		= at8031_set_wol,
-		.get_wol		= at803x_get_wol,
-		.attach_mii_port	= qca807x_attach_mii_port,
 	},
 };
 module_phy_driver(qca807x_drivers);
 
-static const struct mdio_device_id __maybe_unused qca807x_tbl[] = {
+static struct mdio_device_id __maybe_unused qca807x_tbl[] = {
 	{ PHY_ID_MATCH_EXACT(PHY_ID_QCA8072) },
 	{ PHY_ID_MATCH_EXACT(PHY_ID_QCA8075) },
 	{ }

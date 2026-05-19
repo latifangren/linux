@@ -258,9 +258,9 @@ static struct uvesafb_ktask *uvesafb_prep(void)
 {
 	struct uvesafb_ktask *task;
 
-	task = kzalloc_obj(*task);
+	task = kzalloc(sizeof(*task), GFP_KERNEL);
 	if (task) {
-		task->done = kzalloc_obj(*task->done);
+		task->done = kzalloc(sizeof(*task->done), GFP_KERNEL);
 		if (!task->done) {
 			kfree(task);
 			task = NULL;
@@ -487,7 +487,9 @@ static int uvesafb_vbe_getmodes(struct uvesafb_ktask *task,
 		mode++;
 	}
 
-	par->vbe_modes = kzalloc_objs(struct vbe_mode_ib, par->vbe_modes_cnt);
+	par->vbe_modes = kcalloc(par->vbe_modes_cnt,
+				 sizeof(struct vbe_mode_ib),
+				 GFP_KERNEL);
 	if (!par->vbe_modes)
 		return -ENOMEM;
 
@@ -860,7 +862,7 @@ static int uvesafb_vbe_init_mode(struct fb_info *info)
 	 * Convert the modelist into a modedb so that we can use it with
 	 * fb_find_mode().
 	 */
-	mode = kzalloc_objs(*mode, i);
+	mode = kcalloc(i, sizeof(*mode), GFP_KERNEL);
 	if (mode) {
 		i = 0;
 		list_for_each(pos, &info->modelist) {
@@ -1046,7 +1048,8 @@ static int uvesafb_setcmap(struct fb_cmap *cmap, struct fb_info *info)
 		    info->cmap.len || cmap->start < info->cmap.start)
 			return -EINVAL;
 
-		entries = kmalloc_objs(*entries, cmap->len);
+		entries = kmalloc_array(cmap->len, sizeof(*entries),
+					GFP_KERNEL);
 		if (!entries)
 			return -ENOMEM;
 
@@ -1240,7 +1243,7 @@ setmode:
 	    info->var.pixclock != 0) {
 		task->t.regs.ebx |= 0x0800;		/* use CRTC data */
 		task->t.flags = TF_BUF_ESDI;
-		crtc = kzalloc_obj(struct vbe_crtc_ib);
+		crtc = kzalloc(sizeof(struct vbe_crtc_ib), GFP_KERNEL);
 		if (!crtc) {
 			err = -ENOMEM;
 			goto out;

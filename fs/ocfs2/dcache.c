@@ -32,8 +32,7 @@ void ocfs2_dentry_attach_gen(struct dentry *dentry)
 }
 
 
-static int ocfs2_dentry_revalidate(struct inode *dir, const struct qstr *name,
-				   struct dentry *dentry, unsigned int flags)
+static int ocfs2_dentry_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct inode *inode;
 	int ret = 0;    /* if all else fails, just return false */
@@ -45,7 +44,8 @@ static int ocfs2_dentry_revalidate(struct inode *dir, const struct qstr *name,
 	inode = d_inode(dentry);
 	osb = OCFS2_SB(dentry->d_sb);
 
-	trace_ocfs2_dentry_revalidate(dentry, name->len, name->name);
+	trace_ocfs2_dentry_revalidate(dentry, dentry->d_name.len,
+				      dentry->d_name.name);
 
 	/* For a negative dentry -
 	 * check the generation number of the parent and compare with the
@@ -53,8 +53,12 @@ static int ocfs2_dentry_revalidate(struct inode *dir, const struct qstr *name,
 	 */
 	if (inode == NULL) {
 		unsigned long gen = (unsigned long) dentry->d_fsdata;
-		unsigned long pgen = OCFS2_I(dir)->ip_dir_lock_gen;
-		trace_ocfs2_dentry_revalidate_negative(name->len, name->name,
+		unsigned long pgen;
+		spin_lock(&dentry->d_lock);
+		pgen = OCFS2_I(d_inode(dentry->d_parent))->ip_dir_lock_gen;
+		spin_unlock(&dentry->d_lock);
+		trace_ocfs2_dentry_revalidate_negative(dentry->d_name.len,
+						       dentry->d_name.name,
 						       pgen, gen);
 		if (gen != pgen)
 			goto bail;
@@ -145,7 +149,7 @@ struct dentry *ocfs2_find_local_alias(struct inode *inode,
 	struct dentry *dentry;
 
 	spin_lock(&inode->i_lock);
-	for_each_alias(dentry, inode) {
+	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
 		spin_lock(&dentry->d_lock);
 		if (ocfs2_match_dentry(dentry, parent_blkno, skip_unhashed)) {
 			trace_ocfs2_find_local_alias(dentry->d_name.len,
@@ -265,7 +269,7 @@ int ocfs2_dentry_attach_lock(struct dentry *dentry,
 	/*
 	 * There are no other aliases
 	 */
-	dl = kmalloc_obj(*dl, GFP_NOFS);
+	dl = kmalloc(sizeof(*dl), GFP_NOFS);
 	if (!dl) {
 		ret = -ENOMEM;
 		mlog_errno(ret);

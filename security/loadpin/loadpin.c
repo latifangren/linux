@@ -11,7 +11,6 @@
 
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/hex.h>
 #include <linux/kernel_read_file.h>
 #include <linux/lsm_hooks.h>
 #include <linux/mount.h>
@@ -53,29 +52,32 @@ static DEFINE_SPINLOCK(pinned_root_spinlock);
 static bool deny_reading_verity_digests;
 #endif
 
-// initialized to false
-static bool loadpin_root_writable;
 #ifdef CONFIG_SYSCTL
-
-static int proc_handler_loadpin(const struct ctl_table *table, int dir,
-				void *buffer, size_t *lenp, loff_t *ppos)
-{
-	if (!loadpin_root_writable && SYSCTL_USER_TO_KERN(dir))
-		return -EINVAL;
-	return proc_dointvec_minmax(table, dir, buffer, lenp, ppos);
-}
-
-static const struct ctl_table loadpin_sysctl_table[] = {
+static struct ctl_table loadpin_sysctl_table[] = {
 	{
 		.procname       = "enforce",
 		.data           = &enforce,
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
-		.proc_handler   = proc_handler_loadpin,
-		.extra1         = SYSCTL_ZERO,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ONE,
 		.extra2         = SYSCTL_ONE,
 	},
 };
+
+static void set_sysctl(bool is_writable)
+{
+	/*
+	 * If load pinning is not enforced via a read-only block
+	 * device, allow sysctl to change modes for testing.
+	 */
+	if (is_writable)
+		loadpin_sysctl_table[0].extra1 = SYSCTL_ZERO;
+	else
+		loadpin_sysctl_table[0].extra1 = SYSCTL_ONE;
+}
+#else
+static inline void set_sysctl(bool is_writable) { }
 #endif
 
 static void report_writable(struct super_block *mnt_sb, bool writable)
@@ -129,6 +131,7 @@ static int loadpin_check(struct file *file, enum kernel_read_file_id id)
 	struct super_block *load_root;
 	const char *origin = kernel_read_file_id_str(id);
 	bool first_root_pin = false;
+	bool load_root_writable;
 
 	/* If the file id is excluded, ignore the pinning. */
 	if ((unsigned int)id < ARRAY_SIZE(ignore_read_file_id) &&
@@ -149,6 +152,7 @@ static int loadpin_check(struct file *file, enum kernel_read_file_id id)
 	}
 
 	load_root = file->f_path.mnt->mnt_sb;
+	load_root_writable = sb_is_writable(load_root);
 
 	/* First loaded module/firmware defines the root for all others. */
 	spin_lock(&pinned_root_spinlock);
@@ -164,8 +168,8 @@ static int loadpin_check(struct file *file, enum kernel_read_file_id id)
 	spin_unlock(&pinned_root_spinlock);
 
 	if (first_root_pin) {
-		loadpin_root_writable = sb_is_writable(pinned_root);
-		report_writable(pinned_root, loadpin_root_writable);
+		report_writable(pinned_root, load_root_writable);
+		set_sysctl(load_root_writable);
 		report_load(origin, file, "pinned");
 	}
 
@@ -266,6 +270,11 @@ static int __init loadpin_init(void)
 	return 0;
 }
 
+DEFINE_LSM(loadpin) = {
+	.name = "loadpin",
+	.init = loadpin_init,
+};
+
 #ifdef CONFIG_SECURITY_LOADPIN_VERITY
 
 enum loadpin_securityfs_interface_index {
@@ -274,6 +283,7 @@ enum loadpin_securityfs_interface_index {
 
 static int read_trusted_verity_root_digests(unsigned int fd)
 {
+	struct fd f;
 	void *data;
 	int rc;
 	char *p, *d;
@@ -285,8 +295,8 @@ static int read_trusted_verity_root_digests(unsigned int fd)
 	if (!list_empty(&dm_verity_loadpin_trusted_root_digests))
 		return -EPERM;
 
-	CLASS(fd, f)(fd);
-	if (fd_empty(f))
+	f = fdget(fd);
+	if (!fd_file(f))
 		return -EINVAL;
 
 	data = kzalloc(SZ_4K, GFP_KERNEL);
@@ -327,7 +337,7 @@ static int read_trusted_verity_root_digests(unsigned int fd)
 
 		len /= 2;
 
-		trd = kzalloc_flex(*trd, data, len);
+		trd = kzalloc(struct_size(trd, data, len), GFP_KERNEL);
 		if (!trd) {
 			rc = -ENOMEM;
 			goto err;
@@ -349,6 +359,7 @@ static int read_trusted_verity_root_digests(unsigned int fd)
 	}
 
 	kfree(data);
+	fdput(f);
 
 	return 0;
 
@@ -367,6 +378,8 @@ err:
 
 	/* disallow further attempts after reading a corrupt/invalid file */
 	deny_reading_verity_digests = true;
+
+	fdput(f);
 
 	return rc;
 }
@@ -425,15 +438,9 @@ static int __init init_loadpin_securityfs(void)
 	return 0;
 }
 
-#endif /* CONFIG_SECURITY_LOADPIN_VERITY */
+fs_initcall(init_loadpin_securityfs);
 
-DEFINE_LSM(loadpin) = {
-	.id = &loadpin_lsmid,
-	.init = loadpin_init,
-#ifdef CONFIG_SECURITY_LOADPIN_VERITY
-	.initcall_fs = init_loadpin_securityfs,
 #endif /* CONFIG_SECURITY_LOADPIN_VERITY */
-};
 
 /* Should not be mutable after boot, so not listed in sysfs (perm == 0). */
 module_param(enforce, int, 0);

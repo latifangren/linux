@@ -24,7 +24,7 @@
  */
 #ifndef __LINK_DP_CTS_H__
 #define __LINK_DP_CTS_H__
-#include "link_service.h"
+#include "link.h"
 void dp_handle_automated_test(struct dc_link *link);
 bool dp_set_test_pattern(
 		struct dc_link *link,

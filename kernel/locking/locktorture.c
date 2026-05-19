@@ -106,7 +106,7 @@ static const struct kernel_param_ops lt_bind_ops = {
 module_param_cb(bind_readers, &lt_bind_ops, &bind_readers, 0444);
 module_param_cb(bind_writers, &lt_bind_ops, &bind_writers, 0444);
 
-long torture_sched_setaffinity(pid_t pid, const struct cpumask *in_mask, bool dowarn);
+long torture_sched_setaffinity(pid_t pid, const struct cpumask *in_mask);
 
 static struct task_struct *stats_task;
 static struct task_struct **writer_tasks;
@@ -362,60 +362,6 @@ static struct lock_torture_ops raw_spin_lock_irq_ops = {
 	.name		= "raw_spin_lock_irq"
 };
 
-#ifdef CONFIG_BPF_SYSCALL
-
-#include <asm/rqspinlock.h>
-static rqspinlock_t rqspinlock;
-
-static int torture_raw_res_spin_write_lock(int tid __maybe_unused)
-{
-	raw_res_spin_lock(&rqspinlock);
-	return 0;
-}
-
-static void torture_raw_res_spin_write_unlock(int tid __maybe_unused)
-{
-	raw_res_spin_unlock(&rqspinlock);
-}
-
-static struct lock_torture_ops raw_res_spin_lock_ops = {
-	.writelock	= torture_raw_res_spin_write_lock,
-	.write_delay	= torture_spin_lock_write_delay,
-	.task_boost     = torture_rt_boost,
-	.writeunlock	= torture_raw_res_spin_write_unlock,
-	.readlock       = NULL,
-	.read_delay     = NULL,
-	.readunlock     = NULL,
-	.name		= "raw_res_spin_lock"
-};
-
-static int torture_raw_res_spin_write_lock_irq(int tid __maybe_unused)
-{
-	unsigned long flags;
-
-	raw_res_spin_lock_irqsave(&rqspinlock, flags);
-	cxt.cur_ops->flags = flags;
-	return 0;
-}
-
-static void torture_raw_res_spin_write_unlock_irq(int tid __maybe_unused)
-{
-	raw_res_spin_unlock_irqrestore(&rqspinlock, cxt.cur_ops->flags);
-}
-
-static struct lock_torture_ops raw_res_spin_lock_irq_ops = {
-	.writelock	= torture_raw_res_spin_write_lock_irq,
-	.write_delay	= torture_spin_lock_write_delay,
-	.task_boost     = torture_rt_boost,
-	.writeunlock	= torture_raw_res_spin_write_unlock_irq,
-	.readlock       = NULL,
-	.read_delay     = NULL,
-	.readunlock     = NULL,
-	.name		= "raw_res_spin_lock_irq"
-};
-
-#endif
-
 static DEFINE_RWLOCK(torture_rwlock);
 
 static int torture_rwlock_write_lock(int tid __maybe_unused)
@@ -610,8 +556,9 @@ static void torture_ww_mutex_init(void)
 	ww_mutex_init(&torture_ww_mutex_1, &torture_ww_class);
 	ww_mutex_init(&torture_ww_mutex_2, &torture_ww_class);
 
-	ww_acquire_ctxs = kmalloc_objs(*ww_acquire_ctxs,
-				       cxt.nrealwriters_stress);
+	ww_acquire_ctxs = kmalloc_array(cxt.nrealwriters_stress,
+					sizeof(*ww_acquire_ctxs),
+					GFP_KERNEL);
 	if (!ww_acquire_ctxs)
 		VERBOSE_TOROUT_STRING("ww_acquire_ctx: Out of memory");
 }
@@ -1128,8 +1075,7 @@ static int call_rcu_chain_init(void)
 
 	if (call_rcu_chains <= 0)
 		return 0;
-	call_rcu_chain_list = kzalloc_objs(*call_rcu_chain_list,
-					   call_rcu_chains);
+	call_rcu_chain_list = kcalloc(call_rcu_chains, sizeof(*call_rcu_chain_list), GFP_KERNEL);
 	if (!call_rcu_chain_list)
 		return -ENOMEM;
 	for (i = 0; i < call_rcu_chains; i++) {
@@ -1226,9 +1172,6 @@ static int __init lock_torture_init(void)
 		&lock_busted_ops,
 		&spin_lock_ops, &spin_lock_irq_ops,
 		&raw_spin_lock_ops, &raw_spin_lock_irq_ops,
-#ifdef CONFIG_BPF_SYSCALL
-		&raw_res_spin_lock_ops, &raw_res_spin_lock_irq_ops,
-#endif
 		&rw_lock_ops, &rw_lock_irq_ops,
 		&mutex_lock_ops,
 		&ww_mutex_lock_ops,
@@ -1293,7 +1236,9 @@ static int __init lock_torture_init(void)
 	/* Initialize the statistics so that each run gets its own numbers. */
 	if (nwriters_stress) {
 		lock_is_write_held = false;
-		cxt.lwsa = kmalloc_objs(*cxt.lwsa, cxt.nrealwriters_stress);
+		cxt.lwsa = kmalloc_array(cxt.nrealwriters_stress,
+					 sizeof(*cxt.lwsa),
+					 GFP_KERNEL);
 		if (cxt.lwsa == NULL) {
 			VERBOSE_TOROUT_STRING("cxt.lwsa: Out of memory");
 			firsterr = -ENOMEM;
@@ -1321,8 +1266,9 @@ static int __init lock_torture_init(void)
 		}
 
 		if (nreaders_stress) {
-			cxt.lrsa = kmalloc_objs(*cxt.lrsa,
-						cxt.nrealreaders_stress);
+			cxt.lrsa = kmalloc_array(cxt.nrealreaders_stress,
+						 sizeof(*cxt.lrsa),
+						 GFP_KERNEL);
 			if (cxt.lrsa == NULL) {
 				VERBOSE_TOROUT_STRING("cxt.lrsa: Out of memory");
 				firsterr = -ENOMEM;
@@ -1369,8 +1315,9 @@ static int __init lock_torture_init(void)
 	}
 
 	if (nwriters_stress) {
-		writer_tasks = kzalloc_objs(writer_tasks[0],
-					    cxt.nrealwriters_stress);
+		writer_tasks = kcalloc(cxt.nrealwriters_stress,
+				       sizeof(writer_tasks[0]),
+				       GFP_KERNEL);
 		if (writer_tasks == NULL) {
 			TOROUT_ERRSTRING("writer_tasks: Out of memory");
 			firsterr = -ENOMEM;
@@ -1383,8 +1330,9 @@ static int __init lock_torture_init(void)
 		nested_locks = MAX_NESTED_LOCKS;
 
 	if (cxt.cur_ops->readlock) {
-		reader_tasks = kzalloc_objs(reader_tasks[0],
-					    cxt.nrealreaders_stress);
+		reader_tasks = kcalloc(cxt.nrealreaders_stress,
+				       sizeof(reader_tasks[0]),
+				       GFP_KERNEL);
 		if (reader_tasks == NULL) {
 			TOROUT_ERRSTRING("reader_tasks: Out of memory");
 			kfree(writer_tasks);
@@ -1414,7 +1362,7 @@ static int __init lock_torture_init(void)
 		if (torture_init_error(firsterr))
 			goto unwind;
 		if (cpumask_nonempty(bind_writers))
-			torture_sched_setaffinity(writer_tasks[i]->pid, bind_writers, true);
+			torture_sched_setaffinity(writer_tasks[i]->pid, bind_writers);
 
 	create_reader:
 		if (cxt.cur_ops->readlock == NULL || (j >= cxt.nrealreaders_stress))
@@ -1425,7 +1373,7 @@ static int __init lock_torture_init(void)
 		if (torture_init_error(firsterr))
 			goto unwind;
 		if (cpumask_nonempty(bind_readers))
-			torture_sched_setaffinity(reader_tasks[j]->pid, bind_readers, true);
+			torture_sched_setaffinity(reader_tasks[j]->pid, bind_readers);
 	}
 	if (stat_interval > 0) {
 		firsterr = torture_create_kthread(lock_torture_stats, NULL,

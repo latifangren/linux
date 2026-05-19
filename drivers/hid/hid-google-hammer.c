@@ -22,6 +22,7 @@
 #include <linux/platform_data/cros_ec_commands.h>
 #include <linux/platform_data/cros_ec_proto.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeup.h>
 #include <linux/unaligned.h>
 
 #include "hid-ids.h"
@@ -59,7 +60,8 @@ static int cbas_ec_query_base(struct cros_ec_device *ec_dev, bool get_state,
 	struct cros_ec_command *msg;
 	int ret;
 
-	msg = kzalloc_flex(*msg, data, max(sizeof(u32), sizeof(*params)));
+	msg = kzalloc(struct_size(msg, data, max(sizeof(u32), sizeof(*params))),
+		      GFP_KERNEL);
 	if (!msg)
 		return -ENOMEM;
 
@@ -284,7 +286,7 @@ MODULE_DEVICE_TABLE(of, cbas_ec_of_match);
 
 static struct platform_driver cbas_ec_driver = {
 	.probe = cbas_ec_probe,
-	.remove = cbas_ec_remove,
+	.remove_new = cbas_ec_remove,
 	.driver = {
 		.name = "cbas_ec",
 		.acpi_match_table = ACPI_PTR(cbas_ec_acpi_ids),

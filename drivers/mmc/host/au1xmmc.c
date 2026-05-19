@@ -937,10 +937,11 @@ static int au1xmmc_probe(struct platform_device *pdev)
 	struct resource *r;
 	int ret, iflag;
 
-	mmc = devm_mmc_alloc_host(&pdev->dev, sizeof(*host));
+	mmc = mmc_alloc_host(sizeof(struct au1xmmc_host), &pdev->dev);
 	if (!mmc) {
 		dev_err(&pdev->dev, "no memory for mmc_host\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out0;
 	}
 
 	host = mmc_priv(mmc);
@@ -952,14 +953,14 @@ static int au1xmmc_probe(struct platform_device *pdev)
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!r) {
 		dev_err(&pdev->dev, "no mmio defined\n");
-		return ret;
+		goto out1;
 	}
 
 	host->ioarea = request_mem_region(r->start, resource_size(r),
 					   pdev->name);
 	if (!host->ioarea) {
 		dev_err(&pdev->dev, "mmio already in use\n");
-		return ret;
+		goto out1;
 	}
 
 	host->iobase = ioremap(r->start, 0x3c);
@@ -1108,6 +1109,9 @@ out3:
 out2:
 	release_resource(host->ioarea);
 	kfree(host->ioarea);
+out1:
+	mmc_free_host(mmc);
+out0:
 	return ret;
 }
 
@@ -1147,12 +1151,15 @@ static void au1xmmc_remove(struct platform_device *pdev)
 		iounmap((void *)host->iobase);
 		release_resource(host->ioarea);
 		kfree(host->ioarea);
+
+		mmc_free_host(host->mmc);
 	}
 }
 
-static int au1xmmc_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int au1xmmc_suspend(struct platform_device *pdev, pm_message_t state)
 {
-	struct au1xmmc_host *host = dev_get_drvdata(dev);
+	struct au1xmmc_host *host = platform_get_drvdata(pdev);
 
 	__raw_writel(0, HOST_CONFIG2(host));
 	__raw_writel(0, HOST_CONFIG(host));
@@ -1163,24 +1170,27 @@ static int au1xmmc_suspend(struct device *dev)
 	return 0;
 }
 
-static int au1xmmc_resume(struct device *dev)
+static int au1xmmc_resume(struct platform_device *pdev)
 {
-	struct au1xmmc_host *host = dev_get_drvdata(dev);
+	struct au1xmmc_host *host = platform_get_drvdata(pdev);
 
 	au1xmmc_reset_controller(host);
 
 	return 0;
 }
-
-static DEFINE_SIMPLE_DEV_PM_OPS(au1xmmc_pmops, au1xmmc_suspend, au1xmmc_resume);
+#else
+#define au1xmmc_suspend NULL
+#define au1xmmc_resume NULL
+#endif
 
 static struct platform_driver au1xmmc_driver = {
 	.probe         = au1xmmc_probe,
 	.remove        = au1xmmc_remove,
+	.suspend       = au1xmmc_suspend,
+	.resume        = au1xmmc_resume,
 	.driver        = {
 		.name  = DRIVER_NAME,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		.pm = pm_sleep_ptr(&au1xmmc_pmops),
 	},
 };
 

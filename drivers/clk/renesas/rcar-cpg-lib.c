@@ -35,7 +35,7 @@ void cpg_reg_modify(void __iomem *reg, u32 clear, u32 set)
 	val |= set;
 	writel(val, reg);
 	spin_unlock_irqrestore(&cpg_lock, flags);
-}
+};
 
 static int cpg_simple_notifier_call(struct notifier_block *nb,
 				    unsigned long action, void *data)
@@ -94,7 +94,7 @@ struct clk * __init cpg_sdh_clk_register(const char *name,
 	struct cpg_simple_notifier *csn;
 	struct clk *clk;
 
-	csn = kzalloc_obj(*csn);
+	csn = kzalloc(sizeof(*csn), GFP_KERNEL);
 	if (!csn)
 		return ERR_PTR(-ENOMEM);
 
@@ -144,7 +144,7 @@ struct clk * __init cpg_rpc_clk_register(const char *name,
 	struct rpc_clock *rpc;
 	struct clk *clk;
 
-	rpc = kzalloc_obj(*rpc);
+	rpc = kzalloc(sizeof(*rpc), GFP_KERNEL);
 	if (!rpc)
 		return ERR_PTR(-ENOMEM);
 
@@ -185,7 +185,7 @@ struct clk * __init cpg_rpcd2_clk_register(const char *name,
 	struct rpcd2_clock *rpcd2;
 	struct clk *clk;
 
-	rpcd2 = kzalloc_obj(*rpcd2);
+	rpcd2 = kzalloc(sizeof(*rpcd2), GFP_KERNEL);
 	if (!rpcd2)
 		return ERR_PTR(-ENOMEM);
 
@@ -206,3 +206,4 @@ struct clk * __init cpg_rpcd2_clk_register(const char *name,
 
 	return clk;
 }
+

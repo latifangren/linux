@@ -356,7 +356,7 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt,
 	    tb[TCA_CHOKE_STAB] == NULL)
 		return -EINVAL;
 
-	max_P = nla_get_u32_default(tb[TCA_CHOKE_MAX_P], 0);
+	max_P = tb[TCA_CHOKE_MAX_P] ? nla_get_u32(tb[TCA_CHOKE_MAX_P]) : 0;
 
 	ctl = nla_data(tb[TCA_CHOKE_PARMS]);
 	stab = nla_data(tb[TCA_CHOKE_STAB]);
@@ -370,7 +370,7 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt,
 	if (mask != q->tab_mask) {
 		struct sk_buff **ntab;
 
-		ntab = kvzalloc_objs(struct sk_buff *, mask + 1);
+		ntab = kvcalloc(mask + 1, sizeof(struct sk_buff *), GFP_KERNEL);
 		if (!ntab)
 			return -ENOMEM;
 

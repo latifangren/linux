@@ -37,7 +37,7 @@
  */
 #define ARCH_FTRACE_SHIFT_STACK_TRACER 1
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <linux/compat.h>
 
 extern void _mcount(unsigned long);
@@ -52,8 +52,6 @@ extern unsigned long ftrace_graph_call;
 extern void return_to_handler(void);
 
 unsigned long ftrace_call_adjust(unsigned long addr);
-unsigned long arch_ftrace_get_symaddr(unsigned long fentry_ip);
-#define ftrace_get_symaddr(fentry_ip) arch_ftrace_get_symaddr(fentry_ip)
 
 #ifdef CONFIG_DYNAMIC_FTRACE_WITH_ARGS
 #define HAVE_ARCH_FTRACE_REGS
@@ -137,12 +135,6 @@ ftrace_regs_get_frame_pointer(const struct ftrace_regs *fregs)
 	return arch_ftrace_regs(fregs)->fp;
 }
 
-static __always_inline unsigned long
-ftrace_regs_get_return_address(const struct ftrace_regs *fregs)
-{
-	return arch_ftrace_regs(fregs)->lr;
-}
-
 static __always_inline struct pt_regs *
 ftrace_partial_regs(const struct ftrace_regs *fregs, struct pt_regs *regs)
 {
@@ -153,7 +145,6 @@ ftrace_partial_regs(const struct ftrace_regs *fregs, struct pt_regs *regs)
 	regs->pc = afregs->pc;
 	regs->regs[29] = afregs->fp;
 	regs->regs[30] = afregs->lr;
-	regs->pstate = PSR_MODE_EL1h;
 	return regs;
 }
 
@@ -217,9 +208,9 @@ static inline bool arch_syscall_match_sym_name(const char *sym,
 	 */
 	return !strcmp(sym + 8, name);
 }
-#endif /* ifndef __ASSEMBLER__ */
+#endif /* ifndef __ASSEMBLY__ */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 
 void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,

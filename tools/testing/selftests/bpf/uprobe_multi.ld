@@ -1,8 +1,8 @@
 SECTIONS
 {
-	. = ALIGN(65536);
+	. = ALIGN(4096);
 	.note.gnu.build-id : { *(.note.gnu.build-id) }
-	. = ALIGN(65536);
+	. = ALIGN(4096);
 }
 INSERT AFTER .text;
 

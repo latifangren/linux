@@ -95,7 +95,6 @@ static const struct { unsigned flag:8; char opt_char; } opt_array[] = {
 	{ _DPRINTK_FLAGS_INCL_SOURCENAME, 's' },
 	{ _DPRINTK_FLAGS_INCL_LINENO, 'l' },
 	{ _DPRINTK_FLAGS_INCL_TID, 't' },
-	{ _DPRINTK_FLAGS_INCL_STACK, 'd' },
 	{ _DPRINTK_FLAGS_NONE, '_' },
 };
 
@@ -1241,7 +1240,7 @@ static int ddebug_add_module(struct _ddebug_info *di, const char *modname)
 		return 0;
 	}
 
-	dt = kzalloc_obj(*dt);
+	dt = kzalloc(sizeof(*dt), GFP_KERNEL);
 	if (dt == NULL) {
 		pr_err("error adding module: %s\n", modname);
 		return -ENOMEM;

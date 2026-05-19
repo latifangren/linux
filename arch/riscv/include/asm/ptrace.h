@@ -10,7 +10,7 @@
 #include <asm/csr.h>
 #include <linux/compiler.h>
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 struct pt_regs {
 	unsigned long epc;
@@ -23,16 +23,14 @@ struct pt_regs {
 	unsigned long t2;
 	unsigned long s0;
 	unsigned long s1;
-	struct_group(a_regs,
-		unsigned long a0;
-		unsigned long a1;
-		unsigned long a2;
-		unsigned long a3;
-		unsigned long a4;
-		unsigned long a5;
-		unsigned long a6;
-		unsigned long a7;
-	);
+	unsigned long a0;
+	unsigned long a1;
+	unsigned long a2;
+	unsigned long a3;
+	unsigned long a4;
+	unsigned long a5;
+	unsigned long a6;
+	unsigned long a7;
 	unsigned long s2;
 	unsigned long s3;
 	unsigned long s4;
@@ -175,11 +173,11 @@ static inline unsigned long regs_get_kernel_argument(struct pt_regs *regs,
 	return 0;
 }
 
-static __always_inline bool regs_irqs_disabled(struct pt_regs *regs)
+static inline int regs_irqs_disabled(struct pt_regs *regs)
 {
 	return !(regs->status & SR_PIE);
 }
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_RISCV_PTRACE_H */

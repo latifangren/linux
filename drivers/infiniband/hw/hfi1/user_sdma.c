@@ -120,7 +120,7 @@ int hfi1_user_sdma_alloc_queues(struct hfi1_ctxtdata *uctxt,
 
 	dd = uctxt->dd;
 
-	pq = kzalloc_obj(*pq);
+	pq = kzalloc(sizeof(*pq), GFP_KERNEL);
 	if (!pq)
 		return -ENOMEM;
 	pq->dd = dd;
@@ -135,7 +135,9 @@ int hfi1_user_sdma_alloc_queues(struct hfi1_ctxtdata *uctxt,
 		    activate_packet_queue, NULL, NULL);
 	pq->reqidx = 0;
 
-	pq->reqs = kzalloc_objs(*pq->reqs, hfi1_sdma_comp_ring_size);
+	pq->reqs = kcalloc(hfi1_sdma_comp_ring_size,
+			   sizeof(*pq->reqs),
+			   GFP_KERNEL);
 	if (!pq->reqs)
 		goto pq_reqs_nomem;
 
@@ -156,7 +158,7 @@ int hfi1_user_sdma_alloc_queues(struct hfi1_ctxtdata *uctxt,
 		goto pq_txreq_nomem;
 	}
 
-	cq = kzalloc_obj(*cq);
+	cq = kzalloc(sizeof(*cq), GFP_KERNEL);
 	if (!cq)
 		goto cq_nomem;
 
@@ -496,8 +498,8 @@ int hfi1_user_sdma_process_request(struct hfi1_filedata *fd,
 					ntids, sizeof(*req->tids));
 		if (IS_ERR(tmp)) {
 			ret = PTR_ERR(tmp);
-			SDMA_DBG(req, "Failed to copy %d TIDs (%pe)", ntids,
-				 tmp);
+			SDMA_DBG(req, "Failed to copy %d TIDs (%d)",
+				 ntids, ret);
 			goto free_req;
 		}
 		req->tids = tmp;

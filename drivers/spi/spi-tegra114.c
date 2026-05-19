@@ -920,7 +920,7 @@ static struct tegra_spi_client_data
 		return NULL;
 	}
 
-	cdata = kzalloc_obj(*cdata);
+	cdata = kzalloc(sizeof(*cdata), GFP_KERNEL);
 	if (!cdata)
 		return NULL;
 
@@ -1415,7 +1415,8 @@ static int tegra_spi_probe(struct platform_device *pdev)
 		goto exit_pm_disable;
 	}
 
-	ret = spi_register_controller(host);
+	host->dev.of_node = pdev->dev.of_node;
+	ret = devm_spi_register_controller(&pdev->dev, host);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "can not register to host err %d\n", ret);
 		goto exit_free_irq;
@@ -1441,10 +1442,6 @@ static void tegra_spi_remove(struct platform_device *pdev)
 	struct spi_controller *host = platform_get_drvdata(pdev);
 	struct tegra_spi_data	*tspi = spi_controller_get_devdata(host);
 
-	spi_controller_get(host);
-
-	spi_unregister_controller(host);
-
 	free_irq(tspi->irq, tspi);
 
 	if (tspi->tx_dma_chan)
@@ -1456,8 +1453,6 @@ static void tegra_spi_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	if (!pm_runtime_status_suspended(&pdev->dev))
 		tegra_spi_runtime_suspend(&pdev->dev);
-
-	spi_controller_put(host);
 }
 
 #ifdef CONFIG_PM_SLEEP

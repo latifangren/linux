@@ -77,6 +77,7 @@ static void voice_free(struct snd_emu10k1 *emu,
 int snd_emu10k1_voice_alloc(struct snd_emu10k1 *emu, int type, int count, int channels,
 			    struct snd_emu10k1_pcm *epcm, struct snd_emu10k1_voice **rvoice)
 {
+	unsigned long flags;
 	int result;
 
 	if (snd_BUG_ON(!rvoice))
@@ -86,7 +87,7 @@ int snd_emu10k1_voice_alloc(struct snd_emu10k1 *emu, int type, int count, int ch
 	if (snd_BUG_ON(!channels))
 		return -EINVAL;
 
-	guard(spinlock_irqsave)(&emu->voice_lock);
+	spin_lock_irqsave(&emu->voice_lock, flags);
 	for (int got = 0; got < channels; ) {
 		result = voice_alloc(emu, type, count, epcm, &rvoice[got]);
 		if (result == 0) {
@@ -112,6 +113,7 @@ int snd_emu10k1_voice_alloc(struct snd_emu10k1 *emu, int type, int count, int ch
 		}
 		break;
 	}
+	spin_unlock_irqrestore(&emu->voice_lock, flags);
 
 	return result;
 }
@@ -121,15 +123,17 @@ EXPORT_SYMBOL(snd_emu10k1_voice_alloc);
 int snd_emu10k1_voice_free(struct snd_emu10k1 *emu,
 			   struct snd_emu10k1_voice *pvoice)
 {
+	unsigned long flags;
 	int last;
 
 	if (snd_BUG_ON(!pvoice))
 		return -EINVAL;
-	guard(spinlock_irqsave)(&emu->voice_lock);
+	spin_lock_irqsave(&emu->voice_lock, flags);
 	do {
 		last = pvoice->last;
 		voice_free(emu, pvoice++);
 	} while (!last);
+	spin_unlock_irqrestore(&emu->voice_lock, flags);
 	return 0;
 }
 

@@ -140,7 +140,7 @@
 		reg = <0x28>;
 		#gpio-cells = <2>;
 		gpio-controller;
-		ngpios = <32>;
+		ngpio = <32>;
 	};
 };
 

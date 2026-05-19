@@ -127,7 +127,7 @@ static int ioam6_genl_addns(struct sk_buff *skb, struct genl_info *info)
 		goto out_unlock;
 	}
 
-	ns = kzalloc_obj(*ns);
+	ns = kzalloc(sizeof(*ns), GFP_KERNEL);
 	if (!ns) {
 		err = -ENOMEM;
 		goto out_unlock;
@@ -135,11 +135,15 @@ static int ioam6_genl_addns(struct sk_buff *skb, struct genl_info *info)
 
 	ns->id = id;
 
-	data32 = nla_get_u32_default(info->attrs[IOAM6_ATTR_NS_DATA],
-				     IOAM6_U32_UNAVAILABLE);
+	if (!info->attrs[IOAM6_ATTR_NS_DATA])
+		data32 = IOAM6_U32_UNAVAILABLE;
+	else
+		data32 = nla_get_u32(info->attrs[IOAM6_ATTR_NS_DATA]);
 
-	data64 = nla_get_u64_default(info->attrs[IOAM6_ATTR_NS_DATA_WIDE],
-				     IOAM6_U64_UNAVAILABLE);
+	if (!info->attrs[IOAM6_ATTR_NS_DATA_WIDE])
+		data64 = IOAM6_U64_UNAVAILABLE;
+	else
+		data64 = nla_get_u64(info->attrs[IOAM6_ATTR_NS_DATA_WIDE]);
 
 	ns->data = cpu_to_be32(data32);
 	ns->data_wide = cpu_to_be64(data64);
@@ -245,7 +249,7 @@ static int ioam6_genl_dumpns_start(struct netlink_callback *cb)
 	struct rhashtable_iter *iter = (struct rhashtable_iter *)cb->args[0];
 
 	if (!iter) {
-		iter = kmalloc_obj(*iter);
+		iter = kmalloc(sizeof(*iter), GFP_KERNEL);
 		if (!iter)
 			return -ENOMEM;
 
@@ -431,7 +435,7 @@ static int ioam6_genl_dumpsc_start(struct netlink_callback *cb)
 	struct rhashtable_iter *iter = (struct rhashtable_iter *)cb->args[0];
 
 	if (!iter) {
-		iter = kmalloc_obj(*iter);
+		iter = kmalloc(sizeof(*iter), GFP_KERNEL);
 		if (!iter)
 			return -ENOMEM;
 
@@ -710,9 +714,6 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 				    struct ioam6_schema *sc,
 				    unsigned int sclen, bool is_input)
 {
-	/* Note: skb_dst_dev_rcu() can't be NULL at this point. */
-	struct net_device *dev = skb_dst_dev_rcu(skb);
-	struct inet6_dev *i_skb_dev, *idev;
 	struct timespec64 ts;
 	ktime_t tstamp;
 	u64 raw64;
@@ -723,16 +724,13 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 
 	data = trace->data + trace->remlen * 4 - trace->nodelen * 4 - sclen * 4;
 
-	i_skb_dev = skb->dev ? __in6_dev_get(skb->dev) : NULL;
-	idev = __in6_dev_get(dev);
-
 	/* hop_lim and node_id */
 	if (trace->type.bit0) {
 		byte = ipv6_hdr(skb)->hop_limit;
 		if (is_input)
 			byte--;
 
-		raw32 = READ_ONCE(dev_net(dev)->ipv6.sysctl.ioam6_id);
+		raw32 = dev_net(skb_dst(skb)->dev)->ipv6.sysctl.ioam6_id;
 
 		*(__be32 *)data = cpu_to_be32((byte << 24) | raw32);
 		data += sizeof(__be32);
@@ -740,18 +738,18 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 
 	/* ingress_if_id and egress_if_id */
 	if (trace->type.bit1) {
-		if (!i_skb_dev)
+		if (!skb->dev)
 			raw16 = IOAM6_U16_UNAVAILABLE;
 		else
-			raw16 = (__force u16)READ_ONCE(i_skb_dev->cnf.ioam6_id);
+			raw16 = (__force u16)READ_ONCE(__in6_dev_get(skb->dev)->cnf.ioam6_id);
 
 		*(__be16 *)data = cpu_to_be16(raw16);
 		data += sizeof(__be16);
 
-		if ((dev->flags & IFF_LOOPBACK) || !idev)
+		if (skb_dst(skb)->dev->flags & IFF_LOOPBACK)
 			raw16 = IOAM6_U16_UNAVAILABLE;
 		else
-			raw16 = (__force u16)READ_ONCE(idev->cnf.ioam6_id);
+			raw16 = (__force u16)READ_ONCE(__in6_dev_get(skb_dst(skb)->dev)->cnf.ioam6_id);
 
 		*(__be16 *)data = cpu_to_be16(raw16);
 		data += sizeof(__be16);
@@ -803,16 +801,12 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 		struct Qdisc *qdisc;
 		__u32 qlen, backlog;
 
-		if (dev->flags & IFF_LOOPBACK ||
-		    skb_get_queue_mapping(skb) >= dev->num_tx_queues) {
+		if (skb_dst(skb)->dev->flags & IFF_LOOPBACK) {
 			*(__be32 *)data = cpu_to_be32(IOAM6_U32_UNAVAILABLE);
 		} else {
-			queue = skb_get_tx_queue(dev, skb);
+			queue = skb_get_tx_queue(skb_dst(skb)->dev, skb);
 			qdisc = rcu_dereference(queue->qdisc);
-
-			spin_lock_bh(qdisc_lock(qdisc));
 			qdisc_qstats_qlen_backlog(qdisc, &qlen, &backlog);
-			spin_unlock_bh(qdisc_lock(qdisc));
 
 			*(__be32 *)data = cpu_to_be32(backlog);
 		}
@@ -831,7 +825,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 		if (is_input)
 			byte--;
 
-		raw64 = READ_ONCE(dev_net(dev)->ipv6.sysctl.ioam6_id_wide);
+		raw64 = dev_net(skb_dst(skb)->dev)->ipv6.sysctl.ioam6_id_wide;
 
 		*(__be64 *)data = cpu_to_be64(((u64)byte << 56) | raw64);
 		data += sizeof(__be64);
@@ -839,18 +833,18 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 
 	/* ingress_if_id and egress_if_id (wide) */
 	if (trace->type.bit9) {
-		if (!i_skb_dev)
+		if (!skb->dev)
 			raw32 = IOAM6_U32_UNAVAILABLE;
 		else
-			raw32 = READ_ONCE(i_skb_dev->cnf.ioam6_id_wide);
+			raw32 = READ_ONCE(__in6_dev_get(skb->dev)->cnf.ioam6_id_wide);
 
 		*(__be32 *)data = cpu_to_be32(raw32);
 		data += sizeof(__be32);
 
-		if ((dev->flags & IFF_LOOPBACK) || !idev)
+		if (skb_dst(skb)->dev->flags & IFF_LOOPBACK)
 			raw32 = IOAM6_U32_UNAVAILABLE;
 		else
-			raw32 = READ_ONCE(idev->cnf.ioam6_id_wide);
+			raw32 = READ_ONCE(__in6_dev_get(skb_dst(skb)->dev)->cnf.ioam6_id_wide);
 
 		*(__be32 *)data = cpu_to_be32(raw32);
 		data += sizeof(__be32);
@@ -984,7 +978,7 @@ static int __net_init ioam6_net_init(struct net *net)
 	struct ioam6_pernet_data *nsdata;
 	int err = -ENOMEM;
 
-	nsdata = kzalloc_obj(*nsdata);
+	nsdata = kzalloc(sizeof(*nsdata), GFP_KERNEL);
 	if (!nsdata)
 		goto out;
 

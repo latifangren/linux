@@ -205,7 +205,6 @@ static enum bp_result bios_parser_get_src_obj(struct dc_bios *dcb,
 	struct graphics_object_id object_id, uint32_t index,
 	struct graphics_object_id *src_object_id)
 {
-	(void)index;
 	struct bios_parser *bp = BP_FROM_DCB(dcb);
 	unsigned int i;
 	enum bp_result bp_result = BP_RESULT_BADINPUT;
@@ -766,7 +765,6 @@ static enum bp_result bios_parser_get_device_tag(
 	uint32_t device_tag_index,
 	struct connector_device_tag_info *info)
 {
-	(void)device_tag_index;
 	struct bios_parser *bp = BP_FROM_DCB(dcb);
 	struct atom_display_object_path_v2 *object;
 
@@ -811,7 +809,6 @@ static enum bp_result get_ss_info_v4_1(
 	uint32_t index,
 	struct spread_spectrum_info *ss_info)
 {
-	(void)index;
 	enum bp_result result = BP_RESULT_OK;
 	struct atom_display_controller_info_v4_1 *disp_cntl_tbl = NULL;
 	struct atom_smu_info_v3_3 *smu_info = NULL;
@@ -900,7 +897,6 @@ static enum bp_result get_ss_info_v4_2(
 	uint32_t index,
 	struct spread_spectrum_info *ss_info)
 {
-	(void)index;
 	enum bp_result result = BP_RESULT_OK;
 	struct atom_display_controller_info_v4_2 *disp_cntl_tbl = NULL;
 	struct atom_smu_info_v3_1 *smu_info = NULL;
@@ -981,7 +977,6 @@ static enum bp_result get_ss_info_v4_5(
 	uint32_t index,
 	struct spread_spectrum_info *ss_info)
 {
-	(void)index;
 	enum bp_result result = BP_RESULT_OK;
 	struct atom_display_controller_info_v4_5 *disp_cntl_tbl = NULL;
 
@@ -1609,8 +1604,6 @@ static uint32_t bios_parser_get_ss_entry_number(
 	struct dc_bios *dcb,
 	enum as_signal_type signal)
 {
-	(void)dcb;
-	(void)signal;
 	/* TODO: DAL2 atomfirmware implementation does not need this.
 	 * why DAL3 need this?
 	 */
@@ -1785,7 +1778,6 @@ static enum bp_result get_firmware_info_v3_1(
 	struct dc_firmware_info *info)
 {
 	struct atom_firmware_info_v3_1 *firmware_info;
-	struct atom_firmware_info_v3_2 *firmware_info32;
 	struct atom_display_controller_info_v4_1 *dce_info = NULL;
 
 	if (!info)
@@ -1793,13 +1785,11 @@ static enum bp_result get_firmware_info_v3_1(
 
 	firmware_info = GET_IMAGE(struct atom_firmware_info_v3_1,
 			DATA_TABLES(firmwareinfo));
-	firmware_info32 = GET_IMAGE(struct atom_firmware_info_v3_2,
-			DATA_TABLES(firmwareinfo));
 
 	dce_info = GET_IMAGE(struct atom_display_controller_info_v4_1,
 			DATA_TABLES(dce_info));
 
-	if (!firmware_info || !firmware_info32 || !dce_info)
+	if (!firmware_info || !dce_info)
 		return BP_RESULT_BADBIOSTABLE;
 
 	memset(info, 0, sizeof(*info));
@@ -1827,15 +1817,7 @@ static enum bp_result get_firmware_info_v3_1(
 				bp->cmd_tbl.get_smu_clock_info(bp, SMU9_SYSPLL0_ID) * 10;
 	}
 
-	/* These fields are marked as reserved in v3_1, but they appear to be populated
-	 * properly.
-	 */
-	if (firmware_info32 && firmware_info32->board_i2c_feature_id == 0x2) {
-		info->oem_i2c_present = true;
-		info->oem_i2c_obj_id = firmware_info32->board_i2c_feature_gpio_id;
-	} else {
-		info->oem_i2c_present = false;
-	}
+	info->oem_i2c_present = false;
 
 	return BP_RESULT_OK;
 }
@@ -3106,12 +3088,11 @@ static enum bp_result construct_integrated_info(
 						info->ext_disp_conn_info.path[i].ext_encoder_obj_id.id,
 						info->ext_disp_conn_info.path[i].caps
 						);
-			if ((info->ext_disp_conn_info.path[i].caps & AMD_EXT_DISPLAY_PATH_CAPS__EXT_CHIP_MASK) == AMD_EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN)
-				DC_LOG_BIOS("BIOS AMD_EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN on path %d\n", i);
+			if (info->ext_disp_conn_info.path[i].caps & EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN)
+				DC_LOG_BIOS("BIOS EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN on path %d\n", i);
 			else if (bp->base.ctx->dc->config.force_bios_fixed_vs) {
-				info->ext_disp_conn_info.path[i].caps &= ~AMD_EXT_DISPLAY_PATH_CAPS__EXT_CHIP_MASK;
-				info->ext_disp_conn_info.path[i].caps |= AMD_EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN;
-				DC_LOG_BIOS("driver forced AMD_EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN on path %d\n", i);
+				info->ext_disp_conn_info.path[i].caps |= EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN;
+				DC_LOG_BIOS("driver forced EXT_DISPLAY_PATH_CAPS__DP_FIXED_VS_EN on path %d\n", i);
 			}
 		}
 		// Log the Checksum and Voltage Swing
@@ -3214,7 +3195,7 @@ static struct integrated_info *bios_parser_create_integrated_info(
 	struct bios_parser *bp = BP_FROM_DCB(dcb);
 	struct integrated_info *info;
 
-	info = kzalloc_obj(struct integrated_info);
+	info = kzalloc(sizeof(struct integrated_info), GFP_KERNEL);
 
 	if (info == NULL) {
 		ASSERT_CRITICAL(0);
@@ -3543,8 +3524,6 @@ static uint16_t bios_parser_pack_data_tables(
 	struct dc_bios *dcb,
 	void *dst)
 {
-	(void)dcb;
-	(void)dst;
 	// TODO: There is data bytes alignment issue, disable it for now.
 	return 0;
 }
@@ -3802,7 +3781,7 @@ struct dc_bios *firmware_parser_create(
 {
 	struct bios_parser *bp;
 
-	bp = kzalloc_obj(struct bios_parser);
+	bp = kzalloc(sizeof(struct bios_parser), GFP_KERNEL);
 	if (!bp)
 		return NULL;
 

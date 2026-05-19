@@ -6,7 +6,7 @@
  * Copyright (C) 2001,2005 IBM Corporation.
  */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/bug.h>
@@ -21,9 +21,10 @@
  * page size. When using 64K pages however, whether we are really supporting
  * 64K pages in HW or not is irrelevant to those definitions.
  */
-#include <vdso/page.h>
+#define PAGE_SHIFT		CONFIG_PAGE_SHIFT
+#define PAGE_SIZE		(ASM_CONST(1) << PAGE_SHIFT)
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 #ifndef CONFIG_HUGETLB_PAGE
 #define HPAGE_SHIFT PAGE_SHIFT
 #elif defined(CONFIG_PPC_BOOK3S_64)
@@ -39,6 +40,13 @@ extern unsigned int hpage_shift;
 #define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
 #define HUGE_MAX_HSTATE		(MMU_PAGE_COUNT-1)
 #endif
+
+/*
+ * Subtle: (1 << PAGE_SHIFT) is an int, not an unsigned long. So if we
+ * assign PAGE_MASK to a larger type it gets extended the way we want
+ * (i.e. with 1s in the high bits)
+ */
+#define PAGE_MASK      (~((1 << PAGE_SHIFT) - 1))
 
 /*
  * KERNELBASE is the virtual address of the start of the kernel, it's often
@@ -75,7 +83,7 @@ extern unsigned int hpage_shift;
 #define LOAD_OFFSET	ASM_CONST((CONFIG_KERNEL_START-CONFIG_PHYSICAL_START))
 
 #if defined(CONFIG_NONSTATIC_KERNEL)
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 extern phys_addr_t memstart_addr;
 extern phys_addr_t kernstart_addr;
@@ -84,7 +92,7 @@ extern phys_addr_t kernstart_addr;
 extern long long virt_phys_offset;
 #endif
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #define PHYSICAL_START	kernstart_addr
 
 #else	/* !CONFIG_NONSTATIC_KERNEL */
@@ -216,7 +224,7 @@ extern long long virt_phys_offset;
 #endif
 #endif
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 static inline unsigned long virt_to_pfn(const void *kaddr)
 {
 	return __pa(kaddr) >> PAGE_SHIFT;
@@ -240,8 +248,8 @@ static inline const void *pfn_to_kaddr(unsigned long pfn)
  * and needs to be executable.  This means the whole heap ends
  * up being executable.
  */
-#define VMA_DATA_DEFAULT_FLAGS32	VMA_DATA_FLAGS_TSK_EXEC
-#define VMA_DATA_DEFAULT_FLAGS64	VMA_DATA_FLAGS_NON_EXEC
+#define VM_DATA_DEFAULT_FLAGS32	VM_DATA_FLAGS_TSK_EXEC
+#define VM_DATA_DEFAULT_FLAGS64	VM_DATA_FLAGS_NON_EXEC
 
 #ifdef __powerpc64__
 #include <asm/page_64.h>
@@ -261,7 +269,7 @@ static inline const void *pfn_to_kaddr(unsigned long pfn)
 #define is_kernel_addr(x)	((x) >= TASK_SIZE)
 #endif
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #ifdef CONFIG_PPC_BOOK3S_64
 #include <asm/pgtable-be-types.h>
@@ -271,7 +279,6 @@ static inline const void *pfn_to_kaddr(unsigned long pfn)
 
 struct page;
 extern void clear_user_page(void *page, unsigned long vaddr, struct page *pg);
-#define clear_user_page clear_user_page
 extern void copy_user_page(void *to, void *from, unsigned long vaddr,
 		struct page *p);
 extern int devmem_is_allowed(unsigned long pfn);
@@ -291,6 +298,6 @@ static inline unsigned long kaslr_offset(void)
 }
 
 #include <asm-generic/memory_model.h>
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_POWERPC_PAGE_H */

@@ -25,7 +25,7 @@ cn_queue_alloc_callback_entry(struct cn_queue_dev *dev, const char *name,
 {
 	struct cn_callback_entry *cbq;
 
-	cbq = kzalloc_obj(*cbq);
+	cbq = kzalloc(sizeof(*cbq), GFP_KERNEL);
 	if (!cbq) {
 		pr_err("Failed to create new callback queue.\n");
 		return NULL;
@@ -113,7 +113,7 @@ struct cn_queue_dev *cn_queue_alloc_dev(const char *name, struct sock *nls)
 {
 	struct cn_queue_dev *dev;
 
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return NULL;
 

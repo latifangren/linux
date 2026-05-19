@@ -199,7 +199,7 @@ static int pm_connect(struct serio *serio, struct serio_driver *drv)
 	int max_x, max_y;
 	int err;
 
-	pm = kzalloc_obj(*pm);
+	pm = kzalloc(sizeof(*pm), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!pm || !input_dev) {
 		err = -ENOMEM;
@@ -208,7 +208,7 @@ static int pm_connect(struct serio *serio, struct serio_driver *drv)
 
 	pm->serio = serio;
 	pm->dev = input_dev;
-	scnprintf(pm->phys, sizeof(pm->phys), "%s/input0", serio->phys);
+	snprintf(pm->phys, sizeof(pm->phys), "%s/input0", serio->phys);
 	pm->maxcontacts = 1;
 
 	input_dev->name = "PenMount Serial TouchScreen";

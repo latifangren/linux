@@ -29,6 +29,8 @@
 
 #include "internal.h"
 
+#define ACPI_PCI_LINK_CLASS		"pci_irq_routing"
+#define ACPI_PCI_LINK_DEVICE_NAME	"PCI Interrupt Link"
 #define ACPI_PCI_LINK_MAX_POSSIBLE	16
 
 static int acpi_pci_link_add(struct acpi_device *device,
@@ -266,7 +268,7 @@ static int acpi_pci_link_get_current(struct acpi_pci_link *link)
 
 	link->irq.active = irq;
 
-	acpi_handle_debug(handle, "Link at IRQ %d\n", link->irq.active);
+	acpi_handle_debug(handle, "Link at IRQ %d \n", link->irq.active);
 
       end:
 	return result;
@@ -446,7 +448,7 @@ static int acpi_isa_irq_penalty[ACPI_MAX_ISA_IRQS] = {
 	/* >IRQ15 */
 };
 
-static int acpi_irq_pci_sharing_penalty(u32 irq)
+static int acpi_irq_pci_sharing_penalty(int irq)
 {
 	struct acpi_pci_link *link;
 	int penalty = 0;
@@ -472,7 +474,7 @@ static int acpi_irq_pci_sharing_penalty(u32 irq)
 	return penalty;
 }
 
-static int acpi_irq_get_penalty(u32 irq)
+static int acpi_irq_get_penalty(int irq)
 {
 	int penalty = 0;
 
@@ -526,7 +528,7 @@ static int acpi_irq_balance = -1;	/* 0: static, 1: balance */
 static int acpi_pci_link_allocate(struct acpi_pci_link *link)
 {
 	acpi_handle handle = link->device->handle;
-	u32 irq;
+	int irq;
 	int i;
 
 	if (link->irq.initialized) {
@@ -596,53 +598,44 @@ static int acpi_pci_link_allocate(struct acpi_pci_link *link)
 	return 0;
 }
 
-/**
- * acpi_pci_link_allocate_irq(): Retrieve a link device GSI
- *
- * @handle: Handle for the link device
- * @index: GSI index
- * @triggering: pointer to store the GSI trigger
- * @polarity: pointer to store GSI polarity
- * @name: pointer to store link device name
- * @gsi: pointer to store GSI number
- *
- * Returns:
- *	0 on success with @triggering, @polarity, @name, @gsi initialized.
- *	-ENODEV on failure
+/*
+ * acpi_pci_link_allocate_irq
+ * success: return IRQ >= 0
+ * failure: return -1
  */
 int acpi_pci_link_allocate_irq(acpi_handle handle, int index, int *triggering,
-			       int *polarity, char **name, u32 *gsi)
+			       int *polarity, char **name)
 {
 	struct acpi_device *device = acpi_fetch_acpi_dev(handle);
 	struct acpi_pci_link *link;
 
 	if (!device) {
 		acpi_handle_err(handle, "Invalid link device\n");
-		return -ENODEV;
+		return -1;
 	}
 
 	link = acpi_driver_data(device);
 	if (!link) {
 		acpi_handle_err(handle, "Invalid link context\n");
-		return -ENODEV;
+		return -1;
 	}
 
 	/* TBD: Support multiple index (IRQ) entries per Link Device */
 	if (index) {
 		acpi_handle_err(handle, "Invalid index %d\n", index);
-		return -ENODEV;
+		return -1;
 	}
 
 	mutex_lock(&acpi_link_lock);
 	if (acpi_pci_link_allocate(link)) {
 		mutex_unlock(&acpi_link_lock);
-		return -ENODEV;
+		return -1;
 	}
 
 	if (!link->irq.active) {
 		mutex_unlock(&acpi_link_lock);
 		acpi_handle_err(handle, "Link active IRQ is 0!\n");
-		return -ENODEV;
+		return -1;
 	}
 	link->refcnt++;
 	mutex_unlock(&acpi_link_lock);
@@ -654,9 +647,7 @@ int acpi_pci_link_allocate_irq(acpi_handle handle, int index, int *triggering,
 	if (name)
 		*name = acpi_device_bid(link->device);
 	acpi_handle_debug(handle, "Link is referenced\n");
-	*gsi = link->irq.active;
-
-	return 0;
+	return link->irq.active;
 }
 
 /*
@@ -718,11 +709,13 @@ static int acpi_pci_link_add(struct acpi_device *device,
 	int result;
 	int i;
 
-	link = kzalloc_obj(struct acpi_pci_link);
+	link = kzalloc(sizeof(struct acpi_pci_link), GFP_KERNEL);
 	if (!link)
 		return -ENOMEM;
 
 	link->device = device;
+	strcpy(acpi_device_name(device), ACPI_PCI_LINK_DEVICE_NAME);
+	strcpy(acpi_device_class(device), ACPI_PCI_LINK_CLASS);
 	device->driver_data = link;
 
 	mutex_lock(&acpi_link_lock);
@@ -768,7 +761,7 @@ static int acpi_pci_link_resume(struct acpi_pci_link *link)
 	return 0;
 }
 
-static void irqrouter_resume(void *data)
+static void irqrouter_resume(void)
 {
 	struct acpi_pci_link *link;
 
@@ -895,12 +888,8 @@ static int __init acpi_irq_balance_set(char *str)
 
 __setup("acpi_irq_balance", acpi_irq_balance_set);
 
-static const struct syscore_ops irqrouter_syscore_ops = {
+static struct syscore_ops irqrouter_syscore_ops = {
 	.resume = irqrouter_resume,
-};
-
-static struct syscore irqrouter_syscore = {
-	.ops = &irqrouter_syscore_ops,
 };
 
 void __init acpi_pci_link_init(void)
@@ -915,6 +904,6 @@ void __init acpi_pci_link_init(void)
 		else
 			acpi_irq_balance = 0;
 	}
-	register_syscore(&irqrouter_syscore);
+	register_syscore_ops(&irqrouter_syscore_ops);
 	acpi_scan_add_handler(&pci_link_handler);
 }

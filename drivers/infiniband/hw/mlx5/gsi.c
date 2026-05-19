@@ -104,12 +104,13 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 	}
 
 	gsi = &mqp->gsi;
-	gsi->tx_qps = kzalloc_objs(*gsi->tx_qps, num_qps);
+	gsi->tx_qps = kcalloc(num_qps, sizeof(*gsi->tx_qps), GFP_KERNEL);
 	if (!gsi->tx_qps)
 		return -ENOMEM;
 
 	gsi->outstanding_wrs =
-		kzalloc_objs(*gsi->outstanding_wrs, attr->cap.max_send_wr);
+		kcalloc(attr->cap.max_send_wr, sizeof(*gsi->outstanding_wrs),
+			GFP_KERNEL);
 	if (!gsi->outstanding_wrs) {
 		ret = -ENOMEM;
 		goto err_free_tx;
@@ -130,9 +131,8 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 	gsi->cq = ib_alloc_cq(pd->device, gsi, attr->cap.max_send_wr, 0,
 			      IB_POLL_SOFTIRQ);
 	if (IS_ERR(gsi->cq)) {
-		mlx5_ib_warn(dev,
-			     "unable to create send CQ for GSI QP. error %pe\n",
-			     gsi->cq);
+		mlx5_ib_warn(dev, "unable to create send CQ for GSI QP. error %ld\n",
+			     PTR_ERR(gsi->cq));
 		ret = PTR_ERR(gsi->cq);
 		goto err_free_wrs;
 	}
@@ -147,9 +147,8 @@ int mlx5_ib_create_gsi(struct ib_pd *pd, struct mlx5_ib_qp *mqp,
 
 	gsi->rx_qp = ib_create_qp(pd, &hw_init_attr);
 	if (IS_ERR(gsi->rx_qp)) {
-		mlx5_ib_warn(dev,
-			     "unable to create hardware GSI QP. error %pe\n",
-			     gsi->rx_qp);
+		mlx5_ib_warn(dev, "unable to create hardware GSI QP. error %ld\n",
+			     PTR_ERR(gsi->rx_qp));
 		ret = PTR_ERR(gsi->rx_qp);
 		goto err_destroy_cq;
 	}
@@ -295,9 +294,8 @@ static void setup_qp(struct mlx5_ib_gsi_qp *gsi, u16 qp_index)
 
 	qp = create_gsi_ud_qp(gsi);
 	if (IS_ERR(qp)) {
-		mlx5_ib_warn(dev,
-			     "unable to create hardware UD QP for GSI: %pe\n",
-			     qp);
+		mlx5_ib_warn(dev, "unable to create hardware UD QP for GSI: %ld\n",
+			     PTR_ERR(qp));
 		return;
 	}
 

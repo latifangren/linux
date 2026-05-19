@@ -15,9 +15,10 @@
 #define pr_fmt(fmt) "CIFS: " fmt
 
 void cifs_dump_mem(char *label, void *data, int length);
-void cifs_dump_mids(struct TCP_Server_Info *server);
+void cifs_dump_detail(void *buf, struct TCP_Server_Info *ptcp_info);
+void cifs_dump_mids(struct TCP_Server_Info *);
 extern bool traceSMB;		/* flag which enables the function below */
-void dump_smb(void *buf, int smb_buf_length);
+void dump_smb(void *, int);
 #define CIFS_INFO	0x01
 #define CIFS_RC		0x02
 #define CIFS_TIMER	0x04

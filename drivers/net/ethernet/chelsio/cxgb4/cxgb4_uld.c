@@ -241,7 +241,7 @@ static int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
 	struct sge_uld_rxq_info *rxq_info;
 	int i, nrxq, ciq_size;
 
-	rxq_info = kzalloc_obj(*rxq_info);
+	rxq_info = kzalloc(sizeof(*rxq_info), GFP_KERNEL);
 	if (!rxq_info)
 		return -ENOMEM;
 
@@ -269,7 +269,8 @@ static int cfg_queues_uld(struct adapter *adap, unsigned int uld_type,
 	}
 
 	nrxq = rxq_info->nrxq + rxq_info->nciq; /* total rxq's */
-	rxq_info->uldrxq = kzalloc_objs(struct sge_ofld_rxq, nrxq);
+	rxq_info->uldrxq = kcalloc(nrxq, sizeof(struct sge_ofld_rxq),
+				   GFP_KERNEL);
 	if (!rxq_info->uldrxq) {
 		kfree(rxq_info);
 		return -ENOMEM;
@@ -471,7 +472,7 @@ setup_sge_txq_uld(struct adapter *adap, unsigned int uld_type,
 	    (atomic_inc_return(&txq_info->users) > 1))
 		return 0;
 
-	txq_info = kzalloc_obj(*txq_info);
+	txq_info = kzalloc(sizeof(*txq_info), GFP_KERNEL);
 	if (!txq_info)
 		return -ENOMEM;
 	if (uld_type == CXGB4_ULD_CRYPTO) {
@@ -488,7 +489,8 @@ setup_sge_txq_uld(struct adapter *adap, unsigned int uld_type,
 		i = min_t(int, uld_info->ntxq, num_online_cpus());
 		txq_info->ntxq = roundup(i, adap->params.nports);
 	}
-	txq_info->uldtxq = kzalloc_objs(struct sge_uld_txq, txq_info->ntxq);
+	txq_info->uldtxq = kcalloc(txq_info->ntxq, sizeof(struct sge_uld_txq),
+				   GFP_KERNEL);
 	if (!txq_info->uldtxq) {
 		kfree(txq_info);
 		return -ENOMEM;
@@ -523,15 +525,19 @@ int t4_uld_mem_alloc(struct adapter *adap)
 {
 	struct sge *s = &adap->sge;
 
-	adap->uld = kzalloc_objs(*adap->uld, CXGB4_ULD_MAX);
+	adap->uld = kcalloc(CXGB4_ULD_MAX, sizeof(*adap->uld), GFP_KERNEL);
 	if (!adap->uld)
 		return -ENOMEM;
 
-	s->uld_rxq_info = kzalloc_objs(struct sge_uld_rxq_info *, CXGB4_ULD_MAX);
+	s->uld_rxq_info = kcalloc(CXGB4_ULD_MAX,
+				  sizeof(struct sge_uld_rxq_info *),
+				  GFP_KERNEL);
 	if (!s->uld_rxq_info)
 		goto err_uld;
 
-	s->uld_txq_info = kzalloc_objs(struct sge_uld_txq_info *, CXGB4_TX_MAX);
+	s->uld_txq_info = kcalloc(CXGB4_TX_MAX,
+				  sizeof(struct sge_uld_txq_info *),
+				  GFP_KERNEL);
 	if (!s->uld_txq_info)
 		goto err_uld_rx;
 	return 0;
@@ -799,7 +805,7 @@ void cxgb4_register_uld(enum cxgb4_uld type,
 	if (type >= CXGB4_ULD_MAX)
 		return;
 
-	uld_entry = kzalloc_obj(*uld_entry);
+	uld_entry = kzalloc(sizeof(*uld_entry), GFP_KERNEL);
 	if (!uld_entry)
 		return;
 

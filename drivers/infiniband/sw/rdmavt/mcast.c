@@ -34,7 +34,7 @@ static struct rvt_mcast_qp *rvt_mcast_qp_alloc(struct rvt_qp *qp)
 {
 	struct rvt_mcast_qp *mqp;
 
-	mqp = kmalloc_obj(*mqp);
+	mqp = kmalloc(sizeof(*mqp), GFP_KERNEL);
 	if (!mqp)
 		goto bail;
 
@@ -49,6 +49,7 @@ static void rvt_mcast_qp_free(struct rvt_mcast_qp *mqp)
 {
 	struct rvt_qp *qp = mqp->qp;
 
+	/* Notify hfi1_destroy_qp() if it is waiting. */
 	rvt_put_qp(qp);
 
 	kfree(mqp);
@@ -65,7 +66,7 @@ static struct rvt_mcast *rvt_mcast_alloc(union ib_gid *mgid, u16 lid)
 {
 	struct rvt_mcast *mcast;
 
-	mcast = kzalloc_obj(*mcast);
+	mcast = kzalloc(sizeof(*mcast), GFP_KERNEL);
 	if (!mcast)
 		goto bail;
 

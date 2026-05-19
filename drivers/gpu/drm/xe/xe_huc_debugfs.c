@@ -7,10 +7,11 @@
 
 #include <drm/drm_debugfs.h>
 #include <drm/drm_managed.h>
-#include <drm/drm_print.h>
 
-#include "xe_gt_types.h"
+#include "xe_device.h"
+#include "xe_gt.h"
 #include "xe_huc.h"
+#include "xe_macros.h"
 #include "xe_pm.h"
 
 static struct xe_gt *
@@ -36,8 +37,9 @@ static int huc_info(struct seq_file *m, void *data)
 	struct xe_device *xe = huc_to_xe(huc);
 	struct drm_printer p = drm_seq_file_printer(m);
 
-	guard(xe_pm_runtime)(xe);
+	xe_pm_runtime_get(xe);
 	xe_huc_print_info(huc, &p);
+	xe_pm_runtime_put(xe);
 
 	return 0;
 }

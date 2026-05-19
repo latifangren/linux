@@ -22,15 +22,10 @@ description: |+
 
 properties:
   compatible:
-    oneOf:
-      - enum:
-          - aspeed,ast2400-sd-controller
-          - aspeed,ast2500-sd-controller
-          - aspeed,ast2600-sd-controller
-      - items:
-          - const: aspeed,ast2700-sd-controller
-          - const: aspeed,ast2600-sd-controller
-
+    enum:
+      - aspeed,ast2400-sd-controller
+      - aspeed,ast2500-sd-controller
+      - aspeed,ast2600-sd-controller
   reg:
     maxItems: 1
     description: Common configuration registers
@@ -43,9 +38,6 @@ properties:
     maxItems: 1
     description: The SD/SDIO controller clock gate
 
-  resets:
-    maxItems: 1
-
 patternProperties:
   "^sdhci@[0-9a-f]+$":
     type: object
@@ -54,15 +46,10 @@ patternProperties:
 
     properties:
       compatible:
-        oneOf:
-          - enum:
-              - aspeed,ast2400-sdhci
-              - aspeed,ast2500-sdhci
-              - aspeed,ast2600-sdhci
-          - items:
-              - const: aspeed,ast2700-sdhci
-              - const: aspeed,ast2600-sdhci
-
+        enum:
+          - aspeed,ast2400-sdhci
+          - aspeed,ast2500-sdhci
+          - aspeed,ast2600-sdhci
       reg:
         maxItems: 1
         description: The SDHCI registers
@@ -90,18 +77,6 @@ required:
   - "#size-cells"
   - ranges
   - clocks
-
-if:
-  properties:
-    compatible:
-      contains:
-        const: aspeed,ast2700-sd-controller
-then:
-  required:
-    - resets
-else:
-  properties:
-    resets: false
 
 examples:
   - |

@@ -146,7 +146,8 @@ static int __init unmarshal_devices(struct properties_header *properties)
 			goto skip_device;
 		}
 
-		entry = kzalloc_objs(*entry, dev_header->prop_count + 1);
+		entry = kcalloc(dev_header->prop_count + 1, sizeof(*entry),
+				GFP_KERNEL);
 		if (!entry) {
 			dev_err(dev, "cannot allocate properties\n");
 			goto skip_device;
@@ -226,7 +227,7 @@ static int __init map_properties(void)
 		 */
 		data->len = 0;
 		memunmap(data);
-		memblock_phys_free(pa_data + sizeof(*data), data_len);
+		memblock_free_late(pa_data + sizeof(*data), data_len);
 
 		return ret;
 	}

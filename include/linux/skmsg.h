@@ -319,7 +319,7 @@ static inline bool sk_psock_test_state(const struct sk_psock *psock,
 
 static inline void sock_drop(struct sock *sk, struct sk_buff *skb)
 {
-	sk_drops_skbadd(sk, skb);
+	sk_drops_add(sk, skb);
 	kfree_skb(skb);
 }
 
@@ -460,7 +460,8 @@ int sk_psock_msg_verdict(struct sock *sk, struct sk_psock *psock,
  * intentional to enforce typesafety.
  */
 #define sk_psock_init_link()	\
-		kzalloc_obj(struct sk_psock_link, GFP_ATOMIC | __GFP_NOWARN)
+		((struct sk_psock_link *)kzalloc(sizeof(struct sk_psock_link),	\
+						 GFP_ATOMIC | __GFP_NOWARN))
 
 static inline void sk_psock_free_link(struct sk_psock_link *link)
 {

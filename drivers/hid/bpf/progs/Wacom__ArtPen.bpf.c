@@ -148,7 +148,7 @@ int probe(struct hid_bpf_probe_args *ctx)
 {
 	struct hid_bpf_ctx *hid_ctx;
 	__u16 pid;
-	size_t i;
+	int i;
 
 	/* get a struct hid_device to access the actual pid of the device */
 	hid_ctx = hid_bpf_allocate_context(ctx->hid);

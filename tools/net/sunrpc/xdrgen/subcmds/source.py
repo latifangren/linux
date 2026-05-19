@@ -8,11 +8,10 @@ import logging
 
 from argparse import Namespace
 from lark import logger
-from lark.exceptions import VisitError
+from lark.exceptions import UnexpectedInput
 
 from generators.source_top import XdrSourceTopGenerator
 from generators.enum import XdrEnumGenerator
-from generators.passthru import XdrPassthruGenerator
 from generators.pointer import XdrPointerGenerator
 from generators.program import XdrProgramGenerator
 from generators.typedef import XdrTypedefGenerator
@@ -20,12 +19,10 @@ from generators.struct import XdrStructGenerator
 from generators.union import XdrUnionGenerator
 
 from xdr_ast import transform_parse_tree, _RpcProgram, Specification
-from xdr_ast import _XdrAst, _XdrEnum, _XdrPassthru, _XdrPointer
+from xdr_ast import _XdrAst, _XdrEnum, _XdrPointer
 from xdr_ast import _XdrStruct, _XdrTypedef, _XdrUnion
 
-from xdr_parse import xdr_parser, set_xdr_annotate, set_xdr_enum_validation
-from xdr_parse import make_error_handler, XdrParseError
-from xdr_parse import handle_transform_error
+from xdr_parse import xdr_parser, set_xdr_annotate
 
 logger.setLevel(logging.INFO)
 
@@ -75,54 +72,41 @@ def generate_server_source(filename: str, root: Specification, language: str) ->
     gen.emit_source(filename, root)
 
     for definition in root.definitions:
-        if isinstance(definition.value, _XdrPassthru):
-            passthru_gen = XdrPassthruGenerator(language, "server")
-            passthru_gen.emit_decoder(definition.value)
-        else:
-            emit_source_decoder(definition.value, language, "server")
+        emit_source_decoder(definition.value, language, "server")
     for definition in root.definitions:
-        if not isinstance(definition.value, _XdrPassthru):
-            emit_source_encoder(definition.value, language, "server")
+        emit_source_encoder(definition.value, language, "server")
 
 
 def generate_client_source(filename: str, root: Specification, language: str) -> None:
-    """Generate client-side source code"""
+    """Generate server-side source code"""
 
     gen = XdrSourceTopGenerator(language, "client")
     gen.emit_source(filename, root)
 
+    # cel: todo: client needs XDR size macros
+
     for definition in root.definitions:
-        if isinstance(definition.value, _XdrPassthru):
-            passthru_gen = XdrPassthruGenerator(language, "client")
-            passthru_gen.emit_decoder(definition.value)
-        else:
-            emit_source_encoder(definition.value, language, "client")
+        emit_source_encoder(definition.value, language, "client")
     for definition in root.definitions:
-        if not isinstance(definition.value, _XdrPassthru):
-            emit_source_decoder(definition.value, language, "client")
+        emit_source_decoder(definition.value, language, "client")
 
     # cel: todo: client needs PROC macros
+
+
+def handle_parse_error(e: UnexpectedInput) -> bool:
+    """Simple parse error reporting, no recovery attempted"""
+    print(e)
+    return True
 
 
 def subcmd(args: Namespace) -> int:
     """Generate encoder and decoder functions"""
 
     set_xdr_annotate(args.annotate)
-    set_xdr_enum_validation(not args.no_enum_validation)
     parser = xdr_parser()
     with open(args.filename, encoding="utf-8") as f:
-        source = f.read()
-        try:
-            parse_tree = parser.parse(
-                source, on_error=make_error_handler(source, args.filename)
-            )
-        except XdrParseError:
-            return 1
-        try:
-            ast = transform_parse_tree(parse_tree)
-        except VisitError as e:
-            handle_transform_error(e, source, args.filename)
-            return 1
+        parse_tree = parser.parse(f.read(), on_error=handle_parse_error)
+        ast = transform_parse_tree(parse_tree)
         match args.peer:
             case "server":
                 generate_server_source(args.filename, ast, args.language)

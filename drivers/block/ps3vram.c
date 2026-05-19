@@ -401,7 +401,9 @@ static int ps3vram_cache_init(struct ps3_system_bus_device *dev)
 
 	priv->cache.page_count = CACHE_PAGE_COUNT;
 	priv->cache.page_size = CACHE_PAGE_SIZE;
-	priv->cache.tags = kzalloc_objs(struct ps3vram_tag, CACHE_PAGE_COUNT);
+	priv->cache.tags = kcalloc(CACHE_PAGE_COUNT,
+				   sizeof(struct ps3vram_tag),
+				   GFP_KERNEL);
 	if (!priv->cache.tags)
 		return -ENOMEM;
 
@@ -611,7 +613,7 @@ static int ps3vram_probe(struct ps3_system_bus_device *dev)
 	    reports_size, xdr_lpar;
 	char *rest;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
 		error = -ENOMEM;
 		goto fail;

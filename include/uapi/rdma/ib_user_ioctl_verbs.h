@@ -46,7 +46,6 @@
 
 enum ib_uverbs_core_support {
 	IB_UVERBS_CORE_SUPPORT_OPTIONAL_MR_ACCESS = 1 << 0,
-	IB_UVERBS_CORE_SUPPORT_ROBUST_UDATA = 1 << 1,
 };
 
 enum ib_uverbs_access_flags {
@@ -256,7 +255,6 @@ enum rdma_driver_id {
 	RDMA_DRIVER_SIW,
 	RDMA_DRIVER_ERDMA,
 	RDMA_DRIVER_MANA,
-	RDMA_DRIVER_IONIC,
 };
 
 enum ib_uverbs_gid_type {

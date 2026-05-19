@@ -117,8 +117,9 @@ static struct ehci_tt *find_tt(struct usb_device *udev)
 	if (utt->multi) {
 		tt_index = utt->hcpriv;
 		if (!tt_index) {		/* Create the index array */
-			tt_index = kzalloc_objs(*tt_index, utt->hub->maxchild,
-						GFP_ATOMIC);
+			tt_index = kcalloc(utt->hub->maxchild,
+					   sizeof(*tt_index),
+					   GFP_ATOMIC);
 			if (!tt_index)
 				return ERR_PTR(-ENOMEM);
 			utt->hcpriv = tt_index;
@@ -136,7 +137,7 @@ static struct ehci_tt *find_tt(struct usb_device *udev)
 		struct ehci_hcd		*ehci =
 				hcd_to_ehci(bus_to_hcd(udev->bus));
 
-		tt = kzalloc_obj(*tt, GFP_ATOMIC);
+		tt = kzalloc(sizeof(*tt), GFP_ATOMIC);
 		if (!tt) {
 			if (allocated_index) {
 				utt->hcpriv = NULL;
@@ -1002,7 +1003,7 @@ iso_stream_alloc(gfp_t mem_flags)
 {
 	struct ehci_iso_stream *stream;
 
-	stream = kzalloc_obj(*stream, mem_flags);
+	stream = kzalloc(sizeof(*stream), mem_flags);
 	if (likely(stream != NULL)) {
 		INIT_LIST_HEAD(&stream->td_list);
 		INIT_LIST_HEAD(&stream->free_list);
@@ -1166,7 +1167,7 @@ iso_sched_alloc(unsigned packets, gfp_t mem_flags)
 {
 	struct ehci_iso_sched	*iso_sched;
 
-	iso_sched = kzalloc_flex(*iso_sched, packet, packets, mem_flags);
+	iso_sched = kzalloc(struct_size(iso_sched, packet, packets), mem_flags);
 	if (likely(iso_sched != NULL))
 		INIT_LIST_HEAD(&iso_sched->td_list);
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2016 Yang Ling <gnaygnil@gmail.com>
- * Copyright (C) 2025 Binbin Zhou <zhoubinbin@loongson.cn>
  */
 
 #include <linux/clk.h>
@@ -11,52 +10,31 @@
 #include <linux/platform_device.h>
 #include <linux/watchdog.h>
 
-/* Loongson Watchdog Register Definitions */
+/* Loongson 1 Watchdog Register Definitions */
 #define WDT_EN			0x0
+#define WDT_TIMER		0x4
+#define WDT_SET			0x8
 
 #define DEFAULT_HEARTBEAT	30
 
 static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
-MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
-		 __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
+module_param(nowayout, bool, 0444);
 
 static unsigned int heartbeat;
-module_param(heartbeat, uint, 0);
-MODULE_PARM_DESC(heartbeat, "Watchdog heartbeat in seconds. (default="
-		 __MODULE_STRING(DEFAULT_HEARTBEAT) ")");
-
-struct ls1x_wdt_pdata {
-	u32 timer_offset;
-	u32 set_offset;
-	u32 wdt_en_bit;
-};
-
-static const struct ls1x_wdt_pdata ls1b_wdt_pdata = {
-	.timer_offset = 0x4,
-	.set_offset = 0x8,
-	.wdt_en_bit = BIT(0),
-};
-
-static const struct ls1x_wdt_pdata ls2k0300_wdt_pdata = {
-	.timer_offset = 0x8,
-	.set_offset = 0x4,
-	.wdt_en_bit = BIT(1),
-};
+module_param(heartbeat, uint, 0444);
 
 struct ls1x_wdt_drvdata {
 	void __iomem *base;
 	struct clk *clk;
 	unsigned long clk_rate;
 	struct watchdog_device wdt;
-	const struct ls1x_wdt_pdata *pdata;
 };
 
 static int ls1x_wdt_ping(struct watchdog_device *wdt_dev)
 {
 	struct ls1x_wdt_drvdata *drvdata = watchdog_get_drvdata(wdt_dev);
 
-	writel(0x1, drvdata->base + drvdata->pdata->set_offset);
+	writel(0x1, drvdata->base + WDT_SET);
 
 	return 0;
 }
@@ -71,7 +49,7 @@ static int ls1x_wdt_set_timeout(struct watchdog_device *wdt_dev,
 	wdt_dev->timeout = timeout;
 
 	counts = drvdata->clk_rate * min(timeout, max_hw_heartbeat);
-	writel(counts, drvdata->base + drvdata->pdata->timer_offset);
+	writel(counts, drvdata->base + WDT_TIMER);
 
 	return 0;
 }
@@ -80,7 +58,7 @@ static int ls1x_wdt_start(struct watchdog_device *wdt_dev)
 {
 	struct ls1x_wdt_drvdata *drvdata = watchdog_get_drvdata(wdt_dev);
 
-	writel(drvdata->pdata->wdt_en_bit, drvdata->base + WDT_EN);
+	writel(0x1, drvdata->base + WDT_EN);
 
 	return 0;
 }
@@ -88,10 +66,8 @@ static int ls1x_wdt_start(struct watchdog_device *wdt_dev)
 static int ls1x_wdt_stop(struct watchdog_device *wdt_dev)
 {
 	struct ls1x_wdt_drvdata *drvdata = watchdog_get_drvdata(wdt_dev);
-	u32 val = readl(drvdata->base + WDT_EN);
 
-	val &= ~(drvdata->pdata->wdt_en_bit);
-	writel(val, drvdata->base + WDT_EN);
+	writel(0x0, drvdata->base + WDT_EN);
 
 	return 0;
 }
@@ -101,9 +77,9 @@ static int ls1x_wdt_restart(struct watchdog_device *wdt_dev,
 {
 	struct ls1x_wdt_drvdata *drvdata = watchdog_get_drvdata(wdt_dev);
 
-	writel(drvdata->pdata->wdt_en_bit, drvdata->base + WDT_EN);
-	writel(0x1, drvdata->base + drvdata->pdata->timer_offset);
-	writel(0x1, drvdata->base + drvdata->pdata->set_offset);
+	writel(0x1, drvdata->base + WDT_EN);
+	writel(0x1, drvdata->base + WDT_TIMER);
+	writel(0x1, drvdata->base + WDT_SET);
 
 	return 0;
 }
@@ -128,13 +104,11 @@ static int ls1x_wdt_probe(struct platform_device *pdev)
 	struct ls1x_wdt_drvdata *drvdata;
 	struct watchdog_device *ls1x_wdt;
 	unsigned long clk_rate;
+	int err;
 
 	drvdata = devm_kzalloc(dev, sizeof(*drvdata), GFP_KERNEL);
 	if (!drvdata)
 		return -ENOMEM;
-	platform_set_drvdata(pdev, drvdata);
-
-	drvdata->pdata = of_device_get_match_data(dev);
 
 	drvdata->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(drvdata->base))
@@ -161,51 +135,36 @@ static int ls1x_wdt_probe(struct platform_device *pdev)
 	watchdog_set_nowayout(ls1x_wdt, nowayout);
 	watchdog_set_drvdata(ls1x_wdt, drvdata);
 
-	return devm_watchdog_register_device(dev, &drvdata->wdt);
-}
+	err = devm_watchdog_register_device(dev, &drvdata->wdt);
+	if (err)
+		return err;
 
-static int ls1x_wdt_resume(struct device *dev)
-{
-	struct ls1x_wdt_drvdata *data = dev_get_drvdata(dev);
+	platform_set_drvdata(pdev, drvdata);
 
-	if (watchdog_active(&data->wdt))
-		ls1x_wdt_start(&data->wdt);
+	dev_info(dev, "Loongson1 Watchdog driver registered\n");
 
 	return 0;
 }
 
-static int ls1x_wdt_suspend(struct device *dev)
-{
-	struct ls1x_wdt_drvdata *data = dev_get_drvdata(dev);
-
-	if (watchdog_active(&data->wdt))
-		ls1x_wdt_stop(&data->wdt);
-
-	return 0;
-}
-
-static DEFINE_SIMPLE_DEV_PM_OPS(ls1x_wdt_pm_ops, ls1x_wdt_suspend, ls1x_wdt_resume);
-
+#ifdef CONFIG_OF
 static const struct of_device_id ls1x_wdt_dt_ids[] = {
-	{ .compatible = "loongson,ls1b-wdt", .data = &ls1b_wdt_pdata },
-	{ .compatible = "loongson,ls1c-wdt", .data = &ls1b_wdt_pdata },
-	{ .compatible = "loongson,ls2k0300-wdt", .data = &ls2k0300_wdt_pdata },
+	{ .compatible = "loongson,ls1b-wdt", },
+	{ .compatible = "loongson,ls1c-wdt", },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, ls1x_wdt_dt_ids);
+#endif
 
 static struct platform_driver ls1x_wdt_driver = {
 	.probe = ls1x_wdt_probe,
 	.driver = {
 		.name = "ls1x-wdt",
-		.of_match_table = ls1x_wdt_dt_ids,
-		.pm = pm_ptr(&ls1x_wdt_pm_ops),
+		.of_match_table = of_match_ptr(ls1x_wdt_dt_ids),
 	},
 };
 
 module_platform_driver(ls1x_wdt_driver);
 
 MODULE_AUTHOR("Yang Ling <gnaygnil@gmail.com>");
-MODULE_AUTHOR("Binbin Zhou <zhoubinbin@loongson.cn>");
-MODULE_DESCRIPTION("Loongson Watchdog Driver");
+MODULE_DESCRIPTION("Loongson1 Watchdog Driver");
 MODULE_LICENSE("GPL");

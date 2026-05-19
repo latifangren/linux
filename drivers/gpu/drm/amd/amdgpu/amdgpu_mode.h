@@ -44,7 +44,6 @@
 #include <drm/display/drm_dp_mst_helper.h>
 #include "modules/inc/mod_freesync.h"
 #include "amdgpu_dm_irq_params.h"
-#include "amdgpu_dm_ism.h"
 
 struct amdgpu_bo;
 struct amdgpu_device;
@@ -327,8 +326,6 @@ struct amdgpu_mode_info {
 	struct drm_property *audio_property;
 	/* FMT dithering */
 	struct drm_property *dither_property;
-	/* Adaptive Backlight Modulation (power feature) */
-	struct drm_property *abm_level_property;
 	/* hardcoded DFP edid from BIOS */
 	const struct drm_edid *bios_hardcoded_edid;
 
@@ -369,15 +366,15 @@ struct amdgpu_mode_info {
 
 	struct drm_property *plane_ctm_property;
 	/**
-	 * @plane_shaper_lut_property: Plane property to set pre-blending
-	 * shaper LUT that converts color content before 3D LUT.
-	 * If plane_shaper_tf_property != Identity TF, AMD color module will
+	 * @shaper_lut_property: Plane property to set pre-blending shaper LUT
+	 * that converts color content before 3D LUT. If
+	 * plane_shaper_tf_property != Identity TF, AMD color module will
 	 * combine the user LUT values with pre-defined TF into the LUT
 	 * parameters to be programmed.
 	 */
 	struct drm_property *plane_shaper_lut_property;
 	/**
-	 * @plane_shaper_lut_size_property: Plane property for the size of
+	 * @shaper_lut_size_property: Plane property for the size of
 	 * pre-blending shaper LUT as supported by the driver (read-only).
 	 */
 	struct drm_property *plane_shaper_lut_size_property;
@@ -401,10 +398,10 @@ struct amdgpu_mode_info {
 	 */
 	struct drm_property *plane_lut3d_property;
 	/**
-	 * @plane_lut3d_size_property: Plane property to define the max size
-	 * of 3D LUT as supported by the driver (read-only). The max size is
-	 * the max size of one dimension and, therefore, the max number of
-	 * entries for 3D LUT array is the 3D LUT size cubed.
+	 * @plane_degamma_lut_size_property: Plane property to define the max
+	 * size of 3D LUT as supported by the driver (read-only). The max size
+	 * is the max size of one dimension and, therefore, the max number of
+	 * entries for 3D LUT array is the 3D LUT size cubed;
 	 */
 	struct drm_property *plane_lut3d_size_property;
 	/**
@@ -487,10 +484,6 @@ struct amdgpu_crtc {
 	int deferred_flip_completion;
 	/* parameters access from DM IRQ handler */
 	struct dm_irq_params dm_irq_params;
-
-	/* DM idle state manager */
-	struct amdgpu_dm_ism ism;
-
 	/* pll sharing */
 	struct amdgpu_atom_ss ss;
 	bool ss_enabled;
@@ -503,6 +496,8 @@ struct amdgpu_crtc {
 	struct drm_connector *connector;
 	/* for dpm */
 	u32 line_time;
+	u32 wm_low;
+	u32 wm_high;
 	u32 lb_vblank_lead_lines;
 	struct drm_display_mode hw_mode;
 	/* for virtual dce */
@@ -614,7 +609,6 @@ struct amdgpu_i2c_adapter {
 	struct i2c_adapter base;
 
 	struct ddc_service *ddc_service;
-	bool oem;
 };
 
 #define TO_DM_AUX(x) container_of((x), struct amdgpu_dm_dp_aux, aux)
@@ -629,7 +623,7 @@ struct amdgpu_connector {
 	bool use_digital;
 	/* we need to mind the EDID between detect
 	   and get modes due to analog/digital/tvencoder */
-	const struct drm_edid *edid;
+	struct edid *edid;
 	void *con_priv;
 	bool dac_load_detect;
 	bool detected_by_load; /* if the connection status was determined by load */

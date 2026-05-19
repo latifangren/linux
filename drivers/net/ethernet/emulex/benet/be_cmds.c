@@ -1941,7 +1941,7 @@ int be_cmd_modify_eqd(struct be_adapter *adapter, struct be_set_eqd *set_eqd,
 	return 0;
 }
 
-/* Uses synchronous mcc */
+/* Uses sycnhronous mcc */
 int be_cmd_vlan_config(struct be_adapter *adapter, u32 if_id, u16 *vtag_array,
 		       u32 num, u32 domain)
 {
@@ -2035,7 +2035,7 @@ int be_cmd_rx_filter(struct be_adapter *adapter, u32 flags, u32 value)
 	return __be_cmd_rx_filter(adapter, flags, value);
 }
 
-/* Uses synchronous mcc */
+/* Uses synchrounous mcc */
 int be_cmd_set_flow_control(struct be_adapter *adapter, u32 tx_fc, u32 rx_fc)
 {
 	struct be_mcc_wrb *wrb;
@@ -2074,7 +2074,7 @@ err:
 	return status;
 }
 
-/* Uses sync mcc */
+/* Uses sycn mcc */
 int be_cmd_get_flow_control(struct be_adapter *adapter, u32 *tx_fc, u32 *rx_fc)
 {
 	struct be_mcc_wrb *wrb;
@@ -2615,11 +2615,7 @@ err:
 	return status;
 }
 
-/*
- * Since the cookie is text, add a parsing-skipped space to keep it from
- * ever being matched on storage holding this source file.
- */
-static const char flash_cookie[32] __nonstring = "*** SE FLAS" "H DIRECTORY *** ";
+static char flash_cookie[2][16] = {"*** SE FLAS", "H DIRECTORY *** "};
 
 static bool phy_flashing_required(struct be_adapter *adapter)
 {

@@ -162,7 +162,6 @@ static irqreturn_t hpet_interrupt(int irq, void *data)
 
 static void hpet_timer_set_irq(struct hpet_dev *devp)
 {
-	const unsigned int nr_irqs = irq_get_nr_irqs();
 	unsigned long v;
 	int irq, gsi;
 	struct hpet_timer __iomem *timer;
@@ -354,9 +353,8 @@ static __init int hpet_mmap_enable(char *str)
 }
 __setup("hpet_mmap=", hpet_mmap_enable);
 
-static int hpet_mmap_prepare(struct vm_area_desc *desc)
+static int hpet_mmap(struct file *file, struct vm_area_struct *vma)
 {
-	struct file *file = desc->file;
 	struct hpet_dev *devp;
 	unsigned long addr;
 
@@ -369,12 +367,11 @@ static int hpet_mmap_prepare(struct vm_area_desc *desc)
 	if (addr & (PAGE_SIZE - 1))
 		return -ENOSYS;
 
-	desc->page_prot = pgprot_noncached(desc->page_prot);
-	mmap_action_simple_ioremap(desc, addr, PAGE_SIZE);
-	return 0;
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	return vm_iomap_memory(vma, addr, PAGE_SIZE);
 }
 #else
-static int hpet_mmap_prepare(struct vm_area_desc *desc)
+static int hpet_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	return -ENOSYS;
 }
@@ -712,7 +709,7 @@ static const struct file_operations hpet_fops = {
 	.open = hpet_open,
 	.release = hpet_release,
 	.fasync = hpet_fasync,
-	.mmap_prepare = hpet_mmap_prepare,
+	.mmap = hpet_mmap,
 };
 
 static int hpet_is_known(struct hpet_data *hdp)
@@ -726,7 +723,7 @@ static int hpet_is_known(struct hpet_data *hdp)
 	return 0;
 }
 
-static const struct ctl_table hpet_table[] = {
+static struct ctl_table hpet_table[] = {
 	{
 	 .procname = "max-user-freq",
 	 .data = &hpet_max_freq,
@@ -825,7 +822,8 @@ int hpet_alloc(struct hpet_data *hdp)
 		return 0;
 	}
 
-	hpetp = kzalloc_flex(*hpetp, hp_dev, hdp->hd_nirqs);
+	hpetp = kzalloc(struct_size(hpetp, hp_dev, hdp->hd_nirqs),
+			GFP_KERNEL);
 
 	if (!hpetp)
 		return -ENOMEM;
@@ -868,7 +866,7 @@ int hpet_alloc(struct hpet_data *hdp)
 
 	printk(KERN_INFO "hpet%u: at MMIO 0x%lx, IRQ%s",
 		hpetp->hp_which, hdp->hd_phys_address,
-		str_plural(hpetp->hp_ntimer));
+		hpetp->hp_ntimer > 1 ? "s" : "");
 	for (i = 0; i < hpetp->hp_ntimer; i++)
 		printk(KERN_CONT "%s %u", i > 0 ? "," : "", hdp->hd_irq[i]);
 	printk(KERN_CONT "\n");
@@ -1024,7 +1022,8 @@ static int __init hpet_init(void)
 
 	result = acpi_bus_register_driver(&hpet_acpi_driver);
 	if (result < 0) {
-		unregister_sysctl_table(sysctl_header);
+		if (sysctl_header)
+			unregister_sysctl_table(sysctl_header);
 		misc_deregister(&hpet_misc);
 		return result;
 	}

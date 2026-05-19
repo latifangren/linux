@@ -9,7 +9,6 @@
  * for more details.
  */
 #include <linux/init.h>
-#include <linux/string.h>
 #include <asm/bootstd.h>
 #include <asm/machdep.h>
 #include <asm/MC68VZ328.h>
@@ -32,7 +31,7 @@ void __init init_ucsimm(char *command, int size)
 	pr_info("uCsimm/uCdimm hwaddr %pM\n", p);
 	p = getbenv("APPEND");
 	if (p)
-		strscpy(p, command, size);
+		strcpy(p, command);
 	else
 		command[0] = 0;
 }

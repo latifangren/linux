@@ -360,6 +360,7 @@ static void snd_wss_busy_wait(struct snd_wss *chip)
 
 void snd_wss_mce_up(struct snd_wss *chip)
 {
+	unsigned long flags;
 	int timeout;
 
 	snd_wss_wait(chip);
@@ -368,7 +369,7 @@ void snd_wss_mce_up(struct snd_wss *chip)
 		dev_dbg(chip->card->dev,
 			"mce_up - auto calibration time out (0)\n");
 #endif
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	chip->mce_bit |= CS4231_MCE;
 	timeout = wss_inb(chip, CS4231P(REGSEL));
 	if (timeout == 0x80)
@@ -378,11 +379,13 @@ void snd_wss_mce_up(struct snd_wss *chip)
 	if (!(timeout & CS4231_MCE))
 		wss_outb(chip, CS4231P(REGSEL),
 			 chip->mce_bit | (timeout & 0x1f));
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 }
 EXPORT_SYMBOL(snd_wss_mce_up);
 
 void snd_wss_mce_down(struct snd_wss *chip)
 {
+	unsigned long flags;
 	unsigned long end_time;
 	int timeout;
 	int hw_mask = WSS_HW_CS4231_MASK | WSS_HW_CS4232_MASK | WSS_HW_AD1848;
@@ -395,11 +398,11 @@ void snd_wss_mce_down(struct snd_wss *chip)
 			"mce_down [0x%lx] - auto calibration time out (0)\n",
 			(long)CS4231P(REGSEL));
 #endif
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		chip->mce_bit &= ~CS4231_MCE;
-		timeout = wss_inb(chip, CS4231P(REGSEL));
-		wss_outb(chip, CS4231P(REGSEL), chip->mce_bit | (timeout & 0x1f));
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	chip->mce_bit &= ~CS4231_MCE;
+	timeout = wss_inb(chip, CS4231P(REGSEL));
+	wss_outb(chip, CS4231P(REGSEL), chip->mce_bit | (timeout & 0x1f));
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (timeout == 0x80)
 		dev_dbg(chip->card->dev,
 			"mce_down [0x%lx]: serious init problem - codec still busy\n",
@@ -493,7 +496,7 @@ static int snd_wss_trigger(struct snd_pcm_substream *substream,
 			snd_pcm_trigger_done(s, substream);
 		}
 	}
-	guard(spinlock)(&chip->reg_lock);
+	spin_lock(&chip->reg_lock);
 	if (do_start) {
 		chip->image[CS4231_IFACE_CTRL] |= what;
 		if (chip->trigger)
@@ -504,6 +507,7 @@ static int snd_wss_trigger(struct snd_pcm_substream *substream,
 			chip->trigger(chip, what, 0);
 	}
 	snd_wss_out(chip, CS4231_IFACE_CTRL, chip->image[CS4231_IFACE_CTRL]);
+	spin_unlock(&chip->reg_lock);
 #if 0
 	snd_wss_debug(chip);
 #endif
@@ -549,11 +553,14 @@ static unsigned char snd_wss_get_format(struct snd_wss *chip,
 
 static void snd_wss_calibrate_mute(struct snd_wss *chip, int mute)
 {
+	unsigned long flags;
 
 	mute = mute ? 0x80 : 0;
-	guard(spinlock_irqsave)(&chip->reg_lock);
-	if (chip->calibrate_mute == mute)
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	if (chip->calibrate_mute == mute) {
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 		return;
+	}
 	if (!mute) {
 		snd_wss_dout(chip, CS4231_LEFT_INPUT,
 			     chip->image[CS4231_LEFT_INPUT]);
@@ -601,18 +608,20 @@ static void snd_wss_calibrate_mute(struct snd_wss *chip, int mute)
 			     mute | chip->image[CS4231_LINE_RIGHT_OUTPUT]);
 	}
 	chip->calibrate_mute = mute;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 }
 
 static void snd_wss_playback_format(struct snd_wss *chip,
 				       struct snd_pcm_hw_params *params,
 				       unsigned char pdfr)
 {
+	unsigned long flags;
 	int full_calib = 1;
 
-	guard(mutex)(&chip->mce_mutex);
+	mutex_lock(&chip->mce_mutex);
 	if (chip->hardware == WSS_HW_CS4231A ||
 	    (chip->hardware & WSS_HW_CS4232_MASK)) {
-		guard(spinlock_irqsave)(&chip->reg_lock);
+		spin_lock_irqsave(&chip->reg_lock, flags);
 		if ((chip->image[CS4231_PLAYBK_FORMAT] & 0x0f) == (pdfr & 0x0f)) {	/* rate is same? */
 			snd_wss_out(chip, CS4231_ALT_FEATURE_1,
 				    chip->image[CS4231_ALT_FEATURE_1] | 0x10);
@@ -624,6 +633,7 @@ static void snd_wss_playback_format(struct snd_wss *chip,
 			udelay(100); /* Fixes audible clicks at least on GUS MAX */
 			full_calib = 0;
 		}
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 	} else if (chip->hardware == WSS_HW_AD1845) {
 		unsigned rate = params_rate(params);
 
@@ -636,28 +646,30 @@ static void snd_wss_playback_format(struct snd_wss *chip,
 		 * NOTE: We seem to need to write to the MSB before the LSB
 		 *       to get the correct sample frequency.
 		 */
-		guard(spinlock_irqsave)(&chip->reg_lock);
+		spin_lock_irqsave(&chip->reg_lock, flags);
 		snd_wss_out(chip, CS4231_PLAYBK_FORMAT, (pdfr & 0xf0));
 		snd_wss_out(chip, AD1845_UPR_FREQ_SEL, (rate >> 8) & 0xff);
 		snd_wss_out(chip, AD1845_LWR_FREQ_SEL, rate & 0xff);
 		full_calib = 0;
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 	}
 	if (full_calib) {
 		snd_wss_mce_up(chip);
-		scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-			if (chip->hardware != WSS_HW_INTERWAVE && !chip->single_dma) {
-				if (chip->image[CS4231_IFACE_CTRL] & CS4231_RECORD_ENABLE)
-					pdfr = (pdfr & 0xf0) |
-						(chip->image[CS4231_REC_FORMAT] & 0x0f);
-			} else {
-				chip->image[CS4231_PLAYBK_FORMAT] = pdfr;
-			}
-			snd_wss_out(chip, CS4231_PLAYBK_FORMAT, pdfr);
+		spin_lock_irqsave(&chip->reg_lock, flags);
+		if (chip->hardware != WSS_HW_INTERWAVE && !chip->single_dma) {
+			if (chip->image[CS4231_IFACE_CTRL] & CS4231_RECORD_ENABLE)
+				pdfr = (pdfr & 0xf0) |
+				       (chip->image[CS4231_REC_FORMAT] & 0x0f);
+		} else {
+			chip->image[CS4231_PLAYBK_FORMAT] = pdfr;
 		}
+		snd_wss_out(chip, CS4231_PLAYBK_FORMAT, pdfr);
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 		if (chip->hardware == WSS_HW_OPL3SA2)
 			udelay(100);	/* this seems to help */
 		snd_wss_mce_down(chip);
 	}
+	mutex_unlock(&chip->mce_mutex);
 }
 
 static void snd_wss_capture_format(struct snd_wss *chip,
@@ -667,10 +679,10 @@ static void snd_wss_capture_format(struct snd_wss *chip,
 	unsigned long flags;
 	int full_calib = 1;
 
-	guard(mutex)(&chip->mce_mutex);
+	mutex_lock(&chip->mce_mutex);
 	if (chip->hardware == WSS_HW_CS4231A ||
 	    (chip->hardware & WSS_HW_CS4232_MASK)) {
-		guard(spinlock_irqsave)(&chip->reg_lock);
+		spin_lock_irqsave(&chip->reg_lock, flags);
 		if ((chip->image[CS4231_PLAYBK_FORMAT] & 0x0f) == (cdfr & 0x0f) ||	/* rate is same? */
 		    (chip->image[CS4231_IFACE_CTRL] & CS4231_PLAYBACK_ENABLE)) {
 			snd_wss_out(chip, CS4231_ALT_FEATURE_1,
@@ -681,6 +693,7 @@ static void snd_wss_capture_format(struct snd_wss *chip,
 				chip->image[CS4231_ALT_FEATURE_1] &= ~0x20);
 			full_calib = 0;
 		}
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 	} else if (chip->hardware == WSS_HW_AD1845) {
 		unsigned rate = params_rate(params);
 
@@ -693,11 +706,12 @@ static void snd_wss_capture_format(struct snd_wss *chip,
 		 * NOTE: We seem to need to write to the MSB before the LSB
 		 *       to get the correct sample frequency.
 		 */
-		guard(spinlock_irqsave)(&chip->reg_lock);
+		spin_lock_irqsave(&chip->reg_lock, flags);
 		snd_wss_out(chip, CS4231_REC_FORMAT, (cdfr & 0xf0));
 		snd_wss_out(chip, AD1845_UPR_FREQ_SEL, (rate >> 8) & 0xff);
 		snd_wss_out(chip, AD1845_LWR_FREQ_SEL, rate & 0xff);
 		full_calib = 0;
+		spin_unlock_irqrestore(&chip->reg_lock, flags);
 	}
 	if (full_calib) {
 		snd_wss_mce_up(chip);
@@ -722,6 +736,7 @@ static void snd_wss_capture_format(struct snd_wss *chip,
 		spin_unlock_irqrestore(&chip->reg_lock, flags);
 		snd_wss_mce_down(chip);
 	}
+	mutex_unlock(&chip->mce_mutex);
 }
 
 /*
@@ -739,10 +754,10 @@ static unsigned long snd_wss_timer_resolution(struct snd_timer *timer)
 
 static int snd_wss_timer_start(struct snd_timer *timer)
 {
+	unsigned long flags;
 	unsigned int ticks;
 	struct snd_wss *chip = snd_timer_chip(timer);
-
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ticks = timer->sticks;
 	if ((chip->image[CS4231_ALT_FEATURE_1] & CS4231_TIMER_ENABLE) == 0 ||
 	    (unsigned char)(ticks >> 8) != chip->image[CS4231_TIMER_HIGH] ||
@@ -757,22 +772,26 @@ static int snd_wss_timer_start(struct snd_timer *timer)
 			    chip->image[CS4231_ALT_FEATURE_1] |
 			    CS4231_TIMER_ENABLE);
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return 0;
 }
 
 static int snd_wss_timer_stop(struct snd_timer *timer)
 {
+	unsigned long flags;
 	struct snd_wss *chip = snd_timer_chip(timer);
-
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	chip->image[CS4231_ALT_FEATURE_1] &= ~CS4231_TIMER_ENABLE;
 	snd_wss_out(chip, CS4231_ALT_FEATURE_1,
 		    chip->image[CS4231_ALT_FEATURE_1]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return 0;
 }
 
 static void snd_wss_init(struct snd_wss *chip)
 {
+	unsigned long flags;
+
 	snd_wss_calibrate_mute(chip, 1);
 	snd_wss_mce_down(chip);
 
@@ -780,15 +799,15 @@ static void snd_wss_init(struct snd_wss *chip)
 	dev_dbg(chip->card->dev, "init: (1)\n");
 #endif
 	snd_wss_mce_up(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		chip->image[CS4231_IFACE_CTRL] &= ~(CS4231_PLAYBACK_ENABLE |
-						    CS4231_PLAYBACK_PIO |
-						    CS4231_RECORD_ENABLE |
-						    CS4231_RECORD_PIO |
-						    CS4231_CALIB_MODE);
-		chip->image[CS4231_IFACE_CTRL] |= CS4231_AUTOCALIB;
-		snd_wss_out(chip, CS4231_IFACE_CTRL, chip->image[CS4231_IFACE_CTRL]);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	chip->image[CS4231_IFACE_CTRL] &= ~(CS4231_PLAYBACK_ENABLE |
+					    CS4231_PLAYBACK_PIO |
+					    CS4231_RECORD_ENABLE |
+					    CS4231_RECORD_PIO |
+					    CS4231_CALIB_MODE);
+	chip->image[CS4231_IFACE_CTRL] |= CS4231_AUTOCALIB;
+	snd_wss_out(chip, CS4231_IFACE_CTRL, chip->image[CS4231_IFACE_CTRL]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	snd_wss_mce_down(chip);
 
 #ifdef SNDRV_DEBUG_MCE
@@ -796,12 +815,12 @@ static void snd_wss_init(struct snd_wss *chip)
 #endif
 
 	snd_wss_mce_up(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		chip->image[CS4231_IFACE_CTRL] &= ~CS4231_AUTOCALIB;
-		snd_wss_out(chip, CS4231_IFACE_CTRL, chip->image[CS4231_IFACE_CTRL]);
-		snd_wss_out(chip,
-			    CS4231_ALT_FEATURE_1, chip->image[CS4231_ALT_FEATURE_1]);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	chip->image[CS4231_IFACE_CTRL] &= ~CS4231_AUTOCALIB;
+	snd_wss_out(chip, CS4231_IFACE_CTRL, chip->image[CS4231_IFACE_CTRL]);
+	snd_wss_out(chip,
+		    CS4231_ALT_FEATURE_1, chip->image[CS4231_ALT_FEATURE_1]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	snd_wss_mce_down(chip);
 
 #ifdef SNDRV_DEBUG_MCE
@@ -809,16 +828,16 @@ static void snd_wss_init(struct snd_wss *chip)
 		chip->image[CS4231_ALT_FEATURE_1]);
 #endif
 
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		snd_wss_out(chip, CS4231_ALT_FEATURE_2,
-			    chip->image[CS4231_ALT_FEATURE_2]);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	snd_wss_out(chip, CS4231_ALT_FEATURE_2,
+		    chip->image[CS4231_ALT_FEATURE_2]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 
 	snd_wss_mce_up(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		snd_wss_out(chip, CS4231_PLAYBK_FORMAT,
-			    chip->image[CS4231_PLAYBK_FORMAT]);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	snd_wss_out(chip, CS4231_PLAYBK_FORMAT,
+		    chip->image[CS4231_PLAYBK_FORMAT]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	snd_wss_mce_down(chip);
 
 #ifdef SNDRV_DEBUG_MCE
@@ -826,11 +845,11 @@ static void snd_wss_init(struct snd_wss *chip)
 #endif
 
 	snd_wss_mce_up(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		if (!(chip->hardware & WSS_HW_AD1848_MASK))
-			snd_wss_out(chip, CS4231_REC_FORMAT,
-				    chip->image[CS4231_REC_FORMAT]);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	if (!(chip->hardware & WSS_HW_AD1848_MASK))
+		snd_wss_out(chip, CS4231_REC_FORMAT,
+			    chip->image[CS4231_REC_FORMAT]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	snd_wss_mce_down(chip);
 	snd_wss_calibrate_mute(chip, 0);
 
@@ -841,16 +860,21 @@ static void snd_wss_init(struct snd_wss *chip)
 
 static int snd_wss_open(struct snd_wss *chip, unsigned int mode)
 {
-	guard(mutex)(&chip->open_mutex);
+	unsigned long flags;
+
+	mutex_lock(&chip->open_mutex);
 	if ((chip->mode & mode) ||
-	    ((chip->mode & WSS_MODE_OPEN) && chip->single_dma))
+	    ((chip->mode & WSS_MODE_OPEN) && chip->single_dma)) {
+		mutex_unlock(&chip->open_mutex);
 		return -EAGAIN;
+	}
 	if (chip->mode & WSS_MODE_OPEN) {
 		chip->mode |= mode;
+		mutex_unlock(&chip->open_mutex);
 		return 0;
 	}
 	/* ok. now enable and ack CODEC IRQ */
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	if (!(chip->hardware & WSS_HW_AD1848_MASK)) {
 		snd_wss_out(chip, CS4231_IRQ_STATUS,
 			    CS4231_PLAYBACK_IRQ |
@@ -869,8 +893,10 @@ static int snd_wss_open(struct snd_wss *chip, unsigned int mode)
 			    CS4231_TIMER_IRQ);
 		snd_wss_out(chip, CS4231_IRQ_STATUS, 0);
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 
 	chip->mode = mode;
+	mutex_unlock(&chip->open_mutex);
 	return 0;
 }
 
@@ -878,10 +904,12 @@ static void snd_wss_close(struct snd_wss *chip, unsigned int mode)
 {
 	unsigned long flags;
 
-	guard(mutex)(&chip->open_mutex);
+	mutex_lock(&chip->open_mutex);
 	chip->mode &= ~mode;
-	if (chip->mode & WSS_MODE_OPEN)
+	if (chip->mode & WSS_MODE_OPEN) {
+		mutex_unlock(&chip->open_mutex);
 		return;
+	}
 	/* disable IRQ */
 	spin_lock_irqsave(&chip->reg_lock, flags);
 	if (!(chip->hardware & WSS_HW_AD1848_MASK))
@@ -915,6 +943,7 @@ static void snd_wss_close(struct snd_wss *chip, unsigned int mode)
 	spin_unlock_irqrestore(&chip->reg_lock, flags);
 
 	chip->mode = 0;
+	mutex_unlock(&chip->open_mutex);
 }
 
 /*
@@ -968,16 +997,18 @@ static int snd_wss_playback_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_wss *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	unsigned long flags;
 	unsigned int size = snd_pcm_lib_buffer_bytes(substream);
 	unsigned int count = snd_pcm_lib_period_bytes(substream);
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	chip->p_dma_size = size;
 	chip->image[CS4231_IFACE_CTRL] &= ~(CS4231_PLAYBACK_ENABLE | CS4231_PLAYBACK_PIO);
 	snd_dma_program(chip->dma1, runtime->dma_addr, size, DMA_MODE_WRITE | DMA_AUTOINIT);
 	count = snd_wss_get_count(chip->image[CS4231_PLAYBK_FORMAT], count) - 1;
 	snd_wss_out(chip, CS4231_PLY_LWR_CNT, (unsigned char) count);
 	snd_wss_out(chip, CS4231_PLY_UPR_CNT, (unsigned char) (count >> 8));
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 #if 0
 	snd_wss_debug(chip);
 #endif
@@ -1001,10 +1032,11 @@ static int snd_wss_capture_prepare(struct snd_pcm_substream *substream)
 {
 	struct snd_wss *chip = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	unsigned long flags;
 	unsigned int size = snd_pcm_lib_buffer_bytes(substream);
 	unsigned int count = snd_pcm_lib_period_bytes(substream);
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	chip->c_dma_size = size;
 	chip->image[CS4231_IFACE_CTRL] &= ~(CS4231_RECORD_ENABLE | CS4231_RECORD_PIO);
 	snd_dma_program(chip->dma2, runtime->dma_addr, size, DMA_MODE_READ | DMA_AUTOINIT);
@@ -1024,16 +1056,18 @@ static int snd_wss_capture_prepare(struct snd_pcm_substream *substream)
 		snd_wss_out(chip, CS4231_REC_UPR_CNT,
 			    (unsigned char) (count >> 8));
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return 0;
 }
 
 void snd_wss_overrange(struct snd_wss *chip)
 {
+	unsigned long flags;
 	unsigned char res;
 
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		res = snd_wss_in(chip, CS4231_TEST_INIT);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	res = snd_wss_in(chip, CS4231_TEST_INIT);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (res & (0x08 | 0x02))	/* detect overrange only above 0dB; may be user selectable? */
 		chip->capture_substream->runtime->overrange++;
 }
@@ -1079,12 +1113,13 @@ irqreturn_t snd_wss_interrupt(int irq, void *dev_id)
 		}
 	}
 
-	guard(spinlock)(&chip->reg_lock);
+	spin_lock(&chip->reg_lock);
 	status = ~CS4231_ALL_IRQS | ~status;
 	if (chip->hardware & WSS_HW_AD1848_MASK)
 		wss_outb(chip, CS4231P(STATUS), 0);
 	else
 		snd_wss_out(chip, CS4231_IRQ_STATUS, status);
+	spin_unlock(&chip->reg_lock);
 	return IRQ_HANDLED;
 }
 EXPORT_SYMBOL(snd_wss_interrupt);
@@ -1118,8 +1153,10 @@ static snd_pcm_uframes_t snd_wss_capture_pointer(struct snd_pcm_substream *subst
 static int snd_ad1848_probe(struct snd_wss *chip)
 {
 	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
+	unsigned long flags;
 	unsigned char r;
 	unsigned short hardware = 0;
+	int err = 0;
 	int i;
 
 	while (wss_inb(chip, CS4231P(REGSEL)) & CS4231_INIT) {
@@ -1127,7 +1164,7 @@ static int snd_ad1848_probe(struct snd_wss *chip)
 			return -ENODEV;
 		cond_resched();
 	}
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 
 	/* set CS423x MODE 1 */
 	snd_wss_dout(chip, CS4231_MISC_INFO, 0);
@@ -1136,15 +1173,19 @@ static int snd_ad1848_probe(struct snd_wss *chip)
 	r = snd_wss_in(chip, CS4231_RIGHT_INPUT);
 	if (r != 0x45) {
 		/* RMGE always high on AD1847 */
-		if ((r & ~CS4231_ENABLE_MIC_GAIN) != 0x45)
-			return -ENODEV;
+		if ((r & ~CS4231_ENABLE_MIC_GAIN) != 0x45) {
+			err = -ENODEV;
+			goto out;
+		}
 		hardware = WSS_HW_AD1847;
 	} else {
 		snd_wss_dout(chip, CS4231_LEFT_INPUT,  0xaa);
 		r = snd_wss_in(chip, CS4231_LEFT_INPUT);
 		/* L/RMGE always low on AT2320 */
-		if ((r | CS4231_ENABLE_MIC_GAIN) != 0xaa)
-			return -ENODEV;
+		if ((r | CS4231_ENABLE_MIC_GAIN) != 0xaa) {
+			err = -ENODEV;
+			goto out;
+		}
 	}
 
 	/* clear pending IRQ */
@@ -1153,11 +1194,11 @@ static int snd_ad1848_probe(struct snd_wss *chip)
 	mb();
 
 	if ((chip->hardware & WSS_HW_TYPE_MASK) != WSS_HW_DETECT)
-		return 0;
+		goto out;
 
 	if (hardware) {
 		chip->hardware = hardware;
-		return 0;
+		goto out;
 	}
 
 	r = snd_wss_in(chip, CS4231_MISC_INFO);
@@ -1186,11 +1227,14 @@ static int snd_ad1848_probe(struct snd_wss *chip)
 		chip->hardware = WSS_HW_AD1848;
 out_mode:
 	snd_wss_dout(chip, CS4231_MISC_INFO, 0);
-	return 0;
+out:
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
+	return err;
 }
 
 static int snd_wss_probe(struct snd_wss *chip)
 {
+	unsigned long flags;
 	int i, id, rev, regnum;
 	unsigned char *ptr;
 	unsigned int hw;
@@ -1206,10 +1250,11 @@ static int snd_wss_probe(struct snd_wss *chip)
 			if (wss_inb(chip, CS4231P(REGSEL)) & CS4231_INIT)
 				msleep(2);
 			else {
-				guard(spinlock_irqsave)(&chip->reg_lock);
+				spin_lock_irqsave(&chip->reg_lock, flags);
 				snd_wss_out(chip, CS4231_MISC_INFO,
 					    CS4231_MODE2);
 				id = snd_wss_in(chip, CS4231_MISC_INFO) & 0x0f;
+				spin_unlock_irqrestore(&chip->reg_lock, flags);
 				if (id == 0x0a)
 					break;	/* this is valid value */
 			}
@@ -1244,11 +1289,11 @@ static int snd_wss_probe(struct snd_wss *chip)
 			return -ENODEV;		/* unknown CS4231 chip? */
 		}
 	}
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		wss_inb(chip, CS4231P(STATUS));	/* clear any pendings IRQ */
-		wss_outb(chip, CS4231P(STATUS), 0);
-		mb();
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	wss_inb(chip, CS4231P(STATUS));	/* clear any pendings IRQ */
+	wss_outb(chip, CS4231P(STATUS), 0);
+	mb();
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 
 	if (!(chip->hardware & WSS_HW_AD1848_MASK))
 		chip->image[CS4231_MISC_INFO] = CS4231_MODE2;
@@ -1283,10 +1328,10 @@ static int snd_wss_probe(struct snd_wss *chip)
 	ptr = (unsigned char *) &chip->image;
 	regnum = (chip->hardware & WSS_HW_AD1848_MASK) ? 16 : 32;
 	snd_wss_mce_down(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		for (i = 0; i < regnum; i++)	/* ok.. fill all registers */
-			snd_wss_out(chip, i, *ptr++);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	for (i = 0; i < regnum; i++)	/* ok.. fill all registers */
+		snd_wss_out(chip, i, *ptr++);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	snd_wss_mce_up(chip);
 	snd_wss_mce_down(chip);
 
@@ -1551,11 +1596,12 @@ static void snd_wss_thinkpad_twiddle(struct snd_wss *chip, int on)
 static void snd_wss_suspend(struct snd_wss *chip)
 {
 	int reg;
+	unsigned long flags;
 
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		for (reg = 0; reg < 32; reg++)
-			chip->image[reg] = snd_wss_in(chip, reg);
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	for (reg = 0; reg < 32; reg++)
+		chip->image[reg] = snd_wss_in(chip, reg);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (chip->thinkpad_flag)
 		snd_wss_thinkpad_twiddle(chip, 0);
 }
@@ -1564,26 +1610,27 @@ static void snd_wss_suspend(struct snd_wss *chip)
 static void snd_wss_resume(struct snd_wss *chip)
 {
 	int reg;
+	unsigned long flags;
 	/* int timeout; */
 
 	if (chip->thinkpad_flag)
 		snd_wss_thinkpad_twiddle(chip, 1);
 	snd_wss_mce_up(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		for (reg = 0; reg < 32; reg++) {
-			switch (reg) {
-			case CS4231_VERSION:
-				break;
-			default:
-				snd_wss_out(chip, reg, chip->image[reg]);
-				break;
-			}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	for (reg = 0; reg < 32; reg++) {
+		switch (reg) {
+		case CS4231_VERSION:
+			break;
+		default:
+			snd_wss_out(chip, reg, chip->image[reg]);
+			break;
 		}
-		/* Yamaha needs this to resume properly */
-		if (chip->hardware == WSS_HW_OPL3SA2)
-			snd_wss_out(chip, CS4231_PLAYBK_FORMAT,
-				    chip->image[CS4231_PLAYBK_FORMAT]);
 	}
+	/* Yamaha needs this to resume properly */
+	if (chip->hardware == WSS_HW_OPL3SA2)
+		snd_wss_out(chip, CS4231_PLAYBK_FORMAT,
+			    chip->image[CS4231_PLAYBK_FORMAT]);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 #if 1
 	snd_wss_mce_down(chip);
 #else
@@ -1592,11 +1639,11 @@ static void snd_wss_resume(struct snd_wss *chip)
 	   include rescheduling.  -- iwai
 	   */
 	snd_wss_busy_wait(chip);
-	scoped_guard(spinlock_irqsave, &chip->reg_lock) {
-		chip->mce_bit &= ~CS4231_MCE;
-		timeout = wss_inb(chip, CS4231P(REGSEL));
-		wss_outb(chip, CS4231P(REGSEL), chip->mce_bit | (timeout & 0x1f));
-	}
+	spin_lock_irqsave(&chip->reg_lock, flags);
+	chip->mce_bit &= ~CS4231_MCE;
+	timeout = wss_inb(chip, CS4231P(REGSEL));
+	wss_outb(chip, CS4231P(REGSEL), chip->mce_bit | (timeout & 0x1f));
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (timeout == 0x80)
 		dev_err(chip->card->dev
 			"down [0x%lx]: serious init problem - codec still busy\n",
@@ -1818,7 +1865,7 @@ int snd_wss_pcm(struct snd_wss *chip, int device)
 		pcm->info_flags |= SNDRV_PCM_INFO_HALF_DUPLEX;
 	if (chip->hardware != WSS_HW_INTERWAVE)
 		pcm->info_flags |= SNDRV_PCM_INFO_JOINT_DUPLEX;
-	strscpy(pcm->name, snd_wss_chip_id(chip));
+	strcpy(pcm->name, snd_wss_chip_id(chip));
 
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV, chip->card->dev,
 				       64*1024, chip->dma1 > 3 || chip->dma2 > 3 ? 128*1024 : 64*1024);
@@ -1849,7 +1896,7 @@ int snd_wss_timer(struct snd_wss *chip, int device)
 	err = snd_timer_new(chip->card, "CS4231", &tid, &timer);
 	if (err < 0)
 		return err;
-	strscpy(timer->name, snd_wss_chip_id(chip));
+	strcpy(timer->name, snd_wss_chip_id(chip));
 	timer->private_data = chip;
 	timer->private_free = snd_wss_timer_free;
 	timer->hw = snd_wss_timer_table;
@@ -1897,10 +1944,12 @@ static int snd_wss_get_mux(struct snd_kcontrol *kcontrol,
 			   struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ucontrol->value.enumerated.item[0] = (chip->image[CS4231_LEFT_INPUT] & CS4231_MIXS_ALL) >> 6;
 	ucontrol->value.enumerated.item[1] = (chip->image[CS4231_RIGHT_INPUT] & CS4231_MIXS_ALL) >> 6;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return 0;
 }
 
@@ -1908,6 +1957,7 @@ static int snd_wss_put_mux(struct snd_kcontrol *kcontrol,
 			   struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	unsigned short left, right;
 	int change;
 
@@ -1916,13 +1966,14 @@ static int snd_wss_put_mux(struct snd_kcontrol *kcontrol,
 		return -EINVAL;
 	left = ucontrol->value.enumerated.item[0] << 6;
 	right = ucontrol->value.enumerated.item[1] << 6;
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	left = (chip->image[CS4231_LEFT_INPUT] & ~CS4231_MIXS_ALL) | left;
 	right = (chip->image[CS4231_RIGHT_INPUT] & ~CS4231_MIXS_ALL) | right;
 	change = left != chip->image[CS4231_LEFT_INPUT] ||
 		 right != chip->image[CS4231_RIGHT_INPUT];
 	snd_wss_out(chip, CS4231_LEFT_INPUT, left);
 	snd_wss_out(chip, CS4231_RIGHT_INPUT, right);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return change;
 }
 
@@ -1943,13 +1994,15 @@ int snd_wss_get_single(struct snd_kcontrol *kcontrol,
 		       struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int reg = kcontrol->private_value & 0xff;
 	int shift = (kcontrol->private_value >> 8) & 0xff;
 	int mask = (kcontrol->private_value >> 16) & 0xff;
 	int invert = (kcontrol->private_value >> 24) & 0xff;
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ucontrol->value.integer.value[0] = (chip->image[reg] >> shift) & mask;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (invert)
 		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
 	return 0;
@@ -1960,6 +2013,7 @@ int snd_wss_put_single(struct snd_kcontrol *kcontrol,
 		       struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int reg = kcontrol->private_value & 0xff;
 	int shift = (kcontrol->private_value >> 8) & 0xff;
 	int mask = (kcontrol->private_value >> 16) & 0xff;
@@ -1971,10 +2025,11 @@ int snd_wss_put_single(struct snd_kcontrol *kcontrol,
 	if (invert)
 		val = mask - val;
 	val <<= shift;
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	val = (chip->image[reg] & ~(mask << shift)) | val;
 	change = val != chip->image[reg];
 	snd_wss_out(chip, reg, val);
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return change;
 }
 EXPORT_SYMBOL(snd_wss_put_single);
@@ -1996,6 +2051,7 @@ int snd_wss_get_double(struct snd_kcontrol *kcontrol,
 		       struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int left_reg = kcontrol->private_value & 0xff;
 	int right_reg = (kcontrol->private_value >> 8) & 0xff;
 	int shift_left = (kcontrol->private_value >> 16) & 0x07;
@@ -2003,9 +2059,10 @@ int snd_wss_get_double(struct snd_kcontrol *kcontrol,
 	int mask = (kcontrol->private_value >> 24) & 0xff;
 	int invert = (kcontrol->private_value >> 22) & 1;
 
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	ucontrol->value.integer.value[0] = (chip->image[left_reg] >> shift_left) & mask;
 	ucontrol->value.integer.value[1] = (chip->image[right_reg] >> shift_right) & mask;
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	if (invert) {
 		ucontrol->value.integer.value[0] = mask - ucontrol->value.integer.value[0];
 		ucontrol->value.integer.value[1] = mask - ucontrol->value.integer.value[1];
@@ -2018,6 +2075,7 @@ int snd_wss_put_double(struct snd_kcontrol *kcontrol,
 		       struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_wss *chip = snd_kcontrol_chip(kcontrol);
+	unsigned long flags;
 	int left_reg = kcontrol->private_value & 0xff;
 	int right_reg = (kcontrol->private_value >> 8) & 0xff;
 	int shift_left = (kcontrol->private_value >> 16) & 0x07;
@@ -2035,7 +2093,7 @@ int snd_wss_put_double(struct snd_kcontrol *kcontrol,
 	}
 	val1 <<= shift_left;
 	val2 <<= shift_right;
-	guard(spinlock_irqsave)(&chip->reg_lock);
+	spin_lock_irqsave(&chip->reg_lock, flags);
 	if (left_reg != right_reg) {
 		val1 = (chip->image[left_reg] & ~(mask << shift_left)) | val1;
 		val2 = (chip->image[right_reg] & ~(mask << shift_right)) | val2;
@@ -2049,6 +2107,7 @@ int snd_wss_put_double(struct snd_kcontrol *kcontrol,
 		change = val1 != chip->image[left_reg];
 		snd_wss_out(chip, left_reg, val1);
 	}
+	spin_unlock_irqrestore(&chip->reg_lock, flags);
 	return change;
 }
 EXPORT_SYMBOL(snd_wss_put_double);
@@ -2117,7 +2176,7 @@ int snd_wss_mixer(struct snd_wss *chip)
 
 	card = chip->card;
 
-	strscpy(card->mixername, chip->pcm->name);
+	strcpy(card->mixername, chip->pcm->name);
 
 	/* Use only the first 11 entries on AD1848 */
 	if (chip->hardware & WSS_HW_AD1848_MASK)

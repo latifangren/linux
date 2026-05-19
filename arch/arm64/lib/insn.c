@@ -338,8 +338,6 @@ u32 aarch64_insn_gen_cond_branch_imm(unsigned long pc, unsigned long addr,
 	long offset;
 
 	offset = label_imm_common(pc, addr, SZ_1M);
-	if (offset >= SZ_1M)
-		return AARCH64_BREAK_FAULT;
 
 	insn = aarch64_insn_get_bcond_value();
 
@@ -543,35 +541,6 @@ u32 aarch64_insn_gen_load_store_pair(enum aarch64_insn_register reg1,
 					     offset >> shift);
 }
 
-u32 aarch64_insn_gen_load_acq_store_rel(enum aarch64_insn_register reg,
-					enum aarch64_insn_register base,
-					enum aarch64_insn_size_type size,
-					enum aarch64_insn_ldst_type type)
-{
-	u32 insn;
-
-	switch (type) {
-	case AARCH64_INSN_LDST_LOAD_ACQ:
-		insn = aarch64_insn_get_load_acq_value();
-		break;
-	case AARCH64_INSN_LDST_STORE_REL:
-		insn = aarch64_insn_get_store_rel_value();
-		break;
-	default:
-		pr_err("%s: unknown load-acquire/store-release encoding %d\n",
-		       __func__, type);
-		return AARCH64_BREAK_FAULT;
-	}
-
-	insn = aarch64_insn_encode_ldst_size(size, insn);
-
-	insn = aarch64_insn_encode_register(AARCH64_INSN_REGTYPE_RT, insn,
-					    reg);
-
-	return aarch64_insn_encode_register(AARCH64_INSN_REGTYPE_RN, insn,
-					    base);
-}
-
 u32 aarch64_insn_gen_load_store_ex(enum aarch64_insn_register reg,
 				   enum aarch64_insn_register base,
 				   enum aarch64_insn_register state,
@@ -613,6 +582,7 @@ u32 aarch64_insn_gen_load_store_ex(enum aarch64_insn_register reg,
 					    state);
 }
 
+#ifdef CONFIG_ARM64_LSE_ATOMICS
 static u32 aarch64_insn_encode_ldst_order(enum aarch64_insn_mem_order_type type,
 					  u32 insn)
 {
@@ -756,6 +726,7 @@ u32 aarch64_insn_gen_cas(enum aarch64_insn_register result,
 	return aarch64_insn_encode_register(AARCH64_INSN_REGTYPE_RS, insn,
 					    value);
 }
+#endif
 
 u32 aarch64_insn_gen_add_sub_imm(enum aarch64_insn_register dst,
 				 enum aarch64_insn_register src,

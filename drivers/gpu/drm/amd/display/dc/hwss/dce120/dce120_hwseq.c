@@ -29,7 +29,6 @@
 #include "dce120_hwseq.h"
 #include "dce/dce_hwseq.h"
 
-#include "dce100/dce100_hwseq.h"
 #include "dce110/dce110_hwseq.h"
 
 #include "dce/dce_12_0_offset.h"
@@ -154,10 +153,6 @@ static bool dce120_enable_display_power_gating(
 	struct dc_bios *dcb,
 	enum pipe_gating_control power_gating)
 {
-	(void)dc;
-	(void)controller_id;
-	(void)dcb;
-	(void)power_gating;
 	/* disable for bringup */
 #if 0
 	enum bp_result bp_result = BP_RESULT_OK;
@@ -269,6 +264,5 @@ void dce120_hw_sequencer_construct(struct dc *dc)
 	dce110_hw_sequencer_construct(dc);
 	dc->hwseq->funcs.enable_display_power_gating = dce120_enable_display_power_gating;
 	dc->hwss.update_dchub = dce120_update_dchub;
-	dc->hwss.clear_surface_dcc_and_tiling = dce100_reset_surface_dcc_and_tiling;
 }
 

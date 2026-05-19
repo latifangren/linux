@@ -14,8 +14,6 @@
 #include "sc8180x.dtsi"
 #include "sc8180x-pmics.dtsi"
 
-/delete-node/ &gpu_mem;
-
 / {
 	model = "Qualcomm SC8180x Primus";
 	compatible = "qcom,sc8180x-primus", "qcom,sc8180x";
@@ -444,10 +442,11 @@
 
 &gpu {
 	status = "okay";
-};
 
-&gpu_zap_shader {
-	firmware-name = "qcom/sc8180x/qcdxkmsuc8180.mbn";
+	zap-shader {
+		memory-region = <&gpu_mem>;
+		firmware-name = "qcom/sc8180x/qcdxkmsuc8180.mbn";
+	};
 };
 
 &i2c1 {
@@ -532,6 +531,8 @@
 };
 
 &mdss_edp {
+	data-lanes = <0 1 2 3>;
+
 	pinctrl-names = "default";
 	pinctrl-0 = <&edp_hpd_active>;
 
@@ -550,11 +551,15 @@
 			};
 		};
 	};
-};
 
-&mdss_edp_out {
-	data-lanes = <0 1 2 3>;
-	remote-endpoint = <&auo_b133han05_in>;
+	ports {
+		port@1 {
+			reg = <1>;
+			mdss_edp_out: endpoint {
+				remote-endpoint = <&auo_b133han05_in>;
+			};
+		};
+	};
 };
 
 &pcie1 {
@@ -766,6 +771,10 @@
 	vdd-3.3-ch1-supply = <&vreg_l10c_3p3>;
 
 	status = "okay";
+};
+
+&xo_board_clk {
+	clock-frequency = <38400000>;
 };
 
 /* PINCTRL */

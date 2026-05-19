@@ -29,7 +29,6 @@
 #include "include/policy.h"
 #include "include/policy_unpack.h"
 #include "include/policy_compat.h"
-#include "include/signal.h"
 
 /* audit callback for unpack fields */
 static void audit_cb(struct audit_buffer *ab, void *va)
@@ -159,7 +158,7 @@ struct aa_loaddata *aa_loaddata_alloc(size_t size)
 {
 	struct aa_loaddata *d;
 
-	d = kzalloc_obj(*d);
+	d = kzalloc(sizeof(*d), GFP_KERNEL);
 	if (d == NULL)
 		return ERR_PTR(-ENOMEM);
 	d->data = kvzalloc(size, GFP_KERNEL);
@@ -466,73 +465,20 @@ static struct aa_dfa *unpack_dfa(struct aa_ext *e, int flags)
 	return dfa;
 }
 
-static int process_strs_entry(char *str, int size, bool multi)
-{
-	int c = 1;
-
-	if (size <= 0)
-		return -1;
-	if (multi) {
-		if (size < 2)
-			return -2;
-		/* multi ends with double \0 */
-		if (str[size - 2])
-			return -3;
-	}
-
-	char *save = str;
-	char *pos = str;
-	char *end = multi ? str + size - 2 : str + size - 1;
-	/* count # of internal \0 */
-	while (str < end) {
-		if (str == pos) {
-			/* starts with ... */
-			if (!*str) {
-				AA_DEBUG(DEBUG_UNPACK,
-					 "starting with null save=%lu size %d c=%d",
-					 (unsigned long)(str - save), size, c);
-				return -4;
-			}
-			if (isspace(*str))
-				return -5;
-			if (*str == ':') {
-				/* :ns_str\0str\0
-				 * first character after : must be valid
-				 */
-				if (!str[1])
-					return -6;
-			}
-		} else if (!*str) {
-			if (*pos == ':')
-				*str = ':';
-			else
-				c++;
-			pos = str +  1;
-		}
-		str++;
-	} /* while */
-
-	return c;
-}
-
 /**
- * unpack_strs_table - unpack a profile transition table
+ * unpack_trans_table - unpack a profile transition table
  * @e: serialized data extent information  (NOT NULL)
- * @name: name of table (MAY BE NULL)
- * @multi: allow multiple strings on a single entry
  * @strs: str table to unpack to (NOT NULL)
  *
- * Returns: 0 if table successfully unpacked or not present, else error
+ * Returns: true if table successfully unpacked or not present
  */
-static int unpack_strs_table(struct aa_ext *e, const char *name, bool multi,
-			      struct aa_str_table *strs)
+static bool unpack_trans_table(struct aa_ext *e, struct aa_str_table *strs)
 {
 	void *saved_pos = e->pos;
-	struct aa_str_table_ent *table = NULL;
-	int error = -EPROTO;
+	char **table = NULL;
 
 	/* exec table is optional */
-	if (aa_unpack_nameX(e, AA_STRUCT, name)) {
+	if (aa_unpack_nameX(e, AA_STRUCT, "xtable")) {
 		u16 size;
 		int i;
 
@@ -544,46 +490,61 @@ static int unpack_strs_table(struct aa_ext *e, const char *name, bool multi,
 			 * for size check here
 			 */
 			goto fail;
-		table = kzalloc_objs(struct aa_str_table_ent, size);
-		if (!table) {
-			error = -ENOMEM;
+		table = kcalloc(size, sizeof(char *), GFP_KERNEL);
+		if (!table)
 			goto fail;
-		}
+
 		strs->table = table;
 		strs->size = size;
 		for (i = 0; i < size; i++) {
 			char *str;
-			int c, size2 = aa_unpack_strdup(e, &str, NULL);
+			int c, j, pos, size2 = aa_unpack_strdup(e, &str, NULL);
 			/* aa_unpack_strdup verifies that the last character is
 			 * null termination byte.
 			 */
-			c = process_strs_entry(str, size2, multi);
-			if (c <= 0) {
-				AA_DEBUG(DEBUG_UNPACK, "process_strs %d i %d pos %ld",
-					 c, i,
-					 (unsigned long)(e->pos - saved_pos));
+			if (!size2)
 				goto fail;
+			table[i] = str;
+			/* verify that name doesn't start with space */
+			if (isspace(*str))
+				goto fail;
+
+			/* count internal #  of internal \0 */
+			for (c = j = 0; j < size2 - 1; j++) {
+				if (!str[j]) {
+					pos = j;
+					c++;
+				}
 			}
-			if (!multi && c > 1) {
-				AA_DEBUG(DEBUG_UNPACK, "!multi && c > 1");
+			if (*str == ':') {
+				/* first character after : must be valid */
+				if (!str[1])
+					goto fail;
+				/* beginning with : requires an embedded \0,
+				 * verify that exactly 1 internal \0 exists
+				 * trailing \0 already verified by aa_unpack_strdup
+				 *
+				 * convert \0 back to : for label_parse
+				 */
+				if (c == 1)
+					str[pos] = ':';
+				else if (c > 1)
+					goto fail;
+			} else if (c)
 				/* fail - all other cases with embedded \0 */
 				goto fail;
-			}
-			table[i].strs = str;
-			table[i].count = c;
-			table[i].size = size2;
 		}
 		if (!aa_unpack_nameX(e, AA_ARRAYEND, NULL))
 			goto fail;
 		if (!aa_unpack_nameX(e, AA_STRUCTEND, NULL))
 			goto fail;
 	}
-	return 0;
+	return true;
 
 fail:
-	aa_destroy_str_table(strs);
+	aa_free_str_table(strs);
 	e->pos = saved_pos;
-	return error;
+	return false;
 }
 
 static bool unpack_xattrs(struct aa_ext *e, struct aa_profile *profile)
@@ -627,7 +588,8 @@ static bool unpack_secmark(struct aa_ext *e, struct aa_ruleset *rules)
 		if (!aa_unpack_array(e, NULL, &size))
 			goto fail;
 
-		rules->secmark = kzalloc_objs(struct aa_secmark, size);
+		rules->secmark = kcalloc(size, sizeof(struct aa_secmark),
+					   GFP_KERNEL);
 		if (!rules->secmark)
 			goto fail;
 
@@ -652,8 +614,8 @@ static bool unpack_secmark(struct aa_ext *e, struct aa_ruleset *rules)
 fail:
 	if (rules->secmark) {
 		for (i = 0; i < size; i++)
-			kfree_sensitive(rules->secmark[i].label);
-		kfree_sensitive(rules->secmark);
+			kfree(rules->secmark[i].label);
+		kfree(rules->secmark);
 		rules->secmark_count = 0;
 		rules->secmark = NULL;
 	}
@@ -697,213 +659,12 @@ fail:
 	return false;
 }
 
-
-static bool verify_tags(struct aa_tags_struct *tags, const char **info)
-{
-	if ((tags->hdrs.size && !tags->hdrs.table) ||
-	    (!tags->hdrs.size && tags->hdrs.table)) {
-		*info = "failed verification tag.hdrs disagree";
-		return false;
-	}
-	if ((tags->sets.size && !tags->sets.table) ||
-	    (!tags->sets.size && tags->sets.table)) {
-		*info = "failed verification tag.sets disagree";
-		return false;
-	}
-	if ((tags->strs.size && !tags->strs.table) ||
-	    (!tags->strs.size && tags->strs.table)) {
-		*info = "failed verification tags->strs disagree";
-		return false;
-	}
-	/* no data present */
-	if (!tags->sets.size && !tags->hdrs.size && !tags->strs.size) {
-		return true;
-	} else if (!(tags->sets.size && tags->hdrs.size && tags->strs.size)) {
-		/* some data present but not all */
-		*info = "failed verification tags partial data present";
-		return false;
-	}
-
-	u32 i;
-
-	for (i = 0; i < tags->sets.size; i++) {
-		/* count followed by count indexes into hdrs */
-		u32 cnt = tags->sets.table[i];
-
-		if (i+cnt >= tags->sets.size) {
-			AA_DEBUG(DEBUG_UNPACK,
-				 "tagset too large %d+%d > sets.table[%d]",
-				 i, cnt, tags->sets.size);
-			*info = "failed verification tagset too large";
-			return false;
-		}
-		for (; cnt; cnt--) {
-			if (tags->sets.table[++i] >= tags->hdrs.size) {
-				AA_DEBUG(DEBUG_UNPACK,
-					 "tagsets idx out of bounds cnt %d sets.table[%d] >= %d",
-					 cnt, i-1, tags->hdrs.size);
-				*info = "failed verification tagsets idx out of bounds";
-				return false;
-			}
-		}
-	}
-	for (i = 0; i < tags->hdrs.size; i++) {
-		u32 idx = tags->hdrs.table[i].tags;
-
-		if (idx >= tags->strs.size) {
-			AA_DEBUG(DEBUG_UNPACK,
-				 "tag.hdrs idx oob idx %d > tags->strs.size=%d",
-				 idx, tags->strs.size);
-			*info = "failed verification tags.hdrs idx out of bounds";
-			return false;
-		}
-		if (tags->hdrs.table[i].count != tags->strs.table[idx].count) {
-			AA_DEBUG(DEBUG_UNPACK, "hdrs.table[%d].count=%d != tags->strs.table[%d]=%d",
-				 i, tags->hdrs.table[i].count, idx, tags->strs.table[idx].count);
-			*info = "failed verification tagd.hdrs[idx].count";
-			return false;
-		}
-		if (tags->hdrs.table[i].size != tags->strs.table[idx].size) {
-			AA_DEBUG(DEBUG_UNPACK, "hdrs.table[%d].size=%d != strs.table[%d].size=%d",
-				 i, tags->hdrs.table[i].size, idx, tags->strs.table[idx].size);
-			*info = "failed verification tagd.hdrs[idx].size";
-			return false;
-		}
-	}
-
-	return true;
-}
-
-static int unpack_tagsets(struct aa_ext *e, struct aa_tags_struct *tags)
-{
-	u32 *sets;
-	u16 i, size;
-	int error = -EPROTO;
-	void *pos = e->pos;
-
-	if (!aa_unpack_array(e, "sets", &size))
-		goto fail_reset;
-	sets = kcalloc(size, sizeof(u32), GFP_KERNEL);
-	if (!sets) {
-		error = -ENOMEM;
-		goto fail_reset;
-	}
-	for (i = 0; i < size; i++) {
-		if (!aa_unpack_u32(e, &sets[i], NULL))
-			goto fail;
-	}
-	if (!aa_unpack_nameX(e, AA_ARRAYEND, NULL))
-		goto fail;
-
-	tags->sets.size = size;
-	tags->sets.table = sets;
-
-	return 0;
-
-fail:
-	kfree_sensitive(sets);
-fail_reset:
-	e->pos = pos;
-	return error;
-}
-
-static bool unpack_tag_header_ent(struct aa_ext *e, struct aa_tags_header *h)
-{
-	return aa_unpack_u32(e, &h->mask, NULL) &&
-		aa_unpack_u32(e, &h->count, NULL) &&
-		aa_unpack_u32(e, &h->size, NULL) &&
-		aa_unpack_u32(e, &h->tags, NULL);
-}
-
-static int unpack_tag_headers(struct aa_ext *e, struct aa_tags_struct *tags)
-{
-	struct aa_tags_header *hdrs;
-	u16 i, size;
-	int error = -EPROTO;
-	void *pos = e->pos;
-
-	if (!aa_unpack_array(e, "hdrs", &size))
-		goto fail_reset;
-	hdrs = kzalloc_objs(struct aa_tags_header, size);
-	if (!hdrs) {
-		error = -ENOMEM;
-		goto fail_reset;
-	}
-	for (i = 0; i < size; i++) {
-		if (!unpack_tag_header_ent(e, &hdrs[i]))
-			goto fail;
-	}
-	if (!aa_unpack_nameX(e, AA_ARRAYEND, NULL))
-		goto fail;
-
-	tags->hdrs.size = size;
-	tags->hdrs.table = hdrs;
-	AA_DEBUG(DEBUG_UNPACK, "headers %ld size %d", (long) hdrs, size);
-	return true;
-
-fail:
-	kfree_sensitive(hdrs);
-fail_reset:
-	e->pos = pos;
-	return error;
-}
-
-
-static int unpack_tags(struct aa_ext *e, struct aa_tags_struct *tags,
-	const char **info)
-{
-	int error = -EPROTO;
-	void *pos = e->pos;
-
-	AA_BUG(!tags);
-	/* policy tags are optional */
-	if (aa_unpack_nameX(e, AA_STRUCT, "tags")) {
-		u32 version;
-
-		if (!aa_unpack_u32(e, &version, "version") || version != 1) {
-			*info = "invalid tags version";
-			goto fail_reset;
-		}
-		error = unpack_strs_table(e, "strs", true, &tags->strs);
-		if (error) {
-			*info = "failed to unpack profile tag.strs";
-			goto fail;
-		}
-		error = unpack_tag_headers(e, tags);
-		if (error) {
-			*info = "failed to unpack profile tag.headers";
-			goto fail;
-		}
-		error = unpack_tagsets(e, tags);
-		if (error) {
-			*info = "failed to unpack profile tag.sets";
-			goto fail;
-		}
-		if (!aa_unpack_nameX(e, AA_STRUCTEND, NULL))
-			goto fail;
-
-		if (!verify_tags(tags, info))
-			goto fail;
-	}
-
-	return 0;
-
-fail:
-	aa_destroy_tags(tags);
-fail_reset:
-	e->pos = pos;
-	return error;
-}
-
 static bool unpack_perm(struct aa_ext *e, u32 version, struct aa_perms *perm)
 {
-	u32 reserved;
-
 	if (version != 1)
 		return false;
 
-	/* reserved entry is for later expansion, discard for now */
-	return	aa_unpack_u32(e, &reserved, NULL) &&
+	return	aa_unpack_u32(e, &perm->allow, NULL) &&
 		aa_unpack_u32(e, &perm->allow, NULL) &&
 		aa_unpack_u32(e, &perm->deny, NULL) &&
 		aa_unpack_u32(e, &perm->subtree, NULL) &&
@@ -937,7 +698,7 @@ static ssize_t unpack_perms_table(struct aa_ext *e, struct aa_perms **perms)
 			goto fail_reset;
 		if (!aa_unpack_array(e, NULL, &size))
 			goto fail_reset;
-		*perms = kzalloc_objs(struct aa_perms, size);
+		*perms = kcalloc(size, sizeof(struct aa_perms), GFP_KERNEL);
 		if (!*perms) {
 			e->pos = pos;
 			return -ENOMEM;
@@ -970,16 +731,10 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	void *pos = e->pos;
 	int i, flags, error = -EPROTO;
 	ssize_t size;
-	u32 version = 0;
 
 	pdb = aa_alloc_pdb(GFP_KERNEL);
 	if (!pdb)
 		return -ENOMEM;
-
-	AA_DEBUG(DEBUG_UNPACK, "unpacking tags");
-	if (unpack_tags(e, &pdb->tags, info) < 0)
-		goto fail;
-	AA_DEBUG(DEBUG_UNPACK, "done unpacking tags");
 
 	size = unpack_perms_table(e, &pdb->perms);
 	if (size < 0) {
@@ -993,9 +748,6 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 	if (pdb->perms) {
 		/* perms table present accept is index */
 		flags = TO_ACCEPT1_FLAG(YYTD_DATA32);
-		if (aa_unpack_u32(e, &version, "permsv") && version > 2)
-			/* accept2 used for dfa flags */
-			flags |= TO_ACCEPT2_FLAG(YYTD_DATA32);
 	} else {
 		/* packed perms in accept1 and accept2 */
 		flags = TO_ACCEPT1_FLAG(YYTD_DATA32) |
@@ -1043,42 +795,22 @@ static int unpack_pdb(struct aa_ext *e, struct aa_policydb **policy,
 		}
 	}
 
-	/* accept2 is in some cases being allocated, even with perms */
-	if (pdb->perms && !pdb->dfa->tables[YYTD_ID_ACCEPT2]) {
-		/* add dfa flags table missing in v2 */
-		u32 noents = pdb->dfa->tables[YYTD_ID_ACCEPT]->td_lolen;
-		u16 tdflags = pdb->dfa->tables[YYTD_ID_ACCEPT]->td_flags;
-		size_t tsize = table_size(noents, tdflags);
-
-		pdb->dfa->tables[YYTD_ID_ACCEPT2] = kvzalloc(tsize, GFP_KERNEL);
-		if (!pdb->dfa->tables[YYTD_ID_ACCEPT2]) {
-			*info = "failed to alloc dfa flags table";
-			goto out;
-		}
-		pdb->dfa->tables[YYTD_ID_ACCEPT2]->td_lolen = noents;
-		pdb->dfa->tables[YYTD_ID_ACCEPT2]->td_flags = tdflags;
-	}
 	/*
 	 * Unfortunately due to a bug in earlier userspaces, a
 	 * transition table may be present even when the dfa is
 	 * not. For compatibility reasons unpack and discard.
 	 */
-	error = unpack_strs_table(e, "xtable", false, &pdb->trans);
-	if (error && required_trans) {
+	if (!unpack_trans_table(e, &pdb->trans) && required_trans) {
 		*info = "failed to unpack profile transition table";
 		goto fail;
 	}
 
 	if (!pdb->dfa && pdb->trans.table)
-		aa_destroy_str_table(&pdb->trans);
+		aa_free_str_table(&pdb->trans);
 
-	/* TODO:
-	 * - move compat mapping here, requires dfa merging first
-	 * - move verify here, it has to be done after compat mappings
-	 * - move free of unneeded trans table here, has to be done
-	 *   after perm mapping.
-	 */
-out:
+	/* TODO: move compat mapping here, requires dfa merging first */
+	/* TODO: move verify here, it has to be done after compat mappings */
+
 	*policy = pdb;
 	return 0;
 
@@ -1155,7 +887,7 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		error = -ENOMEM;
 		goto fail;
 	}
-	rules = profile->label.rules[0];
+	rules = list_first_entry(&profile->rules, typeof(*rules), list);
 
 	/* profile renaming is optional */
 	(void) aa_unpack_str(e, &profile->rename, "rename");
@@ -1191,12 +923,6 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 	(void) aa_unpack_strdup(e, &disconnected, "disconnected");
 	profile->disconnected = disconnected;
 
-	/* optional */
-	(void) aa_unpack_u32(e, &profile->signal, "kill");
-	if (profile->signal < 1 || profile->signal > MAXMAPPED_SIG) {
-		info = "profile kill.signal invalid value";
-		goto fail;
-	}
 	/* per profile debug flags (complain, audit) */
 	if (!aa_unpack_nameX(e, AA_STRUCT, "flags")) {
 		info = "profile missing flags";
@@ -1327,7 +1053,6 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		goto fail;
 	} else if (rules->file->dfa) {
 		if (!rules->file->perms) {
-			AA_DEBUG(DEBUG_UNPACK, "compat mapping perms");
 			error = aa_compat_map_file(rules->file);
 			if (error) {
 				info = "failed to remap file permission table";
@@ -1345,7 +1070,7 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 	error = -EPROTO;
 	if (aa_unpack_nameX(e, AA_STRUCT, "data")) {
 		info = "out of memory";
-		profile->data = kzalloc_obj(*profile->data);
+		profile->data = kzalloc(sizeof(*profile->data), GFP_KERNEL);
 		if (!profile->data) {
 			error = -ENOMEM;
 			goto fail;
@@ -1363,7 +1088,7 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		}
 
 		while (aa_unpack_strdup(e, &key, NULL)) {
-			data = kzalloc_obj(*data);
+			data = kzalloc(sizeof(*data), GFP_KERNEL);
 			if (!data) {
 				kfree_sensitive(key);
 				error = -ENOMEM;
@@ -1400,8 +1125,6 @@ static struct aa_profile *unpack_profile(struct aa_ext *e, char **ns_name)
 		info = "failed to unpack end of profile";
 		goto fail;
 	}
-
-	aa_compute_profile_mediates(profile);
 
 	return profile;
 
@@ -1516,32 +1239,21 @@ static bool verify_perm(struct aa_perms *perm)
 static bool verify_perms(struct aa_policydb *pdb)
 {
 	int i;
-	int xidx, xmax = -1;
 
 	for (i = 0; i < pdb->size; i++) {
 		if (!verify_perm(&pdb->perms[i]))
 			return false;
 		/* verify indexes into str table */
-		if ((pdb->perms[i].xindex & AA_X_TYPE_MASK) == AA_X_TABLE) {
-			xidx = pdb->perms[i].xindex & AA_X_INDEX_MASK;
-			if (xidx >= pdb->trans.size)
-				return false;
-			if (xmax < xidx)
-				xmax = xidx;
-		}
-		if (pdb->perms[i].tag && pdb->perms[i].tag >= pdb->tags.sets.size)
+		if ((pdb->perms[i].xindex & AA_X_TYPE_MASK) == AA_X_TABLE &&
+		    (pdb->perms[i].xindex & AA_X_INDEX_MASK) >= pdb->trans.size)
+			return false;
+		if (pdb->perms[i].tag && pdb->perms[i].tag >= pdb->trans.size)
 			return false;
 		if (pdb->perms[i].label &&
 		    pdb->perms[i].label >= pdb->trans.size)
 			return false;
 	}
-	/* deal with incorrectly constructed string tables */
-	if (xmax == -1) {
-		aa_destroy_str_table(&pdb->trans);
-	} else if (pdb->trans.size > xmax + 1) {
-		if (!aa_resize_str_table(&pdb->trans, xmax + 1, GFP_KERNEL))
-			return false;
-	}
+
 	return true;
 }
 
@@ -1555,8 +1267,8 @@ static bool verify_perms(struct aa_policydb *pdb)
  */
 static int verify_profile(struct aa_profile *profile)
 {
-	struct aa_ruleset *rules = profile->label.rules[0];
-
+	struct aa_ruleset *rules = list_first_entry(&profile->rules,
+						    typeof(*rules), list);
 	if (!rules)
 		return 0;
 
@@ -1607,7 +1319,7 @@ void aa_load_ent_free(struct aa_load_ent *ent)
 
 struct aa_load_ent *aa_load_ent_alloc(void)
 {
-	struct aa_load_ent *ent = kzalloc_obj(*ent);
+	struct aa_load_ent *ent = kzalloc(sizeof(*ent), GFP_KERNEL);
 	if (ent)
 		INIT_LIST_HEAD(&ent->list);
 	return ent;

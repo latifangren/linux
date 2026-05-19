@@ -15,7 +15,6 @@
 #include <linux/irqchip/chained_irq.h>
 #include <linux/irqdomain.h>
 #include <linux/mfd/syscon.h>
-#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
@@ -28,7 +27,6 @@
 #define cdns_pcie_to_rc(p) container_of(p, struct cdns_pcie_rc, pcie)
 
 #define ENABLE_REG_SYS_2	0x108
-#define ENABLE_CLR_REG_SYS_2	0x308
 #define STATUS_REG_SYS_2	0x508
 #define STATUS_CLR_REG_SYS_2	0x708
 #define LINK_DOWN		BIT(1)
@@ -118,15 +116,6 @@ static irqreturn_t j721e_pcie_link_irq_handler(int irq, void *priv)
 	return IRQ_HANDLED;
 }
 
-static void j721e_pcie_disable_link_irq(struct j721e_pcie *pcie)
-{
-	u32 reg;
-
-	reg = j721e_pcie_intd_readl(pcie, ENABLE_CLR_REG_SYS_2);
-	reg |= pcie->linkdown_irq_regfield;
-	j721e_pcie_intd_writel(pcie, ENABLE_CLR_REG_SYS_2, reg);
-}
-
 static void j721e_pcie_config_link_irq(struct j721e_pcie *pcie)
 {
 	u32 reg;
@@ -164,7 +153,11 @@ static bool j721e_pcie_link_up(struct cdns_pcie *cdns_pcie)
 	u32 reg;
 
 	reg = j721e_pcie_user_readl(pcie, J721E_PCIE_USER_LINKSTATUS);
-	return (reg & LINK_STATUS) == LINK_UP_DL_COMPLETED;
+	reg &= LINK_STATUS;
+	if (reg == LINK_UP_DL_COMPLETED)
+		return true;
+
+	return false;
 }
 
 static const struct cdns_pcie_ops j721e_pcie_ops = {
@@ -202,8 +195,7 @@ static int j721e_pcie_set_link_speed(struct j721e_pcie *pcie,
 	int ret;
 
 	link_speed = of_pci_get_max_link_speed(np);
-	if ((link_speed < 2) ||
-	    (pcie_get_link_speed(link_speed) == PCI_SPEED_UNKNOWN))
+	if (link_speed < 2)
 		link_speed = 2;
 
 	val = link_speed - 1;
@@ -420,13 +412,6 @@ static const struct j721e_pcie_data j784s4_pcie_ep_data = {
 	.max_lanes = 4,
 };
 
-static const struct j721e_pcie_data j722s_pcie_rc_data = {
-	.mode = PCI_MODE_RC,
-	.linkdown_irq_regfield = J7200_LINK_DOWN,
-	.byte_access_allowed = true,
-	.max_lanes = 1,
-};
-
 static const struct of_device_id of_j721e_pcie_match[] = {
 	{
 		.compatible = "ti,j721e-pcie-host",
@@ -460,13 +445,8 @@ static const struct of_device_id of_j721e_pcie_match[] = {
 		.compatible = "ti,j784s4-pcie-ep",
 		.data = &j784s4_pcie_ep_data,
 	},
-	{
-		.compatible = "ti,j722s-pcie-host",
-		.data = &j722s_pcie_rc_data,
-	},
 	{},
 };
-MODULE_DEVICE_TABLE(of, of_j721e_pcie_match);
 
 static int j721e_pcie_probe(struct platform_device *pdev)
 {
@@ -478,7 +458,9 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 	struct j721e_pcie *pcie;
 	struct cdns_pcie_rc *rc = NULL;
 	struct cdns_pcie_ep *ep = NULL;
+	struct gpio_desc *gpiod;
 	void __iomem *base;
+	struct clk *clk;
 	u32 num_lanes;
 	u32 mode;
 	int ret;
@@ -496,7 +478,7 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 
 	switch (mode) {
 	case PCI_MODE_RC:
-		if (!IS_ENABLED(CONFIG_PCI_J721E_HOST))
+		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_HOST))
 			return -ENODEV;
 
 		bridge = devm_pci_alloc_host_bridge(dev, sizeof(*rc));
@@ -515,7 +497,7 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 		pcie->cdns_pcie = cdns_pcie;
 		break;
 	case PCI_MODE_EP:
-		if (!IS_ENABLED(CONFIG_PCI_J721E_EP))
+		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_EP))
 			return -ENODEV;
 
 		ep = devm_kzalloc(dev, sizeof(*ep), GFP_KERNEL);
@@ -589,12 +571,12 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 
 	switch (mode) {
 	case PCI_MODE_RC:
-		pcie->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
-		if (IS_ERR(pcie->reset_gpio)) {
-			ret = dev_err_probe(dev, PTR_ERR(pcie->reset_gpio),
-					    "Failed to get reset GPIO\n");
+		gpiod = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
+		if (IS_ERR(gpiod)) {
+			ret = dev_err_probe(dev, PTR_ERR(gpiod), "Failed to get reset GPIO\n");
 			goto err_get_sync;
 		}
+		pcie->reset_gpio = gpiod;
 
 		ret = cdns_pcie_init_phy(dev, cdns_pcie);
 		if (ret) {
@@ -602,12 +584,18 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 			goto err_get_sync;
 		}
 
-		pcie->refclk = devm_clk_get_optional_enabled(dev, "pcie_refclk");
-		if (IS_ERR(pcie->refclk)) {
-			ret = dev_err_probe(dev, PTR_ERR(pcie->refclk),
-					    "failed to enable pcie_refclk\n");
+		clk = devm_clk_get_optional(dev, "pcie_refclk");
+		if (IS_ERR(clk)) {
+			ret = dev_err_probe(dev, PTR_ERR(clk), "failed to get pcie_refclk\n");
 			goto err_pcie_setup;
 		}
+
+		ret = clk_prepare_enable(clk);
+		if (ret) {
+			dev_err_probe(dev, ret, "failed to enable pcie_refclk\n");
+			goto err_pcie_setup;
+		}
+		pcie->refclk = clk;
 
 		/*
 		 * Section 2.2 of the PCI Express Card Electromechanical
@@ -616,15 +604,15 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 		 * This shall ensure that the power and the reference clock
 		 * are stable.
 		 */
-		if (pcie->reset_gpio) {
+		if (gpiod) {
 			msleep(PCIE_T_PVPERL_MS);
-			gpiod_set_value_cansleep(pcie->reset_gpio, 1);
+			gpiod_set_value_cansleep(gpiod, 1);
 		}
 
-		if (IS_ENABLED(CONFIG_PCI_J721E_HOST)) {
-			ret = cdns_pcie_host_setup(rc);
-			if (ret < 0)
-				goto err_pcie_setup;
+		ret = cdns_pcie_host_setup(rc);
+		if (ret < 0) {
+			clk_disable_unprepare(pcie->refclk);
+			goto err_pcie_setup;
 		}
 
 		break;
@@ -635,11 +623,9 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 			goto err_get_sync;
 		}
 
-		if (IS_ENABLED(CONFIG_PCI_J721E_EP)) {
-			ret = cdns_pcie_ep_setup(ep);
-			if (ret < 0)
-				goto err_pcie_setup;
-		}
+		ret = cdns_pcie_ep_setup(ep);
+		if (ret < 0)
+			goto err_pcie_setup;
 
 		break;
 	}
@@ -661,22 +647,9 @@ static void j721e_pcie_remove(struct platform_device *pdev)
 	struct j721e_pcie *pcie = platform_get_drvdata(pdev);
 	struct cdns_pcie *cdns_pcie = pcie->cdns_pcie;
 	struct device *dev = &pdev->dev;
-	struct cdns_pcie_ep *ep;
-	struct cdns_pcie_rc *rc;
 
-	if (IS_ENABLED(CONFIG_PCI_J721E_HOST) &&
-	    pcie->mode == PCI_MODE_RC) {
-		rc = container_of(cdns_pcie, struct cdns_pcie_rc, pcie);
-		cdns_pcie_host_disable(rc);
-	} else if (IS_ENABLED(CONFIG_PCI_J721E_EP)) {
-		ep = container_of(cdns_pcie, struct cdns_pcie_ep, pcie);
-		cdns_pcie_ep_disable(ep);
-	}
-
-	gpiod_set_value_cansleep(pcie->reset_gpio, 0);
-
+	clk_disable_unprepare(pcie->refclk);
 	cdns_pcie_disable_phy(cdns_pcie);
-	j721e_pcie_disable_link_irq(pcie);
 	pm_runtime_put(dev);
 	pm_runtime_disable(dev);
 }
@@ -734,12 +707,10 @@ static int j721e_pcie_resume_noirq(struct device *dev)
 			gpiod_set_value_cansleep(pcie->reset_gpio, 1);
 		}
 
-		if (IS_ENABLED(CONFIG_PCI_J721E_HOST)) {
-			ret = cdns_pcie_host_link_setup(rc);
-			if (ret < 0) {
-				clk_disable_unprepare(pcie->refclk);
-				return ret;
-			}
+		ret = cdns_pcie_host_link_setup(rc);
+		if (ret < 0) {
+			clk_disable_unprepare(pcie->refclk);
+			return ret;
 		}
 
 		/*
@@ -749,12 +720,10 @@ static int j721e_pcie_resume_noirq(struct device *dev)
 		for (enum cdns_pcie_rp_bar bar = RP_BAR0; bar <= RP_NO_BAR; bar++)
 			rc->avail_ib_bar[bar] = true;
 
-		if (IS_ENABLED(CONFIG_PCI_J721E_HOST)) {
-			ret = cdns_pcie_host_init(rc);
-			if (ret) {
-				clk_disable_unprepare(pcie->refclk);
-				return ret;
-			}
+		ret = cdns_pcie_host_init(rc);
+		if (ret) {
+			clk_disable_unprepare(pcie->refclk);
+			return ret;
 		}
 	}
 
@@ -775,8 +744,4 @@ static struct platform_driver j721e_pcie_driver = {
 		.pm	= pm_sleep_ptr(&j721e_pcie_pm_ops),
 	},
 };
-module_platform_driver(j721e_pcie_driver);
-
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("PCIe controller driver for TI's J721E and related SoCs");
-MODULE_AUTHOR("Kishon Vijay Abraham I <kishon@ti.com>");
+builtin_platform_driver(j721e_pcie_driver);

@@ -6,7 +6,7 @@
 config NET_VENDOR_REALTEK
 	bool "Realtek devices"
 	default y
-	depends on PCI
+	depends on PCI || (PARPORT && X86)
 	help
 	  If you have a network (Ethernet) card belonging to this class, say Y.
 
@@ -16,6 +16,20 @@ config NET_VENDOR_REALTEK
 	  your specific card in the following questions.
 
 if NET_VENDOR_REALTEK
+
+config ATP
+	tristate "AT-LAN-TEC/RealTek pocket adapter support"
+	depends on PARPORT && X86
+	select CRC32
+	help
+	  This is a network (Ethernet) device which attaches to your parallel
+	  port. Read the file <file:drivers/net/ethernet/realtek/atp.c>
+	  if you want to use this.  If you intend to use this driver, you
+	  should have said N to the "Parallel printer support", because the two
+	  drivers don't like each other.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called atp.
 
 config 8139CP
 	tristate "RealTek RTL-8139 C+ PCI Fast Ethernet Adapter support"
@@ -81,6 +95,12 @@ config 8139_OLD_RX_RESET
 	  experience problems, you can enable this option to restore the
 	  old RX-reset behavior.  If unsure, say N.
 
+source "drivers/net/ethernet/realtek/r8125_vendor/Kconfig"
+
+source "drivers/net/ethernet/realtek/r8126_vendor/Kconfig"
+
+source "drivers/net/ethernet/realtek/r8168_vendor/Kconfig"
+
 config R8169
 	tristate "Realtek 8169/8168/8101/8125 ethernet support"
 	depends on PCI
@@ -100,8 +120,7 @@ config R8169
 	  will be called r8169.  This is recommended.
 
 config R8169_LEDS
-	bool "Support for controlling the NIC LEDs"
-	depends on R8169 && LEDS_TRIGGER_NETDEV
+	def_bool R8169 && LEDS_TRIGGER_NETDEV
 	depends on !(R8169=y && LEDS_CLASS=m)
 	help
 	  Optional support for controlling the NIC LED's with the netdev

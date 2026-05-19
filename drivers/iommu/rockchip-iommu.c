@@ -25,7 +25,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <linux/string_choices.h>
 
 #include "iommu-pages.h"
 
@@ -612,7 +611,7 @@ static irqreturn_t rk_iommu_irq(int irq, void *dev_id)
 
 			dev_err(iommu->dev, "Page fault at %pad of type %s\n",
 				&iova,
-				str_write_read(flags == IOMMU_FAULT_WRITE));
+				(flags == IOMMU_FAULT_WRITE) ? "write" : "read");
 
 			log_iova(iommu, i, iova);
 
@@ -730,15 +729,14 @@ static u32 *rk_dte_get_page_table(struct rk_iommu_domain *rk_domain,
 	if (rk_dte_is_pt_valid(dte))
 		goto done;
 
-	page_table = iommu_alloc_pages_sz(GFP_ATOMIC | rk_ops->gfp_flags,
-					  SPAGE_SIZE);
+	page_table = iommu_alloc_page(GFP_ATOMIC | rk_ops->gfp_flags);
 	if (!page_table)
 		return ERR_PTR(-ENOMEM);
 
 	pt_dma = dma_map_single(rk_domain->dma_dev, page_table, SPAGE_SIZE, DMA_TO_DEVICE);
 	if (dma_mapping_error(rk_domain->dma_dev, pt_dma)) {
 		dev_err(rk_domain->dma_dev, "DMA mapping error while allocating page table\n");
-		iommu_free_pages(page_table);
+		iommu_free_page(page_table);
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -960,8 +958,7 @@ out_disable_clocks:
 }
 
 static int rk_iommu_identity_attach(struct iommu_domain *identity_domain,
-				    struct device *dev,
-				    struct iommu_domain *old)
+				    struct device *dev)
 {
 	struct rk_iommu *iommu;
 	struct rk_iommu_domain *rk_domain;
@@ -1006,7 +1003,7 @@ static struct iommu_domain rk_identity_domain = {
 };
 
 static int rk_iommu_attach_device(struct iommu_domain *domain,
-				  struct device *dev, struct iommu_domain *old)
+		struct device *dev)
 {
 	struct rk_iommu *iommu;
 	struct rk_iommu_domain *rk_domain = to_rk_domain(domain);
@@ -1027,7 +1024,7 @@ static int rk_iommu_attach_device(struct iommu_domain *domain,
 	if (iommu->domain == domain)
 		return 0;
 
-	ret = rk_iommu_identity_attach(&rk_identity_domain, dev, old);
+	ret = rk_iommu_identity_attach(&rk_identity_domain, dev);
 	if (ret)
 		return ret;
 
@@ -1042,17 +1039,8 @@ static int rk_iommu_attach_device(struct iommu_domain *domain,
 		return 0;
 
 	ret = rk_iommu_enable(iommu);
-	if (ret) {
-		/*
-		 * Note rk_iommu_identity_attach() might fail before physically
-		 * attaching the dev to iommu->domain, in which case the actual
-		 * old domain for this revert should be rk_identity_domain v.s.
-		 * iommu->domain. Since rk_iommu_identity_attach() does not care
-		 * about the old domain argument for now, this is not a problem.
-		 */
-		WARN_ON(rk_iommu_identity_attach(&rk_identity_domain, dev,
-						 iommu->domain));
-	}
+	if (ret)
+		WARN_ON(rk_iommu_identity_attach(&rk_identity_domain, dev));
 
 	pm_runtime_put(iommu->dev);
 
@@ -1064,7 +1052,7 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	struct rk_iommu_domain *rk_domain;
 	struct rk_iommu *iommu;
 
-	rk_domain = kzalloc_obj(*rk_domain);
+	rk_domain = kzalloc(sizeof(*rk_domain), GFP_KERNEL);
 	if (!rk_domain)
 		return NULL;
 
@@ -1073,8 +1061,7 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	 * Each level1 (dt) and level2 (pt) table has 1024 4-byte entries.
 	 * Allocate one 4 KiB page for each table.
 	 */
-	rk_domain->dt = iommu_alloc_pages_sz(GFP_KERNEL | rk_ops->gfp_flags,
-					     SPAGE_SIZE);
+	rk_domain->dt = iommu_alloc_page(GFP_KERNEL | rk_ops->gfp_flags);
 	if (!rk_domain->dt)
 		goto err_free_domain;
 
@@ -1091,8 +1078,6 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	spin_lock_init(&rk_domain->dt_lock);
 	INIT_LIST_HEAD(&rk_domain->iommus);
 
-	rk_domain->domain.pgsize_bitmap = RK_IOMMU_PGSIZE_BITMAP;
-
 	rk_domain->domain.geometry.aperture_start = 0;
 	rk_domain->domain.geometry.aperture_end   = DMA_BIT_MASK(32);
 	rk_domain->domain.geometry.force_aperture = true;
@@ -1100,7 +1085,7 @@ static struct iommu_domain *rk_iommu_domain_alloc_paging(struct device *dev)
 	return &rk_domain->domain;
 
 err_free_dt:
-	iommu_free_pages(rk_domain->dt);
+	iommu_free_page(rk_domain->dt);
 err_free_domain:
 	kfree(rk_domain);
 
@@ -1121,13 +1106,13 @@ static void rk_iommu_domain_free(struct iommu_domain *domain)
 			u32 *page_table = phys_to_virt(pt_phys);
 			dma_unmap_single(rk_domain->dma_dev, pt_phys,
 					 SPAGE_SIZE, DMA_TO_DEVICE);
-			iommu_free_pages(page_table);
+			iommu_free_page(page_table);
 		}
 	}
 
 	dma_unmap_single(rk_domain->dma_dev, rk_domain->dt_dma,
 			 SPAGE_SIZE, DMA_TO_DEVICE);
-	iommu_free_pages(rk_domain->dt);
+	iommu_free_page(rk_domain->dt);
 
 	kfree(rk_domain);
 }
@@ -1182,6 +1167,7 @@ static const struct iommu_ops rk_iommu_ops = {
 	.probe_device = rk_iommu_probe_device,
 	.release_device = rk_iommu_release_device,
 	.device_group = generic_single_device_group,
+	.pgsize_bitmap = RK_IOMMU_PGSIZE_BITMAP,
 	.of_xlate = rk_iommu_of_xlate,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= rk_iommu_attach_device,

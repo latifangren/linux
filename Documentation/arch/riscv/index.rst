@@ -14,7 +14,12 @@ RISC-V architecture
     uabi
     vector
     cmodx
-    zicfilp
-    zicfiss
 
     features
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

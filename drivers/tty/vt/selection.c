@@ -127,8 +127,9 @@ int sel_loadlut(u32 __user *lut)
 	if (copy_from_user(tmplut, lut, sizeof(inwordLut)))
 		return -EFAULT;
 
-	guard(console_lock)();
+	console_lock();
 	memcpy(inwordLut, tmplut, sizeof(inwordLut));
+	console_unlock();
 
 	return 0;
 }
@@ -348,11 +349,10 @@ static int vc_selection(struct vc_data *vc, struct tiocl_selection *v,
 		return 0;
 	}
 
-	/* Historically 0 => max value */
-	v->xs = umin(v->xs - 1, vc->vc_cols - 1);
-	v->ys = umin(v->ys - 1, vc->vc_rows - 1);
-	v->xe = umin(v->xe - 1, vc->vc_cols - 1);
-	v->ye = umin(v->ye - 1, vc->vc_rows - 1);
+	v->xs = min_t(u16, v->xs - 1, vc->vc_cols - 1);
+	v->ys = min_t(u16, v->ys - 1, vc->vc_rows - 1);
+	v->xe = min_t(u16, v->xe - 1, vc->vc_cols - 1);
+	v->ye = min_t(u16, v->ye - 1, vc->vc_rows - 1);
 
 	if (mouse_reporting() && (v->sel_mode & TIOCL_SELMOUSEREPORT)) {
 		mouse_report(tty, v->sel_mode & TIOCL_SELBUTTONMASK, v->xs,
@@ -375,9 +375,15 @@ static int vc_selection(struct vc_data *vc, struct tiocl_selection *v,
 
 int set_selection_kernel(struct tiocl_selection *v, struct tty_struct *tty)
 {
-	guard(mutex)(&vc_sel.lock);
-	guard(console_lock)();
-	return vc_selection(vc_cons[fg_console].d, v, tty);
+	int ret;
+
+	mutex_lock(&vc_sel.lock);
+	console_lock();
+	ret = vc_selection(vc_cons[fg_console].d, v, tty);
+	console_unlock();
+	mutex_unlock(&vc_sel.lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(set_selection_kernel);
 
@@ -397,14 +403,9 @@ int paste_selection(struct tty_struct *tty)
 	DECLARE_WAITQUEUE(wait, current);
 	int ret = 0;
 
-	bool bp = vc->vc_bracketed_paste;
-	static const char bracketed_paste_start[] = "\033[200~";
-	static const char bracketed_paste_end[]   = "\033[201~";
-	const char *bps = bp ? bracketed_paste_start : NULL;
-	const char *bpe = bp ? bracketed_paste_end : NULL;
-
-	scoped_guard(console_lock)
-		poke_blanked_console();
+	console_lock();
+	poke_blanked_console();
+	console_unlock();
 
 	ld = tty_ldisc_ref_wait(tty);
 	if (!ld)
@@ -413,7 +414,7 @@ int paste_selection(struct tty_struct *tty)
 
 	add_wait_queue(&vc->paste_wait, &wait);
 	mutex_lock(&vc_sel.lock);
-	while (vc_sel.buffer && (vc_sel.buf_len > pasted || bpe)) {
+	while (vc_sel.buffer && vc_sel.buf_len > pasted) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (signal_pending(current)) {
 			ret = -EINTR;
@@ -426,27 +427,10 @@ int paste_selection(struct tty_struct *tty)
 			continue;
 		}
 		__set_current_state(TASK_RUNNING);
-
-		if (bps) {
-			bps += tty_ldisc_receive_buf(ld, bps, NULL, strlen(bps));
-			if (*bps != '\0')
-				continue;
-			bps = NULL;
-		}
-
 		count = vc_sel.buf_len - pasted;
-		if (count) {
-			pasted += tty_ldisc_receive_buf(ld, vc_sel.buffer + pasted,
-							NULL, count);
-			if (vc_sel.buf_len > pasted)
-				continue;
-		}
-
-		if (bpe) {
-			bpe += tty_ldisc_receive_buf(ld, bpe, NULL, strlen(bpe));
-			if (*bpe == '\0')
-				bpe = NULL;
-		}
+		count = tty_ldisc_receive_buf(ld, vc_sel.buffer + pasted, NULL,
+					      count);
+		pasted += count;
 	}
 	mutex_unlock(&vc_sel.lock);
 	remove_wait_queue(&vc->paste_wait, &wait);

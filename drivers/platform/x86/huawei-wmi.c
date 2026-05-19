@@ -846,7 +846,7 @@ static struct platform_driver huawei_wmi_driver = {
 		.name = "huawei-wmi",
 	},
 	.probe = huawei_wmi_probe,
-	.remove = huawei_wmi_remove,
+	.remove_new = huawei_wmi_remove,
 };
 
 static __init int huawei_wmi_init(void)
@@ -854,7 +854,7 @@ static __init int huawei_wmi_init(void)
 	struct platform_device *pdev;
 	int err;
 
-	huawei_wmi = kzalloc_obj(struct huawei_wmi);
+	huawei_wmi = kzalloc(sizeof(struct huawei_wmi), GFP_KERNEL);
 	if (!huawei_wmi)
 		return -ENOMEM;
 

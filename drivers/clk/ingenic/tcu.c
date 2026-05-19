@@ -273,7 +273,7 @@ static int __init ingenic_tcu_register_clock(struct ingenic_tcu *tcu,
 	struct ingenic_tcu_clk *tcu_clk;
 	int err;
 
-	tcu_clk = kzalloc_obj(*tcu_clk);
+	tcu_clk = kzalloc(sizeof(*tcu_clk), GFP_KERNEL);
 	if (!tcu_clk)
 		return -ENOMEM;
 
@@ -344,7 +344,7 @@ static int __init ingenic_tcu_probe(struct device_node *np)
 	if (IS_ERR(map))
 		return PTR_ERR(map);
 
-	tcu = kzalloc_obj(*tcu);
+	tcu = kzalloc(sizeof(*tcu), GFP_KERNEL);
 	if (!tcu)
 		return -ENOMEM;
 
@@ -379,7 +379,8 @@ static int __init ingenic_tcu_probe(struct device_node *np)
 		}
 	}
 
-	tcu->clocks = kzalloc_flex(*tcu->clocks, hws, TCU_CLK_COUNT);
+	tcu->clocks = kzalloc(struct_size(tcu->clocks, hws, TCU_CLK_COUNT),
+			      GFP_KERNEL);
 	if (!tcu->clocks) {
 		ret = -ENOMEM;
 		goto err_clk_disable;
@@ -454,7 +455,7 @@ err_free_tcu:
 	return ret;
 }
 
-static int __maybe_unused tcu_pm_suspend(void *data)
+static int __maybe_unused tcu_pm_suspend(void)
 {
 	struct ingenic_tcu *tcu = ingenic_tcu;
 
@@ -464,7 +465,7 @@ static int __maybe_unused tcu_pm_suspend(void *data)
 	return 0;
 }
 
-static void __maybe_unused tcu_pm_resume(void *data)
+static void __maybe_unused tcu_pm_resume(void)
 {
 	struct ingenic_tcu *tcu = ingenic_tcu;
 
@@ -472,13 +473,9 @@ static void __maybe_unused tcu_pm_resume(void *data)
 		clk_enable(tcu->clk);
 }
 
-static const struct syscore_ops __maybe_unused tcu_pm_ops = {
+static struct syscore_ops __maybe_unused tcu_pm_ops = {
 	.suspend = tcu_pm_suspend,
 	.resume = tcu_pm_resume,
-};
-
-static struct syscore __maybe_unused tcu_pm = {
-	.ops = &tcu_pm_ops,
 };
 
 static void __init ingenic_tcu_init(struct device_node *np)
@@ -489,7 +486,7 @@ static void __init ingenic_tcu_init(struct device_node *np)
 		pr_crit("Failed to initialize TCU clocks: %d\n", ret);
 
 	if (IS_ENABLED(CONFIG_PM_SLEEP))
-		register_syscore(&tcu_pm);
+		register_syscore_ops(&tcu_pm_ops);
 }
 
 CLK_OF_DECLARE_DRIVER(jz4740_cgu, "ingenic,jz4740-tcu", ingenic_tcu_init);

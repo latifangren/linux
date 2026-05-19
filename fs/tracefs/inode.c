@@ -94,13 +94,32 @@ static struct tracefs_dir_ops {
 	int (*rmdir)(const char *name);
 } tracefs_ops __ro_after_init;
 
-static struct dentry *tracefs_syscall_mkdir(struct mnt_idmap *idmap,
-					    struct inode *inode, struct dentry *dentry,
-					    umode_t mode)
+static char *get_dname(struct dentry *dentry)
+{
+	const char *dname;
+	char *name;
+	int len = dentry->d_name.len;
+
+	dname = dentry->d_name.name;
+	name = kmalloc(len + 1, GFP_KERNEL);
+	if (!name)
+		return NULL;
+	memcpy(name, dname, len);
+	name[len] = 0;
+	return name;
+}
+
+static int tracefs_syscall_mkdir(struct mnt_idmap *idmap,
+				 struct inode *inode, struct dentry *dentry,
+				 umode_t mode)
 {
 	struct tracefs_inode *ti;
-	struct name_snapshot name;
+	char *name;
 	int ret;
+
+	name = get_dname(dentry);
+	if (!name)
+		return -ENOMEM;
 
 	/*
 	 * This is a new directory that does not take the default of
@@ -116,19 +135,23 @@ static struct dentry *tracefs_syscall_mkdir(struct mnt_idmap *idmap,
 	 * the files within the tracefs system. It is up to the individual
 	 * mkdir routine to handle races.
 	 */
-	take_dentry_name_snapshot(&name, dentry);
 	inode_unlock(inode);
-	ret = tracefs_ops.mkdir(name.name.name);
+	ret = tracefs_ops.mkdir(name);
 	inode_lock(inode);
-	release_dentry_name_snapshot(&name);
 
-	return ERR_PTR(ret);
+	kfree(name);
+
+	return ret;
 }
 
 static int tracefs_syscall_rmdir(struct inode *inode, struct dentry *dentry)
 {
-	struct name_snapshot name;
+	char *name;
 	int ret;
+
+	name = get_dname(dentry);
+	if (!name)
+		return -ENOMEM;
 
 	/*
 	 * The rmdir call can call the generic functions that create
@@ -137,15 +160,15 @@ static int tracefs_syscall_rmdir(struct inode *inode, struct dentry *dentry)
 	 * This time we need to unlock not only the parent (inode) but
 	 * also the directory that is being deleted.
 	 */
-	take_dentry_name_snapshot(&name, dentry);
 	inode_unlock(inode);
 	inode_unlock(d_inode(dentry));
 
-	ret = tracefs_ops.rmdir(name.name.name);
+	ret = tracefs_ops.rmdir(name);
 
 	inode_lock_nested(inode, I_MUTEX_PARENT);
 	inode_lock(d_inode(dentry));
-	release_dentry_name_snapshot(&name);
+
+	kfree(name);
 
 	return ret;
 }
@@ -434,8 +457,7 @@ static void tracefs_d_release(struct dentry *dentry)
 		eventfs_d_release(dentry);
 }
 
-static int tracefs_d_revalidate(struct inode *inode, const struct qstr *name,
-				struct dentry *dentry, unsigned int flags)
+static int tracefs_d_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct eventfs_inode *ei = dentry->d_fsdata;
 
@@ -468,8 +490,7 @@ static int tracefs_fill_super(struct super_block *sb, struct fs_context *fc)
 		return err;
 
 	sb->s_op = &tracefs_super_operations;
-	tracefs_apply_options(sb, false);
-	set_default_d_op(sb, &tracefs_dentry_operations);
+	sb->s_d_op = &tracefs_dentry_operations;
 
 	return 0;
 }
@@ -500,7 +521,7 @@ static int tracefs_init_fs_context(struct fs_context *fc)
 {
 	struct tracefs_fs_info *fsi;
 
-	fsi = kzalloc_obj(struct tracefs_fs_info);
+	fsi = kzalloc(sizeof(struct tracefs_fs_info), GFP_KERNEL);
 	if (!fsi)
 		return -ENOMEM;
 
@@ -516,7 +537,7 @@ static struct file_system_type trace_fs_type = {
 	.name =		"tracefs",
 	.init_fs_context = tracefs_init_fs_context,
 	.parameters	= tracefs_param_specs,
-	.kill_sb =	kill_anon_super,
+	.kill_sb =	kill_litter_super,
 };
 MODULE_ALIAS_FS("tracefs");
 
@@ -540,24 +561,36 @@ struct dentry *tracefs_start_creating(const char *name, struct dentry *parent)
 	if (!parent)
 		parent = tracefs_mount->mnt_root;
 
-	dentry = simple_start_creating(parent, name);
-	if (IS_ERR(dentry))
+	inode_lock(d_inode(parent));
+	if (unlikely(IS_DEADDIR(d_inode(parent))))
+		dentry = ERR_PTR(-ENOENT);
+	else
+		dentry = lookup_one_len(name, parent, strlen(name));
+	if (!IS_ERR(dentry) && d_inode(dentry)) {
+		dput(dentry);
+		dentry = ERR_PTR(-EEXIST);
+	}
+
+	if (IS_ERR(dentry)) {
+		inode_unlock(d_inode(parent));
 		simple_release_fs(&tracefs_mount, &tracefs_mount_count);
+	}
 
 	return dentry;
 }
 
 struct dentry *tracefs_failed_creating(struct dentry *dentry)
 {
-	simple_done_creating(dentry);
+	inode_unlock(d_inode(dentry->d_parent));
+	dput(dentry);
 	simple_release_fs(&tracefs_mount, &tracefs_mount_count);
 	return NULL;
 }
 
 struct dentry *tracefs_end_creating(struct dentry *dentry)
 {
-	simple_done_creating(dentry);
-	return dentry;	// borrowed
+	inode_unlock(d_inode(dentry->d_parent));
+	return dentry;
 }
 
 /* Find the inode that this will use for default */
@@ -638,11 +671,10 @@ struct dentry *tracefs_create_file(const char *name, umode_t mode,
 	inode->i_private = data;
 	inode->i_uid = d_inode(dentry->d_parent)->i_uid;
 	inode->i_gid = d_inode(dentry->d_parent)->i_gid;
-	d_make_persistent(dentry, inode);
+	d_instantiate(dentry, inode);
 	fsnotify_create(d_inode(dentry->d_parent), dentry);
 	return tracefs_end_creating(dentry);
 }
-EXPORT_SYMBOL_GPL(tracefs_create_file);
 
 static struct dentry *__create_dir(const char *name, struct dentry *parent,
 				   const struct inode_operations *ops)
@@ -670,7 +702,7 @@ static struct dentry *__create_dir(const char *name, struct dentry *parent,
 
 	/* directory inodes start off with i_nlink == 2 (for "." entry) */
 	inc_nlink(inode);
-	d_make_persistent(dentry, inode);
+	d_instantiate(dentry, inode);
 	inc_nlink(d_inode(dentry->d_parent));
 	fsnotify_mkdir(d_inode(dentry->d_parent), dentry);
 	return tracefs_end_creating(dentry);

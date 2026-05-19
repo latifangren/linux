@@ -74,7 +74,7 @@ static int mpc52xx_fec_mdio_probe(struct platform_device *of)
 	bus = mdiobus_alloc();
 	if (bus == NULL)
 		return -ENOMEM;
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (priv == NULL) {
 		err = -ENOMEM;
 		goto out_free;

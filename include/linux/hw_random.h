@@ -46,7 +46,7 @@ struct hwrng {
 	unsigned long priv;
 	unsigned short quality;
 
-	/* private: internal. */
+	/* internal. */
 	struct list_head list;
 	struct kref ref;
 	struct work_struct cleanup_work;

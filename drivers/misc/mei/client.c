@@ -262,10 +262,32 @@ void mei_me_cl_rm_by_uuid(struct mei_device *dev, const uuid_le *uuid)
 {
 	struct mei_me_client *me_cl;
 
-	dev_dbg(&dev->dev, "remove %pUl\n", uuid);
+	dev_dbg(dev->dev, "remove %pUl\n", uuid);
 
 	down_write(&dev->me_clients_rwsem);
 	me_cl = __mei_me_cl_by_uuid(dev, uuid);
+	__mei_me_cl_del(dev, me_cl);
+	mei_me_cl_put(me_cl);
+	up_write(&dev->me_clients_rwsem);
+}
+
+/**
+ * mei_me_cl_rm_by_uuid_id - remove all me clients matching client id
+ *
+ * @dev: the device structure
+ * @uuid: me client uuid
+ * @id: me client id
+ *
+ * Locking: called under "dev->device_lock" lock
+ */
+void mei_me_cl_rm_by_uuid_id(struct mei_device *dev, const uuid_le *uuid, u8 id)
+{
+	struct mei_me_client *me_cl;
+
+	dev_dbg(dev->dev, "remove %pUl %d\n", uuid, id);
+
+	down_write(&dev->me_clients_rwsem);
+	me_cl = __mei_me_cl_by_uuid_id(dev, uuid, id);
 	__mei_me_cl_del(dev, me_cl);
 	mei_me_cl_put(me_cl);
 	up_write(&dev->me_clients_rwsem);
@@ -370,7 +392,7 @@ static struct mei_cl_cb *mei_io_cb_init(struct mei_cl *cl,
 {
 	struct mei_cl_cb *cb;
 
-	cb = kzalloc_obj(*cb);
+	cb = kzalloc(sizeof(*cb), GFP_KERNEL);
 	if (!cb)
 		return NULL;
 
@@ -605,7 +627,7 @@ struct mei_cl *mei_cl_allocate(struct mei_device *dev)
 {
 	struct mei_cl *cl;
 
-	cl = kmalloc_obj(*cl);
+	cl = kmalloc(sizeof(*cl), GFP_KERNEL);
 	if (!cl)
 		return NULL;
 
@@ -635,12 +657,12 @@ int mei_cl_link(struct mei_cl *cl)
 
 	id = find_first_zero_bit(dev->host_clients_map, MEI_CLIENTS_MAX);
 	if (id >= MEI_CLIENTS_MAX) {
-		dev_err(&dev->dev, "id exceeded %d", MEI_CLIENTS_MAX);
+		dev_err(dev->dev, "id exceeded %d", MEI_CLIENTS_MAX);
 		return -EMFILE;
 	}
 
 	if (dev->open_handle_count >= MEI_MAX_OPEN_HANDLE_COUNT) {
-		dev_err(&dev->dev, "open_handle_count exceeded %d",
+		dev_err(dev->dev, "open_handle_count exceeded %d",
 			MEI_MAX_OPEN_HANDLE_COUNT);
 		return -EMFILE;
 	}
@@ -709,8 +731,9 @@ void mei_host_client_init(struct mei_device *dev)
 
 	schedule_work(&dev->bus_rescan_work);
 
-	dev_dbg(&dev->dev, "rpm: autosuspend\n");
-	pm_request_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	dev_dbg(dev->dev, "rpm: autosuspend\n");
+	pm_request_autosuspend(dev->dev);
 }
 
 /**
@@ -723,12 +746,12 @@ bool mei_hbuf_acquire(struct mei_device *dev)
 {
 	if (mei_pg_state(dev) == MEI_PG_ON ||
 	    mei_pg_in_transition(dev)) {
-		dev_dbg(&dev->dev, "device is in pg\n");
+		dev_dbg(dev->dev, "device is in pg\n");
 		return false;
 	}
 
 	if (!dev->hbuf_is_ready) {
-		dev_dbg(&dev->dev, "hbuf is not ready\n");
+		dev_dbg(dev->dev, "hbuf is not ready\n");
 		return false;
 	}
 
@@ -980,9 +1003,9 @@ int mei_cl_disconnect(struct mei_cl *cl)
 		return 0;
 	}
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		return rets;
 	}
@@ -990,7 +1013,8 @@ int mei_cl_disconnect(struct mei_cl *cl)
 	rets = __mei_cl_disconnect(cl);
 
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 
 	return rets;
 }
@@ -1116,9 +1140,9 @@ int mei_cl_connect(struct mei_cl *cl, struct mei_me_client *me_cl,
 		goto nortpm;
 	}
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		goto nortpm;
 	}
@@ -1165,7 +1189,8 @@ int mei_cl_connect(struct mei_cl *cl, struct mei_me_client *me_cl,
 	rets = cl->status;
 out:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 
 	mei_io_cb_free(cb);
 
@@ -1273,7 +1298,7 @@ struct mei_cl_vtag *mei_cl_vtag_alloc(struct file *fp, u8 vtag)
 {
 	struct mei_cl_vtag *cl_vtag;
 
-	cl_vtag = kzalloc_obj(*cl_vtag);
+	cl_vtag = kzalloc(sizeof(*cl_vtag), GFP_KERNEL);
 	if (!cl_vtag)
 		return ERR_PTR(-ENOMEM);
 
@@ -1514,9 +1539,9 @@ int mei_cl_notify_request(struct mei_cl *cl,
 	if (!mei_cl_is_connected(cl))
 		return -ENODEV;
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		return rets;
 	}
@@ -1551,7 +1576,8 @@ int mei_cl_notify_request(struct mei_cl *cl,
 
 out:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 
 	mei_io_cb_free(cb);
 	return rets;
@@ -1679,9 +1705,9 @@ int mei_cl_read_start(struct mei_cl *cl, size_t length, const struct file *fp)
 
 	mei_cl_set_read_by_fp(cl, fp);
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		goto nortpm;
 	}
@@ -1698,7 +1724,8 @@ int mei_cl_read_start(struct mei_cl *cl, size_t length, const struct file *fp)
 
 out:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 nortpm:
 	if (rets)
 		mei_io_cb_free(cb);
@@ -1967,9 +1994,9 @@ ssize_t mei_cl_write(struct mei_cl *cl, struct mei_cl_cb *cb, unsigned long time
 	blocking = cb->blocking;
 	data = buf->data;
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %zd\n", rets);
 		goto free;
 	}
@@ -2087,7 +2114,8 @@ out:
 	rets = buf_len;
 err:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 free:
 	mei_io_cb_free(cb);
 
@@ -2110,10 +2138,12 @@ void mei_cl_complete(struct mei_cl *cl, struct mei_cl_cb *cb)
 	case MEI_FOP_WRITE:
 		mei_tx_cb_dequeue(cb);
 		cl->writing_state = MEI_WRITE_COMPLETE;
-		if (waitqueue_active(&cl->tx_wait))
+		if (waitqueue_active(&cl->tx_wait)) {
 			wake_up_interruptible(&cl->tx_wait);
-		else
-			pm_request_autosuspend(dev->parent);
+		} else {
+			pm_runtime_mark_last_busy(dev->dev);
+			pm_request_autosuspend(dev->dev);
+		}
 		break;
 
 	case MEI_FOP_READ:
@@ -2243,7 +2273,7 @@ int mei_cl_irq_dma_unmap(struct mei_cl *cl, struct mei_cl_cb *cb,
 
 static int mei_cl_dma_alloc(struct mei_cl *cl, u8 buf_id, size_t size)
 {
-	cl->dma.vaddr = dmam_alloc_coherent(&cl->dev->dev, size,
+	cl->dma.vaddr = dmam_alloc_coherent(cl->dev->dev, size,
 					    &cl->dma.daddr, GFP_KERNEL);
 	if (!cl->dma.vaddr)
 		return -ENOMEM;
@@ -2257,7 +2287,7 @@ static int mei_cl_dma_alloc(struct mei_cl *cl, u8 buf_id, size_t size)
 static void mei_cl_dma_free(struct mei_cl *cl)
 {
 	cl->dma.buffer_id = 0;
-	dmam_free_coherent(&cl->dev->dev,
+	dmam_free_coherent(cl->dev->dev,
 			   cl->dma.size, cl->dma.vaddr, cl->dma.daddr);
 	cl->dma.size = 0;
 	cl->dma.vaddr = NULL;
@@ -2313,16 +2343,16 @@ int mei_cl_dma_alloc_and_map(struct mei_cl *cl, const struct file *fp,
 		return -EPROTO;
 	}
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		return rets;
 	}
 
 	rets = mei_cl_dma_alloc(cl, buffer_id, size);
 	if (rets) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		return rets;
 	}
 
@@ -2358,7 +2388,8 @@ out:
 		mei_cl_dma_free(cl);
 
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 
 	mei_io_cb_free(cb);
 	return rets;
@@ -2397,9 +2428,9 @@ int mei_cl_dma_unmap(struct mei_cl *cl, const struct file *fp)
 	if (!cl->dma_mapped)
 		return -EPROTO;
 
-	rets = pm_runtime_get(dev->parent);
+	rets = pm_runtime_get(dev->dev);
 	if (rets < 0 && rets != -EINPROGRESS) {
-		pm_runtime_put_noidle(dev->parent);
+		pm_runtime_put_noidle(dev->dev);
 		cl_err(dev, cl, "rpm: get failed %d\n", rets);
 		return rets;
 	}
@@ -2435,7 +2466,8 @@ int mei_cl_dma_unmap(struct mei_cl *cl, const struct file *fp)
 		mei_cl_dma_free(cl);
 out:
 	cl_dbg(dev, cl, "rpm: autosuspend\n");
-	pm_runtime_put_autosuspend(dev->parent);
+	pm_runtime_mark_last_busy(dev->dev);
+	pm_runtime_put_autosuspend(dev->dev);
 
 	mei_io_cb_free(cb);
 	return rets;

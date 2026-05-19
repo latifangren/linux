@@ -2,7 +2,7 @@
 /*
  * This file contains functions which manage clock event devices.
  *
- * Copyright(C) 2005-2006, Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
+ * Copyright(C) 2005-2006, Thomas Gleixner <tglx@linutronix.de>
  * Copyright(C) 2005-2007, Red Hat, Inc., Ingo Molnar
  * Copyright(C) 2006-2007, Timesys Corp., Thomas Gleixner
  */
@@ -94,9 +94,6 @@ static int __clockevents_switch_state(struct clock_event_device *dev,
 	if (dev->features & CLOCK_EVT_FEAT_DUMMY)
 		return 0;
 
-	/* On state transitions clear the forced flag unconditionally */
-	dev->next_event_forced = 0;
-
 	/* Transition with new state-specific callbacks */
 	switch (state) {
 	case CLOCK_EVT_STATE_DETACHED:
@@ -175,7 +172,6 @@ void clockevents_shutdown(struct clock_event_device *dev)
 {
 	clockevents_switch_state(dev, CLOCK_EVT_STATE_SHUTDOWN);
 	dev->next_event = KTIME_MAX;
-	dev->next_event_forced = 0;
 }
 
 /**
@@ -296,38 +292,6 @@ static int clockevents_program_min_delta(struct clock_event_device *dev)
 
 #endif /* CONFIG_GENERIC_CLOCKEVENTS_MIN_ADJUST */
 
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_COUPLED
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_COUPLED_INLINE
-#include <asm/clock_inlined.h>
-#else
-static __always_inline void
-arch_inlined_clockevent_set_next_coupled(u64 u64 cycles, struct clock_event_device *dev) { }
-#endif
-
-static inline bool clockevent_set_next_coupled(struct clock_event_device *dev, ktime_t expires)
-{
-	u64 cycles;
-
-	if (unlikely(!(dev->features & CLOCK_EVT_FEAT_CLOCKSOURCE_COUPLED)))
-		return false;
-
-	if (unlikely(!ktime_expiry_to_cycles(dev->cs_id, expires, &cycles)))
-		return false;
-
-	if (IS_ENABLED(CONFIG_GENERIC_CLOCKEVENTS_COUPLED_INLINE))
-		arch_inlined_clockevent_set_next_coupled(cycles, dev);
-	else
-		dev->set_next_coupled(cycles, dev);
-	return true;
-}
-
-#else
-static inline bool clockevent_set_next_coupled(struct clock_event_device *dev, ktime_t expires)
-{
-	return false;
-}
-#endif
-
 /**
  * clockevents_program_event - Reprogram the clock event device.
  * @dev:	device to program
@@ -336,10 +300,12 @@ static inline bool clockevent_set_next_coupled(struct clock_event_device *dev, k
  *
  * Returns 0 on success, -ETIME when the event is in the past.
  */
-int clockevents_program_event(struct clock_event_device *dev, ktime_t expires, bool force)
+int clockevents_program_event(struct clock_event_device *dev, ktime_t expires,
+			      bool force)
 {
+	unsigned long long clc;
 	int64_t delta;
-	u64 cycles;
+	int rc;
 
 	if (WARN_ON_ONCE(expires < 0))
 		return -ETIME;
@@ -353,55 +319,31 @@ int clockevents_program_event(struct clock_event_device *dev, ktime_t expires, b
 	WARN_ONCE(!clockevent_state_oneshot(dev), "Current state: %d\n",
 		  clockevent_get_state(dev));
 
-	/* ktime_t based reprogramming for the broadcast hrtimer device */
-	if (unlikely(dev->features & CLOCK_EVT_FEAT_HRTIMER))
+	/* Shortcut for clockevent devices that can deal with ktime. */
+	if (dev->features & CLOCK_EVT_FEAT_KTIME)
 		return dev->set_next_ktime(expires, dev);
 
-	if (likely(clockevent_set_next_coupled(dev, expires)))
-		return 0;
-
 	delta = ktime_to_ns(ktime_sub(expires, ktime_get()));
+	if (delta <= 0)
+		return force ? clockevents_program_min_delta(dev) : -ETIME;
 
-	/* Required for tick_periodic() during early boot */
-	if (delta <= 0 && !force)
-		return -ETIME;
+	delta = min(delta, (int64_t) dev->max_delta_ns);
+	delta = max(delta, (int64_t) dev->min_delta_ns);
 
-	if (delta > (int64_t)dev->min_delta_ns) {
-		delta = min(delta, (int64_t) dev->max_delta_ns);
-		cycles = ((u64)delta * dev->mult) >> dev->shift;
-		if (!dev->set_next_event((unsigned long) cycles, dev)) {
-			dev->next_event_forced = 0;
-			return 0;
-		}
-	}
+	clc = ((unsigned long long) delta * dev->mult) >> dev->shift;
+	rc = dev->set_next_event((unsigned long) clc, dev);
 
-	if (dev->next_event_forced)
-		return 0;
-
-	if (dev->set_next_event(dev->min_delta_ticks, dev)) {
-		if (!force || clockevents_program_min_delta(dev))
-			return -ETIME;
-	}
-	dev->next_event_forced = 1;
-	return 0;
+	return (rc && force) ? clockevents_program_min_delta(dev) : rc;
 }
 
 /*
- * Called after a clockevent has been added which might
- * have replaced a current regular or broadcast device. A
- * released normal device might be a suitable replacement
- * for the current broadcast device. Similarly a released
- * broadcast device might be a suitable replacement for a
- * normal device.
+ * Called after a notify add to make devices available which were
+ * released from the notifier call.
  */
 static void clockevents_notify_released(void)
 {
 	struct clock_event_device *dev;
 
-	/*
-	 * Keep iterating as long as tick_check_new_device()
-	 * replaces a device.
-	 */
 	while (!list_empty(&clockevents_released)) {
 		dev = list_entry(clockevents_released.next,
 				 struct clock_event_device, list);
@@ -668,30 +610,39 @@ void clockevents_resume(void)
 
 #ifdef CONFIG_HOTPLUG_CPU
 
+# ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 /**
- * tick_offline_cpu - Shutdown all clock events related
- *                    to this CPU and take it out of the
- *                    broadcast mechanism.
+ * tick_offline_cpu - Take CPU out of the broadcast mechanism
  * @cpu:	The outgoing CPU
  *
- * Called by the dying CPU during teardown.
+ * Called on the outgoing CPU after it took itself offline.
  */
 void tick_offline_cpu(unsigned int cpu)
 {
-	struct clock_event_device *dev, *tmp;
-
 	raw_spin_lock(&clockevents_lock);
-
 	tick_broadcast_offline(cpu);
-	tick_shutdown();
+	raw_spin_unlock(&clockevents_lock);
+}
+# endif
 
+/**
+ * tick_cleanup_dead_cpu - Cleanup the tick and clockevents of a dead cpu
+ * @cpu:	The dead CPU
+ */
+void tick_cleanup_dead_cpu(int cpu)
+{
+	struct clock_event_device *dev, *tmp;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&clockevents_lock, flags);
+
+	tick_shutdown(cpu);
 	/*
 	 * Unregister the clock event devices which were
-	 * released above.
+	 * released from the users in the notify chain.
 	 */
 	list_for_each_entry_safe(dev, tmp, &clockevents_released, list)
 		list_del(&dev->list);
-
 	/*
 	 * Now check whether the CPU has left unused per cpu devices
 	 */
@@ -703,8 +654,7 @@ void tick_offline_cpu(unsigned int cpu)
 			list_del(&dev->list);
 		}
 	}
-
-	raw_spin_unlock(&clockevents_lock);
+	raw_spin_unlock_irqrestore(&clockevents_lock, flags);
 }
 #endif
 

@@ -641,12 +641,13 @@ void hpi_cmn_control_cache_sync_to_msg(struct hpi_control_cache *p_cache,
 struct hpi_control_cache *hpi_alloc_control_cache(const u32 control_count,
 	const u32 size_in_bytes, u8 *p_dsp_control_buffer)
 {
-	struct hpi_control_cache *p_cache = kmalloc_obj(*p_cache);
+	struct hpi_control_cache *p_cache =
+		kmalloc(sizeof(*p_cache), GFP_KERNEL);
 	if (!p_cache)
 		return NULL;
 
 	p_cache->p_info =
-		kzalloc_objs(*p_cache->p_info, control_count);
+		kcalloc(control_count, sizeof(*p_cache->p_info), GFP_KERNEL);
 	if (!p_cache->p_info) {
 		kfree(p_cache);
 		return NULL;

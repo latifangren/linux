@@ -56,8 +56,6 @@
  */
 #define WAKEUP_CHARS 256
 
-#define N_TTY_BUF_SIZE 4096
-
 /*
  * This defines the low- and high-watermarks for throttling and
  * unthrottling the TTY driver.  These watermarks are used for
@@ -80,6 +78,14 @@
 #define ECHO_COMMIT_WATERMARK	256
 #define ECHO_BLOCK		256
 #define ECHO_DISCARD_WATERMARK	N_TTY_BUF_SIZE - (ECHO_BLOCK + 32)
+
+
+#undef N_TTY_TRACE
+#ifdef N_TTY_TRACE
+# define n_tty_trace(f, args...)	trace_printk(f, ##args)
+#else
+# define n_tty_trace(f, args...)	no_printk(f, ##args)
+#endif
 
 struct n_tty_data {
 	/* producer-published */
@@ -324,9 +330,12 @@ static void reset_buffer_flags(struct n_tty_data *ldata)
 
 static void n_tty_packet_mode_flush(struct tty_struct *tty)
 {
+	unsigned long flags;
+
 	if (tty->link->ctrl.packet) {
-		scoped_guard(spinlock_irqsave, &tty->ctrl.lock)
-			tty->ctrl.pktstatus |= TIOCPKT_FLUSHREAD;
+		spin_lock_irqsave(&tty->ctrl.lock, flags);
+		tty->ctrl.pktstatus |= TIOCPKT_FLUSHREAD;
+		spin_unlock_irqrestore(&tty->ctrl.lock, flags);
 		wake_up_interruptible(&tty->link->read_wait);
 	}
 }
@@ -346,12 +355,13 @@ static void n_tty_packet_mode_flush(struct tty_struct *tty)
  */
 static void n_tty_flush_buffer(struct tty_struct *tty)
 {
-	guard(rwsem_write)(&tty->termios_rwsem);
+	down_write(&tty->termios_rwsem);
 	reset_buffer_flags(tty->disc_data);
 	n_tty_kick_worker(tty);
 
 	if (tty->link)
 		n_tty_packet_mode_flush(tty);
+	up_write(&tty->termios_rwsem);
 }
 
 /**
@@ -476,13 +486,19 @@ static int do_output_char(u8 c, struct tty_struct *tty, int space)
 static int process_output(u8 c, struct tty_struct *tty)
 {
 	struct n_tty_data *ldata = tty->disc_data;
+	unsigned int space;
+	int retval;
 
-	guard(mutex)(&ldata->output_lock);
+	mutex_lock(&ldata->output_lock);
 
-	if (do_output_char(c, tty, tty_write_room(tty)) < 0)
+	space = tty_write_room(tty);
+	retval = do_output_char(c, tty, space);
+
+	mutex_unlock(&ldata->output_lock);
+	if (retval < 0)
 		return -1;
-
-	return 0;
+	else
+		return 0;
 }
 
 /**
@@ -507,15 +523,17 @@ static ssize_t process_output_block(struct tty_struct *tty,
 				    const u8 *buf, unsigned int nr)
 {
 	struct n_tty_data *ldata = tty->disc_data;
-	unsigned int space, i;
+	unsigned int space;
+	int i;
 	const u8 *cp;
 
-	guard(mutex)(&ldata->output_lock);
+	mutex_lock(&ldata->output_lock);
 
 	space = tty_write_room(tty);
-	if (space == 0)
+	if (space == 0) {
+		mutex_unlock(&ldata->output_lock);
 		return 0;
-
+	}
 	if (nr > space)
 		nr = space;
 
@@ -527,18 +545,18 @@ static ssize_t process_output_block(struct tty_struct *tty,
 			if (O_ONLRET(tty))
 				ldata->column = 0;
 			if (O_ONLCR(tty))
-				goto do_write;
+				goto break_out;
 			ldata->canon_column = ldata->column;
 			break;
 		case '\r':
 			if (O_ONOCR(tty) && ldata->column == 0)
-				goto do_write;
+				goto break_out;
 			if (O_OCRNL(tty))
-				goto do_write;
+				goto break_out;
 			ldata->canon_column = ldata->column = 0;
 			break;
 		case '\t':
-			goto do_write;
+			goto break_out;
 		case '\b':
 			if (ldata->column > 0)
 				ldata->column--;
@@ -546,15 +564,18 @@ static ssize_t process_output_block(struct tty_struct *tty,
 		default:
 			if (!iscntrl(c)) {
 				if (O_OLCUC(tty))
-					goto do_write;
+					goto break_out;
 				if (!is_continuation(c, tty))
 					ldata->column++;
 			}
 			break;
 		}
 	}
-do_write:
-	return tty->ops->write(tty, buf, i);
+break_out:
+	i = tty->ops->write(tty, buf, i);
+
+	mutex_unlock(&ldata->output_lock);
+	return i;
 }
 
 static int n_tty_process_echo_ops(struct tty_struct *tty, size_t *tail,
@@ -733,22 +754,24 @@ static void commit_echoes(struct tty_struct *tty)
 	size_t nr, old, echoed;
 	size_t head;
 
-	scoped_guard(mutex, &ldata->output_lock) {
-		head = ldata->echo_head;
-		ldata->echo_mark = head;
-		old = ldata->echo_commit - ldata->echo_tail;
+	mutex_lock(&ldata->output_lock);
+	head = ldata->echo_head;
+	ldata->echo_mark = head;
+	old = ldata->echo_commit - ldata->echo_tail;
 
-		/*
-		 * Process committed echoes if the accumulated # of bytes is over the threshold
-		 * (and try again each time another block is accumulated)
-		 */
-		nr = head - ldata->echo_tail;
-		if (nr < ECHO_COMMIT_WATERMARK || (nr % ECHO_BLOCK > old % ECHO_BLOCK))
-			return;
-
-		ldata->echo_commit = head;
-		echoed = __process_echoes(tty);
+	/* Process committed echoes if the accumulated # of bytes
+	 * is over the threshold (and try again each time another
+	 * block is accumulated) */
+	nr = head - ldata->echo_tail;
+	if (nr < ECHO_COMMIT_WATERMARK ||
+	    (nr % ECHO_BLOCK > old % ECHO_BLOCK)) {
+		mutex_unlock(&ldata->output_lock);
+		return;
 	}
+
+	ldata->echo_commit = head;
+	echoed = __process_echoes(tty);
+	mutex_unlock(&ldata->output_lock);
 
 	if (echoed && tty->ops->flush_chars)
 		tty->ops->flush_chars(tty);
@@ -762,10 +785,10 @@ static void process_echoes(struct tty_struct *tty)
 	if (ldata->echo_mark == ldata->echo_tail)
 		return;
 
-	scoped_guard(mutex, &ldata->output_lock) {
-		ldata->echo_commit = ldata->echo_mark;
-		echoed = __process_echoes(tty);
-	}
+	mutex_lock(&ldata->output_lock);
+	ldata->echo_commit = ldata->echo_mark;
+	echoed = __process_echoes(tty);
+	mutex_unlock(&ldata->output_lock);
 
 	if (echoed && tty->ops->flush_chars)
 		tty->ops->flush_chars(tty);
@@ -780,9 +803,10 @@ static void flush_echoes(struct tty_struct *tty)
 	    ldata->echo_commit == ldata->echo_head)
 		return;
 
-	guard(mutex)(&ldata->output_lock);
+	mutex_lock(&ldata->output_lock);
 	ldata->echo_commit = ldata->echo_head;
 	__process_echoes(tty);
+	mutex_unlock(&ldata->output_lock);
 }
 
 /**
@@ -1071,19 +1095,18 @@ static void isig(int sig, struct tty_struct *tty)
 	if (L_NOFLSH(tty)) {
 		/* signal only */
 		__isig(sig, tty);
-		return;
-	}
 
-	/* signal and flush */
-	up_read(&tty->termios_rwsem);
-	scoped_guard(rwsem_write, &tty->termios_rwsem) {
+	} else { /* signal and flush */
+		up_read(&tty->termios_rwsem);
+		down_write(&tty->termios_rwsem);
+
 		__isig(sig, tty);
 
 		/* clear echo buffer */
-		scoped_guard(mutex, &ldata->output_lock) {
-			ldata->echo_head = ldata->echo_tail = 0;
-			ldata->echo_mark = ldata->echo_commit = 0;
-		}
+		mutex_lock(&ldata->output_lock);
+		ldata->echo_head = ldata->echo_tail = 0;
+		ldata->echo_mark = ldata->echo_commit = 0;
+		mutex_unlock(&ldata->output_lock);
 
 		/* clear output buffer */
 		tty_driver_flush_buffer(tty);
@@ -1094,8 +1117,10 @@ static void isig(int sig, struct tty_struct *tty)
 		/* notify pty master of flush */
 		if (tty->link)
 			n_tty_packet_mode_flush(tty);
+
+		up_write(&tty->termios_rwsem);
+		down_read(&tty->termios_rwsem);
 	}
-	down_read(&tty->termios_rwsem);
 }
 
 /**
@@ -1675,7 +1700,7 @@ n_tty_receive_buf_common(struct tty_struct *tty, const u8 *cp, const u8 *fp,
 	size_t n, rcvd = 0;
 	int room, overflow;
 
-	guard(rwsem_read)(&tty->termios_rwsem);
+	down_read(&tty->termios_rwsem);
 
 	do {
 		/*
@@ -1743,6 +1768,8 @@ n_tty_receive_buf_common(struct tty_struct *tty, const u8 *cp, const u8 *fp,
 		if (!chars_in_buffer(tty))
 			n_tty_kick_worker(tty);
 	}
+
+	up_read(&tty->termios_rwsem);
 
 	return rcvd;
 }
@@ -1869,9 +1896,10 @@ static void n_tty_close(struct tty_struct *tty)
 	if (tty->link)
 		n_tty_packet_mode_flush(tty);
 
-	guard(rwsem_write)(&tty->termios_rwsem);
+	down_write(&tty->termios_rwsem);
 	vfree(ldata);
 	tty->disc_data = NULL;
+	up_write(&tty->termios_rwsem);
 }
 
 /**
@@ -2007,6 +2035,9 @@ static bool canon_copy_from_read_buf(const struct tty_struct *tty, u8 **kbp,
 	tail = MASK(ldata->read_tail);
 	size = min_t(size_t, tail + n, N_TTY_BUF_SIZE);
 
+	n_tty_trace("%s: nr:%zu tail:%zu n:%zu size:%zu\n",
+		    __func__, *nr, tail, n, size);
+
 	eol = find_next_bit(ldata->read_flags, size, tail);
 	more = n - (size - tail);
 	if (eol == N_TTY_BUF_SIZE && more) {
@@ -2023,6 +2054,9 @@ static bool canon_copy_from_read_buf(const struct tty_struct *tty, u8 **kbp,
 
 	if (!found || read_buf(ldata, eol) != __DISABLED_CHAR)
 		n = c;
+
+	n_tty_trace("%s: eol:%zu found:%d n:%zu c:%zu tail:%zu more:%zu\n",
+		    __func__, eol, found, n, c, tail, more);
 
 	tty_copy(tty, *kbp, tail, n);
 	*kbp += n;
@@ -2100,66 +2134,6 @@ static int job_control(struct tty_struct *tty, struct file *file)
 	return __tty_check_change(tty, SIGTTIN);
 }
 
-/*
- * We still hold the atomic_read_lock and the termios_rwsem, and can just
- * continue to copy data.
- */
-static ssize_t n_tty_continue_cookie(struct tty_struct *tty, u8 *kbuf,
-				   size_t nr, void **cookie)
-{
-	struct n_tty_data *ldata = tty->disc_data;
-	u8 *kb = kbuf;
-
-	if (ldata->icanon && !L_EXTPROC(tty)) {
-		/*
-		 * If we have filled the user buffer, see if we should skip an
-		 * EOF character before releasing the lock and returning done.
-		 */
-		if (!nr)
-			canon_skip_eof(ldata);
-		else if (canon_copy_from_read_buf(tty, &kb, &nr))
-			return kb - kbuf;
-	} else {
-		if (copy_from_read_buf(tty, &kb, &nr))
-			return kb - kbuf;
-	}
-
-	/* No more data - release locks and stop retries */
-	n_tty_kick_worker(tty);
-	n_tty_check_unthrottle(tty);
-	up_read(&tty->termios_rwsem);
-	mutex_unlock(&ldata->atomic_read_lock);
-	*cookie = NULL;
-
-	return kb - kbuf;
-}
-
-static int n_tty_wait_for_input(struct tty_struct *tty, struct file *file,
-				struct wait_queue_entry *wait, long *timeout)
-{
-	if (test_bit(TTY_OTHER_CLOSED, &tty->flags))
-		return -EIO;
-	if (tty_hung_up_p(file))
-		return 0;
-	/*
-	 * Abort readers for ttys which never actually get hung up.
-	 * See __tty_hangup().
-	 */
-	if (test_bit(TTY_HUPPING, &tty->flags))
-		return 0;
-	if (!*timeout)
-		return 0;
-	if (tty_io_nonblock(tty, file))
-		return -EAGAIN;
-	if (signal_pending(current))
-		return -ERESTARTSYS;
-
-	up_read(&tty->termios_rwsem);
-	*timeout = wait_woken(wait, TASK_INTERRUPTIBLE, *timeout);
-	down_read(&tty->termios_rwsem);
-
-	return 1;
-}
 
 /**
  * n_tty_read		-	read function for tty
@@ -2193,9 +2167,36 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 	bool packet;
 	size_t old_tail;
 
-	/* Is this a continuation of a read started earlier? */
-	if (*cookie)
-		return n_tty_continue_cookie(tty, kbuf, nr, cookie);
+	/*
+	 * Is this a continuation of a read started earler?
+	 *
+	 * If so, we still hold the atomic_read_lock and the
+	 * termios_rwsem, and can just continue to copy data.
+	 */
+	if (*cookie) {
+		if (ldata->icanon && !L_EXTPROC(tty)) {
+			/*
+			 * If we have filled the user buffer, see
+			 * if we should skip an EOF character before
+			 * releasing the lock and returning done.
+			 */
+			if (!nr)
+				canon_skip_eof(ldata);
+			else if (canon_copy_from_read_buf(tty, &kb, &nr))
+				return kb - kbuf;
+		} else {
+			if (copy_from_read_buf(tty, &kb, &nr))
+				return kb - kbuf;
+		}
+
+		/* No more data - release locks and stop retries */
+		n_tty_kick_worker(tty);
+		n_tty_check_unthrottle(tty);
+		up_read(&tty->termios_rwsem);
+		mutex_unlock(&ldata->atomic_read_lock);
+		*cookie = NULL;
+		return kb - kbuf;
+	}
 
 	retval = job_control(tty, file);
 	if (retval < 0)
@@ -2236,10 +2237,10 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 			u8 cs;
 			if (kb != kbuf)
 				break;
-			scoped_guard(spinlock_irq, &tty->link->ctrl.lock) {
-				cs = tty->link->ctrl.pktstatus;
-				tty->link->ctrl.pktstatus = 0;
-			}
+			spin_lock_irq(&tty->link->ctrl.lock);
+			cs = tty->link->ctrl.pktstatus;
+			tty->link->ctrl.pktstatus = 0;
+			spin_unlock_irq(&tty->link->ctrl.lock);
 			*kb++ = cs;
 			nr--;
 			break;
@@ -2250,12 +2251,34 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 			tty_buffer_flush_work(tty->port);
 			down_read(&tty->termios_rwsem);
 			if (!input_available_p(tty, 0)) {
-				int ret = n_tty_wait_for_input(tty, file, &wait,
-							       &timeout);
-				if (ret <= 0) {
-					retval = ret;
+				if (test_bit(TTY_OTHER_CLOSED, &tty->flags)) {
+					retval = -EIO;
 					break;
 				}
+				if (tty_hung_up_p(file))
+					break;
+				/*
+				 * Abort readers for ttys which never actually
+				 * get hung up.  See __tty_hangup().
+				 */
+				if (test_bit(TTY_HUPPING, &tty->flags))
+					break;
+				if (!timeout)
+					break;
+				if (tty_io_nonblock(tty, file)) {
+					retval = -EAGAIN;
+					break;
+				}
+				if (signal_pending(current)) {
+					retval = -ERESTARTSYS;
+					break;
+				}
+				up_read(&tty->termios_rwsem);
+
+				timeout = wait_woken(&wait, TASK_INTERRUPTIBLE,
+						timeout);
+
+				down_read(&tty->termios_rwsem);
 				continue;
 			}
 		}
@@ -2270,8 +2293,21 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 				nr--;
 			}
 
-			if (copy_from_read_buf(tty, &kb, &nr) && kb - kbuf >= minimum)
-				goto more_to_be_read;
+			/*
+			 * Copy data, and if there is more to be had
+			 * and we have nothing more to wait for, then
+			 * let's mark us for retries.
+			 *
+			 * NOTE! We return here with both the termios_sem
+			 * and atomic_read_lock still held, the retries
+			 * will release them when done.
+			 */
+			if (copy_from_read_buf(tty, &kb, &nr) && kb - kbuf >= minimum) {
+more_to_be_read:
+				remove_wait_queue(&tty->read_wait, &wait);
+				*cookie = cookie;
+				return kb - kbuf;
+			}
 		}
 
 		n_tty_check_unthrottle(tty);
@@ -2298,18 +2334,6 @@ static ssize_t n_tty_read(struct tty_struct *tty, struct file *file, u8 *kbuf,
 		retval = kb - kbuf;
 
 	return retval;
-more_to_be_read:
-	/*
-	 * There is more to be had and we have nothing more to wait for, so
-	 * let's mark us for retries.
-	 *
-	 * NOTE! We return here with both the termios_sem and atomic_read_lock
-	 * still held, the retries will release them when done.
-	 */
-	remove_wait_queue(&tty->read_wait, &wait);
-	*cookie = cookie;
-
-	return kb - kbuf;
 }
 
 /**
@@ -2346,7 +2370,7 @@ static ssize_t n_tty_write(struct tty_struct *tty, struct file *file,
 			return retval;
 	}
 
-	guard(rwsem_read)(&tty->termios_rwsem);
+	down_read(&tty->termios_rwsem);
 
 	/* Write out any echoed characters that are still pending */
 	process_echoes(tty);
@@ -2384,8 +2408,9 @@ static ssize_t n_tty_write(struct tty_struct *tty, struct file *file,
 			struct n_tty_data *ldata = tty->disc_data;
 
 			while (nr > 0) {
-				scoped_guard(mutex, &ldata->output_lock)
-					num = tty->ops->write(tty, b, nr);
+				mutex_lock(&ldata->output_lock);
+				num = tty->ops->write(tty, b, nr);
+				mutex_unlock(&ldata->output_lock);
 				if (num < 0) {
 					retval = num;
 					goto break_out;
@@ -2412,7 +2437,7 @@ break_out:
 	remove_wait_queue(&tty->write_wait, &wait);
 	if (nr && tty->fasync)
 		set_bit(TTY_DO_WRITE_WAKEUP, &tty->flags);
-
+	up_read(&tty->termios_rwsem);
 	return (b - buf) ? b - buf : retval;
 }
 
@@ -2486,11 +2511,12 @@ static int n_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
 	case TIOCOUTQ:
 		return put_user(tty_chars_in_buffer(tty), (int __user *) arg);
 	case TIOCINQ:
-		scoped_guard(rwsem_write, &tty->termios_rwsem)
-			if (L_ICANON(tty) && !L_EXTPROC(tty))
-				num = inq_canon(ldata);
-			else
-				num = read_cnt(ldata);
+		down_write(&tty->termios_rwsem);
+		if (L_ICANON(tty) && !L_EXTPROC(tty))
+			num = inq_canon(ldata);
+		else
+			num = read_cnt(ldata);
+		up_write(&tty->termios_rwsem);
 		return put_user(num, (unsigned int __user *) arg);
 	default:
 		return n_tty_ioctl_helper(tty, cmd, arg);

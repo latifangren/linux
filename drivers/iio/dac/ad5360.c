@@ -439,8 +439,8 @@ static int ad5360_alloc_channels(struct iio_dev *indio_dev)
 	struct iio_chan_spec *channels;
 	unsigned int i;
 
-	channels = kzalloc_objs(struct iio_chan_spec,
-				st->chip_info->num_channels);
+	channels = kcalloc(st->chip_info->num_channels,
+			   sizeof(struct iio_chan_spec), GFP_KERNEL);
 
 	if (!channels)
 		return -ENOMEM;
@@ -542,7 +542,7 @@ static const struct spi_device_id ad5360_ids[] = {
 	{ "ad5371", ID_AD5371 },
 	{ "ad5372", ID_AD5372 },
 	{ "ad5373", ID_AD5373 },
-	{ }
+	{}
 };
 MODULE_DEVICE_TABLE(spi, ad5360_ids);
 

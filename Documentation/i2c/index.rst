@@ -66,3 +66,10 @@ Legacy documentation
    :maxdepth: 1
 
    old-module-parameters
+
+.. only::  subproject and html
+
+   Indices
+   =======
+
+   * :ref:`genindex`

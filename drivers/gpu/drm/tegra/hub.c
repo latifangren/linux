@@ -20,7 +20,6 @@
 #include <drm/drm_blend.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 
 #include "drm.h"
@@ -769,7 +768,7 @@ struct drm_plane *tegra_shared_plane_create(struct drm_device *drm,
 	const u32 *formats;
 	int err;
 
-	plane = kzalloc_obj(*plane);
+	plane = kzalloc(sizeof(*plane), GFP_KERNEL);
 	if (!plane)
 		return ERR_PTR(-ENOMEM);
 
@@ -825,22 +824,7 @@ static void tegra_display_hub_destroy_state(struct drm_private_obj *obj,
 	kfree(hub_state);
 }
 
-static struct drm_private_state *
-tegra_display_hub_create_state(struct drm_private_obj *obj)
-{
-	struct tegra_display_hub_state *hub_state;
-
-	hub_state = kzalloc_obj(*hub_state);
-	if (!hub_state)
-		return ERR_PTR(-ENOMEM);
-
-	__drm_atomic_helper_private_obj_create_state(obj, &hub_state->base);
-
-	return &hub_state->base;
-}
-
 static const struct drm_private_state_funcs tegra_display_hub_state_funcs = {
-	.atomic_create_state = tegra_display_hub_create_state,
 	.atomic_duplicate_state = tegra_display_hub_duplicate_state,
 	.atomic_destroy_state = tegra_display_hub_destroy_state,
 };
@@ -956,8 +940,13 @@ static int tegra_display_hub_init(struct host1x_client *client)
 	struct tegra_display_hub *hub = to_tegra_display_hub(client);
 	struct drm_device *drm = dev_get_drvdata(client->host);
 	struct tegra_drm *tegra = drm->dev_private;
+	struct tegra_display_hub_state *state;
 
-	drm_atomic_private_obj_init(drm, &hub->base,
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
+	if (!state)
+		return -ENOMEM;
+
+	drm_atomic_private_obj_init(drm, &hub->base, &state->base,
 				    &tegra_display_hub_state_funcs);
 
 	tegra->hub = hub;
@@ -1229,5 +1218,5 @@ struct platform_driver tegra_display_hub_driver = {
 		.of_match_table = tegra_display_hub_of_match,
 	},
 	.probe = tegra_display_hub_probe,
-	.remove = tegra_display_hub_remove,
+	.remove_new = tegra_display_hub_remove,
 };

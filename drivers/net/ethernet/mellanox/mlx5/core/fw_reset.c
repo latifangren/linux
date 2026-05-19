@@ -39,7 +39,6 @@ struct mlx5_fw_reset {
 enum {
 	MLX5_FW_RST_STATE_IDLE = 0,
 	MLX5_FW_RST_STATE_TOGGLE_REQ = 4,
-	MLX5_FW_RST_STATE_DROP_MODE = 5,
 };
 
 enum {
@@ -74,8 +73,7 @@ static int mlx5_fw_reset_enable_remote_dev_reset_set(struct devlink *devlink, u3
 }
 
 static int mlx5_fw_reset_enable_remote_dev_reset_get(struct devlink *devlink, u32 id,
-						     struct devlink_param_gset_ctx *ctx,
-						     struct netlink_ext_ack *extack)
+						     struct devlink_param_gset_ctx *ctx)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
 	struct mlx5_fw_reset *fw_reset;
@@ -262,7 +260,7 @@ static void mlx5_stop_sync_reset_poll(struct mlx5_core_dev *dev)
 {
 	struct mlx5_fw_reset *fw_reset = dev->priv.fw_reset;
 
-	timer_delete_sync(&fw_reset->timer);
+	del_timer_sync(&fw_reset->timer);
 }
 
 static int mlx5_sync_reset_clear_reset_requested(struct mlx5_core_dev *dev, bool poll_health)
@@ -296,8 +294,7 @@ static void mlx5_sync_reset_reload_work(struct work_struct *work)
 #define MLX5_RESET_POLL_INTERVAL	(HZ / 10)
 static void poll_sync_reset(struct timer_list *t)
 {
-	struct mlx5_fw_reset *fw_reset = timer_container_of(fw_reset, t,
-							    timer);
+	struct mlx5_fw_reset *fw_reset = from_timer(fw_reset, t, timer);
 	struct mlx5_core_dev *dev = fw_reset->dev;
 	u32 fatal_error;
 
@@ -369,11 +366,14 @@ static void mlx5_fw_live_patch_event(struct work_struct *work)
 }
 
 #if IS_ENABLED(CONFIG_HOTPLUG_PCI_PCIE)
-static int mlx5_check_hotplug_interrupt(struct mlx5_core_dev *dev,
-					struct pci_dev *bridge)
+static int mlx5_check_hotplug_interrupt(struct mlx5_core_dev *dev)
 {
+	struct pci_dev *bridge = dev->pdev->bus->self;
 	u16 reg16;
 	int err;
+
+	if (!bridge)
+		return -EOPNOTSUPP;
 
 	err = pcie_capability_read_word(bridge, PCI_EXP_SLTCTL, &reg16);
 	if (err)
@@ -437,14 +437,8 @@ static int mlx5_check_dev_ids(struct mlx5_core_dev *dev, u16 dev_id)
 static bool mlx5_is_reset_now_capable(struct mlx5_core_dev *dev,
 				      u8 reset_method)
 {
-	struct pci_dev *bridge = dev->pdev->bus->self;
 	u16 dev_id;
 	int err;
-
-	if (!bridge) {
-		mlx5_core_warn(dev, "PCI bus bridge is not accessible\n");
-		return false;
-	}
 
 	if (!MLX5_CAP_GEN(dev, fast_teardown)) {
 		mlx5_core_warn(dev, "fast teardown is not supported by firmware\n");
@@ -458,7 +452,7 @@ static bool mlx5_is_reset_now_capable(struct mlx5_core_dev *dev,
 
 #if IS_ENABLED(CONFIG_HOTPLUG_PCI_PCIE)
 	if (reset_method != MLX5_MFRL_REG_PCI_RESET_METHOD_HOT_RESET) {
-		err = mlx5_check_hotplug_interrupt(dev, bridge);
+		err = mlx5_check_hotplug_interrupt(dev);
 		if (err)
 			return false;
 	}
@@ -639,7 +633,6 @@ void mlx5_sync_reset_unload_flow(struct mlx5_core_dev *dev, bool locked)
 {
 	struct mlx5_fw_reset *fw_reset = dev->priv.fw_reset;
 	unsigned long timeout;
-	int poll_freq = 20;
 	bool reset_action;
 	u8 rst_state;
 	int err;
@@ -664,12 +657,7 @@ void mlx5_sync_reset_unload_flow(struct mlx5_core_dev *dev, bool locked)
 			reset_action = true;
 			break;
 		}
-		if (rst_state == MLX5_FW_RST_STATE_DROP_MODE) {
-			mlx5_core_info(dev, "Sync Reset Drop mode ack\n");
-			mlx5_set_fw_rst_ack(dev);
-			poll_freq = 1000;
-		}
-		msleep(poll_freq);
+		msleep(20);
 	} while (!time_after(jiffies, timeout));
 
 	if (!reset_action) {
@@ -899,7 +887,7 @@ int mlx5_fw_reset_init(struct mlx5_core_dev *dev)
 	if (!MLX5_CAP_MCAM_REG(dev, mfrl))
 		return 0;
 
-	fw_reset = kzalloc_obj(*fw_reset);
+	fw_reset = kzalloc(sizeof(*fw_reset), GFP_KERNEL);
 	if (!fw_reset)
 		return -ENOMEM;
 	fw_reset->wq = create_singlethread_workqueue("mlx5_fw_reset_events");

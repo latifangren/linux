@@ -371,7 +371,7 @@ static struct platform_driver pm860x_rtc_driver = {
 		.pm	= &pm860x_rtc_pm_ops,
 	},
 	.probe		= pm860x_rtc_probe,
-	.remove		= pm860x_rtc_remove,
+	.remove_new	= pm860x_rtc_remove,
 };
 
 module_platform_driver(pm860x_rtc_driver);

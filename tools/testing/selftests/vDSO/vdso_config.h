@@ -25,6 +25,10 @@
 #define VDSO_VERSION		1
 #define VDSO_NAMES		0
 #define VDSO_32BIT		1
+#elif defined (__s390__) && !defined(__s390x__)
+#define VDSO_VERSION		2
+#define VDSO_NAMES		0
+#define VDSO_32BIT		1
 #elif defined (__s390x__)
 #define VDSO_VERSION		2
 #define VDSO_NAMES		0
@@ -54,7 +58,6 @@
 #define VDSO_NAMES		1
 #endif
 
-__attribute__((unused))
 static const char *versions[7] = {
 	"LINUX_2.6",
 	"LINUX_2.6.15",
@@ -65,8 +68,7 @@ static const char *versions[7] = {
 	"LINUX_5.10"
 };
 
-__attribute__((unused))
-static const char *names[2][8] = {
+static const char *names[2][7] = {
 	{
 		"__kernel_gettimeofday",
 		"__kernel_clock_gettime",
@@ -75,7 +77,6 @@ static const char *names[2][8] = {
 		"__kernel_getcpu",
 		"__kernel_clock_gettime64",
 		"__kernel_getrandom",
-		"__kernel_clock_getres_time64",
 	},
 	{
 		"__vdso_gettimeofday",
@@ -85,7 +86,6 @@ static const char *names[2][8] = {
 		"__vdso_getcpu",
 		"__vdso_clock_gettime64",
 		"__vdso_getrandom",
-		"__vdso_clock_getres_time64",
 	},
 };
 

@@ -25,8 +25,7 @@ struct branch_flags {
 			u64 spec:2;
 			u64 new_type:4;
 			u64 priv:3;
-			u64 not_taken:1;
-			u64 reserved:30;
+			u64 reserved:31;
 		};
 	};
 };
@@ -65,9 +64,6 @@ struct branch_stack {
 static inline struct branch_entry *perf_sample__branch_entries(struct perf_sample *sample)
 {
 	u64 *entry = (u64 *)sample->branch_stack;
-
-	if (entry == NULL)
-		return NULL;
 
 	entry++;
 	if (sample->no_hw_idx)

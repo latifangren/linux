@@ -12,7 +12,6 @@
 #include <linux/firmware.h>
 #include <linux/module.h>
 #include <linux/bitrev.h>
-#include <linux/hex.h>
 #include <linux/kernel.h>
 
 #include "firmware.h"
@@ -195,7 +194,8 @@ static int usb6fire_fw_ezusb_upload(
 	u8 data;
 	struct usb_device *device = interface_to_usbdev(intf);
 	const struct firmware *fw = NULL;
-	struct ihex_record *rec = kmalloc_obj(struct ihex_record);
+	struct ihex_record *rec = kmalloc(sizeof(struct ihex_record),
+			GFP_KERNEL);
 
 	if (!rec)
 		return -ENOMEM;

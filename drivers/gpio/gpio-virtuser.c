@@ -11,6 +11,7 @@
 #include <linux/atomic.h>
 #include <linux/bitmap.h>
 #include <linux/cleanup.h>
+#include <linux/completion.h>
 #include <linux/configfs.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
@@ -213,7 +214,9 @@ static int gpio_virtuser_set_array_value(struct gpio_descs *descs,
 	struct gpio_virtuser_irq_work_context ctx;
 
 	if (!atomic)
-		return gpiod_multi_set_value_cansleep(descs, values);
+		return gpiod_set_array_value_cansleep(descs->ndescs,
+						      descs->desc,
+						      descs->info, values);
 
 	gpio_virtuser_init_irq_work_context(&ctx);
 	ctx.work = IRQ_WORK_INIT_HARD(gpio_virtuser_set_value_array_atomic);
@@ -498,7 +501,9 @@ static int gpio_virtuser_value_set(void *data, u64 val)
 	if (val > 1)
 		return -EINVAL;
 
-	return gpiod_set_value_cansleep(ld->ad.desc, (int)val);
+	gpiod_set_value_cansleep(ld->ad.desc, (int)val);
+
+	return 0;
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(gpio_virtuser_value_fops,
@@ -539,7 +544,7 @@ static void gpio_virtuser_set_value_atomic(struct irq_work *work)
 	struct gpio_virtuser_irq_work_context *ctx =
 			to_gpio_virtuser_irq_work_context(work);
 
-	ctx->ret = gpiod_set_value(ctx->desc, ctx->val);
+	gpiod_set_value(ctx->desc, ctx->val);
 	complete(&ctx->work_completion);
 }
 
@@ -558,7 +563,7 @@ static int gpio_virtuser_value_atomic_set(void *data, u64 val)
 
 	gpio_virtuser_irq_work_queue_sync(&ctx);
 
-	return ctx.ret;
+	return 0;
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(gpio_virtuser_value_atomic_fops,
@@ -976,16 +981,48 @@ static struct platform_driver gpio_virtuser_driver = {
 };
 
 struct gpio_virtuser_device {
-	struct platform_device *pdev;
 	struct config_group group;
 
+	struct platform_device *pdev;
 	int id;
 	struct mutex lock;
+
+	struct notifier_block bus_notifier;
+	struct completion probe_completion;
+	bool driver_bound;
 
 	struct gpiod_lookup_table *lookup_table;
 
 	struct list_head lookup_list;
 };
+
+static int gpio_virtuser_bus_notifier_call(struct notifier_block *nb,
+					   unsigned long action, void *data)
+{
+	struct gpio_virtuser_device *vdev;
+	struct device *dev = data;
+	char devname[32];
+
+	vdev = container_of(nb, struct gpio_virtuser_device, bus_notifier);
+	snprintf(devname, sizeof(devname), "gpio-virtuser.%d", vdev->id);
+
+	if (!device_match_name(dev, devname))
+		return NOTIFY_DONE;
+
+	switch (action) {
+	case BUS_NOTIFY_BOUND_DRIVER:
+		vdev->driver_bound = true;
+		break;
+	case BUS_NOTIFY_DRIVER_NOT_BOUND:
+		vdev->driver_bound = false;
+		break;
+	default:
+		return NOTIFY_DONE;
+	}
+
+	complete(&vdev->probe_completion);
+	return NOTIFY_OK;
+}
 
 static struct gpio_virtuser_device *
 to_gpio_virtuser_device(struct config_item *item)
@@ -1386,7 +1423,7 @@ gpio_virtuser_make_lookup_table(struct gpio_virtuser_device *dev)
 	lockdep_assert_held(&dev->lock);
 
 	struct gpiod_lookup_table *table __free(kfree) =
-		kzalloc_flex(*table, table, num_entries + 1);
+		kzalloc(struct_size(table, table, num_entries + 1), GFP_KERNEL);
 	if (!table)
 		return -ENOMEM;
 
@@ -1448,8 +1485,8 @@ static int
 gpio_virtuser_device_activate(struct gpio_virtuser_device *dev)
 {
 	struct platform_device_info pdevinfo;
-	struct platform_device *pdev;
 	struct fwnode_handle *swnode;
+	struct platform_device *pdev;
 	int ret;
 
 	lockdep_assert_held(&dev->lock);
@@ -1470,19 +1507,27 @@ gpio_virtuser_device_activate(struct gpio_virtuser_device *dev)
 	if (ret)
 		goto err_remove_swnode;
 
+	reinit_completion(&dev->probe_completion);
+	dev->driver_bound = false;
+	bus_register_notifier(&platform_bus_type, &dev->bus_notifier);
+
 	pdev = platform_device_register_full(&pdevinfo);
 	if (IS_ERR(pdev)) {
 		ret = PTR_ERR(pdev);
+		bus_unregister_notifier(&platform_bus_type, &dev->bus_notifier);
 		goto err_remove_lookup_table;
 	}
 
-	wait_for_device_probe();
-	if (!device_is_bound(&pdev->dev)) {
+	wait_for_completion(&dev->probe_completion);
+	bus_unregister_notifier(&platform_bus_type, &dev->bus_notifier);
+
+	if (!dev->driver_bound) {
 		ret = -ENXIO;
 		goto err_unregister_pdev;
 	}
 
 	dev->pdev = pdev;
+
 	return 0;
 
 err_unregister_pdev:
@@ -1504,9 +1549,9 @@ gpio_virtuser_device_deactivate(struct gpio_virtuser_device *dev)
 
 	swnode = dev_fwnode(&dev->pdev->dev);
 	platform_device_unregister(dev->pdev);
-	dev->pdev = NULL;
 	gpio_virtuser_remove_lookup_table(dev);
 	fwnode_remove_software_node(swnode);
+	dev->pdev = NULL;
 }
 
 static void
@@ -1616,7 +1661,7 @@ gpio_virtuser_make_lookup_entry_group(struct config_group *group,
 		return ERR_PTR(-EBUSY);
 
 	struct gpio_virtuser_lookup_entry *entry __free(kfree) =
-				kzalloc_obj(*entry);
+				kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return ERR_PTR(-ENOMEM);
 
@@ -1642,7 +1687,7 @@ static void gpio_virtuser_lookup_config_group_release(struct config_item *item)
 	kfree(lookup);
 }
 
-static const struct configfs_item_operations gpio_virtuser_lookup_config_item_ops = {
+static struct configfs_item_operations gpio_virtuser_lookup_config_item_ops = {
 	.release	= gpio_virtuser_lookup_config_group_release,
 };
 
@@ -1672,7 +1717,7 @@ gpio_virtuser_make_lookup_group(struct config_group *group, const char *name)
 		return ERR_PTR(-EBUSY);
 
 	struct gpio_virtuser_lookup *lookup __free(kfree) =
-				kzalloc_obj(*lookup);
+				kzalloc(sizeof(*lookup), GFP_KERNEL);
 	if (!lookup)
 		return ERR_PTR(-ENOMEM);
 
@@ -1703,11 +1748,11 @@ static void gpio_virtuser_device_config_group_release(struct config_item *item)
 	kfree(dev);
 }
 
-static const struct configfs_item_operations gpio_virtuser_device_config_item_ops = {
+static struct configfs_item_operations gpio_virtuser_device_config_item_ops = {
 	.release	= gpio_virtuser_device_config_group_release,
 };
 
-static const struct configfs_group_operations gpio_virtuser_device_config_group_ops = {
+static struct configfs_group_operations gpio_virtuser_device_config_group_ops = {
 	.make_group	= gpio_virtuser_make_lookup_group,
 };
 
@@ -1722,7 +1767,8 @@ static struct config_group *
 gpio_virtuser_config_make_device_group(struct config_group *group,
 				       const char *name)
 {
-	struct gpio_virtuser_device *dev __free(kfree) = kzalloc_obj(*dev);
+	struct gpio_virtuser_device *dev __free(kfree) = kzalloc(sizeof(*dev),
+								 GFP_KERNEL);
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
 
@@ -1734,11 +1780,13 @@ gpio_virtuser_config_make_device_group(struct config_group *group,
 				    &gpio_virtuser_device_config_group_type);
 	mutex_init(&dev->lock);
 	INIT_LIST_HEAD(&dev->lookup_list);
+	dev->bus_notifier.notifier_call = gpio_virtuser_bus_notifier_call;
+	init_completion(&dev->probe_completion);
 
 	return &no_free_ptr(dev)->group;
 }
 
-static const struct configfs_group_operations gpio_virtuser_config_group_ops = {
+static struct configfs_group_operations gpio_virtuser_config_group_ops = {
 	.make_group	= gpio_virtuser_config_make_device_group,
 };
 

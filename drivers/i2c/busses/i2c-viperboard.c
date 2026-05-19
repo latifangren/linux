@@ -11,7 +11,6 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 #include <linux/types.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -204,7 +203,7 @@ static int vprbrd_i2c_read(struct vprbrd *vb, struct i2c_msg *msg)
 		/* copy the received data */
 		memcpy(msg->buf + start, rmsg, len1);
 
-		/* second read transfer if necessary */
+		/* second read transfer if neccessary */
 		if (len2 > 0) {
 			ret = vprbrd_i2c_receive(vb->usb_dev, rmsg, len2);
 			if (ret < 0)
@@ -279,7 +278,7 @@ static int vprbrd_i2c_xfer(struct i2c_adapter *i2c, struct i2c_msg *msgs,
 
 		dev_dbg(&i2c->dev,
 			"  %d: %s (flags %d) %d bytes to 0x%02x\n",
-			i, str_read_write(pmsg->flags & I2C_M_RD),
+			i, pmsg->flags & I2C_M_RD ? "read" : "write",
 			pmsg->flags, pmsg->len, pmsg->addr);
 
 		mutex_lock(&vb->lock);
@@ -385,13 +384,15 @@ static int vprbrd_i2c_probe(struct platform_device *pdev)
 			VPRBRD_USB_REQUEST_I2C_FREQ, VPRBRD_USB_TYPE_OUT,
 			0x0000, 0x0000, &vb_i2c->bus_freq_param, 1,
 			VPRBRD_USB_TIMEOUT_MS);
-		if (ret != 1)
-			return dev_err_probe(&pdev->dev, -EIO,
-					     "failure setting i2c_bus_freq to %d\n",
-					     i2c_bus_freq);
+		if (ret != 1) {
+			dev_err(&pdev->dev, "failure setting i2c_bus_freq to %d\n",
+				i2c_bus_freq);
+			return -EIO;
+		}
 	} else {
-		return dev_err_probe(&pdev->dev, -EIO,
-				     "invalid i2c_bus_freq setting:%d\n", i2c_bus_freq);
+		dev_err(&pdev->dev,
+			"invalid i2c_bus_freq setting:%d\n", i2c_bus_freq);
+		return -EIO;
 	}
 
 	vb_i2c->i2c.dev.parent = &pdev->dev;

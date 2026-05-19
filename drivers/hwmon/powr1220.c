@@ -16,6 +16,7 @@
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
 #include <linux/err.h>
+#include <linux/mutex.h>
 #include <linux/delay.h>
 
 #define ADC_STEP_MV			2
@@ -74,6 +75,7 @@ enum powr1220_adc_values {
 
 struct powr1220_data {
 	struct i2c_client *client;
+	struct mutex update_lock;
 	u8 max_channels;
 	bool adc_valid[MAX_POWR1220_ADC_VALUES];
 	 /* the next value is in jiffies */
@@ -109,6 +111,8 @@ static int powr1220_read_adc(struct device *dev, int ch_num)
 	int result;
 	int adc_range = 0;
 
+	mutex_lock(&data->update_lock);
+
 	if (time_after(jiffies, data->adc_last_updated[ch_num] + HZ) ||
 	    !data->adc_valid[ch_num]) {
 		/*
@@ -124,8 +128,8 @@ static int powr1220_read_adc(struct device *dev, int ch_num)
 		/* set the attenuator and mux */
 		result = i2c_smbus_write_byte_data(data->client, ADC_MUX,
 						   adc_range | ch_num);
-		if (result < 0)
-			return result;
+		if (result)
+			goto exit;
 
 		/*
 		 * wait at least Tconvert time (200 us) for the
@@ -136,14 +140,14 @@ static int powr1220_read_adc(struct device *dev, int ch_num)
 		/* get the ADC reading */
 		result = i2c_smbus_read_byte_data(data->client, ADC_VALUE_LOW);
 		if (result < 0)
-			return result;
+			goto exit;
 
 		reading = result >> 4;
 
 		/* get the upper half of the reading */
 		result = i2c_smbus_read_byte_data(data->client, ADC_VALUE_HIGH);
 		if (result < 0)
-			return result;
+			goto exit;
 
 		reading |= result << 4;
 
@@ -159,6 +163,10 @@ static int powr1220_read_adc(struct device *dev, int ch_num)
 	} else {
 		result = data->adc_values[ch_num];
 	}
+
+exit:
+	mutex_unlock(&data->update_lock);
+
 	return result;
 }
 
@@ -294,6 +302,7 @@ static int powr1220_probe(struct i2c_client *client)
 		break;
 	}
 
+	mutex_init(&data->update_lock);
 	data->client = client;
 
 	hwmon_dev = devm_hwmon_device_register_with_info(&client->dev,

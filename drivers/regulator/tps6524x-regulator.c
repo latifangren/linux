@@ -598,6 +598,7 @@ static int pmic_probe(struct spi_device *spi)
 
 	spi_set_drvdata(spi, hw);
 
+	memset(hw, 0, sizeof(struct tps6524x));
 	hw->dev = dev;
 	hw->spi = spi;
 	mutex_init(&hw->lock);

@@ -401,7 +401,7 @@ static int mvs_prep_sas_ha_init(struct Scsi_Host *shost,
 	sha->sas_port = arr_port;
 	sha->shost = shost;
 
-	sha->lldd_ha = kzalloc_obj(struct mvs_prv_info);
+	sha->lldd_ha = kzalloc(sizeof(struct mvs_prv_info), GFP_KERNEL);
 	if (!sha->lldd_ha)
 		goto exit_free;
 
@@ -502,7 +502,7 @@ static int mvs_pci_init(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	chip = &mvs_chips[ent->driver_data];
 	SHOST_TO_SAS_HA(shost) =
-		kzalloc_objs(struct sas_ha_struct, 1);
+		kcalloc(1, sizeof(struct sas_ha_struct), GFP_KERNEL);
 	if (!SHOST_TO_SAS_HA(shost)) {
 		scsi_host_put(shost);
 		rc = -ENOMEM;
@@ -609,7 +609,7 @@ static void mvs_pci_remove(struct pci_dev *pdev)
 	return;
 }
 
-static const struct pci_device_id mvs_pci_table[] = {
+static struct pci_device_id mvs_pci_table[] = {
 	{ PCI_VDEVICE(MARVELL, 0x6320), chip_6320 },
 	{ PCI_VDEVICE(MARVELL, 0x6340), chip_6440 },
 	{

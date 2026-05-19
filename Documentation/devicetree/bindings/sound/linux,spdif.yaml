@@ -23,9 +23,6 @@ properties:
 
   sound-name-prefix: true
 
-  port:
-    $ref: /schemas/graph.yaml#/properties/port
-
 required:
   - "#sound-dai-cells"
   - compatible

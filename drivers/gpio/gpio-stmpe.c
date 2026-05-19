@@ -15,7 +15,6 @@
 #include <linux/platform_device.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 
 /*
  * These registers are modified under the irq bus lock and cached to avoid
@@ -54,7 +53,7 @@ static int stmpe_gpio_get(struct gpio_chip *chip, unsigned offset)
 	return !!(ret & mask);
 }
 
-static int stmpe_gpio_set(struct gpio_chip *chip, unsigned int offset, int val)
+static void stmpe_gpio_set(struct gpio_chip *chip, unsigned offset, int val)
 {
 	struct stmpe_gpio *stmpe_gpio = gpiochip_get_data(chip);
 	struct stmpe *stmpe = stmpe_gpio->stmpe;
@@ -67,9 +66,9 @@ static int stmpe_gpio_set(struct gpio_chip *chip, unsigned int offset, int val)
 	 * For them we need to write 0 to clear and 1 to set.
 	 */
 	if (stmpe->regs[STMPE_IDX_GPSR_LSB] == stmpe->regs[STMPE_IDX_GPCR_LSB])
-		return stmpe_set_bits(stmpe, reg, mask, val ? mask : 0);
-
-	return stmpe_reg_write(stmpe, reg, mask);
+		stmpe_set_bits(stmpe, reg, mask, val ? mask : 0);
+	else
+		stmpe_reg_write(stmpe, reg, mask);
 }
 
 static int stmpe_gpio_get_direction(struct gpio_chip *chip,
@@ -98,11 +97,8 @@ static int stmpe_gpio_direction_output(struct gpio_chip *chip,
 	struct stmpe *stmpe = stmpe_gpio->stmpe;
 	u8 reg = stmpe->regs[STMPE_IDX_GPDR_LSB + (offset / 8)];
 	u8 mask = BIT(offset % 8);
-	int ret;
 
-	ret = stmpe_gpio_set(chip, offset, val);
-	if (ret)
-		return ret;
+	stmpe_gpio_set(chip, offset, val);
 
 	return stmpe_set_bits(stmpe, reg, mask, mask);
 }
@@ -262,8 +258,9 @@ static void stmpe_gpio_irq_unmask(struct irq_data *d)
 	stmpe_gpio->regs[REG_IE][regoffset] |= mask;
 }
 
-static void stmpe_dbg_show_one(struct seq_file *s, struct gpio_chip *gc,
-			       unsigned int offset)
+static void stmpe_dbg_show_one(struct seq_file *s,
+			       struct gpio_chip *gc,
+			       unsigned offset, unsigned gpio)
 {
 	struct stmpe_gpio *stmpe_gpio = gpiochip_get_data(gc);
 	struct stmpe *stmpe = stmpe_gpio->stmpe;
@@ -285,7 +282,8 @@ static void stmpe_dbg_show_one(struct seq_file *s, struct gpio_chip *gc,
 
 	if (dir) {
 		seq_printf(s, " gpio-%-3d (%-20.20s) out %s",
-			   offset, label ?: "(none)", str_hi_lo(val));
+			   gpio, label ?: "(none)",
+			   val ? "hi" : "lo");
 	} else {
 		u8 edge_det_reg;
 		u8 rise_reg;
@@ -353,8 +351,8 @@ static void stmpe_dbg_show_one(struct seq_file *s, struct gpio_chip *gc,
 		irqen = !!(ret & mask);
 
 		seq_printf(s, " gpio-%-3d (%-20.20s) in  %s %13s %13s %25s %25s",
-			   offset, label ?: "(none)",
-			   str_hi_lo(val),
+			   gpio, label ?: "(none)",
+			   val ? "hi" : "lo",
 			   edge_det_values[edge_det],
 			   irqen ? "IRQ-enabled" : "IRQ-disabled",
 			   rise_values[rise],
@@ -365,9 +363,10 @@ static void stmpe_dbg_show_one(struct seq_file *s, struct gpio_chip *gc,
 static void stmpe_dbg_show(struct seq_file *s, struct gpio_chip *gc)
 {
 	unsigned i;
+	unsigned gpio = gc->base;
 
-	for (i = 0; i < gc->ngpio; i++) {
-		stmpe_dbg_show_one(s, gc, i);
+	for (i = 0; i < gc->ngpio; i++, gpio++) {
+		stmpe_dbg_show_one(s, gc, i, gpio);
 		seq_putc(s, '\n');
 	}
 }
@@ -532,16 +531,10 @@ static int stmpe_gpio_probe(struct platform_device *pdev)
 	return devm_gpiochip_add_data(dev, &stmpe_gpio->chip, stmpe_gpio);
 }
 
-static const struct of_device_id stmpe_gpio_of_matches[] = {
-	{ .compatible = "st,stmpe-gpio", },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(of, stmpe_gpio_of_matches);
-
 static struct platform_driver stmpe_gpio_driver = {
 	.driver = {
-		.name = "stmpe-gpio",
-		.of_match_table = stmpe_gpio_of_matches,
+		.suppress_bind_attrs	= true,
+		.name			= "stmpe-gpio",
 	},
 	.probe		= stmpe_gpio_probe,
 };
@@ -551,13 +544,3 @@ static int __init stmpe_gpio_init(void)
 	return platform_driver_register(&stmpe_gpio_driver);
 }
 subsys_initcall(stmpe_gpio_init);
-
-static void __exit stmpe_gpio_exit(void)
-{
-	platform_driver_unregister(&stmpe_gpio_driver);
-}
-module_exit(stmpe_gpio_exit);
-
-MODULE_DESCRIPTION("STMPE expander GPIO");
-MODULE_AUTHOR("Rabin Vincent <rabin.vincent@stericsson.com>");
-MODULE_LICENSE("GPL");

@@ -18,6 +18,8 @@
 #include "octep_vf_config.h"
 #include "octep_vf_main.h"
 
+struct workqueue_struct *octep_vf_wq;
+
 /* Supported Devices */
 static const struct pci_device_id octep_vf_pci_id_tbl[] = {
 	{PCI_DEVICE(PCI_VENDOR_ID_CAVIUM, OCTEP_PCI_DEVICE_ID_CN93_VF)},
@@ -113,7 +115,7 @@ static int octep_vf_enable_msix_range(struct octep_vf_device *oct)
 	/* Generic interrupts apart from input/output queues */
 	//num_msix = oct->num_oqs + CFG_GET_NON_IOQ_MSIX(oct->conf);
 	num_msix = oct->num_oqs;
-	oct->msix_entries = kzalloc_objs(struct msix_entry, num_msix);
+	oct->msix_entries = kcalloc(num_msix, sizeof(struct msix_entry), GFP_KERNEL);
 	if (!oct->msix_entries)
 		goto msix_alloc_err;
 
@@ -969,7 +971,7 @@ int octep_vf_device_setup(struct octep_vf_device *oct)
 	struct pci_dev *pdev = oct->pdev;
 
 	/* allocate memory for oct->conf */
-	oct->conf = kzalloc_obj(*oct->conf);
+	oct->conf = kzalloc(sizeof(*oct->conf), GFP_KERNEL);
 	if (!oct->conf)
 		return -ENOMEM;
 

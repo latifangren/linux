@@ -6,7 +6,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "vm_util.h"
 #include "thp_settings.h"
 
 #define THP_SYSFS "/sys/kernel/mm/transparent_hugepage/"
@@ -65,7 +64,30 @@ int read_file(const char *path, char *buf, size_t buflen)
 	return (unsigned int) numread;
 }
 
-unsigned long read_num(const char *path)
+int write_file(const char *path, const char *buf, size_t buflen)
+{
+	int fd;
+	ssize_t numwritten;
+
+	fd = open(path, O_WRONLY);
+	if (fd == -1) {
+		printf("open(%s)\n", path);
+		exit(EXIT_FAILURE);
+		return 0;
+	}
+
+	numwritten = write(fd, buf, buflen - 1);
+	close(fd);
+	if (numwritten < 1) {
+		printf("write(%s)\n", buf);
+		exit(EXIT_FAILURE);
+		return 0;
+	}
+
+	return (unsigned int) numwritten;
+}
+
+const unsigned long read_num(const char *path)
 {
 	char buf[21];
 
@@ -82,7 +104,10 @@ void write_num(const char *path, unsigned long num)
 	char buf[21];
 
 	sprintf(buf, "%ld", num);
-	write_file(path, buf, strlen(buf) + 1);
+	if (!write_file(path, buf, strlen(buf) + 1)) {
+		perror(path);
+		exit(EXIT_FAILURE);
+	}
 }
 
 int thp_read_string(const char *name, const char * const strings[])
@@ -140,10 +165,14 @@ void thp_write_string(const char *name, const char *val)
 		printf("%s: Pathname is too long\n", __func__);
 		exit(EXIT_FAILURE);
 	}
-	write_file(path, val, strlen(val) + 1);
+
+	if (!write_file(path, val, strlen(val) + 1)) {
+		perror(path);
+		exit(EXIT_FAILURE);
+	}
 }
 
-unsigned long thp_read_num(const char *name)
+const unsigned long thp_read_num(const char *name)
 {
 	char path[PATH_MAX];
 	int ret;
@@ -351,22 +380,4 @@ unsigned long thp_supported_orders(void)
 unsigned long thp_shmem_supported_orders(void)
 {
 	return __thp_supported_orders(true);
-}
-
-bool thp_available(void)
-{
-	if (access(THP_SYSFS, F_OK) != 0)
-		return false;
-	return true;
-}
-
-bool thp_is_enabled(void)
-{
-	if (!thp_available())
-		return false;
-
-	int mode = thp_read_string("enabled", thp_enabled_strings);
-
-	/* THP is considered enabled if it's either "always" or "madvise" */
-	return mode == 1 || mode == 3;
 }

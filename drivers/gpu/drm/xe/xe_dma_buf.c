@@ -20,7 +20,7 @@
 #include "xe_ttm_vram_mgr.h"
 #include "xe_vm.h"
 
-MODULE_IMPORT_NS("DMA_BUF");
+MODULE_IMPORT_NS(DMA_BUF);
 
 static int xe_dma_buf_attach(struct dma_buf *dmabuf,
 			     struct dma_buf_attachment *attach)
@@ -48,39 +48,31 @@ static void xe_dma_buf_detach(struct dma_buf *dmabuf,
 
 static int xe_dma_buf_pin(struct dma_buf_attachment *attach)
 {
-	struct dma_buf *dmabuf = attach->dmabuf;
-	struct drm_gem_object *obj = dmabuf->priv;
+	struct drm_gem_object *obj = attach->dmabuf->priv;
 	struct xe_bo *bo = gem_to_xe_bo(obj);
 	struct xe_device *xe = xe_bo_device(bo);
-	struct drm_exec *exec = XE_VALIDATION_UNSUPPORTED;
-	bool allow_vram = true;
 	int ret;
 
-	list_for_each_entry(attach, &dmabuf->attachments, node) {
-		if (!attach->peer2peer) {
-			allow_vram = false;
-			break;
-		}
-	}
-
-	if (xe_bo_is_pinned(bo) && !xe_bo_is_mem_type(bo, XE_PL_TT) &&
-	    !(xe_bo_is_vram(bo) && allow_vram)) {
+	/*
+	 * For now only support pinning in TT memory, for two reasons:
+	 * 1) Avoid pinning in a placement not accessible to some importers.
+	 * 2) Pinning in VRAM requires PIN accounting which is a to-do.
+	 */
+	if (xe_bo_is_pinned(bo) && !xe_bo_is_mem_type(bo, XE_PL_TT)) {
 		drm_dbg(&xe->drm, "Can't migrate pinned bo for dma-buf pin.\n");
 		return -EINVAL;
 	}
 
-	if (!allow_vram) {
-		ret = xe_bo_migrate(bo, XE_PL_TT, NULL, exec);
-		if (ret) {
-			if (ret != -EINTR && ret != -ERESTARTSYS)
-				drm_dbg(&xe->drm,
-					"Failed migrating dma-buf to TT memory: %pe\n",
-					ERR_PTR(ret));
-			return ret;
-		}
+	ret = xe_bo_migrate(bo, XE_PL_TT);
+	if (ret) {
+		if (ret != -EINTR && ret != -ERESTARTSYS)
+			drm_dbg(&xe->drm,
+				"Failed migrating dma-buf to TT memory: %pe\n",
+				ERR_PTR(ret));
+		return ret;
 	}
 
-	ret = xe_bo_pin_external(bo, !allow_vram, exec);
+	ret = xe_bo_pin_external(bo, true);
 	xe_assert(xe, !ret);
 
 	return 0;
@@ -100,7 +92,6 @@ static struct sg_table *xe_dma_buf_map(struct dma_buf_attachment *attach,
 	struct dma_buf *dma_buf = attach->dmabuf;
 	struct drm_gem_object *obj = dma_buf->priv;
 	struct xe_bo *bo = gem_to_xe_bo(obj);
-	struct drm_exec *exec = XE_VALIDATION_UNSUPPORTED;
 	struct sg_table *sgt;
 	int r = 0;
 
@@ -109,9 +100,9 @@ static struct sg_table *xe_dma_buf_map(struct dma_buf_attachment *attach,
 
 	if (!xe_bo_is_pinned(bo)) {
 		if (!attach->peer2peer)
-			r = xe_bo_migrate(bo, XE_PL_TT, NULL, exec);
+			r = xe_bo_migrate(bo, XE_PL_TT);
 		else
-			r = xe_bo_validate(bo, NULL, false, exec);
+			r = xe_bo_validate(bo, NULL, false);
 		if (r)
 			return ERR_PTR(r);
 	}
@@ -170,26 +161,15 @@ static int xe_dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 	struct xe_bo *bo = gem_to_xe_bo(obj);
 	bool reads =  (direction == DMA_BIDIRECTIONAL ||
 		       direction == DMA_FROM_DEVICE);
-	struct xe_validation_ctx ctx;
-	struct drm_exec exec;
-	int ret = 0;
 
 	if (!reads)
 		return 0;
 
 	/* Can we do interruptible lock here? */
-	xe_validation_guard(&ctx, &xe_bo_device(bo)->val, &exec, (struct xe_val_flags) {}, ret) {
-		ret = drm_exec_lock_obj(&exec, &bo->ttm.base);
-		drm_exec_retry_on_contention(&exec);
-		if (ret)
-			break;
+	xe_bo_lock(bo, false);
+	(void)xe_bo_migrate(bo, XE_PL_TT);
+	xe_bo_unlock(bo);
 
-		ret = xe_bo_migrate(bo, XE_PL_TT, NULL, &exec);
-		drm_exec_retry_on_contention(&exec);
-		xe_validation_retry_on_oom(&ctx, &ret);
-	}
-
-	/* If we failed, cpu-access takes place in current placement. */
 	return 0;
 }
 
@@ -211,51 +191,15 @@ struct dma_buf *xe_gem_prime_export(struct drm_gem_object *obj, int flags)
 {
 	struct xe_bo *bo = gem_to_xe_bo(obj);
 	struct dma_buf *buf;
-	struct ttm_operation_ctx ctx = {
-		.interruptible = true,
-		.no_wait_gpu = true,
-		/* We opt to avoid OOM on system pages allocations */
-		.gfp_retry_mayfail = true,
-		.allow_res_evict = false,
-	};
-	int ret;
 
 	if (bo->vm)
 		return ERR_PTR(-EPERM);
-
-	/*
-	 * Reject exporting purgeable BOs. DONTNEED BOs can be purged
-	 * at any time, making the exported dma-buf unusable. Purged BOs
-	 * have no backing store and are permanently invalid.
-	 */
-	ret = xe_bo_lock(bo, true);
-	if (ret)
-		return ERR_PTR(ret);
-
-	if (xe_bo_madv_is_dontneed(bo)) {
-		ret = -EBUSY;
-		goto out_unlock;
-	}
-
-	if (xe_bo_is_purged(bo)) {
-		ret = -EINVAL;
-		goto out_unlock;
-	}
-	xe_bo_unlock(bo);
-
-	ret = ttm_bo_setup_export(&bo->ttm, &ctx);
-	if (ret)
-		return ERR_PTR(ret);
 
 	buf = drm_gem_prime_export(obj, flags);
 	if (!IS_ERR(buf))
 		buf->ops = &xe_dmabuf_ops;
 
 	return buf;
-
-out_unlock:
-	xe_bo_unlock(bo);
-	return ERR_PTR(ret);
 }
 
 static struct drm_gem_object *
@@ -264,50 +208,37 @@ xe_dma_buf_init_obj(struct drm_device *dev, struct xe_bo *storage,
 {
 	struct dma_resv *resv = dma_buf->resv;
 	struct xe_device *xe = to_xe_device(dev);
-	struct xe_validation_ctx ctx;
-	struct drm_gem_object *dummy_obj;
-	struct drm_exec exec;
 	struct xe_bo *bo;
-	int ret = 0;
+	int ret;
 
-	dummy_obj = drm_gpuvm_resv_object_alloc(&xe->drm);
-	if (!dummy_obj)
-		return ERR_PTR(-ENOMEM);
-
-	dummy_obj->resv = resv;
-	xe_validation_guard(&ctx, &xe->val, &exec, (struct xe_val_flags) {}, ret) {
-		ret = drm_exec_lock_obj(&exec, dummy_obj);
-		drm_exec_retry_on_contention(&exec);
-		if (ret)
-			break;
-
-		bo = xe_bo_init_locked(xe, storage, NULL, resv, NULL, dma_buf->size,
-				       0, /* Will require 1way or 2way for vm_bind */
-				       ttm_bo_type_sg, XE_BO_FLAG_SYSTEM, &exec);
-		drm_exec_retry_on_contention(&exec);
-		if (IS_ERR(bo)) {
-			ret = PTR_ERR(bo);
-			xe_validation_retry_on_oom(&ctx, &ret);
-			break;
-		}
+	dma_resv_lock(resv, NULL);
+	bo = ___xe_bo_create_locked(xe, storage, NULL, resv, NULL, dma_buf->size,
+				    0, /* Will require 1way or 2way for vm_bind */
+				    ttm_bo_type_sg, XE_BO_FLAG_SYSTEM);
+	if (IS_ERR(bo)) {
+		ret = PTR_ERR(bo);
+		goto error;
 	}
-	drm_gem_object_put(dummy_obj);
+	dma_resv_unlock(resv);
 
-	return ret ? ERR_PTR(ret) : &bo->ttm.base;
+	return &bo->ttm.base;
+
+error:
+	dma_resv_unlock(resv);
+	return ERR_PTR(ret);
 }
 
 static void xe_dma_buf_move_notify(struct dma_buf_attachment *attach)
 {
 	struct drm_gem_object *obj = attach->importer_priv;
 	struct xe_bo *bo = gem_to_xe_bo(obj);
-	struct drm_exec *exec = XE_VALIDATION_UNSUPPORTED;
 
-	XE_WARN_ON(xe_bo_evict(bo, exec));
+	XE_WARN_ON(xe_bo_evict(bo, false));
 }
 
 static const struct dma_buf_attach_ops xe_dma_buf_attach_ops = {
 	.allow_peer2peer = true,
-	.invalidate_mappings = xe_dma_buf_move_notify
+	.move_notify = xe_dma_buf_move_notify
 };
 
 #if IS_ENABLED(CONFIG_DRM_XE_KUNIT_TEST)

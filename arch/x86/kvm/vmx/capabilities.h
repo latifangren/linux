@@ -15,10 +15,14 @@ extern bool __read_mostly enable_ept;
 extern bool __read_mostly enable_unrestricted_guest;
 extern bool __read_mostly enable_ept_ad_bits;
 extern bool __read_mostly enable_pml;
+extern bool __read_mostly enable_ipiv;
 extern int __read_mostly pt_mode;
 
 #define PT_MODE_SYSTEM		0
 #define PT_MODE_HOST_GUEST	1
+
+#define PMU_CAP_FW_WRITES	(1ULL << 13)
+#define PMU_CAP_LBR_FMT		0x3f
 
 struct nested_vmx_msrs {
 	/*
@@ -73,11 +77,6 @@ static inline bool cpu_has_vmx_basic_inout(void)
 	return	vmcs_config.basic & VMX_BASIC_INOUT;
 }
 
-static inline bool cpu_has_vmx_basic_no_hw_errcode_cc(void)
-{
-	return	vmcs_config.basic & VMX_BASIC_NO_HW_ERROR_CODE_CC;
-}
-
 static inline bool cpu_has_virtual_nmis(void)
 {
 	return vmcs_config.pin_based_exec_ctrl & PIN_BASED_VIRTUAL_NMIS &&
@@ -103,16 +102,6 @@ static inline bool cpu_has_load_ia32_efer(void)
 static inline bool cpu_has_load_perf_global_ctrl(void)
 {
 	return vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PERF_GLOBAL_CTRL;
-}
-
-static inline bool cpu_has_load_cet_ctrl(void)
-{
-	return vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_CET_STATE;
-}
-
-static inline bool cpu_has_save_perf_global_ctrl(void)
-{
-	return vmcs_config.vmexit_ctrl & VM_EXIT_SAVE_IA32_PERF_GLOBAL_CTRL;
 }
 
 static inline bool cpu_has_vmx_mpx(void)
@@ -401,8 +390,7 @@ static inline bool vmx_pt_mode_is_host_guest(void)
 
 static inline bool vmx_pebs_supported(void)
 {
-	return boot_cpu_has(X86_FEATURE_PEBS) && kvm_pmu_cap.pebs_ept &&
-	       !enable_mediated_pmu;
+	return boot_cpu_has(X86_FEATURE_PEBS) && kvm_pmu_cap.pebs_ept;
 }
 
 static inline bool cpu_has_notify_vmexit(void)

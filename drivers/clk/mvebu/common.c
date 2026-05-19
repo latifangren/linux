@@ -124,7 +124,8 @@ void __init mvebu_coreclk_setup(struct device_node *np,
 	if (desc->get_refclk_freq)
 		clk_data.clk_num += 1;
 
-	clk_data.clks = kzalloc_objs(*clk_data.clks, clk_data.clk_num);
+	clk_data.clks = kcalloc(clk_data.clk_num, sizeof(*clk_data.clks),
+				GFP_KERNEL);
 	if (WARN_ON(!clk_data.clks)) {
 		iounmap(base);
 		return;
@@ -214,24 +215,20 @@ static struct clk *clk_gating_get_src(
 	return ERR_PTR(-ENODEV);
 }
 
-static int mvebu_clk_gating_suspend(void *data)
+static int mvebu_clk_gating_suspend(void)
 {
 	ctrl->saved_reg = readl(ctrl->base);
 	return 0;
 }
 
-static void mvebu_clk_gating_resume(void *data)
+static void mvebu_clk_gating_resume(void)
 {
 	writel(ctrl->saved_reg, ctrl->base);
 }
 
-static const struct syscore_ops clk_gate_syscore_ops = {
+static struct syscore_ops clk_gate_syscore_ops = {
 	.suspend = mvebu_clk_gating_suspend,
 	.resume = mvebu_clk_gating_resume,
-};
-
-static struct syscore clk_gate_syscore = {
-	.ops = &clk_gate_syscore_ops,
 };
 
 void __init mvebu_clk_gating_setup(struct device_node *np,
@@ -257,7 +254,7 @@ void __init mvebu_clk_gating_setup(struct device_node *np,
 		clk_put(clk);
 	}
 
-	ctrl = kzalloc_obj(*ctrl);
+	ctrl = kzalloc(sizeof(*ctrl), GFP_KERNEL);
 	if (WARN_ON(!ctrl))
 		goto ctrl_out;
 
@@ -271,7 +268,8 @@ void __init mvebu_clk_gating_setup(struct device_node *np,
 		n++;
 
 	ctrl->num_gates = n;
-	ctrl->gates = kzalloc_objs(*ctrl->gates, ctrl->num_gates);
+	ctrl->gates = kcalloc(ctrl->num_gates, sizeof(*ctrl->gates),
+			      GFP_KERNEL);
 	if (WARN_ON(!ctrl->gates))
 		goto gates_out;
 
@@ -286,7 +284,7 @@ void __init mvebu_clk_gating_setup(struct device_node *np,
 
 	of_clk_add_provider(np, clk_gating_get_src, ctrl);
 
-	register_syscore(&clk_gate_syscore);
+	register_syscore_ops(&clk_gate_syscore_ops);
 
 	return;
 gates_out:

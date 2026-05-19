@@ -29,9 +29,6 @@ properties:
     minimum: 0
     maximum: 192
 
-  '#address-cells':
-    const: 0
-
   interrupt-controller: true
 
   '#interrupt-cells':

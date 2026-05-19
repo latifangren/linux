@@ -268,7 +268,7 @@ static int qrtr_tx_wait(struct qrtr_node *node, int dest_node, int dest_port,
 	mutex_lock(&node->qrtr_tx_lock);
 	flow = xa_load(&node->qrtr_tx_flow, key);
 	if (!flow) {
-		flow = kzalloc_obj(*flow);
+		flow = kzalloc(sizeof(*flow), GFP_KERNEL);
 		if (flow) {
 			init_waitqueue_head(&flow->resume_tx);
 			if (xa_err(xa_store(&node->qrtr_tx_flow, key, flow,
@@ -361,7 +361,7 @@ static int qrtr_node_enqueue(struct qrtr_node *node, struct sk_buff *skb,
 	}
 
 	hdr->size = cpu_to_le32(len);
-	hdr->confirm_rx = cpu_to_le32(!!confirm_rx);
+	hdr->confirm_rx = !!confirm_rx;
 
 	rc = skb_put_padto(skb, ALIGN(len, 4) + sizeof(*hdr));
 
@@ -462,7 +462,7 @@ int qrtr_endpoint_post(struct qrtr_endpoint *ep, const void *data, size_t len)
 		cb->type = le32_to_cpu(v1->type);
 		cb->src_node = le32_to_cpu(v1->src_node_id);
 		cb->src_port = le32_to_cpu(v1->src_port_id);
-		cb->confirm_rx = !!le32_to_cpu(v1->confirm_rx);
+		cb->confirm_rx = !!v1->confirm_rx;
 		cb->dst_node = le32_to_cpu(v1->dst_node_id);
 		cb->dst_port = le32_to_cpu(v1->dst_port_id);
 
@@ -585,7 +585,7 @@ int qrtr_endpoint_register(struct qrtr_endpoint *ep, unsigned int nid)
 	if (!ep || !ep->xmit)
 		return -EINVAL;
 
-	node = kzalloc_obj(*node);
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
 	if (!node)
 		return -ENOMEM;
 
@@ -819,7 +819,7 @@ static int qrtr_autobind(struct socket *sock)
 }
 
 /* Bind socket to specified sockaddr. */
-static int qrtr_bind(struct socket *sock, struct sockaddr_unsized *saddr, int len)
+static int qrtr_bind(struct socket *sock, struct sockaddr *saddr, int len)
 {
 	DECLARE_SOCKADDR(struct sockaddr_qrtr *, addr, saddr);
 	struct qrtr_sock *ipc = qrtr_sk(sock->sk);
@@ -1079,7 +1079,7 @@ out:
 	return rc;
 }
 
-static int qrtr_connect(struct socket *sock, struct sockaddr_unsized *saddr,
+static int qrtr_connect(struct socket *sock, struct sockaddr *saddr,
 			int len, int flags)
 {
 	DECLARE_SOCKADDR(struct sockaddr_qrtr *, addr, saddr);

@@ -13,16 +13,18 @@
 #include <drm/drm_managed.h>
 #include <drm/drm_print.h>
 
-#include "xe_assert.h"
+#include "regs/xe_engine_regs.h"
+#include "regs/xe_gt_regs.h"
 #include "xe_device.h"
 #include "xe_device_types.h"
 #include "xe_force_wake.h"
+#include "xe_gt.h"
 #include "xe_gt_mcr.h"
 #include "xe_gt_printk.h"
-#include "xe_gt_types.h"
 #include "xe_hw_engine_types.h"
-#include "xe_lrc.h"
+#include "xe_macros.h"
 #include "xe_mmio.h"
+#include "xe_reg_whitelist.h"
 #include "xe_rtp_types.h"
 
 static void reg_sr_fini(struct drm_device *drm, void *arg)
@@ -91,7 +93,7 @@ int xe_reg_sr_add(struct xe_reg_sr *sr,
 		return 0;
 	}
 
-	pentry = kmalloc_obj(*pentry);
+	pentry = kmalloc(sizeof(*pentry), GFP_KERNEL);
 	if (!pentry) {
 		ret = -ENOMEM;
 		goto fail;
@@ -146,7 +148,7 @@ static void apply_one_mmio(struct xe_gt *gt, struct xe_reg_sr_entry *entry)
 	else if (entry->clr_bits + 1)
 		val = (reg.mcr ?
 		       xe_gt_mcr_unicast_read_any(gt, reg_mcr) :
-		       xe_mmio_read32(&gt->mmio, reg)) & (~entry->clr_bits);
+		       xe_mmio_read32(gt, reg)) & (~entry->clr_bits);
 	else
 		val = 0;
 
@@ -162,33 +164,86 @@ static void apply_one_mmio(struct xe_gt *gt, struct xe_reg_sr_entry *entry)
 	if (entry->reg.mcr)
 		xe_gt_mcr_multicast_write(gt, reg_mcr, val);
 	else
-		xe_mmio_write32(&gt->mmio, reg, val);
+		xe_mmio_write32(gt, reg, val);
 }
 
 void xe_reg_sr_apply_mmio(struct xe_reg_sr *sr, struct xe_gt *gt)
 {
 	struct xe_reg_sr_entry *entry;
 	unsigned long reg;
+	int err;
 
 	if (xa_empty(&sr->xa))
 		return;
 
-	/*
-	 * We don't process non-LRC reg_sr lists in VF, so they should have
-	 * been empty in the check above.
-	 */
-	xe_gt_assert(gt, !IS_SRIOV_VF(gt_to_xe(gt)));
-
 	xe_gt_dbg(gt, "Applying %s save-restore MMIOs\n", sr->name);
 
-	CLASS(xe_force_wake, fw_ref)(gt_to_fw(gt), XE_FORCEWAKE_ALL);
-	if (!xe_force_wake_ref_has_domain(fw_ref.domains, XE_FORCEWAKE_ALL)) {
-		xe_gt_err(gt, "Failed to apply, err=-ETIMEDOUT\n");
-		return;
-	}
+	err = xe_force_wake_get(gt_to_fw(gt), XE_FORCEWAKE_ALL);
+	if (err)
+		goto err_force_wake;
 
 	xa_for_each(&sr->xa, reg, entry)
 		apply_one_mmio(gt, entry);
+
+	err = xe_force_wake_put(gt_to_fw(gt), XE_FORCEWAKE_ALL);
+	XE_WARN_ON(err);
+
+	return;
+
+err_force_wake:
+	xe_gt_err(gt, "Failed to apply, err=%d\n", err);
+}
+
+void xe_reg_sr_apply_whitelist(struct xe_hw_engine *hwe)
+{
+	struct xe_reg_sr *sr = &hwe->reg_whitelist;
+	struct xe_gt *gt = hwe->gt;
+	struct xe_device *xe = gt_to_xe(gt);
+	struct xe_reg_sr_entry *entry;
+	struct drm_printer p;
+	u32 mmio_base = hwe->mmio_base;
+	unsigned long reg;
+	unsigned int slot = 0;
+	int err;
+
+	if (xa_empty(&sr->xa))
+		return;
+
+	drm_dbg(&xe->drm, "Whitelisting %s registers\n", sr->name);
+
+	err = xe_force_wake_get(gt_to_fw(gt), XE_FORCEWAKE_ALL);
+	if (err)
+		goto err_force_wake;
+
+	p = drm_dbg_printer(&xe->drm, DRM_UT_DRIVER, NULL);
+	xa_for_each(&sr->xa, reg, entry) {
+		if (slot == RING_MAX_NONPRIV_SLOTS) {
+			xe_gt_err(gt,
+				  "hwe %s: maximum register whitelist slots (%d) reached, refusing to add more\n",
+				  hwe->name, RING_MAX_NONPRIV_SLOTS);
+			break;
+		}
+
+		xe_reg_whitelist_print_entry(&p, 0, reg, entry);
+		xe_mmio_write32(gt, RING_FORCE_TO_NONPRIV(mmio_base, slot),
+				reg | entry->set_bits);
+		slot++;
+	}
+
+	/* And clear the rest just in case of garbage */
+	for (; slot < RING_MAX_NONPRIV_SLOTS; slot++) {
+		u32 addr = RING_NOPID(mmio_base).addr;
+
+		xe_mmio_write32(gt, RING_FORCE_TO_NONPRIV(mmio_base, slot), addr);
+	}
+
+	err = xe_force_wake_put(gt_to_fw(gt), XE_FORCEWAKE_ALL);
+	XE_WARN_ON(err);
+
+	return;
+
+err_force_wake:
+	drm_err(&xe->drm, "Failed to apply, err=%d\n", err);
 }
 
 /**
@@ -210,67 +265,4 @@ void xe_reg_sr_dump(struct xe_reg_sr *sr, struct drm_printer *p)
 			   reg, entry->clr_bits, entry->set_bits,
 			   str_yes_no(entry->reg.masked),
 			   str_yes_no(entry->reg.mcr));
-}
-
-static u32 readback_reg(struct xe_gt *gt, struct xe_reg reg)
-{
-	struct xe_reg_mcr mcr_reg = to_xe_reg_mcr(reg);
-
-	if (reg.mcr)
-		return xe_gt_mcr_unicast_read_any(gt, mcr_reg);
-	else
-		return xe_mmio_read32(&gt->mmio, reg);
-}
-
-/**
- * xe_reg_sr_readback_check() - Readback registers referenced in save/restore
- *     entries and check whether the programming is in place.
- * @sr: Save/restore entries
- * @gt: GT to read register from
- * @p: DRM printer to report discrepancies on
- */
-void xe_reg_sr_readback_check(struct xe_reg_sr *sr,
-			      struct xe_gt *gt,
-			      struct drm_printer *p)
-{
-	struct xe_reg_sr_entry *entry;
-	unsigned long offset;
-
-	xa_for_each(&sr->xa, offset, entry) {
-		u32 val = readback_reg(gt, entry->reg);
-		u32 mask = entry->clr_bits | entry->set_bits;
-
-		if ((val & mask) != entry->set_bits)
-			drm_printf(p, "%#8lx & %#10x :: expected %#10x got %#10x\n",
-				   offset, mask, entry->set_bits, val & mask);
-	}
-}
-
-/**
- * xe_reg_sr_lrc_check() - Check LRC for registers referenced in save/restore
- *     entries and check whether the programming is in place.
- * @sr: Save/restore entries
- * @gt: GT to read register from
- * @hwe: Hardware engine type to check LRC for
- * @p: DRM printer to report discrepancies on
- */
-void xe_reg_sr_lrc_check(struct xe_reg_sr *sr,
-			 struct xe_gt *gt,
-			 struct xe_hw_engine *hwe,
-			 struct drm_printer *p)
-{
-	struct xe_reg_sr_entry *entry;
-	unsigned long offset;
-
-	xa_for_each(&sr->xa, offset, entry) {
-		u32 val;
-		int ret = xe_lrc_lookup_default_reg_value(gt, hwe->class, offset, &val);
-		u32 mask = entry->clr_bits | entry->set_bits;
-
-		if (ret == -ENOENT)
-			drm_printf(p, "%#8lx :: not found in LRC for %s\n", offset, hwe->name);
-		else if ((val & mask) != entry->set_bits)
-			drm_printf(p, "%#8lx & %#10x :: expected %#10x got %#10x\n",
-				   offset, mask, entry->set_bits, val & mask);
-	}
 }

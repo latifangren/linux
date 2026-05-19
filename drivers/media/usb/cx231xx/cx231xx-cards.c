@@ -679,7 +679,8 @@ struct cx231xx_board cx231xx_boards[] = {
 			}, {
 				.type = CX231XX_VMUX_SVIDEO,
 				.vmux = CX231XX_VIN_1_1 |
-					(CX231XX_VIN_3_2 << 8),
+					(CX231XX_VIN_1_2 << 8) |
+					CX25840_SVIDEO_ON,
 				.amux = CX231XX_AMUX_LINE_IN,
 				.gpio = NULL,
 			}
@@ -989,6 +990,7 @@ struct cx231xx_board cx231xx_boards[] = {
 		} },
 	},
 };
+const unsigned int cx231xx_bcount = ARRAY_SIZE(cx231xx_boards);
 
 /* table of devices that work with this driver */
 struct usb_device_id cx231xx_id_table[] = {
@@ -1295,7 +1297,7 @@ void cx231xx_card_setup(struct cx231xx *dev)
 				u8 eeprom[256];
 				struct i2c_client client;
 			};
-			struct eeprom *e = kzalloc_obj(*e);
+			struct eeprom *e = kzalloc(sizeof(*e), GFP_KERNEL);
 
 			if (e == NULL) {
 				dev_err(dev->dev,
@@ -1369,6 +1371,8 @@ void cx231xx_release_resources(struct cx231xx *dev)
 
 	cx231xx_unregister_media_device(dev);
 
+	usb_put_dev(dev->udev);
+
 	/* Mark device as unused */
 	clear_bit(dev->devno, &cx231xx_devused);
 }
@@ -1379,7 +1383,7 @@ static int cx231xx_media_device_init(struct cx231xx *dev,
 #ifdef CONFIG_MEDIA_CONTROLLER
 	struct media_device *mdev;
 
-	mdev = kzalloc_obj(*mdev);
+	mdev = kzalloc(sizeof(*mdev), GFP_KERNEL);
 	if (!mdev)
 		return -ENOMEM;
 
@@ -1717,7 +1721,7 @@ static int cx231xx_usb_probe(struct usb_interface *interface,
 		}
 	} while (test_and_set_bit(nr, &cx231xx_devused));
 
-	udev = interface_to_usbdev(interface);
+	udev = usb_get_dev(interface_to_usbdev(interface));
 
 	/* allocate memory for our device state and initialize it */
 	dev = devm_kzalloc(&udev->dev, sizeof(*dev), GFP_KERNEL);
@@ -1913,6 +1917,7 @@ err_v4l2:
 err_media_init:
 	usb_set_intfdata(interface, NULL);
 err_if:
+	usb_put_dev(udev);
 	clear_bit(nr, &cx231xx_devused);
 	return retval;
 }

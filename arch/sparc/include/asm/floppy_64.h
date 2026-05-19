@@ -13,7 +13,6 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/dma-mapping.h>
-#include <linux/string.h>
 
 #include <asm/auxio.h>
 
@@ -95,6 +94,9 @@ static int sun_floppy_types[2] = { 0, 0 };
 
 #define N_FDC    1
 #define N_DRIVE  8
+
+/* No 64k boundary crossing problems on the Sparc. */
+#define CROSS_64KB(a,s) (0)
 
 static unsigned char sun_82077_fd_inb(unsigned long base, unsigned int reg)
 {
@@ -616,7 +618,7 @@ static unsigned long __init sun_floppy_init(void)
 		sun_pci_fd_ebus_dma.callback = sun_pci_fd_dma_callback;
 		sun_pci_fd_ebus_dma.client_cookie = NULL;
 		sun_pci_fd_ebus_dma.irq = FLOPPY_IRQ;
-		strscpy(sun_pci_fd_ebus_dma.name, "floppy");
+		strcpy(sun_pci_fd_ebus_dma.name, "floppy");
 		if (ebus_dma_register(&sun_pci_fd_ebus_dma))
 			return 0;
 

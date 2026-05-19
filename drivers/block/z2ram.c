@@ -187,7 +187,8 @@ static int z2_open(struct gendisk *disk, blk_mode_t mode)
 			    (unsigned long)z_remap_nocache_nonser(paddr, size);
 #endif
 			z2ram_map =
-			    kmalloc_objs(z2ram_map[0], size / Z2RAM_CHUNKSIZE);
+			    kmalloc_array(size / Z2RAM_CHUNKSIZE,
+					  sizeof(z2ram_map[0]), GFP_KERNEL);
 			if (z2ram_map == NULL) {
 				printk(KERN_ERR DEVICE_NAME
 				       ": cannot get mem for z2ram_map\n");
@@ -353,6 +354,7 @@ static int __init z2_init(void)
 	tag_set.nr_maps = 1;
 	tag_set.queue_depth = 16;
 	tag_set.numa_node = NUMA_NO_NODE;
+	tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 	ret = blk_mq_alloc_tag_set(&tag_set);
 	if (ret)
 		goto out_unregister_blkdev;

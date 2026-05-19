@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/inet.h>
+#include <linux/fdtable.h>
 #include <linux/rhashtable.h>
 
 #include <net/sock.h>
@@ -119,7 +120,7 @@ struct handshake_req *handshake_req_alloc(const struct handshake_proto *proto,
 	if (!proto->hp_accept || !proto->hp_done)
 		return NULL;
 
-	req = kzalloc_flex(*req, hr_priv, proto->hp_privsize, flags);
+	req = kzalloc(struct_size(req, hr_priv, proto->hp_privsize), flags);
 	if (!req)
 		return NULL;
 

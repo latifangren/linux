@@ -2201,7 +2201,7 @@ static int vsc9959_psfp_sgi_table_add(struct ocelot *ocelot,
 			return 0;
 		}
 
-	tmp = kzalloc_obj(*tmp);
+	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 

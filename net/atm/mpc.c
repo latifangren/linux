@@ -184,7 +184,7 @@ struct atm_mpoa_qos *atm_mpoa_add_qos(__be32 dst_ip, struct atm_qos *qos)
 		return entry;
 	}
 
-	entry = kmalloc_obj(struct atm_mpoa_qos);
+	entry = kmalloc(sizeof(struct atm_mpoa_qos), GFP_KERNEL);
 	if (entry == NULL) {
 		pr_info("mpoa: out of memory\n");
 		return entry;
@@ -282,7 +282,7 @@ static struct mpoa_client *alloc_mpc(void)
 {
 	struct mpoa_client *mpc;
 
-	mpc = kzalloc_obj(struct mpoa_client);
+	mpc = kzalloc(sizeof(struct mpoa_client), GFP_KERNEL);
 	if (mpc == NULL)
 		return NULL;
 	rwlock_init(&mpc->ingress_lock);
@@ -804,7 +804,7 @@ static int atm_mpoa_mpoad_attach(struct atm_vcc *vcc, int arg)
 		/* This lets us now how our LECs are doing */
 		err = register_netdevice_notifier(&mpoa_notifier);
 		if (err < 0) {
-			timer_delete(&mpc_timer);
+			del_timer(&mpc_timer);
 			return err;
 		}
 	}
@@ -1495,7 +1495,7 @@ static void __exit atm_mpoa_cleanup(void)
 
 	mpc_proc_clean();
 
-	timer_delete_sync(&mpc_timer);
+	del_timer_sync(&mpc_timer);
 	unregister_netdevice_notifier(&mpoa_notifier);
 	deregister_atm_ioctl(&atm_ioctl_ops);
 

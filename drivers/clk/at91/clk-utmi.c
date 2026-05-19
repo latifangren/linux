@@ -155,7 +155,7 @@ at91_clk_register_utmi_internal(struct regmap *regmap_pmc,
 	if (!(parent_name || parent_hw))
 		return ERR_PTR(-EINVAL);
 
-	utmi = kzalloc_obj(*utmi);
+	utmi = kzalloc(sizeof(*utmi), GFP_KERNEL);
 	if (!utmi)
 		return ERR_PTR(-ENOMEM);
 

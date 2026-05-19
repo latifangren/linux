@@ -67,7 +67,7 @@ void intel_iommu_drain_pasid_prq(struct device *dev, u32 pasid)
 	u16 sid, did;
 
 	info = dev_iommu_priv_get(dev);
-	if (!info->iopf_refcount)
+	if (!info->pri_enabled)
 		return;
 
 	iommu = info->iommu;
@@ -81,15 +81,13 @@ void intel_iommu_drain_pasid_prq(struct device *dev, u32 pasid)
 	 */
 prq_retry:
 	reinit_completion(&iommu->prq_complete);
-	tail = readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
-	head = readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
+	tail = dmar_readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
+	head = dmar_readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
 	while (head != tail) {
 		struct page_req_dsc *req;
 
 		req = &iommu->prq[head / sizeof(*req)];
-		if (req->rid != sid ||
-		    (req->pasid_present && pasid != req->pasid) ||
-		    (!req->pasid_present && pasid != IOMMU_NO_PASID)) {
+		if (!req->pasid_present || req->pasid != pasid) {
 			head = (head + sizeof(*req)) & PRQ_RING_MASK;
 			continue;
 		}
@@ -113,7 +111,7 @@ prq_retry:
 		qi_desc_dev_iotlb(sid, info->pfsid, info->ats_qdep, 0,
 				  MAX_AGAW_PFN_WIDTH, &desc[2]);
 	} else {
-		qi_desc_piotlb_all(did, pasid, &desc[1]);
+		qi_desc_piotlb(did, pasid, 0, -1, 0, &desc[1]);
 		qi_desc_dev_iotlb_pasid(sid, info->pfsid, pasid, info->ats_qdep,
 					0, MAX_AGAW_PFN_WIDTH, &desc[2]);
 	}
@@ -151,7 +149,8 @@ static void handle_bad_prq_event(struct intel_iommu *iommu,
 			QI_PGRP_PASID_P(req->pasid_present) |
 			QI_PGRP_RESP_CODE(result) |
 			QI_PGRP_RESP_TYPE;
-	desc.qw1 = QI_PGRP_IDX(req->prg_index);
+	desc.qw1 = QI_PGRP_IDX(req->prg_index) |
+			QI_PGRP_LPIG(req->lpig);
 
 	qi_submit_sync(iommu, &desc, 1, 0);
 }
@@ -208,19 +207,25 @@ static irqreturn_t prq_event_thread(int irq, void *d)
 	 */
 	writel(DMA_PRS_PPR, iommu->reg + DMAR_PRS_REG);
 
-	tail = readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
-	head = readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
+	tail = dmar_readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
+	head = dmar_readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
 	handled = (head != tail);
 	while (head != tail) {
 		req = &iommu->prq[head / sizeof(*req)];
 		address = (u64)req->addr << VTD_PAGE_SHIFT;
 
-		if (unlikely(!is_canonical_address(address))) {
-			pr_err("IOMMU: %s: Address is not canonical\n",
+		if (unlikely(!req->pasid_present)) {
+			pr_err("IOMMU: %s: Page request without PASID\n",
 			       iommu->name);
 bad_req:
 			handle_bad_prq_event(iommu, req, QI_RESP_INVALID);
 			goto prq_advance;
+		}
+
+		if (unlikely(!is_canonical_address(address))) {
+			pr_err("IOMMU: %s: Address is not canonical\n",
+			       iommu->name);
+			goto bad_req;
 		}
 
 		if (unlikely(req->pm_req && (req->rd_req | req->wr_req))) {
@@ -259,7 +264,7 @@ prq_advance:
 		head = (head + sizeof(*req)) & PRQ_RING_MASK;
 	}
 
-	writeq(tail, iommu->reg + DMAR_PQH_REG);
+	dmar_writeq(iommu->reg + DMAR_PQH_REG, tail);
 
 	/*
 	 * Clear the page request overflow bit and wake up all threads that
@@ -268,8 +273,8 @@ prq_advance:
 	if (readl(iommu->reg + DMAR_PRS_REG) & DMA_PRS_PRO) {
 		pr_info_ratelimited("IOMMU: %s: PRQ overflow detected\n",
 				    iommu->name);
-		head = readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
-		tail = readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
+		head = dmar_readq(iommu->reg + DMAR_PQH_REG) & PRQ_RING_MASK;
+		tail = dmar_readq(iommu->reg + DMAR_PQT_REG) & PRQ_RING_MASK;
 		if (head == tail) {
 			iopf_queue_discard_partial(iommu->iopf_queue);
 			writel(DMA_PRS_PRO, iommu->reg + DMAR_PRS_REG);
@@ -289,8 +294,7 @@ int intel_iommu_enable_prq(struct intel_iommu *iommu)
 	struct iopf_queue *iopfq;
 	int irq, ret;
 
-	iommu->prq =
-		iommu_alloc_pages_node_sz(iommu->node, GFP_KERNEL, PRQ_SIZE);
+	iommu->prq = iommu_alloc_pages_node(iommu->node, GFP_KERNEL, PRQ_ORDER);
 	if (!iommu->prq) {
 		pr_warn("IOMMU: %s: Failed to allocate page request queue\n",
 			iommu->name);
@@ -325,9 +329,9 @@ int intel_iommu_enable_prq(struct intel_iommu *iommu)
 		       iommu->name);
 		goto free_iopfq;
 	}
-	writeq(0ULL, iommu->reg + DMAR_PQH_REG);
-	writeq(0ULL, iommu->reg + DMAR_PQT_REG);
-	writeq(virt_to_phys(iommu->prq) | PRQ_ORDER, iommu->reg + DMAR_PQA_REG);
+	dmar_writeq(iommu->reg + DMAR_PQH_REG, 0ULL);
+	dmar_writeq(iommu->reg + DMAR_PQT_REG, 0ULL);
+	dmar_writeq(iommu->reg + DMAR_PQA_REG, virt_to_phys(iommu->prq) | PRQ_ORDER);
 
 	init_completion(&iommu->prq_complete);
 
@@ -340,7 +344,7 @@ free_hwirq:
 	dmar_free_hwirq(irq);
 	iommu->pr_irq = 0;
 free_prq:
-	iommu_free_pages(iommu->prq);
+	iommu_free_pages(iommu->prq, PRQ_ORDER);
 	iommu->prq = NULL;
 
 	return ret;
@@ -348,9 +352,9 @@ free_prq:
 
 int intel_iommu_finish_prq(struct intel_iommu *iommu)
 {
-	writeq(0ULL, iommu->reg + DMAR_PQH_REG);
-	writeq(0ULL, iommu->reg + DMAR_PQT_REG);
-	writeq(0ULL, iommu->reg + DMAR_PQA_REG);
+	dmar_writeq(iommu->reg + DMAR_PQH_REG, 0ULL);
+	dmar_writeq(iommu->reg + DMAR_PQT_REG, 0ULL);
+	dmar_writeq(iommu->reg + DMAR_PQA_REG, 0ULL);
 
 	if (iommu->pr_irq) {
 		free_irq(iommu->pr_irq, iommu);
@@ -363,7 +367,7 @@ int intel_iommu_finish_prq(struct intel_iommu *iommu)
 		iommu->iopf_queue = NULL;
 	}
 
-	iommu_free_pages(iommu->prq);
+	iommu_free_pages(iommu->prq, PRQ_ORDER);
 	iommu->prq = NULL;
 
 	return 0;
@@ -378,17 +382,19 @@ void intel_iommu_page_response(struct device *dev, struct iopf_fault *evt,
 	struct iommu_fault_page_request *prm;
 	struct qi_desc desc;
 	bool pasid_present;
+	bool last_page;
 	u16 sid;
 
 	prm = &evt->fault.prm;
 	sid = PCI_DEVID(bus, devfn);
 	pasid_present = prm->flags & IOMMU_FAULT_PAGE_REQUEST_PASID_VALID;
+	last_page = prm->flags & IOMMU_FAULT_PAGE_REQUEST_LAST_PAGE;
 
 	desc.qw0 = QI_PGRP_PASID(prm->pasid) | QI_PGRP_DID(sid) |
 			QI_PGRP_PASID_P(pasid_present) |
 			QI_PGRP_RESP_CODE(msg->code) |
 			QI_PGRP_RESP_TYPE;
-	desc.qw1 = QI_PGRP_IDX(prm->grpid);
+	desc.qw1 = QI_PGRP_IDX(prm->grpid) | QI_PGRP_LPIG(last_page);
 	desc.qw2 = 0;
 	desc.qw3 = 0;
 

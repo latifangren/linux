@@ -66,7 +66,7 @@ static bool sysfb_unregister(void)
  */
 void sysfb_disable(struct device *dev)
 {
-	struct screen_info *si = &sysfb_primary_display.screen;
+	struct screen_info *si = &screen_info;
 	struct device *parent;
 
 	mutex_lock(&disable_lock);
@@ -78,25 +78,6 @@ void sysfb_disable(struct device *dev)
 	mutex_unlock(&disable_lock);
 }
 EXPORT_SYMBOL_GPL(sysfb_disable);
-
-/**
- * sysfb_handles_screen_info() - reports if sysfb handles the global screen_info
- *
- * Callers can use sysfb_handles_screen_info() to determine whether the Generic
- * System Framebuffers (sysfb) can handle the global screen_info data structure
- * or not. Drivers might need this information to know if they have to setup the
- * system framebuffer, or if they have to delegate this action to sysfb instead.
- *
- * Returns:
- * True if sysfb handles the global screen_info data structure.
- */
-bool sysfb_handles_screen_info(void)
-{
-	const struct screen_info *si = &sysfb_primary_display.screen;
-
-	return !!screen_info_video_type(si);
-}
-EXPORT_SYMBOL_GPL(sysfb_handles_screen_info);
 
 #if defined(CONFIG_PCI)
 static bool sysfb_pci_dev_is_enabled(struct pci_dev *pdev)
@@ -141,8 +122,7 @@ static struct device *sysfb_parent_dev(const struct screen_info *si)
 
 static __init int sysfb_init(void)
 {
-	struct sysfb_display_info *dpy = &sysfb_primary_display;
-	struct screen_info *si = &dpy->screen;
+	struct screen_info *si = &screen_info;
 	struct device *parent;
 	unsigned int type;
 	struct simplefb_platform_data mode;
@@ -156,7 +136,7 @@ static __init int sysfb_init(void)
 	if (disabled)
 		goto unlock_mutex;
 
-	sysfb_apply_efi_quirks(si);
+	sysfb_apply_efi_quirks();
 
 	parent = sysfb_parent_dev(si);
 	if (IS_ERR(parent)) {
@@ -201,9 +181,9 @@ static __init int sysfb_init(void)
 
 	pd->dev.parent = parent;
 
-	sysfb_set_efifb_fwnode(si, pd);
+	sysfb_set_efifb_fwnode(pd);
 
-	ret = platform_device_add_data(pd, dpy, sizeof(*dpy));
+	ret = platform_device_add_data(pd, si, sizeof(*si));
 	if (ret)
 		goto err;
 

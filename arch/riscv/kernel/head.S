@@ -15,7 +15,6 @@
 #include <asm/image.h>
 #include <asm/scs.h>
 #include <asm/xip_fixup.h>
-#include <asm/usercfi.h>
 #include "efi-header.S"
 
 __HEAD
@@ -132,12 +131,6 @@ secondary_start_sbi:
 	csrw CSR_IE, zero
 	csrw CSR_IP, zero
 
-#ifndef CONFIG_RISCV_M_MODE
-	/* Enable time CSR */
-	li t0, 0x2
-	csrw CSR_SCOUNTEREN, t0
-#endif
-
 	/* Load the global pointer */
 	load_global_pointer
 
@@ -171,19 +164,6 @@ secondary_start_sbi:
 	call relocate_enable_mmu
 #endif
 	call .Lsetup_trap_vector
-#if defined(CONFIG_RISCV_SBI) && defined(CONFIG_RISCV_USER_CFI)
-	li a7, SBI_EXT_FWFT
-	li a6, SBI_EXT_FWFT_SET
-	li a0, SBI_FWFT_SHADOW_STACK
-	li a1, 1 /* enable supervisor to access shadow stack access */
-	li a2, SBI_FWFT_SET_FLAG_LOCK
-	ecall
-	beqz a0, 1f
-	la a1, riscv_nousercfi
-	li a0, CMDLINE_DISABLE_RISCV_USERCFI_BCFI
-	REG_S a0, (a1)
-1:
-#endif
 	scs_load_current
 	call smp_callin
 #endif /* CONFIG_SMP */
@@ -246,10 +226,6 @@ SYM_CODE_START(_start_kernel)
 	 * to hand it to us.
 	 */
 	csrr a0, CSR_MHARTID
-#else
-	/* Enable time CSR */
-	li t0, 0x2
-	csrw CSR_SCOUNTEREN, t0
 #endif /* CONFIG_RISCV_M_MODE */
 
 	/* Load the global pointer */
@@ -344,19 +320,6 @@ SYM_CODE_START(_start_kernel)
 	la tp, init_task
 	la sp, init_thread_union + THREAD_SIZE
 	addi sp, sp, -PT_SIZE_ON_STACK
-#if defined(CONFIG_RISCV_SBI) && defined(CONFIG_RISCV_USER_CFI)
-	li a7, SBI_EXT_FWFT
-	li a6, SBI_EXT_FWFT_SET
-	li a0, SBI_FWFT_SHADOW_STACK
-	li a1, 1 /* enable supervisor to access shadow stack access */
-	li a2, SBI_FWFT_SET_FLAG_LOCK
-	ecall
-	beqz a0, 1f
-	la a1, riscv_nousercfi
-	li a0, CMDLINE_DISABLE_RISCV_USERCFI_BCFI
-	REG_S a0, (a1)
-1:
-#endif
 	scs_load_current
 
 #ifdef CONFIG_KASAN

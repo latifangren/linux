@@ -16,7 +16,7 @@
 #include <asm/sbi.h>
 #include <asm/uaccess.h>
 
-static void kvm_riscv_vcpu_sbi_sta_reset(struct kvm_vcpu *vcpu)
+void kvm_riscv_vcpu_sbi_sta_reset(struct kvm_vcpu *vcpu)
 {
 	vcpu->arch.sta.shmem = INVALID_GPA;
 	vcpu->arch.sta.last_steal = 0;
@@ -85,6 +85,8 @@ static int kvm_sbi_sta_steal_time_set_shmem(struct kvm_vcpu *vcpu)
 	unsigned long shmem_phys_hi = cp->a1;
 	u32 flags = cp->a2;
 	struct sbi_sta_struct zero_sta = {0};
+	unsigned long hva;
+	bool writable;
 	gpa_t shmem;
 	int ret;
 
@@ -109,10 +111,13 @@ static int kvm_sbi_sta_steal_time_set_shmem(struct kvm_vcpu *vcpu)
 			return SBI_ERR_INVALID_ADDRESS;
 	}
 
-	/* No need to check writable slot explicitly as kvm_vcpu_write_guest does it internally */
+	hva = kvm_vcpu_gfn_to_hva_prot(vcpu, shmem >> PAGE_SHIFT, &writable);
+	if (kvm_is_error_hva(hva) || !writable)
+		return SBI_ERR_INVALID_ADDRESS;
+
 	ret = kvm_vcpu_write_guest(vcpu, shmem, &zero_sta, sizeof(zero_sta));
 	if (ret)
-		return SBI_ERR_INVALID_ADDRESS;
+		return SBI_ERR_FAILURE;
 
 	vcpu->arch.sta.shmem = shmem;
 	vcpu->arch.sta.last_steal = current->sched_info.run_delay;
@@ -146,88 +151,62 @@ static unsigned long kvm_sbi_ext_sta_probe(struct kvm_vcpu *vcpu)
 	return !!sched_info_on();
 }
 
-static unsigned long kvm_sbi_ext_sta_get_state_reg_count(struct kvm_vcpu *vcpu)
+const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_sta = {
+	.extid_start = SBI_EXT_STA,
+	.extid_end = SBI_EXT_STA,
+	.handler = kvm_sbi_ext_sta_handler,
+	.probe = kvm_sbi_ext_sta_probe,
+};
+
+int kvm_riscv_vcpu_get_reg_sbi_sta(struct kvm_vcpu *vcpu,
+				   unsigned long reg_num,
+				   unsigned long *reg_val)
 {
-	return sizeof(struct kvm_riscv_sbi_sta) / sizeof(unsigned long);
-}
-
-static int kvm_sbi_ext_sta_get_reg(struct kvm_vcpu *vcpu, unsigned long reg_num,
-				   unsigned long reg_size, void *reg_val)
-{
-	unsigned long *value;
-
-	if (reg_size != sizeof(unsigned long))
-		return -EINVAL;
-	value = reg_val;
-
 	switch (reg_num) {
 	case KVM_REG_RISCV_SBI_STA_REG(shmem_lo):
-		*value = (unsigned long)vcpu->arch.sta.shmem;
+		*reg_val = (unsigned long)vcpu->arch.sta.shmem;
 		break;
 	case KVM_REG_RISCV_SBI_STA_REG(shmem_hi):
 		if (IS_ENABLED(CONFIG_32BIT))
-			*value = upper_32_bits(vcpu->arch.sta.shmem);
+			*reg_val = upper_32_bits(vcpu->arch.sta.shmem);
 		else
-			*value = 0;
+			*reg_val = 0;
 		break;
 	default:
-		return -ENOENT;
+		return -EINVAL;
 	}
 
 	return 0;
 }
 
-static int kvm_sbi_ext_sta_set_reg(struct kvm_vcpu *vcpu, unsigned long reg_num,
-				   unsigned long reg_size, const void *reg_val)
+int kvm_riscv_vcpu_set_reg_sbi_sta(struct kvm_vcpu *vcpu,
+				   unsigned long reg_num,
+				   unsigned long reg_val)
 {
-	unsigned long value;
-	gpa_t new_shmem = INVALID_GPA;
-
-	if (reg_size != sizeof(unsigned long))
-		return -EINVAL;
-	value = *(const unsigned long *)reg_val;
-
 	switch (reg_num) {
 	case KVM_REG_RISCV_SBI_STA_REG(shmem_lo):
 		if (IS_ENABLED(CONFIG_32BIT)) {
 			gpa_t hi = upper_32_bits(vcpu->arch.sta.shmem);
 
-			new_shmem = value;
-			new_shmem |= hi << 32;
+			vcpu->arch.sta.shmem = reg_val;
+			vcpu->arch.sta.shmem |= hi << 32;
 		} else {
-			new_shmem = value;
+			vcpu->arch.sta.shmem = reg_val;
 		}
 		break;
 	case KVM_REG_RISCV_SBI_STA_REG(shmem_hi):
 		if (IS_ENABLED(CONFIG_32BIT)) {
 			gpa_t lo = lower_32_bits(vcpu->arch.sta.shmem);
 
-			new_shmem = ((gpa_t)value << 32);
-			new_shmem |= lo;
-		} else if (value != 0) {
+			vcpu->arch.sta.shmem = ((gpa_t)reg_val << 32);
+			vcpu->arch.sta.shmem |= lo;
+		} else if (reg_val != 0) {
 			return -EINVAL;
 		}
 		break;
 	default:
-		return -ENOENT;
-	}
-
-	if (new_shmem != INVALID_GPA && !IS_ALIGNED(new_shmem, 64))
 		return -EINVAL;
-
-	vcpu->arch.sta.shmem = new_shmem;
+	}
 
 	return 0;
 }
-
-const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_sta = {
-	.extid_start = SBI_EXT_STA,
-	.extid_end = SBI_EXT_STA,
-	.handler = kvm_sbi_ext_sta_handler,
-	.probe = kvm_sbi_ext_sta_probe,
-	.reset = kvm_riscv_vcpu_sbi_sta_reset,
-	.state_reg_subtype = KVM_REG_RISCV_SBI_STA,
-	.get_state_reg_count = kvm_sbi_ext_sta_get_state_reg_count,
-	.get_state_reg = kvm_sbi_ext_sta_get_reg,
-	.set_state_reg = kvm_sbi_ext_sta_set_reg,
-};

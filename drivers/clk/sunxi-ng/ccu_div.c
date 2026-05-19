@@ -10,25 +10,26 @@
 #include "ccu_gate.h"
 #include "ccu_div.h"
 
-static int ccu_div_determine_rate_helper(struct ccu_mux_internal *mux,
-					 struct clk_rate_request *req,
-					 void *data)
+static unsigned long ccu_div_round_rate(struct ccu_mux_internal *mux,
+					struct clk_hw *parent,
+					unsigned long *parent_rate,
+					unsigned long rate,
+					void *data)
 {
 	struct ccu_div *cd = data;
-	int ret;
 
 	if (cd->common.features & CCU_FEATURE_FIXED_POSTDIV)
-		req->rate *= cd->fixed_post_div;
+		rate *= cd->fixed_post_div;
 
-	ret = divider_determine_rate(&cd->common.hw, req, cd->div.table,
-				     cd->div.width, cd->div.flags);
-	if (ret)
-		return ret;
+	rate = divider_round_rate_parent(&cd->common.hw, parent,
+					 rate, parent_rate,
+					 cd->div.table, cd->div.width,
+					 cd->div.flags);
 
 	if (cd->common.features & CCU_FEATURE_FIXED_POSTDIV)
-		req->rate /= cd->fixed_post_div;
+		rate /= cd->fixed_post_div;
 
-	return 0;
+	return rate;
 }
 
 static void ccu_div_disable(struct clk_hw *hw)
@@ -81,7 +82,7 @@ static int ccu_div_determine_rate(struct clk_hw *hw,
 	struct ccu_div *cd = hw_to_ccu_div(hw);
 
 	return ccu_mux_helper_determine_rate(&cd->common, &cd->mux,
-					     req, ccu_div_determine_rate_helper, cd);
+					     req, ccu_div_round_rate, cd);
 }
 
 static int ccu_div_set_rate(struct clk_hw *hw, unsigned long rate,
@@ -105,8 +106,6 @@ static int ccu_div_set_rate(struct clk_hw *hw, unsigned long rate,
 
 	reg = readl(cd->common.base + cd->common.reg);
 	reg &= ~GENMASK(cd->div.width + cd->div.shift - 1, cd->div.shift);
-	if (cd->common.features & CCU_FEATURE_UPDATE_BIT)
-		reg |= CCU_SUNXI_UPDATE_BIT;
 
 	writel(reg | (val << cd->div.shift),
 	       cd->common.base + cd->common.reg);
@@ -142,4 +141,4 @@ const struct clk_ops ccu_div_ops = {
 	.recalc_rate	= ccu_div_recalc_rate,
 	.set_rate	= ccu_div_set_rate,
 };
-EXPORT_SYMBOL_NS_GPL(ccu_div_ops, "SUNXI_CCU");
+EXPORT_SYMBOL_NS_GPL(ccu_div_ops, SUNXI_CCU);

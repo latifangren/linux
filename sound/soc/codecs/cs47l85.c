@@ -2497,7 +2497,6 @@ static irqreturn_t cs47l85_adsp2_irq(int irq, void *data)
 
 static int cs47l85_component_probe(struct snd_soc_component *component)
 {
-	struct snd_soc_dapm_context *dapm = snd_soc_component_to_dapm(component);
 	struct cs47l85 *cs47l85 = snd_soc_component_get_drvdata(component);
 	struct madera *madera = cs47l85->core.madera;
 	int i, ret;
@@ -2505,7 +2504,7 @@ static int cs47l85_component_probe(struct snd_soc_component *component)
 	snd_soc_component_init_regmap(component, madera->regmap);
 
 	mutex_lock(&madera->dapm_ptr_lock);
-	madera->dapm = snd_soc_component_to_dapm(component);
+	madera->dapm = snd_soc_component_get_dapm(component);
 	mutex_unlock(&madera->dapm_ptr_lock);
 
 	ret = madera_init_inputs(component);
@@ -2517,7 +2516,7 @@ static int cs47l85_component_probe(struct snd_soc_component *component)
 	if (ret)
 		return ret;
 
-	snd_soc_dapm_disable_pin(dapm, "HAPTICS");
+	snd_soc_component_disable_pin(component, "HAPTICS");
 
 	ret = snd_soc_add_component_controls(component,
 					     madera_adsp_rate_controls,

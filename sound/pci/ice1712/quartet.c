@@ -396,7 +396,7 @@ static void reg_write(struct snd_ice1712 *ice, unsigned int reg,
 {
 	unsigned int tmp;
 
-	guard(mutex)(&ice->gpio_mutex);
+	mutex_lock(&ice->gpio_mutex);
 	/* set direction of used GPIOs*/
 	/* all outputs */
 	tmp = 0x00ffff;
@@ -429,6 +429,7 @@ static void reg_write(struct snd_ice1712 *ice, unsigned int reg,
 	ice->gpio.set_mask(ice, 0xffffff);
 	/* outputs only 8-15 */
 	ice->gpio.set_dir(ice, 0x00ff00);
+	mutex_unlock(&ice->gpio_mutex);
 }
 
 static unsigned int get_scr(struct snd_ice1712 *ice)
@@ -969,7 +970,7 @@ static int qtet_init(struct snd_ice1712 *ice)
 	val = inb(ICEMT1724(ice, RATE));
 	outb(val | VT1724_SPDIF_MASTER, ICEMT1724(ice, RATE));
 
-	spec = kzalloc_obj(*spec);
+	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
 	if (!spec)
 		return -ENOMEM;
 	/* qtet is clocked by Xilinx array */
@@ -1005,7 +1006,7 @@ static int qtet_init(struct snd_ice1712 *ice)
 	ice->num_total_dacs = 2;
 	ice->num_total_adcs = 2;
 
-	ice->akm = kzalloc_objs(struct snd_akm4xxx, 2);
+	ice->akm = kcalloc(2, sizeof(struct snd_akm4xxx), GFP_KERNEL);
 	ak = ice->akm;
 	if (!ak)
 		return -ENOMEM;

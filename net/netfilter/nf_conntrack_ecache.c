@@ -17,6 +17,9 @@
 #include <linux/stddef.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+#include <linux/notifier.h>
+#endif
 #include <linux/netdevice.h>
 #include <linux/slab.h>
 #include <linux/export.h>
@@ -28,9 +31,9 @@
 
 static DEFINE_MUTEX(nf_ct_ecache_mutex);
 
-#define DYING_NULLS_VAL			((1 << 30) + 1)
-#define ECACHE_MAX_JIFFIES		msecs_to_jiffies(10)
-#define ECACHE_RETRY_JIFFIES		msecs_to_jiffies(10)
+#define DYING_NULLS_VAL ((1 << 30) + 1)
+#define ECACHE_MAX_JIFFIES msecs_to_jiffies(10)
+#define ECACHE_RETRY_JIFFIES msecs_to_jiffies(10)
 
 enum retry_state {
 	STATE_CONGESTED,
@@ -63,7 +66,8 @@ next:
 	sent = 0;
 	spin_lock_bh(&cnet->ecache.dying_lock);
 
-	hlist_nulls_for_each_entry_safe(h, n, &cnet->ecache.dying_list, hnnode) {
+	hlist_nulls_for_each_entry_safe(h, n, &cnet->ecache.dying_list,
+					hnnode) {
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
 
 		/* The worker owns all entries, ct remains valid until nf_ct_put
@@ -75,7 +79,8 @@ next:
 		}
 
 		hlist_nulls_del_rcu(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnnode);
-		hlist_nulls_add_head(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode, &evicted_list);
+		hlist_nulls_add_head(&ct->tuplehash[IP_CT_DIR_REPLY].hnnode,
+				     &evicted_list);
 
 		if (time_after(stop, jiffies)) {
 			ret = STATE_RESTART;
@@ -105,7 +110,8 @@ next:
 
 static void ecache_work(struct work_struct *work)
 {
-	struct nf_conntrack_net *cnet = container_of(work, struct nf_conntrack_net, ecache.dwork.work);
+	struct nf_conntrack_net *cnet =
+		container_of(work, struct nf_conntrack_net, ecache.dwork.work);
 	int ret, delay = -1;
 
 	ret = ecache_work_evict_list(cnet);
@@ -126,8 +132,7 @@ static void ecache_work(struct work_struct *work)
 
 #ifndef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
-					   const u32 events,
-					   const u32 missed,
+					   const u32 events, const u32 missed,
 					   const struct nf_ct_event *item)
 {
 	struct net *net = nf_ct_net(item->ct);
@@ -141,12 +146,23 @@ static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
 	rcu_read_lock();
 
 	notify = rcu_dereference(net->ct.nf_conntrack_event_cb);
-	if (!notify) {
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+	if (!notify && !rcu_dereference_raw(net->ct.nf_conntrack_chain.head))
+#else
+	if (!notify)
+#endif
+	{
 		rcu_read_unlock();
 		return 0;
 	}
-
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+	ret = atomic_notifier_call_chain(&net->ct.nf_conntrack_chain,
+					 events | missed, &item);
+	if (notify)
+		ret = notify->ct_event(events | missed, item);
+#else
 	ret = notify->ct_event(events | missed, item);
+#endif
 	rcu_read_unlock();
 
 	if (likely(ret >= 0 && missed == 0))
@@ -164,14 +180,35 @@ static int __nf_conntrack_eventmask_report(struct nf_conntrack_ecache *e,
 }
 #endif
 
-static void nf_ct_ecache_tstamp_refresh(struct nf_conntrack_ecache *e)
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+int nf_conntrack_eventmask_report(unsigned int eventmask, struct nf_conn *ct,
+				  u32 portid, int report)
 {
-#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
-	if (local64_read(&e->timestamp))
-		local64_set(&e->timestamp, ktime_get_real_ns());
-#endif
-}
+	struct nf_conntrack_ecache *e;
+	struct net *net = nf_ct_net(ct);
 
+	e = nf_ct_ecache_find(ct);
+	if (e == NULL)
+		return 0;
+
+	if (nf_ct_is_confirmed(ct)) {
+		struct nf_ct_event item = { .ct = ct,
+					    .portid = e->portid ? e->portid :
+								  portid,
+					    .report = report };
+		/* This is a resent of a destroy event? If so, skip missed */
+		unsigned long missed = e->portid ? 0 : e->missed;
+
+		if (!((eventmask | missed) & e->ctmask))
+			return 0;
+
+		atomic_notifier_call_chain(&net->ct.nf_conntrack_chain,
+					   eventmask | missed, &item);
+	}
+
+	return 0;
+}
+#else
 int nf_conntrack_eventmask_report(unsigned int events, struct nf_conn *ct,
 				  u32 portid, int report)
 {
@@ -196,8 +233,6 @@ int nf_conntrack_eventmask_report(unsigned int events, struct nf_conn *ct,
 	/* This is a resent of a destroy event? If so, skip missed */
 	missed = e->portid ? 0 : e->missed;
 
-	nf_ct_ecache_tstamp_refresh(e);
-
 	ret = __nf_conntrack_eventmask_report(e, events, missed, &item);
 	if (unlikely(ret < 0 && (events & (1 << IPCT_DESTROY)))) {
 		/* This is a destroy event that has been triggered by a process,
@@ -209,10 +244,51 @@ int nf_conntrack_eventmask_report(unsigned int events, struct nf_conn *ct,
 
 	return ret;
 }
+#endif
 EXPORT_SYMBOL_GPL(nf_conntrack_eventmask_report);
 
 /* deliver cached events and clear cache entry - must be called with locally
  * disabled softirqs */
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+void nf_ct_deliver_cached_events(struct nf_conn *ct)
+{
+	unsigned long events, missed;
+	struct nf_conntrack_ecache *e;
+	struct nf_ct_event item;
+	struct net *net = nf_ct_net(ct);
+
+	e = nf_ct_ecache_find(ct);
+	if (e == NULL)
+		return;
+
+	events = xchg(&e->cache, 0);
+
+	if (!nf_ct_is_confirmed(ct) || nf_ct_is_dying(ct) || !events)
+		return;
+
+	/* We make a copy of the missed event cache without taking
+	 * the lock, thus we may send missed events twice. However,
+	 * this does not harm and it happens very rarely. */
+	missed = e->missed;
+
+	if (!((events | missed) & e->ctmask))
+		return;
+
+	item.ct = ct;
+	item.portid = 0;
+	item.report = 0;
+
+	atomic_notifier_call_chain(&net->ct.nf_conntrack_chain, events | missed,
+				   &item);
+
+	if (likely(!missed))
+		return;
+
+	spin_lock_bh(&ct->lock);
+	e->missed &= ~missed;
+	spin_unlock_bh(&ct->lock);
+}
+#else
 void nf_ct_deliver_cached_events(struct nf_conn *ct)
 {
 	struct nf_conntrack_ecache *e;
@@ -238,18 +314,17 @@ void nf_ct_deliver_cached_events(struct nf_conn *ct)
 	 */
 	__nf_conntrack_eventmask_report(e, events, e->missed, &item);
 }
+#endif
 EXPORT_SYMBOL_GPL(nf_ct_deliver_cached_events);
 
 void nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
-			       struct nf_conntrack_expect *exp,
-			       u32 portid, int report)
+			       struct nf_conntrack_expect *exp, u32 portid,
+			       int report)
 
 {
 	struct net *net = nf_ct_exp_net(exp);
 	struct nf_ct_event_notifier *notify;
 	struct nf_conntrack_ecache *e;
-
-	lockdep_nfct_expect_lock_held();
 
 	rcu_read_lock();
 	notify = rcu_dereference(net->ct.nf_conntrack_event_cb);
@@ -261,31 +336,66 @@ void nf_ct_expect_event_report(enum ip_conntrack_expect_events event,
 		goto out_unlock;
 
 	if (e->expmask & (1 << event)) {
-		struct nf_exp_event item = {
-			.exp	= exp,
-			.portid	= portid,
-			.report = report
-		};
+		struct nf_exp_event item = { .exp = exp,
+					     .portid = portid,
+					     .report = report };
 		notify->exp_event(1 << event, &item);
 	}
 out_unlock:
 	rcu_read_unlock();
 }
 
-void nf_conntrack_register_notifier(struct net *net,
-				    const struct nf_ct_event_notifier *new)
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+int nf_conntrack_register_notifier(struct net *net, struct notifier_block *nb)
 {
+	return atomic_notifier_chain_register(&net->ct.nf_conntrack_chain, nb);
+}
+int nf_conntrack_register_chain_notifier(struct net *net,
+					 struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&net->ct.nf_conntrack_chain, nb);
+}
+EXPORT_SYMBOL_GPL(nf_conntrack_register_chain_notifier);
+#else
+int nf_conntrack_register_notifier(struct net *net,
+				   const struct nf_ct_event_notifier *new)
+{
+	int ret;
 	struct nf_ct_event_notifier *notify;
 
 	mutex_lock(&nf_ct_ecache_mutex);
-	notify = rcu_dereference_protected(net->ct.nf_conntrack_event_cb,
-					   lockdep_is_held(&nf_ct_ecache_mutex));
+	notify =
+		rcu_dereference_protected(net->ct.nf_conntrack_event_cb,
+					  lockdep_is_held(&nf_ct_ecache_mutex));
 	WARN_ON_ONCE(notify);
+	if (notify != NULL) {
+		ret = -EBUSY;
+		goto out_unlock;
+	}
+
 	rcu_assign_pointer(net->ct.nf_conntrack_event_cb, new);
+	ret = 0;
+out_unlock:
 	mutex_unlock(&nf_ct_ecache_mutex);
+	return ret;
 }
+#endif
 EXPORT_SYMBOL_GPL(nf_conntrack_register_notifier);
 
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+int nf_conntrack_unregister_notifier(struct net *net, struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&net->ct.nf_conntrack_chain,
+						nb);
+}
+int nf_conntrack_unregister_chain_notifier(struct net *net,
+					   struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&net->ct.nf_conntrack_chain,
+						nb);
+}
+EXPORT_SYMBOL_GPL(nf_conntrack_unregister_chain_notifier);
+#else
 void nf_conntrack_unregister_notifier(struct net *net)
 {
 	mutex_lock(&nf_ct_ecache_mutex);
@@ -293,6 +403,7 @@ void nf_conntrack_unregister_notifier(struct net *net)
 	mutex_unlock(&nf_ct_ecache_mutex);
 	/* synchronize_rcu() is called after netns pre_exit */
 }
+#endif
 EXPORT_SYMBOL_GPL(nf_conntrack_unregister_notifier);
 
 void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state)
@@ -305,32 +416,21 @@ void nf_conntrack_ecache_work(struct net *net, enum nf_ct_ecache_state state)
 		net->ct.ecache_dwork_pending = true;
 	} else if (state == NFCT_ECACHE_DESTROY_SENT) {
 		if (!hlist_nulls_empty(&cnet->ecache.dying_list))
-			mod_delayed_work(system_percpu_wq, &cnet->ecache.dwork, 0);
+			mod_delayed_work(system_wq, &cnet->ecache.dwork, 0);
 		else
 			net->ct.ecache_dwork_pending = false;
 	}
 }
 
-static void nf_ct_ecache_tstamp_new(const struct nf_conn *ct, struct nf_conntrack_ecache *e)
-{
-#ifdef CONFIG_NF_CONNTRACK_TIMESTAMP
-	u64 ts = 0;
-
-	if (nf_ct_ext_exist(ct, NF_CT_EXT_TSTAMP))
-		ts = ktime_get_real_ns();
-
-	local64_set(&e->timestamp, ts);
-#endif
-}
-
-bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp)
+bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask,
+			  gfp_t gfp)
 {
 	struct net *net = nf_ct_net(ct);
 	struct nf_conntrack_ecache *e;
 
 	switch (net->ct.sysctl_events) {
 	case 0:
-		 /* assignment via template / ruleset? ignore sysctl. */
+		/* assignment via template / ruleset? ignore sysctl. */
 		if (ctmask || expmask)
 			break;
 		return true;
@@ -352,8 +452,7 @@ bool nf_ct_ecache_ext_add(struct nf_conn *ct, u16 ctmask, u16 expmask, gfp_t gfp
 
 	e = nf_ct_ext_add(ct, NF_CT_EXT_ECACHE, gfp);
 	if (e) {
-		nf_ct_ecache_tstamp_new(ct, e);
-		e->ctmask  = ctmask;
+		e->ctmask = ctmask;
 		e->expmask = expmask;
 	}
 
@@ -374,7 +473,7 @@ void nf_conntrack_ecache_pernet_init(struct net *net)
 	INIT_HLIST_NULLS_HEAD(&cnet->ecache.dying_list, DYING_NULLS_VAL);
 	spin_lock_init(&cnet->ecache.dying_lock);
 
-	BUILD_BUG_ON(__IPCT_MAX >= 16);	/* e->ctmask is u16 */
+	BUILD_BUG_ON(__IPCT_MAX >= 16); /* e->ctmask is u16 */
 }
 
 void nf_conntrack_ecache_pernet_fini(struct net *net)

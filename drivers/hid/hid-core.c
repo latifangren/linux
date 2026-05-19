@@ -96,7 +96,7 @@ struct hid_report *hid_register_report(struct hid_device *device,
 	if (report_enum->report_id_hash[id])
 		return report_enum->report_id_hash[id];
 
-	report = kzalloc_obj(struct hid_report);
+	report = kzalloc(sizeof(struct hid_report), GFP_KERNEL);
 	if (!report)
 		return NULL;
 
@@ -664,11 +664,7 @@ static int hid_parser_main(struct hid_parser *parser, struct hid_item *item)
 		ret = hid_add_field(parser, HID_FEATURE_REPORT, data);
 		break;
 	default:
-		if (item->tag >= HID_MAIN_ITEM_TAG_RESERVED_MIN &&
-			item->tag <= HID_MAIN_ITEM_TAG_RESERVED_MAX)
-			hid_warn_ratelimited(parser->device, "reserved main item tag 0x%x\n", item->tag);
-		else
-			hid_warn_ratelimited(parser->device, "unknown main item tag 0x%x\n", item->tag);
+		hid_warn(parser->device, "unknown main item tag 0x%x\n", item->tag);
 		ret = 0;
 	}
 
@@ -724,14 +720,7 @@ static void hid_close_report(struct hid_device *device)
 		INIT_LIST_HEAD(&report_enum->report_list);
 	}
 
-	/*
-	 * If the HID driver had a rdesc_fixup() callback, dev->rdesc
-	 * will be allocated by hid-core and needs to be freed.
-	 * Otherwise, it is either equal to dev_rdesc or bpf_rdesc, in
-	 * which cases it'll be freed later on device removal or destroy.
-	 */
-	if (device->rdesc != device->dev_rdesc && device->rdesc != device->bpf_rdesc)
-		kfree(device->rdesc);
+	kfree(device->rdesc);
 	device->rdesc = NULL;
 	device->rsize = 0;
 
@@ -744,14 +733,6 @@ static void hid_close_report(struct hid_device *device)
 	device->status &= ~HID_STAT_PARSED;
 }
 
-static inline void hid_free_bpf_rdesc(struct hid_device *hdev)
-{
-	/* bpf_rdesc is either equal to dev_rdesc or allocated by call_hid_bpf_rdesc_fixup() */
-	if (hdev->bpf_rdesc != hdev->dev_rdesc)
-		kfree(hdev->bpf_rdesc);
-	hdev->bpf_rdesc = NULL;
-}
-
 /*
  * Free a device structure, all reports, and all fields.
  */
@@ -761,7 +742,6 @@ void hiddev_free(struct kref *ref)
 	struct hid_device *hid = container_of(ref, struct hid_device, ref);
 
 	hid_close_report(hid);
-	hid_free_bpf_rdesc(hid);
 	kfree(hid->dev_rdesc);
 	kfree(hid);
 }
@@ -809,29 +789,35 @@ static const u8 *fetch_item(const __u8 *start, const __u8 *end, struct hid_item 
 	}
 
 	item->format = HID_ITEM_FORMAT_SHORT;
-	item->size = BIT(b & 3) >> 1; /* 0, 1, 2, 3 -> 0, 1, 2, 4 */
-
-	if (end - start < item->size)
-		return NULL;
+	item->size = b & 3;
 
 	switch (item->size) {
 	case 0:
-		break;
+		return start;
 
 	case 1:
-		item->data.u8 = *start;
-		break;
+		if ((end - start) < 1)
+			return NULL;
+		item->data.u8 = *start++;
+		return start;
 
 	case 2:
+		if ((end - start) < 2)
+			return NULL;
 		item->data.u16 = get_unaligned_le16(start);
-		break;
+		start = (__u8 *)((__le16 *)start + 1);
+		return start;
 
-	case 4:
+	case 3:
+		item->size++;
+		if ((end - start) < 4)
+			return NULL;
 		item->data.u32 = get_unaligned_le32(start);
-		break;
+		start = (__u8 *)((__le32 *)start + 1);
+		return start;
 	}
 
-	return start + item->size;
+	return NULL;
 }
 
 static void hid_scan_input_usage(struct hid_parser *parser, u32 usage)
@@ -927,6 +913,7 @@ static int hid_scan_main(struct hid_parser *parser, struct hid_item *item)
  */
 static int hid_scan_report(struct hid_device *hid)
 {
+	struct hid_parser *parser;
 	struct hid_item item;
 	const __u8 *start = hid->dev_rdesc;
 	const __u8 *end = start + hid->dev_rsize;
@@ -938,21 +925,12 @@ static int hid_scan_report(struct hid_device *hid)
 		hid_parser_reserved
 	};
 
-	struct hid_parser *parser __free(kvfree) = vzalloc(sizeof(*parser));
+	parser = vzalloc(sizeof(struct hid_parser));
 	if (!parser)
 		return -ENOMEM;
 
 	parser->device = hid;
 	hid->group = HID_GROUP_GENERIC;
-
-	/*
-	 * In case we are re-scanning after a BPF has been loaded,
-	 * we need to use the bpf report descriptor, not the original one.
-	 */
-	if (hid->bpf_rdesc && hid->bpf_rsize) {
-		start = hid->bpf_rdesc;
-		end = start + hid->bpf_rsize;
-	}
 
 	/*
 	 * The parsing is simpler than the one in hid_open_report() as we should
@@ -989,6 +967,7 @@ static int hid_scan_report(struct hid_device *hid)
 	}
 
 	kfree(parser->collection_stack);
+	vfree(parser);
 	return 0;
 }
 
@@ -1245,90 +1224,6 @@ void hid_setup_resolution_multiplier(struct hid_device *hid)
 }
 EXPORT_SYMBOL_GPL(hid_setup_resolution_multiplier);
 
-static int hid_parse_collections(struct hid_device *device)
-{
-	struct hid_item item;
-	const u8 *start = device->rdesc;
-	const u8 *end = start + device->rsize;
-	const u8 *next;
-	int ret;
-	static typeof(hid_parser_main) (* const dispatch_type[]) = {
-		hid_parser_main,
-		hid_parser_global,
-		hid_parser_local,
-		hid_parser_reserved
-	};
-
-	struct hid_parser *parser __free(kvfree) = vzalloc(sizeof(*parser));
-	if (!parser)
-		return -ENOMEM;
-
-	parser->device = device;
-
-	device->collection = kzalloc_objs(*device->collection,
-					  HID_DEFAULT_NUM_COLLECTIONS);
-	if (!device->collection)
-		return -ENOMEM;
-
-	device->collection_size = HID_DEFAULT_NUM_COLLECTIONS;
-	for (unsigned int i = 0; i < HID_DEFAULT_NUM_COLLECTIONS; i++)
-		device->collection[i].parent_idx = -1;
-
-	ret = -EINVAL;
-	if (start == end) {
-		hid_err(device, "rejecting 0-sized report descriptor\n");
-		goto out;
-	}
-
-	while ((next = fetch_item(start, end, &item)) != NULL) {
-		start = next;
-
-		if (item.format != HID_ITEM_FORMAT_SHORT) {
-			hid_err(device, "unexpected long global item\n");
-			goto out;
-		}
-
-		if (dispatch_type[item.type](parser, &item)) {
-			hid_err(device, "item %u %u %u %u parsing failed\n",
-				item.format,
-				(unsigned int)item.size,
-				(unsigned int)item.type,
-				(unsigned int)item.tag);
-			goto out;
-		}
-	}
-
-	if (start != end) {
-		hid_err(device, "item fetching failed at offset %u/%u\n",
-			device->rsize - (unsigned int)(end - start),
-			device->rsize);
-		goto out;
-	}
-
-	if (parser->collection_stack_ptr) {
-		hid_err(device, "unbalanced collection at end of report description\n");
-		goto out;
-	}
-
-	if (parser->local.delimiter_depth) {
-		hid_err(device, "unbalanced delimiter at end of report description\n");
-		goto out;
-	}
-
-	/*
-	 * fetch initial values in case the device's
-	 * default multiplier isn't the recommended 1
-	 */
-	hid_setup_resolution_multiplier(device);
-
-	device->status |= HID_STAT_PARSED;
-	ret = 0;
-
-out:
-	kfree(parser->collection_stack);
-	return ret;
-}
-
 /**
  * hid_open_report - open a driver-specific device report
  *
@@ -1343,51 +1238,117 @@ out:
  */
 int hid_open_report(struct hid_device *device)
 {
+	struct hid_parser *parser;
+	struct hid_item item;
 	unsigned int size;
-	const u8 *start;
-	int error;
+	const __u8 *start;
+	__u8 *buf;
+	const __u8 *end;
+	const __u8 *next;
+	int ret;
+	int i;
+	static int (*dispatch_type[])(struct hid_parser *parser,
+				      struct hid_item *item) = {
+		hid_parser_main,
+		hid_parser_global,
+		hid_parser_local,
+		hid_parser_reserved
+	};
 
 	if (WARN_ON(device->status & HID_STAT_PARSED))
 		return -EBUSY;
 
-	start = device->bpf_rdesc;
+	start = device->dev_rdesc;
 	if (WARN_ON(!start))
 		return -ENODEV;
-	size = device->bpf_rsize;
+	size = device->dev_rsize;
 
-	if (device->driver->report_fixup) {
-		/*
-		 * device->driver->report_fixup() needs to work
-		 * on a copy of our report descriptor so it can
-		 * change it.
-		 */
-		u8 *buf __free(kfree) = kmemdup(start, size, GFP_KERNEL);
+	/* call_hid_bpf_rdesc_fixup() ensures we work on a copy of rdesc */
+	buf = call_hid_bpf_rdesc_fixup(device, start, &size);
+	if (buf == NULL)
+		return -ENOMEM;
 
-		if (!buf)
-			return -ENOMEM;
-
+	if (device->driver->report_fixup)
 		start = device->driver->report_fixup(device, buf, &size);
+	else
+		start = buf;
 
-		/*
-		 * The second kmemdup is required in case report_fixup() returns
-		 * a static read-only memory, but we have no idea if that memory
-		 * needs to be cleaned up or not at the end.
-		 */
-		start = kmemdup(start, size, GFP_KERNEL);
-		if (!start)
-			return -ENOMEM;
-	}
+	start = kmemdup(start, size, GFP_KERNEL);
+	kfree(buf);
+	if (start == NULL)
+		return -ENOMEM;
 
 	device->rdesc = start;
 	device->rsize = size;
 
-	error = hid_parse_collections(device);
-	if (error) {
-		hid_close_report(device);
-		return error;
+	parser = vzalloc(sizeof(struct hid_parser));
+	if (!parser) {
+		ret = -ENOMEM;
+		goto alloc_err;
 	}
 
-	return 0;
+	parser->device = device;
+
+	end = start + size;
+
+	device->collection = kcalloc(HID_DEFAULT_NUM_COLLECTIONS,
+				     sizeof(struct hid_collection), GFP_KERNEL);
+	if (!device->collection) {
+		ret = -ENOMEM;
+		goto err;
+	}
+	device->collection_size = HID_DEFAULT_NUM_COLLECTIONS;
+	for (i = 0; i < HID_DEFAULT_NUM_COLLECTIONS; i++)
+		device->collection[i].parent_idx = -1;
+
+	ret = -EINVAL;
+	while ((next = fetch_item(start, end, &item)) != NULL) {
+		start = next;
+
+		if (item.format != HID_ITEM_FORMAT_SHORT) {
+			hid_err(device, "unexpected long global item\n");
+			goto err;
+		}
+
+		if (dispatch_type[item.type](parser, &item)) {
+			hid_err(device, "item %u %u %u %u parsing failed\n",
+				item.format, (unsigned)item.size,
+				(unsigned)item.type, (unsigned)item.tag);
+			goto err;
+		}
+
+		if (start == end) {
+			if (parser->collection_stack_ptr) {
+				hid_err(device, "unbalanced collection at end of report description\n");
+				goto err;
+			}
+			if (parser->local.delimiter_depth) {
+				hid_err(device, "unbalanced delimiter at end of report description\n");
+				goto err;
+			}
+
+			/*
+			 * fetch initial values in case the device's
+			 * default multiplier isn't the recommended 1
+			 */
+			hid_setup_resolution_multiplier(device);
+
+			kfree(parser->collection_stack);
+			vfree(parser);
+			device->status |= HID_STAT_PARSED;
+
+			return 0;
+		}
+	}
+
+	hid_err(device, "item fetching failed at offset %u/%u\n",
+		size - (unsigned int)(end - start), size);
+err:
+	kfree(parser->collection_stack);
+alloc_err:
+	vfree(parser);
+	hid_close_report(device);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(hid_open_report);
 
@@ -1807,7 +1768,7 @@ static void hid_report_process_ordering(struct hid_device *hid,
 	}
 
 	/* allocate the memory to process the fields */
-	entries = kzalloc_objs(*entries, count);
+	entries = kcalloc(count, sizeof(*entries), GFP_KERNEL);
 	if (!entries)
 		return;
 
@@ -2000,11 +1961,11 @@ static struct hid_report *hid_get_report(struct hid_report_enum *report_enum,
 int __hid_request(struct hid_device *hid, struct hid_report *report,
 		enum hid_class_request reqtype)
 {
-	u8 *data_buf;
+	char *buf, *data_buf;
 	int ret;
 	u32 len;
 
-	u8 *buf __free(kfree) = hid_alloc_report_buf(report, GFP_KERNEL);
+	buf = hid_alloc_report_buf(report, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -2023,13 +1984,17 @@ int __hid_request(struct hid_device *hid, struct hid_report *report,
 	ret = hid_hw_raw_request(hid, report->id, buf, len, report->type, reqtype);
 	if (ret < 0) {
 		dbg_hid("unable to complete request: %d\n", ret);
-		return ret;
+		goto out;
 	}
 
 	if (reqtype == HID_REQ_GET_REPORT)
 		hid_input_report(hid, report->type, buf, ret, 0);
 
-	return 0;
+	ret = 0;
+
+out:
+	kfree(buf);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(__hid_request);
 
@@ -2064,10 +2029,9 @@ int hid_report_raw_event(struct hid_device *hid, enum hid_report_type type, u8 *
 		rsize = max_buffer_size;
 
 	if (csize < rsize) {
-		hid_warn_ratelimited(hid, "Event data for report %d was too short (%d vs %d)\n",
-				     report->id, rsize, csize);
-		ret = -EINVAL;
-		goto out;
+		dbg_hid("report %d is too short, (%d < %d)\n", report->id,
+				csize, rsize);
+		memset(cdata + csize, 0, rsize - csize);
 	}
 
 	if ((hid->claimed & HID_CLAIMED_HIDDEV) && hid->hiddev_report_event)
@@ -2210,9 +2174,9 @@ static bool hid_hiddev(struct hid_device *hdev)
 
 
 static ssize_t
-report_descriptor_read(struct file *filp, struct kobject *kobj,
-		       const struct bin_attribute *attr,
-		       char *buf, loff_t off, size_t count)
+read_report_descriptor(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
+		char *buf, loff_t off, size_t count)
 {
 	struct device *dev = kobj_to_dev(kobj);
 	struct hid_device *hdev = to_hid_device(dev);
@@ -2229,17 +2193,24 @@ report_descriptor_read(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-country_show(struct device *dev, struct device_attribute *attr,
-	     char *buf)
+show_country(struct device *dev, struct device_attribute *attr,
+		char *buf)
 {
 	struct hid_device *hdev = to_hid_device(dev);
 
 	return sprintf(buf, "%02x\n", hdev->country & 0xff);
 }
 
-static const BIN_ATTR_RO(report_descriptor, HID_MAX_DESCRIPTOR_SIZE);
+static struct bin_attribute dev_bin_attr_report_desc = {
+	.attr = { .name = "report_descriptor", .mode = 0444 },
+	.read = read_report_descriptor,
+	.size = HID_MAX_DESCRIPTOR_SIZE,
+};
 
-static const DEVICE_ATTR_RO(country);
+static const struct device_attribute dev_attr_country = {
+	.attr = { .name = "country", .mode = 0444 },
+	.show = show_country,
+};
 
 int hid_connect(struct hid_device *hdev, unsigned int connect_mask)
 {
@@ -2323,9 +2294,6 @@ int hid_connect(struct hid_device *hdev, unsigned int connect_mask)
 		break;
 	case BUS_I2C:
 		bus = "I2C";
-		break;
-	case BUS_SDW:
-		bus = "SOUNDWIRE";
 		break;
 	case BUS_VIRTUAL:
 		bus = "VIRTUAL";
@@ -2429,9 +2397,6 @@ int hid_hw_open(struct hid_device *hdev)
 		ret = hdev->ll_driver->open(hdev);
 		if (ret)
 			hdev->ll_open_count--;
-
-		if (hdev->driver->on_hid_hw_open)
-			hdev->driver->on_hid_hw_open(hdev);
 	}
 
 	mutex_unlock(&hdev->ll_open_lock);
@@ -2451,12 +2416,8 @@ EXPORT_SYMBOL_GPL(hid_hw_open);
 void hid_hw_close(struct hid_device *hdev)
 {
 	mutex_lock(&hdev->ll_open_lock);
-	if (!--hdev->ll_open_count) {
+	if (!--hdev->ll_open_count)
 		hdev->ll_driver->close(hdev);
-
-		if (hdev->driver->on_hid_hw_close)
-			hdev->driver->on_hid_hw_close(hdev);
-	}
 	mutex_unlock(&hdev->ll_open_lock);
 }
 EXPORT_SYMBOL_GPL(hid_hw_close);
@@ -2618,7 +2579,7 @@ static ssize_t new_id_store(struct device_driver *drv, const char *buf,
 	if (ret < 3)
 		return -EINVAL;
 
-	dynid = kzalloc_obj(*dynid);
+	dynid = kzalloc(sizeof(*dynid), GFP_KERNEL);
 	if (!dynid)
 		return -ENOMEM;
 
@@ -2725,48 +2686,10 @@ static bool hid_check_device_match(struct hid_device *hdev,
 	return !hid_ignore_special_drivers && !(hdev->quirks & HID_QUIRK_IGNORE_SPECIAL_DRIVER);
 }
 
-static void hid_set_group(struct hid_device *hdev)
-{
-	int ret;
-
-	if (hid_ignore_special_drivers) {
-		hdev->group = HID_GROUP_GENERIC;
-	} else if (!hdev->group &&
-		   !(hdev->quirks & HID_QUIRK_HAVE_SPECIAL_DRIVER)) {
-		ret = hid_scan_report(hdev);
-		if (ret)
-			hid_warn(hdev, "bad device descriptor (%d)\n", ret);
-	}
-}
-
 static int __hid_device_probe(struct hid_device *hdev, struct hid_driver *hdrv)
 {
 	const struct hid_device_id *id;
 	int ret;
-
-	if (!hdev->bpf_rsize) {
-		/* we keep a reference to the currently scanned report descriptor */
-		const __u8  *original_rdesc = hdev->bpf_rdesc;
-
-		if (!original_rdesc)
-			original_rdesc = hdev->dev_rdesc;
-
-		/* in case a bpf program gets detached, we need to free the old one */
-		hid_free_bpf_rdesc(hdev);
-
-		/* keep this around so we know we called it once */
-		hdev->bpf_rsize = hdev->dev_rsize;
-
-		/* call_hid_bpf_rdesc_fixup will always return a valid pointer */
-		hdev->bpf_rdesc = call_hid_bpf_rdesc_fixup(hdev, hdev->dev_rdesc,
-							   &hdev->bpf_rsize);
-
-		/* the report descriptor changed, we need to re-scan it */
-		if (original_rdesc != hdev->bpf_rdesc) {
-			hdev->group = 0;
-			hid_set_group(hdev);
-		}
-	}
 
 	if (!hid_check_device_match(hdev, hdrv, &id))
 		return -ENODEV;
@@ -2856,7 +2779,7 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *a,
 {
 	struct hid_device *hdev = container_of(dev, struct hid_device, dev);
 
-	return sysfs_emit(buf, "hid:b%04Xg%04Xv%08Xp%08X\n",
+	return scnprintf(buf, PAGE_SIZE, "hid:b%04Xg%04Xv%08Xp%08X\n",
 			 hdev->bus, hdev->group, hdev->vendor, hdev->product);
 }
 static DEVICE_ATTR_RO(modalias);
@@ -2865,8 +2788,8 @@ static struct attribute *hid_dev_attrs[] = {
 	&dev_attr_modalias.attr,
 	NULL,
 };
-static const struct bin_attribute *hid_dev_bin_attrs[] = {
-	&bin_attr_report_descriptor,
+static struct bin_attribute *hid_dev_bin_attrs[] = {
+	&dev_bin_attr_report_desc,
 	NULL
 };
 static const struct attribute_group hid_dev_group = {
@@ -2895,11 +2818,6 @@ static int hid_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	if (add_uevent_var(env, "MODALIAS=hid:b%04Xg%04Xv%08Xp%08X",
 			   hdev->bus, hdev->group, hdev->vendor, hdev->product))
 		return -ENOMEM;
-	if (hdev->firmware_version) {
-		if (add_uevent_var(env, "HID_FIRMWARE_VERSION=0x%04llX",
-				   hdev->firmware_version))
-			return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -2951,7 +2869,14 @@ int hid_add_device(struct hid_device *hdev)
 	/*
 	 * Scan generic devices for group information
 	 */
-	hid_set_group(hdev);
+	if (hid_ignore_special_drivers) {
+		hdev->group = HID_GROUP_GENERIC;
+	} else if (!hdev->group &&
+		   !(hdev->quirks & HID_QUIRK_HAVE_SPECIAL_DRIVER)) {
+		ret = hid_scan_report(hdev);
+		if (ret)
+			hid_warn(hdev, "bad device descriptor (%d)\n", ret);
+	}
 
 	hdev->id = atomic_inc_return(&id);
 
@@ -2985,7 +2910,7 @@ struct hid_device *hid_allocate_device(void)
 	struct hid_device *hdev;
 	int ret = -ENOMEM;
 
-	hdev = kzalloc_obj(*hdev);
+	hdev = kzalloc(sizeof(*hdev), GFP_KERNEL);
 	if (hdev == NULL)
 		return ERR_PTR(ret);
 
@@ -3002,10 +2927,6 @@ struct hid_device *hid_allocate_device(void)
 	sema_init(&hdev->driver_input_lock, 1);
 	mutex_init(&hdev->ll_open_lock);
 	kref_init(&hdev->ref);
-
-#ifdef CONFIG_HID_BATTERY_STRENGTH
-	INIT_LIST_HEAD(&hdev->batteries);
-#endif
 
 	ret = hid_bpf_device_init(hdev);
 	if (ret)
@@ -3026,11 +2947,9 @@ static void hid_remove_device(struct hid_device *hdev)
 		hid_debug_unregister(hdev);
 		hdev->status &= ~HID_STAT_ADDED;
 	}
-	hid_free_bpf_rdesc(hdev);
 	kfree(hdev->dev_rdesc);
 	hdev->dev_rdesc = NULL;
 	hdev->dev_rsize = 0;
-	hdev->bpf_rsize = 0;
 }
 
 /**
@@ -3131,7 +3050,7 @@ int hid_check_keys_pressed(struct hid_device *hid)
 EXPORT_SYMBOL_GPL(hid_check_keys_pressed);
 
 #ifdef CONFIG_HID_BPF
-static const struct hid_ops __hid_ops = {
+static struct hid_ops __hid_ops = {
 	.hid_get_report = hid_get_report,
 	.hid_hw_raw_request = __hid_hw_raw_request,
 	.hid_hw_output_report = __hid_hw_output_report,

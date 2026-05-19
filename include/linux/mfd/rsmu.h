@@ -19,6 +19,7 @@ enum rsmu_type {
 };
 
 /**
+ *
  * struct rsmu_ddata - device data structure for sub devices.
  *
  * @dev:    i2c/spi device.

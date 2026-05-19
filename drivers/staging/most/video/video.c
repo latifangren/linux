@@ -52,11 +52,6 @@ struct comp_fh {
 	u32 offs;
 };
 
-static inline struct comp_fh *to_comp_fh(struct file *filp)
-{
-	return container_of(file_to_v4l2_fh(filp), struct comp_fh, fh);
-}
-
 static LIST_HEAD(video_devices);
 static DEFINE_SPINLOCK(list_lock);
 
@@ -84,7 +79,7 @@ static int comp_vdev_open(struct file *filp)
 		return -EINVAL;
 	}
 
-	fh = kzalloc_obj(*fh);
+	fh = kzalloc(sizeof(*fh), GFP_KERNEL);
 	if (!fh)
 		return -ENOMEM;
 
@@ -96,7 +91,9 @@ static int comp_vdev_open(struct file *filp)
 
 	fh->mdev = mdev;
 	v4l2_fh_init(&fh->fh, vdev);
-	v4l2_fh_add(&fh->fh, filp);
+	filp->private_data = fh;
+
+	v4l2_fh_add(&fh->fh);
 
 	ret = most_start_channel(mdev->iface, mdev->ch_idx, &comp);
 	if (ret) {
@@ -107,7 +104,7 @@ static int comp_vdev_open(struct file *filp)
 	return 0;
 
 err_rm:
-	v4l2_fh_del(&fh->fh, filp);
+	v4l2_fh_del(&fh->fh);
 	v4l2_fh_exit(&fh->fh);
 
 err_dec:
@@ -118,10 +115,9 @@ err_dec:
 
 static int comp_vdev_close(struct file *filp)
 {
-	struct comp_fh *fh = to_comp_fh(filp);
+	struct comp_fh *fh = filp->private_data;
 	struct most_video_dev *mdev = fh->mdev;
 	struct mbo *mbo, *tmp;
-	LIST_HEAD(free_list);
 
 	/*
 	 * We need to put MBOs back before we call most_stop_channel()
@@ -134,18 +130,17 @@ static int comp_vdev_close(struct file *filp)
 
 	spin_lock_irq(&mdev->list_lock);
 	mdev->mute = true;
-	list_replace_init(&mdev->pending_mbos, &free_list);
-	spin_unlock_irq(&mdev->list_lock);
-
-	list_for_each_entry_safe(mbo, tmp, &free_list, list) {
-		list_del_init(&mbo->list);
+	list_for_each_entry_safe(mbo, tmp, &mdev->pending_mbos, list) {
+		list_del(&mbo->list);
+		spin_unlock_irq(&mdev->list_lock);
 		most_put_mbo(mbo);
+		spin_lock_irq(&mdev->list_lock);
 	}
-
+	spin_unlock_irq(&mdev->list_lock);
 	most_stop_channel(mdev->iface, mdev->ch_idx, &comp);
 	mdev->mute = false;
 
-	v4l2_fh_del(&fh->fh, filp);
+	v4l2_fh_del(&fh->fh);
 	v4l2_fh_exit(&fh->fh);
 
 	atomic_dec(&mdev->access_ref);
@@ -156,7 +151,7 @@ static int comp_vdev_close(struct file *filp)
 static ssize_t comp_vdev_read(struct file *filp, char __user *buf,
 			      size_t count, loff_t *pos)
 {
-	struct comp_fh *fh = to_comp_fh(filp);
+	struct comp_fh *fh = filp->private_data;
 	struct most_video_dev *mdev = fh->mdev;
 	int ret = 0;
 
@@ -205,7 +200,7 @@ static ssize_t comp_vdev_read(struct file *filp, char __user *buf,
 
 static __poll_t comp_vdev_poll(struct file *filp, poll_table *wait)
 {
-	struct comp_fh *fh = to_comp_fh(filp);
+	struct comp_fh *fh = filp->private_data;
 	struct most_video_dev *mdev = fh->mdev;
 	__poll_t mask = 0;
 
@@ -474,7 +469,7 @@ static int comp_probe_channel(struct most_interface *iface, int channel_idx,
 		return -EINVAL;
 	}
 
-	mdev = kzalloc_obj(*mdev);
+	mdev = kzalloc(sizeof(*mdev), GFP_KERNEL);
 	if (!mdev)
 		return -ENOMEM;
 
@@ -556,7 +551,6 @@ static int __init comp_init(void)
 static void __exit comp_exit(void)
 {
 	struct most_video_dev *mdev, *tmp;
-	LIST_HEAD(free_list);
 
 	/*
 	 * As the mostcore currently doesn't call disconnect_channel()
@@ -565,15 +559,16 @@ static void __exit comp_exit(void)
 	 * This must be fixed in core.
 	 */
 	spin_lock_irq(&list_lock);
-	list_replace_init(&video_devices, &free_list);
-	spin_unlock_irq(&list_lock);
+	list_for_each_entry_safe(mdev, tmp, &video_devices, list) {
+		list_del(&mdev->list);
+		spin_unlock_irq(&list_lock);
 
-	list_for_each_entry_safe(mdev, tmp, &free_list, list) {
-		list_del_init(&mdev->list);
 		comp_unregister_videodev(mdev);
 		v4l2_device_disconnect(&mdev->v4l2_dev);
 		v4l2_device_put(&mdev->v4l2_dev);
+		spin_lock_irq(&list_lock);
 	}
+	spin_unlock_irq(&list_lock);
 
 	most_deregister_configfs_subsys(&comp);
 	most_deregister_component(&comp);

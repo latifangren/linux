@@ -69,7 +69,7 @@ bool folio_use_access_time(struct folio *folio)
 }
 #endif
 
-#ifdef CONFIG_NUMA_MIGRATION
+#ifdef CONFIG_MIGRATION
 static int top_tier_adistance;
 /*
  * node_demotion[] examples:
@@ -129,7 +129,7 @@ static int top_tier_adistance;
  *
  */
 static struct demotion_nodes *node_demotion __read_mostly;
-#endif /* CONFIG_NUMA_MIGRATION */
+#endif /* CONFIG_MIGRATION */
 
 static BLOCKING_NOTIFIER_HEAD(mt_adistance_algorithms);
 
@@ -227,7 +227,7 @@ static struct memory_tier *find_create_memory_tier(struct memory_dev_type *memty
 		}
 	}
 
-	new_memtier = kzalloc_obj(struct memory_tier);
+	new_memtier = kzalloc(sizeof(struct memory_tier), GFP_KERNEL);
 	if (!new_memtier)
 		return ERR_PTR(-ENOMEM);
 
@@ -273,7 +273,7 @@ static struct memory_tier *__node_get_memory_tier(int node)
 				     lockdep_is_held(&memory_tier_lock));
 }
 
-#ifdef CONFIG_NUMA_MIGRATION
+#ifdef CONFIG_MIGRATION
 bool node_is_toptier(int node)
 {
 	bool toptier;
@@ -320,17 +320,16 @@ void node_get_allowed_targets(pg_data_t *pgdat, nodemask_t *targets)
 /**
  * next_demotion_node() - Get the next node in the demotion path
  * @node: The starting node to lookup the next node
- * @allowed_mask: The pointer to allowed node mask
  *
  * Return: node id for next memory node in the demotion path hierarchy
  * from @node; NUMA_NO_NODE if @node is terminal.  This does not keep
  * @node online or guarantee that it *continues* to be the next demotion
  * target.
  */
-int next_demotion_node(int node, const nodemask_t *allowed_mask)
+int next_demotion_node(int node)
 {
 	struct demotion_nodes *nd;
-	nodemask_t mask;
+	int target;
 
 	if (!node_demotion)
 		return NUMA_NO_NODE;
@@ -345,10 +344,6 @@ int next_demotion_node(int node, const nodemask_t *allowed_mask)
 	 * node_demotion[] reads need to be consistent.
 	 */
 	rcu_read_lock();
-	/* Filter out nodes that are not in allowed_mask. */
-	nodes_and(mask, nd->preferred, *allowed_mask);
-	rcu_read_unlock();
-
 	/*
 	 * If there are multiple target nodes, just select one
 	 * target node randomly.
@@ -361,16 +356,10 @@ int next_demotion_node(int node, const nodemask_t *allowed_mask)
 	 * caching issue, which seems more complicated. So selecting
 	 * target node randomly seems better until now.
 	 */
-	if (!nodes_empty(mask))
-		return node_random(&mask);
+	target = node_random(&nd->preferred);
+	rcu_read_unlock();
 
-	/*
-	 * Preferred nodes are not in allowed_mask. Flip bits in
-	 * allowed_mask as used node mask. Then, use it to get the
-	 * closest demotion target.
-	 */
-	nodes_complement(mask, *allowed_mask);
-	return find_next_best_node(node, &mask);
+	return target;
 }
 
 static void disable_all_demotion_targets(void)
@@ -486,7 +475,8 @@ static void establish_demotion_targets(void)
 	 */
 	list_for_each_entry_reverse(memtier, &memory_tiers, list) {
 		tier_nodes = get_memtier_nodemask(memtier);
-		if (nodes_and(tier_nodes, node_states[N_CPU], tier_nodes)) {
+		nodes_and(tier_nodes, node_states[N_CPU], tier_nodes);
+		if (!nodes_empty(tier_nodes)) {
 			/*
 			 * abstract distance below the max value of this memtier
 			 * is considered toptier.
@@ -519,7 +509,7 @@ static void establish_demotion_targets(void)
 
 #else
 static inline void establish_demotion_targets(void) {}
-#endif /* CONFIG_NUMA_MIGRATION */
+#endif /* CONFIG_MIGRATION */
 
 static inline void __init_node_memory_type(int node, struct memory_dev_type *memtype)
 {
@@ -529,7 +519,7 @@ static inline void __init_node_memory_type(int node, struct memory_dev_type *mem
 	 * for each device getting added in the same NUMA node
 	 * with this specific memtype, bump the map count. We
 	 * Only take memtype device reference once, so that
-	 * changing a node memtype can be done by dropping the
+	 * changing a node memtype can be done by droping the
 	 * only reference count taken here.
 	 */
 
@@ -625,7 +615,7 @@ struct memory_dev_type *alloc_memory_type(int adistance)
 {
 	struct memory_dev_type *memtype;
 
-	memtype = kmalloc_obj(*memtype);
+	memtype = kmalloc(sizeof(*memtype), GFP_KERNEL);
 	if (!memtype)
 		return ERR_PTR(-ENOMEM);
 
@@ -658,7 +648,7 @@ void clear_node_memory_type(int node, struct memory_dev_type *memtype)
 	if (node_memory_types[node].memtype == memtype || !memtype)
 		node_memory_types[node].map_count--;
 	/*
-	 * If we unmapped all the attached devices to this node,
+	 * If we umapped all the attached devices to this node,
 	 * clear the node memory type.
 	 */
 	if (!node_memory_types[node].map_count) {
@@ -882,18 +872,25 @@ static int __meminit memtier_hotplug_callback(struct notifier_block *self,
 					      unsigned long action, void *_arg)
 {
 	struct memory_tier *memtier;
-	struct node_notify *nn = _arg;
+	struct memory_notify *arg = _arg;
+
+	/*
+	 * Only update the node migration order when a node is
+	 * changing status, like online->offline.
+	 */
+	if (arg->status_change_nid < 0)
+		return notifier_from_errno(0);
 
 	switch (action) {
-	case NODE_REMOVED_LAST_MEMORY:
+	case MEM_OFFLINE:
 		mutex_lock(&memory_tier_lock);
-		if (clear_node_memory_tier(nn->nid))
+		if (clear_node_memory_tier(arg->status_change_nid))
 			establish_demotion_targets();
 		mutex_unlock(&memory_tier_lock);
 		break;
-	case NODE_ADDED_FIRST_MEMORY:
+	case MEM_ONLINE:
 		mutex_lock(&memory_tier_lock);
-		memtier = set_node_memory_tier(nn->nid);
+		memtier = set_node_memory_tier(arg->status_change_nid);
 		if (!IS_ERR(memtier))
 			establish_demotion_targets();
 		mutex_unlock(&memory_tier_lock);
@@ -911,8 +908,9 @@ static int __init memory_tier_init(void)
 	if (ret)
 		panic("%s() failed to register memory tier subsystem\n", __func__);
 
-#ifdef CONFIG_NUMA_MIGRATION
-	node_demotion = kzalloc_objs(struct demotion_nodes, nr_node_ids);
+#ifdef CONFIG_MIGRATION
+	node_demotion = kcalloc(nr_node_ids, sizeof(struct demotion_nodes),
+				GFP_KERNEL);
 	WARN_ON(!node_demotion);
 #endif
 
@@ -931,14 +929,14 @@ static int __init memory_tier_init(void)
 	nodes_and(default_dram_nodes, node_states[N_MEMORY],
 		  node_states[N_CPU]);
 
-	hotplug_node_notifier(memtier_hotplug_callback, MEMTIER_HOTPLUG_PRI);
+	hotplug_memory_notifier(memtier_hotplug_callback, MEMTIER_HOTPLUG_PRI);
 	return 0;
 }
 subsys_initcall(memory_tier_init);
 
 bool numa_demotion_enabled = false;
 
-#ifdef CONFIG_NUMA_MIGRATION
+#ifdef CONFIG_MIGRATION
 #ifdef CONFIG_SYSFS
 static ssize_t demotion_enabled_show(struct kobject *kobj,
 				     struct kobj_attribute *attr, char *buf)
@@ -951,22 +949,10 @@ static ssize_t demotion_enabled_store(struct kobject *kobj,
 				      const char *buf, size_t count)
 {
 	ssize_t ret;
-	bool before = numa_demotion_enabled;
 
 	ret = kstrtobool(buf, &numa_demotion_enabled);
 	if (ret)
 		return ret;
-
-	/*
-	 * Reset kswapd_failures statistics. They may no longer be
-	 * valid since the policy for kswapd has changed.
-	 */
-	if (before == false && numa_demotion_enabled == true) {
-		struct pglist_data *pgdat;
-
-		for_each_online_pgdat(pgdat)
-			kswapd_clear_hopeless(pgdat, KSWAPD_CLEAR_HOPELESS_OTHER);
-	}
 
 	return count;
 }

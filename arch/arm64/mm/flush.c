@@ -53,11 +53,11 @@ void __sync_icache_dcache(pte_t pte)
 {
 	struct folio *folio = page_folio(pte_page(pte));
 
-	if (!test_bit(PG_dcache_clean, &folio->flags.f)) {
+	if (!test_bit(PG_dcache_clean, &folio->flags)) {
 		sync_icache_aliases((unsigned long)folio_address(folio),
 				    (unsigned long)folio_address(folio) +
 					    folio_size(folio));
-		set_bit(PG_dcache_clean, &folio->flags.f);
+		set_bit(PG_dcache_clean, &folio->flags);
 	}
 }
 EXPORT_SYMBOL_GPL(__sync_icache_dcache);
@@ -69,8 +69,8 @@ EXPORT_SYMBOL_GPL(__sync_icache_dcache);
  */
 void flush_dcache_folio(struct folio *folio)
 {
-	if (test_bit(PG_dcache_clean, &folio->flags.f))
-		clear_bit(PG_dcache_clean, &folio->flags.f);
+	if (test_bit(PG_dcache_clean, &folio->flags))
+		clear_bit(PG_dcache_clean, &folio->flags);
 }
 EXPORT_SYMBOL(flush_dcache_folio);
 

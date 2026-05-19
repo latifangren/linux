@@ -73,12 +73,24 @@ process_static_context_state(struct pvr_device *pvr_dev, const struct pvr_stream
 	void *stream;
 	int err;
 
-	stream = memdup_user(u64_to_user_ptr(stream_user_ptr), stream_size);
-	if (IS_ERR(stream))
-		return PTR_ERR(stream);
+	stream = kzalloc(stream_size, GFP_KERNEL);
+	if (!stream)
+		return -ENOMEM;
+
+	if (copy_from_user(stream, u64_to_user_ptr(stream_user_ptr), stream_size)) {
+		err = -EFAULT;
+		goto err_free;
+	}
 
 	err = pvr_stream_process(pvr_dev, cmd_defs, stream, stream_size, dest);
+	if (err)
+		goto err_free;
 
+	kfree(stream);
+
+	return 0;
+
+err_free:
 	kfree(stream);
 
 	return err;
@@ -292,7 +304,7 @@ int pvr_context_create(struct pvr_file *pvr_file, struct drm_pvr_ioctl_create_co
 	if (ctx_size < 0)
 		return ctx_size;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 

@@ -18,7 +18,6 @@
 #define ZPCI_IOMAP_SHIFT		48
 #define ZPCI_IOMAP_ADDR_SHIFT		62
 #define ZPCI_IOMAP_ADDR_BASE		(1UL << ZPCI_IOMAP_ADDR_SHIFT)
-#define ZPCI_IOMAP_ADDR_MAX		((1UL << (ZPCI_IOMAP_ADDR_SHIFT + 1)) - 1)
 #define ZPCI_IOMAP_ADDR_OFF_MASK	((1UL << ZPCI_IOMAP_SHIFT) - 1)
 #define ZPCI_IOMAP_MAX_ENTRIES							\
 	(1UL << (ZPCI_IOMAP_ADDR_SHIFT - ZPCI_IOMAP_SHIFT))
@@ -144,7 +143,7 @@ static inline int zpci_get_max_io_size(u64 src, u64 dst, int len, int max)
 
 static inline int zpci_memcpy_fromio(void *dst,
 				     const volatile void __iomem *src,
-				     size_t n)
+				     unsigned long n)
 {
 	int size, rc = 0;
 
@@ -163,7 +162,7 @@ static inline int zpci_memcpy_fromio(void *dst,
 }
 
 static inline int zpci_memcpy_toio(volatile void __iomem *dst,
-				   const void *src, size_t n)
+				   const void *src, unsigned long n)
 {
 	int size, rc = 0;
 
@@ -188,7 +187,7 @@ static inline int zpci_memcpy_toio(volatile void __iomem *dst,
 }
 
 static inline int zpci_memset_io(volatile void __iomem *dst,
-				 int val, size_t count)
+				 unsigned char val, size_t count)
 {
 	u8 *src = kmalloc(count, GFP_KERNEL);
 	int rc;

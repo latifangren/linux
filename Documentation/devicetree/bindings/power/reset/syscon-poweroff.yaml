@@ -23,9 +23,6 @@ properties:
   compatible:
     const: syscon-poweroff
 
-  reg:
-    maxItems: 1
-
   mask:
     $ref: /schemas/types.yaml#/definitions/uint32
     description: Update only the register bits defined by the mask (32 bit).
@@ -47,10 +44,7 @@ properties:
 
 required:
   - compatible
-
-anyOf:
-  - required: [offset]
-  - required: [reg]
+  - offset
 
 additionalProperties: false
 

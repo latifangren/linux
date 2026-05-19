@@ -71,7 +71,7 @@ MODULE_PARM_DESC(max_reason,
 
 static int ramoops_ecc;
 module_param_named(ecc, ramoops_ecc, int, 0400);
-MODULE_PARM_DESC(ecc,
+MODULE_PARM_DESC(ramoops_ecc,
 		"if non-zero, the option enables ECC support and specifies "
 		"ECC buffer size in bytes (1 is a special value, means 16 "
 		"bytes ECC)");
@@ -232,7 +232,8 @@ static ssize_t ramoops_pstore_read(struct pstore_record *record)
 			 */
 			struct persistent_ram_zone *tmp_prz, *prz_next;
 
-			tmp_prz = kzalloc_obj(struct persistent_ram_zone);
+			tmp_prz = kzalloc(sizeof(struct persistent_ram_zone),
+					  GFP_KERNEL);
 			if (!tmp_prz)
 				return -ENOMEM;
 			prz = tmp_prz;
@@ -538,7 +539,7 @@ static int ramoops_init_przs(const char *name,
 		goto fail;
 	}
 
-	prz_ar = kzalloc_objs(**przs, *cnt);
+	prz_ar = kcalloc(*cnt, sizeof(**przs), GFP_KERNEL);
 	if (!prz_ar)
 		goto fail;
 
@@ -863,8 +864,6 @@ static int ramoops_probe(struct platform_device *pdev)
 	ramoops_console_size = pdata->console_size;
 	ramoops_pmsg_size = pdata->pmsg_size;
 	ramoops_ftrace_size = pdata->ftrace_size;
-	mem_type = pdata->mem_type;
-	ramoops_ecc = pdata->ecc_info.ecc_size;
 
 	pr_info("using 0x%lx@0x%llx, ecc: %d\n",
 		cxt->size, (unsigned long long)cxt->phys_addr,
@@ -902,7 +901,7 @@ MODULE_DEVICE_TABLE(of, dt_match);
 
 static struct platform_driver ramoops_driver = {
 	.probe		= ramoops_probe,
-	.remove		= ramoops_remove,
+	.remove_new	= ramoops_remove,
 	.driver		= {
 		.name		= "ramoops",
 		.of_match_table	= dt_match,

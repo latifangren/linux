@@ -44,6 +44,7 @@
 #include <net/sock.h>
 #include <net/ip.h>
 #include <net/udp_tunnel.h>
+#include <net/ipv6_stubs.h>
 #include <linux/tipc_netlink.h>
 #include "core.h"
 #include "addr.h"
@@ -171,7 +172,7 @@ static int tipc_udp_xmit(struct net *net, struct sk_buff *skb,
 			 struct udp_media_addr *dst, struct dst_cache *cache)
 {
 	struct dst_entry *ndst;
-	int ttl, err;
+	int ttl, err = 0;
 
 	local_bh_disable();
 	ndst = dst_cache_get(cache);
@@ -196,7 +197,7 @@ static int tipc_udp_xmit(struct net *net, struct sk_buff *skb,
 		ttl = ip4_dst_hoplimit(&rt->dst);
 		udp_tunnel_xmit_skb(rt, ub->ubsock->sk, skb, src->ipv4.s_addr,
 				    dst->ipv4.s_addr, 0, ttl, 0, src->port,
-				    dst->port, false, true, 0);
+				    dst->port, false, true);
 #if IS_ENABLED(CONFIG_IPV6)
 	} else {
 		if (!ndst) {
@@ -206,8 +207,9 @@ static int tipc_udp_xmit(struct net *net, struct sk_buff *skb,
 				.saddr = src->ipv6,
 				.flowi6_proto = IPPROTO_UDP
 			};
-			ndst = ip6_dst_lookup_flow(net, ub->ubsock->sk,
-						   &fl6, NULL);
+			ndst = ipv6_stub->ipv6_dst_lookup_flow(net,
+							       ub->ubsock->sk,
+							       &fl6, NULL);
 			if (IS_ERR(ndst)) {
 				err = PTR_ERR(ndst);
 				goto tx_error;
@@ -215,13 +217,13 @@ static int tipc_udp_xmit(struct net *net, struct sk_buff *skb,
 			dst_cache_set_ip6(cache, ndst, &fl6.saddr);
 		}
 		ttl = ip6_dst_hoplimit(ndst);
-		udp_tunnel6_xmit_skb(ndst, ub->ubsock->sk, skb, NULL,
-				     &src->ipv6, &dst->ipv6, 0, ttl, 0,
-				     src->port, dst->port, false, 0);
+		err = udp_tunnel6_xmit_skb(ndst, ub->ubsock->sk, skb, NULL,
+					   &src->ipv6, &dst->ipv6, 0, ttl, 0,
+					   src->port, dst->port, false);
 #endif
 	}
 	local_bh_enable();
-	return 0;
+	return err;
 
 tx_error:
 	local_bh_enable();
@@ -307,7 +309,7 @@ static int tipc_udp_rcast_add(struct tipc_bearer *b,
 	if (!ub)
 		return -ENODEV;
 
-	rcast = kmalloc_obj(*rcast, GFP_ATOMIC);
+	rcast = kmalloc(sizeof(*rcast), GFP_ATOMIC);
 	if (!rcast)
 		return -ENOMEM;
 
@@ -416,7 +418,8 @@ static int enable_mcast(struct udp_bearer *ub, struct udp_media_addr *remote)
 #if IS_ENABLED(CONFIG_IPV6)
 	} else {
 		lock_sock(sk);
-		err = ipv6_sock_mc_join(sk, ub->ifindex, &remote->ipv6);
+		err = ipv6_stub->ipv6_sock_mc_join(sk, ub->ifindex,
+						   &remote->ipv6);
 		release_sock(sk);
 #endif
 	}
@@ -672,7 +675,7 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 	struct net_device *dev;
 	int rmcast = 0;
 
-	ub = kzalloc_obj(*ub, GFP_ATOMIC);
+	ub = kzalloc(sizeof(*ub), GFP_ATOMIC);
 	if (!ub)
 		return -ENOMEM;
 

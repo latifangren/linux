@@ -26,7 +26,7 @@ Revision and Copyright
 **********************
 Authors:
 
-- Verkuil, Hans <hverkuil@kernel.org>
+- Verkuil, Hans <hverkuil-cisco@xs4all.nl>
 
  - Initial version.
 

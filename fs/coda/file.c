@@ -160,7 +160,7 @@ coda_file_mmap(struct file *coda_file, struct vm_area_struct *vma)
 	size_t count;
 	int ret;
 
-	if (!can_mmap_file(host_file))
+	if (!host_file->f_op->mmap)
 		return -ENODEV;
 
 	if (WARN_ON(coda_file != vma->vm_file))
@@ -175,7 +175,7 @@ coda_file_mmap(struct file *coda_file, struct vm_area_struct *vma)
 	if (ret)
 		return ret;
 
-	cvm_ops = kmalloc_obj(struct coda_vm_ops);
+	cvm_ops = kmalloc(sizeof(struct coda_vm_ops), GFP_KERNEL);
 	if (!cvm_ops)
 		return -ENOMEM;
 
@@ -199,10 +199,10 @@ coda_file_mmap(struct file *coda_file, struct vm_area_struct *vma)
 	spin_unlock(&cii->c_lock);
 
 	vma->vm_file = get_file(host_file);
-	ret = vfs_mmap(vma->vm_file, vma);
+	ret = call_mmap(vma->vm_file, vma);
 
 	if (ret) {
-		/* if vfs_mmap fails, our caller will put host_file so we
+		/* if call_mmap fails, our caller will put host_file so we
 		 * should drop the reference to the coda_file that we got.
 		 */
 		fput(coda_file);
@@ -231,7 +231,7 @@ int coda_open(struct inode *coda_inode, struct file *coda_file)
 	unsigned short coda_flags = coda_flags_to_cflags(flags);
 	struct coda_file_info *cfi;
 
-	cfi = kmalloc_obj(struct coda_file_info);
+	cfi = kmalloc(sizeof(struct coda_file_info), GFP_KERNEL);
 	if (!cfi)
 		return -ENOMEM;
 

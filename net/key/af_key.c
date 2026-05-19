@@ -757,22 +757,6 @@ static unsigned int pfkey_sockaddr_fill(const xfrm_address_t *xaddr, __be16 port
 	return 0;
 }
 
-static unsigned int pfkey_sockaddr_fill_zero_tail(const xfrm_address_t *xaddr,
-						  __be16 port,
-						  struct sockaddr *sa,
-						  unsigned short family)
-{
-	unsigned int prefixlen;
-	int sockaddr_len = pfkey_sockaddr_len(family);
-	int sockaddr_size = pfkey_sockaddr_size(family);
-
-	prefixlen = pfkey_sockaddr_fill(xaddr, port, sa, family);
-	if (sockaddr_size > sockaddr_len)
-		memset((u8 *)sa + sockaddr_len, 0, sockaddr_size - sockaddr_len);
-
-	return prefixlen;
-}
-
 static struct sk_buff *__pfkey_xfrm_state2msg(const struct xfrm_state *x,
 					      int add_keys, int hsc)
 {
@@ -1212,7 +1196,7 @@ static struct xfrm_state * pfkey_msg2xfrm_state(struct net *net,
 				err = -ENOSYS;
 				goto out;
 			}
-			x->calg = kmalloc_obj(*x->calg);
+			x->calg = kmalloc(sizeof(*x->calg), GFP_KERNEL);
 			if (!x->calg) {
 				err = -ENOMEM;
 				goto out;
@@ -1277,7 +1261,7 @@ static struct xfrm_state * pfkey_msg2xfrm_state(struct net *net,
 		const struct sadb_x_nat_t_type* n_type;
 		struct xfrm_encap_tmpl *natt;
 
-		x->encap = kzalloc_obj(*x->encap);
+		x->encap = kzalloc(sizeof(*x->encap), GFP_KERNEL);
 		if (!x->encap) {
 			err = -ENOMEM;
 			goto out;
@@ -1871,7 +1855,7 @@ static int pfkey_dump(struct sock *sk, struct sk_buff *skb, const struct sadb_ms
 			mutex_unlock(&pfk->dump_lock);
 			return -EINVAL;
 		}
-		filter = kmalloc_obj(*filter);
+		filter = kmalloc(sizeof(*filter), GFP_KERNEL);
 		if (filter == NULL) {
 			mutex_unlock(&pfk->dump_lock);
 			return -ENOMEM;
@@ -2646,7 +2630,7 @@ static int pfkey_migrate(struct sock *sk, struct sk_buff *skb,
 	}
 
 	return xfrm_migrate(&sel, dir, XFRM_POLICY_TYPE_MAIN, m, i,
-			    kma ? &k : NULL, net, NULL, 0, NULL, NULL);
+			    kma ? &k : NULL, net, NULL, 0, NULL);
 
  out:
 	return err;
@@ -3222,9 +3206,9 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	addr->sadb_address_proto = 0;
 	addr->sadb_address_reserved = 0;
 	addr->sadb_address_prefixlen =
-		pfkey_sockaddr_fill_zero_tail(&x->props.saddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      x->props.family);
+		pfkey_sockaddr_fill(&x->props.saddr, 0,
+				    (struct sockaddr *) (addr + 1),
+				    x->props.family);
 	if (!addr->sadb_address_prefixlen)
 		BUG();
 
@@ -3237,9 +3221,9 @@ static int pfkey_send_acquire(struct xfrm_state *x, struct xfrm_tmpl *t, struct 
 	addr->sadb_address_proto = 0;
 	addr->sadb_address_reserved = 0;
 	addr->sadb_address_prefixlen =
-		pfkey_sockaddr_fill_zero_tail(&x->id.daddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      x->props.family);
+		pfkey_sockaddr_fill(&x->id.daddr, 0,
+				    (struct sockaddr *) (addr + 1),
+				    x->props.family);
 	if (!addr->sadb_address_prefixlen)
 		BUG();
 
@@ -3437,9 +3421,9 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 	addr->sadb_address_proto = 0;
 	addr->sadb_address_reserved = 0;
 	addr->sadb_address_prefixlen =
-		pfkey_sockaddr_fill_zero_tail(&x->props.saddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      x->props.family);
+		pfkey_sockaddr_fill(&x->props.saddr, 0,
+				    (struct sockaddr *) (addr + 1),
+				    x->props.family);
 	if (!addr->sadb_address_prefixlen)
 		BUG();
 
@@ -3459,9 +3443,9 @@ static int pfkey_send_new_mapping(struct xfrm_state *x, xfrm_address_t *ipaddr, 
 	addr->sadb_address_proto = 0;
 	addr->sadb_address_reserved = 0;
 	addr->sadb_address_prefixlen =
-		pfkey_sockaddr_fill_zero_tail(ipaddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      x->props.family);
+		pfkey_sockaddr_fill(ipaddr, 0,
+				    (struct sockaddr *) (addr + 1),
+				    x->props.family);
 	if (!addr->sadb_address_prefixlen)
 		BUG();
 
@@ -3490,15 +3474,15 @@ static int set_sadb_address(struct sk_buff *skb, int sasize, int type,
 	switch (type) {
 	case SADB_EXT_ADDRESS_SRC:
 		addr->sadb_address_prefixlen = sel->prefixlen_s;
-		pfkey_sockaddr_fill_zero_tail(&sel->saddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      sel->family);
+		pfkey_sockaddr_fill(&sel->saddr, 0,
+				    (struct sockaddr *)(addr + 1),
+				    sel->family);
 		break;
 	case SADB_EXT_ADDRESS_DST:
 		addr->sadb_address_prefixlen = sel->prefixlen_d;
-		pfkey_sockaddr_fill_zero_tail(&sel->daddr, 0,
-					      (struct sockaddr *)(addr + 1),
-					      sel->family);
+		pfkey_sockaddr_fill(&sel->daddr, 0,
+				    (struct sockaddr *)(addr + 1),
+				    sel->family);
 		break;
 	default:
 		return -EINVAL;
@@ -3804,12 +3788,12 @@ static int pfkey_seq_show(struct seq_file *f, void *v)
 	if (v == SEQ_START_TOKEN)
 		seq_printf(f ,"sk       RefCnt Rmem   Wmem   User   Inode\n");
 	else
-		seq_printf(f, "%pK %-6d %-6u %-6u %-6u %-6llu\n",
+		seq_printf(f, "%pK %-6d %-6u %-6u %-6u %-6lu\n",
 			       s,
 			       refcount_read(&s->sk_refcnt),
 			       sk_rmem_alloc_get(s),
 			       sk_wmem_alloc_get(s),
-			       from_kuid_munged(seq_user_ns(f), sk_uid(s)),
+			       from_kuid_munged(seq_user_ns(f), sock_i_uid(s)),
 			       sock_i_ino(s)
 			       );
 	return 0;
@@ -3924,8 +3908,6 @@ static int __init ipsec_pfkey_init(void)
 {
 	int err = proto_register(&key_proto, 0);
 
-	pr_warn_once("PFKEY is deprecated and scheduled to be removed in 2027, "
-	             "please contact the netdev mailing list\n");
 	if (err != 0)
 		goto out;
 

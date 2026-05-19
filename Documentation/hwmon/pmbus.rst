@@ -74,7 +74,7 @@ Supported chips:
 
     Datasheet:
 
-	https://www.analog.com/media/en/technical-documentation/data-sheets/MAX20796.pdf
+	Not published
 
   * Generic PMBus devices
 

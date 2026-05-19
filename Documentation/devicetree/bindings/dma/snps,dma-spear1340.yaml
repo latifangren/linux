@@ -22,6 +22,7 @@ properties:
               - renesas,r9a06g032-dma
           - const: renesas,rzn1-dma
 
+
   "#dma-cells":
     minimum: 3
     maximum: 4

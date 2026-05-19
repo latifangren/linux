@@ -24,7 +24,8 @@
 #include "internal.h"
 
 static DEFINE_MUTEX(crypto_default_rng_lock);
-static struct crypto_rng *crypto_default_rng;
+struct crypto_rng *crypto_default_rng;
+EXPORT_SYMBOL_GPL(crypto_default_rng);
 static int crypto_default_rng_refcnt;
 
 int crypto_rng_reset(struct crypto_rng *tfm, const u8 *seed, unsigned int slen)
@@ -76,8 +77,9 @@ static int __maybe_unused crypto_rng_report(
 	return nla_put(skb, CRYPTOCFGA_REPORT_RNG, sizeof(rrng), &rrng);
 }
 
-static void __maybe_unused crypto_rng_show(struct seq_file *m,
-					   struct crypto_alg *alg)
+static void crypto_rng_show(struct seq_file *m, struct crypto_alg *alg)
+	__maybe_unused;
+static void crypto_rng_show(struct seq_file *m, struct crypto_alg *alg)
 {
 	seq_printf(m, "type         : rng\n");
 	seq_printf(m, "seedsize     : %u\n", seedsize(alg));
@@ -96,7 +98,6 @@ static const struct crypto_type crypto_rng_type = {
 	.maskset = CRYPTO_ALG_TYPE_MASK,
 	.type = CRYPTO_ALG_TYPE_RNG,
 	.tfmsize = offsetof(struct crypto_rng, base),
-	.algsize = offsetof(struct rng_alg, base),
 };
 
 struct crypto_rng *crypto_alloc_rng(const char *alg_name, u32 type, u32 mask)
@@ -105,7 +106,7 @@ struct crypto_rng *crypto_alloc_rng(const char *alg_name, u32 type, u32 mask)
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_rng);
 
-static int crypto_get_default_rng(void)
+int crypto_get_default_rng(void)
 {
 	struct crypto_rng *rng;
 	int err;
@@ -134,27 +135,15 @@ unlock:
 
 	return err;
 }
+EXPORT_SYMBOL_GPL(crypto_get_default_rng);
 
-static void crypto_put_default_rng(void)
+void crypto_put_default_rng(void)
 {
 	mutex_lock(&crypto_default_rng_lock);
 	crypto_default_rng_refcnt--;
 	mutex_unlock(&crypto_default_rng_lock);
 }
-
-int __crypto_stdrng_get_bytes(void *buf, unsigned int len)
-{
-	int err;
-
-	err = crypto_get_default_rng();
-	if (err)
-		return err;
-
-	err = crypto_rng_get_bytes(crypto_default_rng, buf, len);
-	crypto_put_default_rng();
-	return err;
-}
-EXPORT_SYMBOL_GPL(__crypto_stdrng_get_bytes);
+EXPORT_SYMBOL_GPL(crypto_put_default_rng);
 
 #if defined(CONFIG_CRYPTO_RNG) || defined(CONFIG_CRYPTO_RNG_MODULE)
 int crypto_del_default_rng(void)
@@ -213,13 +202,17 @@ int crypto_register_rngs(struct rng_alg *algs, int count)
 
 	for (i = 0; i < count; i++) {
 		ret = crypto_register_rng(algs + i);
-		if (ret) {
-			crypto_unregister_rngs(algs, i);
-			return ret;
-		}
+		if (ret)
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for (--i; i >= 0; --i)
+		crypto_unregister_rng(algs + i);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(crypto_register_rngs);
 

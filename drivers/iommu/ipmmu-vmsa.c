@@ -430,7 +430,7 @@ static int ipmmu_domain_init_context(struct ipmmu_vmsa_domain *domain)
 	 * non-secure mode.
 	 */
 	domain->cfg.quirks = IO_PGTABLE_QUIRK_ARM_NS;
-	domain->cfg.pgsize_bitmap = domain->io_domain.pgsize_bitmap;
+	domain->cfg.pgsize_bitmap = SZ_1G | SZ_2M | SZ_4K;
 	domain->cfg.ias = 32;
 	domain->cfg.oas = 40;
 	domain->cfg.tlb = &ipmmu_flush_ops;
@@ -566,12 +566,11 @@ static struct iommu_domain *ipmmu_domain_alloc_paging(struct device *dev)
 {
 	struct ipmmu_vmsa_domain *domain;
 
-	domain = kzalloc_obj(*domain);
+	domain = kzalloc(sizeof(*domain), GFP_KERNEL);
 	if (!domain)
 		return NULL;
 
 	mutex_init(&domain->mutex);
-	domain->io_domain.pgsize_bitmap = SZ_1G | SZ_2M | SZ_4K;
 
 	return &domain->io_domain;
 }
@@ -590,7 +589,7 @@ static void ipmmu_domain_free(struct iommu_domain *io_domain)
 }
 
 static int ipmmu_attach_device(struct iommu_domain *io_domain,
-			       struct device *dev, struct iommu_domain *old)
+			       struct device *dev)
 {
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct ipmmu_vmsa_device *mmu = to_ipmmu(dev);
@@ -637,17 +636,17 @@ static int ipmmu_attach_device(struct iommu_domain *io_domain,
 }
 
 static int ipmmu_iommu_identity_attach(struct iommu_domain *identity_domain,
-				       struct device *dev,
-				       struct iommu_domain *old)
+				       struct device *dev)
 {
+	struct iommu_domain *io_domain = iommu_get_domain_for_dev(dev);
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct ipmmu_vmsa_domain *domain;
 	unsigned int i;
 
-	if (old == identity_domain || !old)
+	if (io_domain == identity_domain || !io_domain)
 		return 0;
 
-	domain = to_vmsa_domain(old);
+	domain = to_vmsa_domain(io_domain);
 	for (i = 0; i < fwspec->num_ids; ++i)
 		ipmmu_utlb_disable(domain, fwspec->ids[i]);
 
@@ -885,6 +884,7 @@ static const struct iommu_ops ipmmu_ops = {
 	 */
 	.device_group = IS_ENABLED(CONFIG_ARM) && !IS_ENABLED(CONFIG_IOMMU_DMA)
 			? generic_device_group : generic_single_device_group,
+	.pgsize_bitmap = SZ_1G | SZ_2M | SZ_4K,
 	.of_xlate = ipmmu_of_xlate,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= ipmmu_attach_device,
@@ -1083,25 +1083,31 @@ static int ipmmu_probe(struct platform_device *pdev)
 		}
 	}
 
-	platform_set_drvdata(pdev, mmu);
 	/*
 	 * Register the IPMMU to the IOMMU subsystem in the following cases:
 	 * - R-Car Gen2 IPMMU (all devices registered)
 	 * - R-Car Gen3 IPMMU (leaf devices only - skip root IPMMU-MM device)
 	 */
-	if (mmu->features->has_cache_leaf_nodes && ipmmu_is_root(mmu))
-		return 0;
+	if (!mmu->features->has_cache_leaf_nodes || !ipmmu_is_root(mmu)) {
+		ret = iommu_device_sysfs_add(&mmu->iommu, &pdev->dev, NULL, "%s",
+					     dev_name(&pdev->dev));
+		if (ret)
+			return ret;
 
-	ret = iommu_device_sysfs_add(&mmu->iommu, &pdev->dev, NULL, "%s",
-				     dev_name(&pdev->dev));
-	if (ret)
-		return ret;
+		ret = iommu_device_register(&mmu->iommu, &ipmmu_ops, &pdev->dev);
+		if (ret)
+			return ret;
+	}
 
-	ret = iommu_device_register(&mmu->iommu, &ipmmu_ops, &pdev->dev);
-	if (ret)
-		iommu_device_sysfs_remove(&mmu->iommu);
+	/*
+	 * We can't create the ARM mapping here as it requires the bus to have
+	 * an IOMMU, which only happens when bus_set_iommu() is called in
+	 * ipmmu_init() after the probe function returns.
+	 */
 
-	return ret;
+	platform_set_drvdata(pdev, mmu);
+
+	return 0;
 }
 
 static void ipmmu_remove(struct platform_device *pdev)
@@ -1155,6 +1161,6 @@ static struct platform_driver ipmmu_driver = {
 		.pm = pm_sleep_ptr(&ipmmu_pm),
 	},
 	.probe = ipmmu_probe,
-	.remove = ipmmu_remove,
+	.remove_new = ipmmu_remove,
 };
 builtin_platform_driver(ipmmu_driver);

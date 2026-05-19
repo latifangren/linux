@@ -309,12 +309,13 @@ struct ceph_options *ceph_alloc_options(void)
 {
 	struct ceph_options *opt;
 
-	opt = kzalloc_obj(*opt);
+	opt = kzalloc(sizeof(*opt), GFP_KERNEL);
 	if (!opt)
 		return NULL;
 
 	opt->crush_locs = RB_ROOT;
-	opt->mon_addr = kzalloc_objs(*opt->mon_addr, CEPH_MAX_MON);
+	opt->mon_addr = kcalloc(CEPH_MAX_MON, sizeof(*opt->mon_addr),
+				GFP_KERNEL);
 	if (!opt->mon_addr) {
 		kfree(opt);
 		return NULL;
@@ -455,7 +456,7 @@ int ceph_parse_param(struct fs_parameter *param, struct ceph_options *opt,
 		ceph_crypto_key_destroy(opt->key);
 		kfree(opt->key);
 
-		opt->key = kzalloc_obj(*opt->key);
+		opt->key = kzalloc(sizeof(*opt->key), GFP_KERNEL);
 		if (!opt->key)
 			return -ENOMEM;
 		err = ceph_crypto_key_unarmor(opt->key, param->string);
@@ -468,7 +469,7 @@ int ceph_parse_param(struct fs_parameter *param, struct ceph_options *opt,
 		ceph_crypto_key_destroy(opt->key);
 		kfree(opt->key);
 
-		opt->key = kzalloc_obj(*opt->key);
+		opt->key = kzalloc(sizeof(*opt->key), GFP_KERNEL);
 		if (!opt->key)
 			return -ENOMEM;
 		return get_secret(opt->key, param->string, &log);
@@ -713,7 +714,7 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private)
 	if (err < 0)
 		return ERR_PTR(err);
 
-	client = kzalloc_obj(*client);
+	client = kzalloc(sizeof(*client), GFP_KERNEL);
 	if (client == NULL)
 		return ERR_PTR(-ENOMEM);
 
@@ -787,7 +788,7 @@ EXPORT_SYMBOL(ceph_reset_client_addr);
 /*
  * mount: join the ceph cluster, and open root directory.
  */
-int __ceph_open_session(struct ceph_client *client)
+int __ceph_open_session(struct ceph_client *client, unsigned long started)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	long timeout = ceph_timeout_jiffies(client->options->mount_timeout);
@@ -843,11 +844,12 @@ EXPORT_SYMBOL(__ceph_open_session);
 int ceph_open_session(struct ceph_client *client)
 {
 	int ret;
+	unsigned long started = jiffies;  /* note the start time */
 
 	dout("open_session start\n");
 	mutex_lock(&client->mount_mutex);
 
-	ret = __ceph_open_session(client);
+	ret = __ceph_open_session(client, started);
 
 	mutex_unlock(&client->mount_mutex);
 	return ret;

@@ -22,15 +22,14 @@ static bool p2p_enabled(struct dma_buf_test_params *params)
 
 static bool is_dynamic(struct dma_buf_test_params *params)
 {
-	return params->attach_ops && params->attach_ops->invalidate_mappings;
+	return IS_ENABLED(CONFIG_DMABUF_MOVE_NOTIFY) && params->attach_ops &&
+		params->attach_ops->move_notify;
 }
 
 static void check_residency(struct kunit *test, struct xe_bo *exported,
-			    struct xe_bo *imported, struct dma_buf *dmabuf,
-			    struct drm_exec *exec)
+			    struct xe_bo *imported, struct dma_buf *dmabuf)
 {
 	struct dma_buf_test_params *params = to_dma_buf_test_params(test->priv);
-	struct dma_buf_attachment *attach;
 	u32 mem_type;
 	int ret;
 
@@ -46,7 +45,7 @@ static void check_residency(struct kunit *test, struct xe_bo *exported,
 		mem_type = XE_PL_TT;
 	else if (params->force_different_devices && !is_dynamic(params) &&
 		 (params->mem_mask & XE_BO_FLAG_SYSTEM))
-		/* Pin migrated to TT on non-dynamic attachments. */
+		/* Pin migrated to TT */
 		mem_type = XE_PL_TT;
 
 	if (!xe_bo_is_mem_type(exported, mem_type)) {
@@ -58,12 +57,16 @@ static void check_residency(struct kunit *test, struct xe_bo *exported,
 		return;
 
 	/*
-	 * Evict exporter. Evicting the exported bo will
-	 * evict also the imported bo through the invalidate_mappings() functionality if
+	 * Evict exporter. Note that the gem object dma_buf member isn't
+	 * set from xe_gem_prime_export(), and it's needed for the move_notify()
+	 * functionality, so hack that up here. Evicting the exported bo will
+	 * evict also the imported bo through the move_notify() functionality if
 	 * importer is on a different device. If they're on the same device,
 	 * the exporter and the importer should be the same bo.
 	 */
-	ret = xe_bo_evict(exported, exec);
+	swap(exported->ttm.base.dma_buf, dmabuf);
+	ret = xe_bo_evict(exported, true);
+	swap(exported->ttm.base.dma_buf, dmabuf);
 	if (ret) {
 		if (ret != -EINTR && ret != -ERESTARTSYS)
 			KUNIT_FAIL(test, "Evicting exporter failed with err=%d.\n",
@@ -78,7 +81,7 @@ static void check_residency(struct kunit *test, struct xe_bo *exported,
 	}
 
 	/* Re-validate the importer. This should move also exporter in. */
-	ret = xe_bo_validate(imported, NULL, false, exec);
+	ret = xe_bo_validate(imported, NULL, false);
 	if (ret) {
 		if (ret != -EINTR && ret != -ERESTARTSYS)
 			KUNIT_FAIL(test, "Validating importer failed with err=%d.\n",
@@ -87,18 +90,6 @@ static void check_residency(struct kunit *test, struct xe_bo *exported,
 	}
 
 	KUNIT_EXPECT_TRUE(test, xe_bo_is_mem_type(exported, mem_type));
-
-	/* Check that we can pin without migrating. */
-	attach = list_first_entry_or_null(&dmabuf->attachments, typeof(*attach), node);
-	if (attach) {
-		int err = dma_buf_pin(attach);
-
-		if (!err) {
-			KUNIT_EXPECT_TRUE(test, xe_bo_is_mem_type(exported, mem_type));
-			dma_buf_unpin(attach);
-		}
-		KUNIT_EXPECT_EQ(test, err, 0);
-	}
 
 	if (params->force_different_devices)
 		KUNIT_EXPECT_TRUE(test, xe_bo_is_mem_type(imported, XE_PL_TT));
@@ -126,8 +117,8 @@ static void xe_test_dmabuf_import_same_driver(struct xe_device *xe)
 		size = SZ_64K;
 
 	kunit_info(test, "running %s\n", __func__);
-	bo = xe_bo_create_user(xe, NULL, size, DRM_XE_GEM_CPU_CACHING_WC,
-			       params->mem_mask, NULL);
+	bo = xe_bo_create_user(xe, NULL, NULL, size, DRM_XE_GEM_CPU_CACHING_WC,
+			       params->mem_mask);
 	if (IS_ERR(bo)) {
 		KUNIT_FAIL(test, "xe_bo_create() failed with err=%ld\n",
 			   PTR_ERR(bo));
@@ -140,7 +131,6 @@ static void xe_test_dmabuf_import_same_driver(struct xe_device *xe)
 			   PTR_ERR(dmabuf));
 		goto out;
 	}
-	bo->ttm.base.dma_buf = dmabuf;
 
 	import = xe_gem_prime_import(&xe->drm, dmabuf);
 	if (!IS_ERR(import)) {
@@ -155,14 +145,13 @@ static void xe_test_dmabuf_import_same_driver(struct xe_device *xe)
 			KUNIT_FAIL(test,
 				   "xe_gem_prime_import() succeeded when it shouldn't have\n");
 		} else {
-			struct drm_exec *exec = XE_VALIDATION_OPT_OUT;
 			int err;
 
 			/* Is everything where we expect it to be? */
 			xe_bo_lock(import_bo, false);
-			err = xe_bo_validate(import_bo, NULL, false, exec);
+			err = xe_bo_validate(import_bo, NULL, false);
 
-			/* Pinning in VRAM is not allowed for non-dynamic attachments */
+			/* Pinning in VRAM is not allowed. */
 			if (!is_dynamic(params) &&
 			    params->force_different_devices &&
 			    !(params->mem_mask & XE_BO_FLAG_SYSTEM))
@@ -173,7 +162,7 @@ static void xe_test_dmabuf_import_same_driver(struct xe_device *xe)
 						  err == -ERESTARTSYS);
 
 			if (!err)
-				check_residency(test, bo, import_bo, dmabuf, exec);
+				check_residency(test, bo, import_bo, dmabuf);
 			xe_bo_unlock(import_bo);
 		}
 		drm_gem_object_put(import);
@@ -189,7 +178,6 @@ static void xe_test_dmabuf_import_same_driver(struct xe_device *xe)
 		KUNIT_FAIL(test, "dynamic p2p attachment failed with err=%ld\n",
 			   PTR_ERR(import));
 	}
-	bo->ttm.base.dma_buf = NULL;
 	dma_buf_put(dmabuf);
 out:
 	drm_gem_object_put(&bo->ttm.base);
@@ -197,7 +185,7 @@ out:
 
 static const struct dma_buf_attach_ops nop2p_attach_ops = {
 	.allow_peer2peer = false,
-	.invalidate_mappings = xe_dma_buf_move_notify
+	.move_notify = xe_dma_buf_move_notify
 };
 
 /*
@@ -210,7 +198,7 @@ static const struct dma_buf_attach_ops nop2p_attach_ops = {
 static const struct dma_buf_test_params test_params[] = {
 	{.mem_mask = XE_BO_FLAG_VRAM0,
 	 .attach_ops = &xe_dma_buf_attach_ops},
-	{.mem_mask = XE_BO_FLAG_VRAM0 | XE_BO_FLAG_NEEDS_CPU_ACCESS,
+	{.mem_mask = XE_BO_FLAG_VRAM0,
 	 .attach_ops = &xe_dma_buf_attach_ops,
 	 .force_different_devices = true},
 
@@ -242,8 +230,7 @@ static const struct dma_buf_test_params test_params[] = {
 
 	{.mem_mask = XE_BO_FLAG_SYSTEM | XE_BO_FLAG_VRAM0,
 	 .attach_ops = &xe_dma_buf_attach_ops},
-	{.mem_mask = XE_BO_FLAG_SYSTEM | XE_BO_FLAG_VRAM0 |
-		     XE_BO_FLAG_NEEDS_CPU_ACCESS,
+	{.mem_mask = XE_BO_FLAG_SYSTEM | XE_BO_FLAG_VRAM0,
 	 .attach_ops = &xe_dma_buf_attach_ops,
 	 .force_different_devices = true},
 
@@ -265,7 +252,7 @@ static int dma_buf_run_device(struct xe_device *xe)
 	const struct dma_buf_test_params *params;
 	struct kunit *test = kunit_get_current_test();
 
-	guard(xe_pm_runtime)(xe);
+	xe_pm_runtime_get(xe);
 	for (params = test_params; params->mem_mask; ++params) {
 		struct dma_buf_test_params p = *params;
 
@@ -273,6 +260,7 @@ static int dma_buf_run_device(struct xe_device *xe)
 		test->priv = &p;
 		xe_test_dmabuf_import_same_driver(xe);
 	}
+	xe_pm_runtime_put(xe);
 
 	/* A non-zero return would halt iteration over driver devices */
 	return 0;

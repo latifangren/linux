@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 
 set -e
+set -o pipefail
 
 # To debug, uncomment the following line
 # set -x

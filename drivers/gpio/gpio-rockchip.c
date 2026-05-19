@@ -170,8 +170,8 @@ static int rockchip_gpio_set_direction(struct gpio_chip *chip,
 	return 0;
 }
 
-static int rockchip_gpio_set(struct gpio_chip *gc, unsigned int offset,
-			     int value)
+static void rockchip_gpio_set(struct gpio_chip *gc, unsigned int offset,
+			      int value)
 {
 	struct rockchip_pin_bank *bank = gpiochip_get_data(gc);
 	unsigned long flags;
@@ -179,8 +179,6 @@ static int rockchip_gpio_set(struct gpio_chip *gc, unsigned int offset,
 	raw_spin_lock_irqsave(&bank->slock, flags);
 	rockchip_gpio_writel_bit(bank, offset, value, bank->gpio_regs->port_dr);
 	raw_spin_unlock_irqrestore(&bank->slock, flags);
-
-	return 0;
 }
 
 static int rockchip_gpio_get(struct gpio_chip *gc, unsigned int offset)
@@ -296,7 +294,7 @@ static int rockchip_gpio_set_config(struct gpio_chip *gc, unsigned int offset,
 		 */
 		return -ENOTSUPP;
 	default:
-		return gpiochip_generic_config(gc, offset, config);
+		return -ENOTSUPP;
 	}
 }
 
@@ -516,8 +514,8 @@ static int rockchip_interrupts_register(struct rockchip_pin_bank *bank)
 	struct irq_chip_generic *gc;
 	int ret;
 
-	bank->domain = irq_domain_create_linear(dev_fwnode(bank->dev), 32, &irq_generic_chip_ops,
-						NULL);
+	bank->domain = irq_domain_add_linear(bank->of_node, 32,
+					&irq_generic_chip_ops, NULL);
 	if (!bank->domain) {
 		dev_warn(bank->dev, "could not init irq domain for bank %s\n",
 			 bank->name);
@@ -582,7 +580,7 @@ static int rockchip_gpiolib_register(struct rockchip_pin_bank *bank)
 	bank->gpio_chip = rockchip_gpiolib_chip;
 
 	gc = &bank->gpio_chip;
-	gc->base = -1;
+	gc->base = bank->pin_base;
 	gc->ngpio = bank->nr_pins;
 	gc->label = bank->name;
 	gc->parent = bank->dev;
@@ -762,7 +760,7 @@ static int rockchip_gpio_probe(struct platform_device *pdev)
 		list_del(&cfg->head);
 
 		switch (cfg->param) {
-		case PIN_CONFIG_LEVEL:
+		case PIN_CONFIG_OUTPUT:
 			ret = rockchip_gpio_direction_output(&bank->gpio_chip, cfg->pin, cfg->arg);
 			if (ret)
 				dev_warn(dev, "setting output pin %u to %u failed\n", cfg->pin,
@@ -804,7 +802,7 @@ static const struct of_device_id rockchip_gpio_match[] = {
 
 static struct platform_driver rockchip_gpio_driver = {
 	.probe		= rockchip_gpio_probe,
-	.remove		= rockchip_gpio_remove,
+	.remove_new	= rockchip_gpio_remove,
 	.driver		= {
 		.name	= "rockchip-gpio",
 		.of_match_table = rockchip_gpio_match,

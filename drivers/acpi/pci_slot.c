@@ -42,9 +42,8 @@ static int
 check_slot(acpi_handle handle, unsigned long long *sun)
 {
 	int device = -1;
-	unsigned long long sta;
+	unsigned long long adr, sta;
 	acpi_status status;
-	u64 adr;
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 
 	acpi_get_name(handle, ACPI_FULL_PATHNAME, &buffer);
@@ -57,9 +56,10 @@ check_slot(acpi_handle handle, unsigned long long *sun)
 			goto out;
 	}
 
-	if (acpi_get_local_u64_address(handle, &adr)) {
-		pr_debug("_ADR returned with failure on %s\n",
-			 (char *)buffer.pointer);
+	status = acpi_evaluate_integer(handle, "_ADR", NULL, &adr);
+	if (ACPI_FAILURE(status)) {
+		pr_debug("_ADR returned %d on %s\n",
+			 status, (char *)buffer.pointer);
 		goto out;
 	}
 
@@ -104,7 +104,7 @@ register_slot(acpi_handle handle, u32 lvl, void *context, void **rv)
 			return AE_OK;
 	}
 
-	slot = kmalloc_obj(*slot);
+	slot = kmalloc(sizeof(*slot), GFP_KERNEL);
 	if (!slot)
 		return AE_OK;
 

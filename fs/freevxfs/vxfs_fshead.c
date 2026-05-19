@@ -58,7 +58,7 @@ vxfs_getfsh(struct inode *ip, int which)
 	if (bp) {
 		struct vxfs_fsh		*fhp;
 
-		if (!(fhp = kmalloc_obj(*fhp)))
+		if (!(fhp = kmalloc(sizeof(*fhp), GFP_KERNEL)))
 			goto out;
 		memcpy(fhp, bp->b_data, sizeof(*fhp));
 

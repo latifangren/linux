@@ -26,7 +26,7 @@
 #include <linux/highmem.h>
 #include <linux/slab.h>
 #include <net/9p/9p.h>
-#include <linux/fs_context.h>
+#include <linux/parser.h>
 #include <net/9p/client.h>
 #include <net/9p/transport.h>
 #include <linux/scatterlist.h>
@@ -284,8 +284,8 @@ req_retry:
 		if (err == -ENOSPC) {
 			chan->ring_bufs_avail = 0;
 			spin_unlock_irqrestore(&chan->lock, flags);
-			err = io_wait_event_killable(*chan->vc_wq,
-						     chan->ring_bufs_avail);
+			err = wait_event_killable(*chan->vc_wq,
+						  chan->ring_bufs_avail);
 			if (err  == -ERESTARTSYS)
 				return err;
 
@@ -325,7 +325,7 @@ static int p9_get_mapped_pages(struct virtio_chan *chan,
 		 * Other zc request to finish here
 		 */
 		if (atomic_read(&vp_pinned) >= chan->p9_max_pages) {
-			err = io_wait_event_killable(vp_wq,
+			err = wait_event_killable(vp_wq,
 			      (atomic_read(&vp_pinned) < chan->p9_max_pages));
 			if (err == -ERESTARTSYS)
 				return err;
@@ -358,7 +358,8 @@ static int p9_get_mapped_pages(struct virtio_chan *chan,
 		nr_pages = DIV_ROUND_UP((unsigned long)p + len, PAGE_SIZE) -
 			   (unsigned long)p / PAGE_SIZE;
 
-		*pages = kmalloc_objs(struct page *, nr_pages, GFP_NOFS);
+		*pages = kmalloc_array(nr_pages, sizeof(struct page *),
+				       GFP_NOFS);
 		if (!*pages)
 			return -ENOMEM;
 
@@ -511,8 +512,8 @@ req_retry_pinned:
 		if (err == -ENOSPC) {
 			chan->ring_bufs_avail = 0;
 			spin_unlock_irqrestore(&chan->lock, flags);
-			err = io_wait_event_killable(*chan->vc_wq,
-						     chan->ring_bufs_avail);
+			err = wait_event_killable(*chan->vc_wq,
+						  chan->ring_bufs_avail);
 			if (err  == -ERESTARTSYS)
 				goto err_out;
 
@@ -530,8 +531,8 @@ req_retry_pinned:
 	spin_unlock_irqrestore(&chan->lock, flags);
 	kicked = 1;
 	p9_debug(P9_DEBUG_TRANS, "virtio request kicked\n");
-	err = io_wait_event_killable(req->wq,
-				     READ_ONCE(req->status) >= REQ_STATUS_RCVD);
+	err = wait_event_killable(req->wq,
+			          READ_ONCE(req->status) >= REQ_STATUS_RCVD);
 	// RERROR needs reply (== error string) in static data
 	if (READ_ONCE(req->status) == REQ_STATUS_RCVD &&
 	    unlikely(req->rc.sdata[4] == P9_RERROR))
@@ -601,7 +602,7 @@ static int p9_virtio_probe(struct virtio_device *vdev)
 		return -EINVAL;
 	}
 
-	chan = kmalloc_obj(struct virtio_chan);
+	chan = kmalloc(sizeof(struct virtio_chan), GFP_KERNEL);
 	if (!chan) {
 		pr_err("Failed to allocate virtio 9P channel\n");
 		err = -ENOMEM;
@@ -641,7 +642,7 @@ static int p9_virtio_probe(struct virtio_device *vdev)
 	if (err) {
 		goto out_free_tag;
 	}
-	chan->vc_wq = kmalloc_obj(wait_queue_head_t);
+	chan->vc_wq = kmalloc(sizeof(wait_queue_head_t), GFP_KERNEL);
 	if (!chan->vc_wq) {
 		err = -ENOMEM;
 		goto out_remove_file;
@@ -678,7 +679,8 @@ fail:
 /**
  * p9_virtio_create - allocate a new virtio channel
  * @client: client instance invoking this transport
- * @fc: the filesystem context
+ * @devname: string identifying the channel to connect to (unused)
+ * @args: args passed from sys_mount() for per-transport options (unused)
  *
  * This sets up a transport channel for 9p communication.  Right now
  * we only match the first available channel, but eventually we could look up
@@ -689,9 +691,8 @@ fail:
  */
 
 static int
-p9_virtio_create(struct p9_client *client, struct fs_context *fc)
+p9_virtio_create(struct p9_client *client, const char *devname, char *args)
 {
-	const char *devname = fc->source;
 	struct virtio_chan *chan;
 	int ret = -ENOENT;
 	int found = 0;
@@ -801,8 +802,7 @@ static struct p9_trans_module p9_virtio_trans = {
 	 */
 	.maxsize = PAGE_SIZE * (VIRTQUEUE_NUM - 3),
 	.pooled_rbuffers = false,
-	.def = true,
-	.supports_vmalloc = false,
+	.def = 1,
 	.owner = THIS_MODULE,
 };
 

@@ -49,7 +49,6 @@
 #include <linux/stacktrace.h>
 
 #include <drm/drm_mm.h>
-#include <drm/drm_print.h>
 
 /**
  * DOC: Overview
@@ -612,7 +611,7 @@ int drm_mm_insert_node_in_range(struct drm_mm * const mm,
 }
 EXPORT_SYMBOL(drm_mm_insert_node_in_range);
 
-static inline __maybe_unused bool drm_mm_node_scanned_block(const struct drm_mm_node *node)
+static inline bool drm_mm_node_scanned_block(const struct drm_mm_node *node)
 {
 	return test_bit(DRM_MM_NODE_SCANNED_BIT, &node->flags);
 }

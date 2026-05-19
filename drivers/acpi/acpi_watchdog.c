@@ -103,7 +103,7 @@ void __init acpi_watchdog_init(void)
 {
 	const struct acpi_wdat_entry *entries;
 	const struct acpi_table_wdat *wdat;
-	LIST_HEAD(resource_list);
+	struct list_head resource_list;
 	struct resource_entry *rentry;
 	struct platform_device *pdev;
 	struct resource *resources;
@@ -124,6 +124,8 @@ void __init acpi_watchdog_init(void)
 	if (wdat->pci_segment != 0xff || wdat->pci_bus != 0xff ||
 	    wdat->pci_device != 0xff || wdat->pci_function != 0xff)
 		goto fail_put_wdat;
+
+	INIT_LIST_HEAD(&resource_list);
 
 	entries = (struct acpi_wdat_entry *)(wdat + 1);
 	for (i = 0; i < wdat->entries; i++) {
@@ -166,7 +168,7 @@ void __init acpi_watchdog_init(void)
 		}
 	}
 
-	resources = kzalloc_objs(*resources, nresources);
+	resources = kcalloc(nresources, sizeof(*resources), GFP_KERNEL);
 	if (!resources)
 		goto fail_free_resource_list;
 

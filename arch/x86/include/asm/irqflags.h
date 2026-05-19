@@ -4,7 +4,7 @@
 
 #include <asm/processor-flags.h>
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #include <asm/nospec-branch.h>
 
@@ -25,7 +25,7 @@ extern __always_inline unsigned long native_save_fl(void)
 	 */
 	asm volatile("# __raw_save_flags\n\t"
 		     "pushf ; pop %0"
-		     : ASM_OUTPUT_RM (flags)
+		     : "=rm" (flags)
 		     : /* no input */
 		     : "memory");
 
@@ -77,7 +77,7 @@ static __always_inline void native_local_irq_restore(unsigned long flags)
 #endif
 
 #ifndef CONFIG_PARAVIRT
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 /*
  * Used in the idle loop; sti takes one instruction cycle
  * to complete:
@@ -95,13 +95,13 @@ static __always_inline void halt(void)
 {
 	native_halt();
 }
-#endif /* __ASSEMBLER__ */
-#else
-#include <asm/paravirt.h>
+#endif /* __ASSEMBLY__ */
 #endif /* CONFIG_PARAVIRT */
 
-#ifndef CONFIG_PARAVIRT_XXL
-#ifndef __ASSEMBLER__
+#ifdef CONFIG_PARAVIRT_XXL
+#include <asm/paravirt.h>
+#else
+#ifndef __ASSEMBLY__
 #include <linux/types.h>
 
 static __always_inline unsigned long arch_local_save_flags(void)
@@ -137,10 +137,10 @@ static __always_inline unsigned long arch_local_irq_save(void)
 
 #endif
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif /* CONFIG_PARAVIRT_XXL */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 static __always_inline int arch_irqs_disabled_flags(unsigned long flags)
 {
 	return !(flags & X86_EFLAGS_IF);
@@ -158,6 +158,6 @@ static __always_inline void arch_local_irq_restore(unsigned long flags)
 	if (!arch_irqs_disabled_flags(flags))
 		arch_local_irq_enable();
 }
-#endif /* !__ASSEMBLER__ */
+#endif /* !__ASSEMBLY__ */
 
 #endif

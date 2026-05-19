@@ -55,16 +55,12 @@ properties:
       - const: intr
 
   clocks:
-    minItems: 1
     items:
-      - description: core clock
-      - description: monitor clock
+      - description: module clock
 
   clock-names:
-    minItems: 1
     items:
       - const: core
-      - const: core_m
 
   resets:
     items:
@@ -78,7 +74,7 @@ properties:
 
   reset-gpios:
     description: Must contain a phandle to a GPIO controller followed by GPIO
-      that is being used as PERST input signal.
+      that is being used as PERST input signal. Please refer to pci.txt.
 
   phys:
     minItems: 1

@@ -65,6 +65,8 @@ struct cb_recallargs {
 	uint32_t truncate;
 };
 
+#if defined(CONFIG_NFS_V4_1)
+
 struct referring_call {
 	uint32_t			rc_sequenceid;
 	uint32_t			rc_slotid;
@@ -166,6 +168,7 @@ struct cb_notify_lock_args {
 
 extern __be32 nfs4_callback_notify_lock(void *argp, void *resp,
 					 struct cb_process_state *cps);
+#endif /* CONFIG_NFS_V4_1 */
 #ifdef CONFIG_NFS_V4_2
 struct cb_offloadargs {
 	struct nfs_fh		coa_fh;
@@ -185,8 +188,7 @@ extern __be32 nfs4_callback_recall(void *argp, void *resp,
 				   struct cb_process_state *cps);
 #if IS_ENABLED(CONFIG_NFS_V4)
 extern int nfs_callback_up(u32 minorversion, struct rpc_xprt *xprt);
-extern void nfs_callback_down(int minorversion, struct net *net,
-			      struct rpc_xprt *xprt);
+extern void nfs_callback_down(int minorversion, struct net *net);
 #endif /* CONFIG_NFS_V4 */
 /*
  * nfs41: Callbacks are expected to not cause substantial latency,

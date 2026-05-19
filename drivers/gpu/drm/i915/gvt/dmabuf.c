@@ -33,14 +33,13 @@
 
 #include <drm/drm_fourcc.h>
 #include <drm/drm_plane.h>
-#include <drm/drm_print.h>
-
-#include "display/skl_universal_plane_regs.h"
 
 #include "gem/i915_gem_dmabuf.h"
 
-#include "gvt.h"
 #include "i915_drv.h"
+#include "gvt.h"
+
+#include "display/skl_universal_plane_regs.h"
 
 #define GEN8_DECODE_PTE(pte) (pte & GENMASK_ULL(63, 12))
 
@@ -67,7 +66,7 @@ static int vgpu_gem_get_pages(struct drm_i915_gem_object *obj)
 	if (drm_WARN_ON(&dev_priv->drm, !vgpu))
 		return -ENODEV;
 
-	st = kmalloc_obj(*st);
+	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (unlikely(!st))
 		return -ENOMEM;
 
@@ -437,7 +436,7 @@ int intel_vgpu_query_plane(struct intel_vgpu *vgpu, void *args)
 			dmabuf_obj_get(dmabuf_obj);
 		}
 		ret = 0;
-		gvt_dbg_dpy("vgpu%d: reuse dmabuf_obj ref %d, id %d\n",
+		gvt_dbg_dpy("vgpu%d: re-use dmabuf_obj ref %d, id %d\n",
 			    vgpu->id, kref_read(&dmabuf_obj->kref),
 			    gfx_plane_info->dmabuf_id);
 		mutex_unlock(&vgpu->dmabuf_lock);
@@ -447,14 +446,15 @@ int intel_vgpu_query_plane(struct intel_vgpu *vgpu, void *args)
 	mutex_unlock(&vgpu->dmabuf_lock);
 
 	/* Need to allocate a new one*/
-	dmabuf_obj = kmalloc_obj(struct intel_vgpu_dmabuf_obj);
+	dmabuf_obj = kmalloc(sizeof(struct intel_vgpu_dmabuf_obj), GFP_KERNEL);
 	if (unlikely(!dmabuf_obj)) {
 		gvt_vgpu_err("alloc dmabuf_obj failed\n");
 		ret = -ENOMEM;
 		goto out;
 	}
 
-	dmabuf_obj->info = kmalloc_obj(struct intel_vgpu_fb_info);
+	dmabuf_obj->info = kmalloc(sizeof(struct intel_vgpu_fb_info),
+				   GFP_KERNEL);
 	if (unlikely(!dmabuf_obj->info)) {
 		gvt_vgpu_err("allocate intel vgpu fb info failed\n");
 		ret = -ENOMEM;

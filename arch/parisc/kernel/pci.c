@@ -8,7 +8,6 @@
  * Copyright (C) 1999-2001 Hewlett-Packard Company
  * Copyright (C) 1999-2001 Grant Grundler
  */
-#include <linux/align.h>
 #include <linux/eisa.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -197,12 +196,9 @@ void __ref pcibios_init_bridge(struct pci_dev *dev)
  * than res->start.
  */
 resource_size_t pcibios_align_resource(void *data, const struct resource *res,
-				       const struct resource *empty_res,
-				       resource_size_t size,
-				       resource_size_t alignment)
+				resource_size_t size, resource_size_t alignment)
 {
-	struct pci_dev *dev = data;
-	resource_size_t align, start = res->start;
+	resource_size_t mask, align, start = res->start;
 
 	DBG_RES("pcibios_align_resource(%s, (%p) [%lx,%lx]/%x, 0x%lx, 0x%lx)\n",
 		pci_name(((struct pci_dev *) data)),
@@ -211,10 +207,11 @@ resource_size_t pcibios_align_resource(void *data, const struct resource *res,
 
 	/* If it's not IO, then it's gotta be MEM */
 	align = (res->flags & IORESOURCE_IO) ? PCIBIOS_MIN_IO : PCIBIOS_MIN_MEM;
-	if (align > alignment)
-		start = ALIGN(start, align);
-	else
-		start = pci_align_resource(dev, res, empty_res, size, alignment);
+
+	/* Align to largest of MIN or input size */
+	mask = max(alignment, align) - 1;
+	start += mask;
+	start &= ~mask;
 
 	return start;
 }

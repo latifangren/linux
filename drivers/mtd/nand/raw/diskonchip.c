@@ -11,7 +11,7 @@
  * Error correction code lifted from the old docecc code
  * Author: Fabrice Bellard (fabrice.bellard@netgem.com)
  * Copyright (C) 2000 Netgem S.A.
- * converted to the generic Reed-Solomon library by Thomas Gleixner <tglx@kernel.org>
+ * converted to the generic Reed-Solomon library by Thomas Gleixner <tglx@linutronix.de>
  *
  * Interface to generic NAND code for M-Systems DiskOnChip devices
  */

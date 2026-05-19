@@ -17,6 +17,8 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 
+#include <asm/msr.h>
+
 /* make sure there is space for all the signed info */
 static_assert(sizeof(struct cpucp_info) <= SEC_DEV_INFO_BUF_SZ);
 
@@ -201,7 +203,7 @@ static int debug_coresight(struct hl_device *hdev, struct hl_ctx *ctx, struct hl
 	void *input = NULL, *output = NULL;
 	int rc;
 
-	params = kzalloc_obj(*params);
+	params = kzalloc(sizeof(*params), GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -682,11 +684,11 @@ static int sec_attest_info(struct hl_fpriv *hpriv, struct hl_info_args *args)
 	if ((!max_size) || (!out))
 		return -EINVAL;
 
-	sec_attest_info = kmalloc_obj(*sec_attest_info);
+	sec_attest_info = kmalloc(sizeof(*sec_attest_info), GFP_KERNEL);
 	if (!sec_attest_info)
 		return -ENOMEM;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info) {
 		rc = -ENOMEM;
 		goto free_sec_attest_info;
@@ -731,11 +733,11 @@ static int dev_info_signed(struct hl_fpriv *hpriv, struct hl_info_args *args)
 	if ((!max_size) || (!out))
 		return -EINVAL;
 
-	dev_info_signed = kzalloc_obj(*dev_info_signed);
+	dev_info_signed = kzalloc(sizeof(*dev_info_signed), GFP_KERNEL);
 	if (!dev_info_signed)
 		return -ENOMEM;
 
-	info = kzalloc_obj(*info);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info) {
 		rc = -ENOMEM;
 		goto free_dev_info_signed;
@@ -959,12 +961,6 @@ static int send_fw_generic_request(struct hl_device *hdev, struct hl_info_args *
 
 	switch (info_args->fw_sub_opcode) {
 	case HL_PASSTHROUGH_VERSIONS:
-		need_input_buff = false;
-		break;
-	case  HL_GET_ERR_COUNTERS_CMD:
-		need_input_buff = true;
-		break;
-	case HL_GET_P_STATE:
 		need_input_buff = false;
 		break;
 	default:
@@ -1283,10 +1279,13 @@ static long _hl_ioctl(struct hl_fpriv *hpriv, unsigned int cmd, unsigned long ar
 		retcode = -EFAULT;
 
 out_err:
-	if (retcode)
+	if (retcode) {
+		char task_comm[TASK_COMM_LEN];
+
 		dev_dbg_ratelimited(dev,
 				"error in ioctl: pid=%d, comm=\"%s\", cmd=%#010x, nr=%#04x\n",
-				task_pid_nr(current), current->comm, cmd, nr);
+				task_pid_nr(current), get_task_comm(task_comm, current), cmd, nr);
+	}
 
 	if (kdata != stack_kdata)
 		kfree(kdata);
@@ -1309,9 +1308,11 @@ long hl_ioctl_control(struct file *filep, unsigned int cmd, unsigned long arg)
 	if (nr == _IOC_NR(DRM_IOCTL_HL_INFO)) {
 		ioctl = &hl_ioctls_control[nr - HL_COMMAND_START];
 	} else {
+		char task_comm[TASK_COMM_LEN];
+
 		dev_dbg_ratelimited(hdev->dev_ctrl,
 				"invalid ioctl: pid=%d, comm=\"%s\", cmd=%#010x, nr=%#04x\n",
-				task_pid_nr(current), current->comm, cmd, nr);
+				task_pid_nr(current), get_task_comm(task_comm, current), cmd, nr);
 		return -ENOTTY;
 	}
 

@@ -354,7 +354,8 @@ static int init_origin_hash(void)
 {
 	int i;
 
-	_origins = kmalloc_objs(struct list_head, ORIGIN_HASH_SIZE);
+	_origins = kmalloc_array(ORIGIN_HASH_SIZE, sizeof(struct list_head),
+				 GFP_KERNEL);
 	if (!_origins) {
 		DMERR("unable to allocate memory for _origins");
 		return -ENOMEM;
@@ -362,7 +363,9 @@ static int init_origin_hash(void)
 	for (i = 0; i < ORIGIN_HASH_SIZE; i++)
 		INIT_LIST_HEAD(_origins + i);
 
-	_dm_origins = kmalloc_objs(struct list_head, ORIGIN_HASH_SIZE);
+	_dm_origins = kmalloc_array(ORIGIN_HASH_SIZE,
+				    sizeof(struct list_head),
+				    GFP_KERNEL);
 	if (!_dm_origins) {
 		DMERR("unable to allocate memory for _dm_origins");
 		kfree(_origins);
@@ -556,7 +559,7 @@ static int register_snapshot(struct dm_snapshot *snap)
 	struct block_device *bdev = snap->origin->bdev;
 	int r = 0;
 
-	new_o = kmalloc_obj(*new_o);
+	new_o = kmalloc(sizeof(*new_o), GFP_KERNEL);
 	if (!new_o)
 		return -ENOMEM;
 
@@ -663,7 +666,8 @@ static int dm_exception_table_init(struct dm_exception_table *et,
 
 	et->hash_shift = hash_shift;
 	et->hash_mask = size - 1;
-	et->table = kvmalloc_objs(struct dm_hlist_head, size);
+	et->table = kvmalloc_array(size, sizeof(struct dm_hlist_head),
+				   GFP_KERNEL);
 	if (!et->table)
 		return -ENOMEM;
 
@@ -1248,7 +1252,7 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		origin_mode = BLK_OPEN_WRITE;
 	}
 
-	s = kzalloc_obj(*s);
+	s = kzalloc(sizeof(*s), GFP_KERNEL);
 	if (!s) {
 		ti->error = "Cannot allocate private snapshot structure";
 		r = -ENOMEM;
@@ -2622,7 +2626,7 @@ static int origin_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 		return -EINVAL;
 	}
 
-	o = kmalloc_obj(struct dm_origin);
+	o = kmalloc(sizeof(struct dm_origin), GFP_KERNEL);
 	if (!o) {
 		ti->error = "Cannot allocate private origin structure";
 		r = -ENOMEM;

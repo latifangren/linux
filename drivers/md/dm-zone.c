@@ -17,26 +17,33 @@
  * For internal zone reports bypassing the top BIO submission path.
  */
 static int dm_blk_do_report_zones(struct mapped_device *md, struct dm_table *t,
-				  unsigned int nr_zones,
-				  struct dm_report_zones_args *args)
+				  sector_t sector, unsigned int nr_zones,
+				  report_zones_cb cb, void *data)
 {
+	struct gendisk *disk = md->disk;
+	int ret;
+	struct dm_report_zones_args args = {
+		.next_sector = sector,
+		.orig_data = data,
+		.orig_cb = cb,
+	};
+
 	do {
 		struct dm_target *tgt;
-		int ret;
 
-		tgt = dm_table_find_target(t, args->next_sector);
+		tgt = dm_table_find_target(t, args.next_sector);
 		if (WARN_ON_ONCE(!tgt->type->report_zones))
 			return -EIO;
 
-		args->tgt = tgt;
-		ret = tgt->type->report_zones(tgt, args,
-					      nr_zones - args->zone_idx);
+		args.tgt = tgt;
+		ret = tgt->type->report_zones(tgt, &args,
+					      nr_zones - args.zone_idx);
 		if (ret < 0)
 			return ret;
-	} while (args->zone_idx < nr_zones &&
-		 args->next_sector < get_capacity(md->disk));
+	} while (args.zone_idx < nr_zones &&
+		 args.next_sector < get_capacity(disk));
 
-	return args->zone_idx;
+	return args.zone_idx;
 }
 
 /*
@@ -45,8 +52,7 @@ static int dm_blk_do_report_zones(struct mapped_device *md, struct dm_table *t,
  * generally implemented by targets using dm_report_zones().
  */
 int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
-			unsigned int nr_zones,
-			struct blk_report_zones_args *args)
+			unsigned int nr_zones, report_zones_cb cb, void *data)
 {
 	struct mapped_device *md = disk->private_data;
 	struct dm_table *map;
@@ -72,14 +78,9 @@ int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
 		map = zone_revalidate_map;
 	}
 
-	if (map) {
-		struct dm_report_zones_args dm_args = {
-			.disk = md->disk,
-			.next_sector = sector,
-			.rep_args = args,
-		};
-		ret = dm_blk_do_report_zones(md, map, nr_zones, &dm_args);
-	}
+	if (map)
+		ret = dm_blk_do_report_zones(md, map, sector, nr_zones, cb,
+					     data);
 
 do_put_table:
 	if (put_table)
@@ -115,18 +116,7 @@ static int dm_report_zones_cb(struct blk_zone *zone, unsigned int idx,
 	}
 
 	args->next_sector = zone->start + zone->len;
-
-	/* If we have an internal callback, call it first. */
-	if (args->cb) {
-		int ret;
-
-		ret = args->cb(zone, args->zone_idx, args->data);
-		if (ret)
-			return ret;
-	}
-
-	return disk_report_zone(args->disk, zone, args->zone_idx++,
-				args->rep_args);
+	return args->orig_cb(zone, args->zone_idx++, args->orig_data);
 }
 
 /*
@@ -173,21 +163,21 @@ int dm_revalidate_zones(struct dm_table *t, struct request_queue *q)
 {
 	struct mapped_device *md = t->md;
 	struct gendisk *disk = md->disk;
-	unsigned int nr_zones = disk->nr_zones;
 	int ret;
 
 	if (!get_capacity(disk))
 		return 0;
 
-	/*
-	 * Do not revalidate if zone write plug resources have already
-	 * been allocated.
-	 */
-	if (dm_has_zone_plugs(md))
-		return 0;
+	/* Revalidate only if something changed. */
+	if (!disk->nr_zones || disk->nr_zones != md->nr_zones) {
+		DMINFO("%s using %s zone append",
+		       disk->disk_name,
+		       queue_emulates_zone_append(q) ? "emulated" : "native");
+		md->nr_zones = 0;
+	}
 
-	DMINFO("%s using %s zone append", disk->disk_name,
-	       queue_emulates_zone_append(q) ? "emulated" : "native");
+	if (md->nr_zones)
+		return 0;
 
 	/*
 	 * Our table is not live yet. So the call to dm_get_live_table()
@@ -202,9 +192,10 @@ int dm_revalidate_zones(struct dm_table *t, struct request_queue *q)
 
 	if (ret) {
 		DMERR("Revalidate zones failed %d", ret);
-		disk->nr_zones = nr_zones;
 		return ret;
 	}
+
+	md->nr_zones = disk->nr_zones;
 
 	return 0;
 }
@@ -358,15 +349,15 @@ int dm_set_zones_restrictions(struct dm_table *t, struct request_queue *q,
 
 	/*
 	 * Check if zone append is natively supported, and if not, set the
-	 * mapped device queue as needing zone append emulation. If zone
-	 * append is natively supported, make sure that
-	 * max_hw_zone_append_sectors is not set to 0.
+	 * mapped device queue as needing zone append emulation.
 	 */
 	WARN_ON_ONCE(queue_is_mq(q));
-	if (!dm_table_supports_zone_append(t))
-		lim->max_hw_zone_append_sectors = 0;
-	else if (lim->max_hw_zone_append_sectors == 0)
-		lim->max_hw_zone_append_sectors = lim->max_zone_append_sectors;
+	if (dm_table_supports_zone_append(t)) {
+		clear_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
+	} else {
+		set_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
+		lim->max_zone_append_sectors = 0;
+	}
 
 	/*
 	 * Determine the max open and max active zone limits for the mapped
@@ -400,29 +391,16 @@ int dm_set_zones_restrictions(struct dm_table *t, struct request_queue *q,
 	if (!zlim.mapped_nr_seq_zones) {
 		lim->max_open_zones = 0;
 		lim->max_active_zones = 0;
-		lim->max_hw_zone_append_sectors = 0;
 		lim->max_zone_append_sectors = 0;
 		lim->zone_write_granularity = 0;
 		lim->chunk_sectors = 0;
 		lim->features &= ~BLK_FEAT_ZONED;
+		clear_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
+		md->nr_zones = 0;
+		disk->nr_zones = 0;
 		return 0;
 	}
 
-	if (get_capacity(disk) && dm_has_zone_plugs(t->md)) {
-		if (q->limits.chunk_sectors != lim->chunk_sectors) {
-			DMWARN("%s: device has zone write plug resources. "
-			       "Cannot change zone size",
-			       disk->disk_name);
-			return -EINVAL;
-		}
-		if (lim->max_hw_zone_append_sectors != 0 &&
-		    !dm_table_is_wildcard(t)) {
-			DMWARN("%s: device has zone write plug resources. "
-			       "New table must emulate zone append",
-			       disk->disk_name);
-			return -EINVAL;
-		}
-	}
 	/*
 	 * Warn once (when the capacity is not yet set) if the mapped device is
 	 * partially using zone resources of the target devices as that leads to
@@ -442,22 +420,6 @@ int dm_set_zones_restrictions(struct dm_table *t, struct request_queue *q,
 	return 0;
 }
 
-void dm_finalize_zone_settings(struct dm_table *t, struct queue_limits *lim)
-{
-	struct mapped_device *md = t->md;
-
-	if (lim->features & BLK_FEAT_ZONED) {
-		if (dm_table_supports_zone_append(t))
-			clear_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
-		else
-			set_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
-	} else {
-		clear_bit(DMF_EMULATE_ZONE_APPEND, &md->flags);
-		md->disk->nr_zones = 0;
-	}
-}
-
-
 /*
  * IO completion callback called from clone_endio().
  */
@@ -473,10 +435,12 @@ void dm_zone_endio(struct dm_io *io, struct bio *clone)
 	 */
 	if (clone->bi_status == BLK_STS_OK &&
 	    bio_op(clone) == REQ_OP_ZONE_APPEND) {
-		orig_bio->bi_iter.bi_sector +=
-			bdev_offset_from_zone_start(disk->part0,
-						    clone->bi_iter.bi_sector);
+		sector_t mask = bdev_zone_sectors(disk->part0) - 1;
+
+		orig_bio->bi_iter.bi_sector += clone->bi_iter.bi_sector & mask;
 	}
+
+	return;
 }
 
 static int dm_zone_need_reset_cb(struct blk_zone *zone, unsigned int idx,
@@ -502,15 +466,10 @@ int dm_zone_get_reset_bitmap(struct mapped_device *md, struct dm_table *t,
 			     sector_t sector, unsigned int nr_zones,
 			     unsigned long *need_reset)
 {
-	struct dm_report_zones_args args = {
-		.disk = md->disk,
-		.next_sector = sector,
-		.cb = dm_zone_need_reset_cb,
-		.data = need_reset,
-	};
 	int ret;
 
-	ret = dm_blk_do_report_zones(md, t, nr_zones, &args);
+	ret = dm_blk_do_report_zones(md, t, sector, nr_zones,
+				     dm_zone_need_reset_cb, need_reset);
 	if (ret != nr_zones) {
 		DMERR("Get %s zone reset bitmap failed\n",
 		      md->disk->disk_name);

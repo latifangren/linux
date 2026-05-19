@@ -80,7 +80,11 @@ command results in a shift count error.'
     NPROC=1
 else
     ONLINE=0
-    OPTIONS="--dir $srcroot $COCCIINCLUDE"
+    if [ "$KBUILD_EXTMOD" = "" ] ; then
+        OPTIONS="--dir $srctree $COCCIINCLUDE"
+    else
+        OPTIONS="--dir $KBUILD_EXTMOD $COCCIINCLUDE"
+    fi
 
     # Use only one thread per core by default if hyperthreading is enabled
     THREADS_PER_CORE=$(LANG=C lscpu | grep "Thread(s) per core: " | tr -cd "[:digit:]")
@@ -138,7 +142,7 @@ run_cmd_parmap() {
 	if [ $VERBOSE -ne 0 ] ; then
 		echo "Running ($NPROC in parallel): $@"
 	fi
-	if [ "$DEBUG_FILE" != "/dev/null" ]; then
+	if [ "$DEBUG_FILE" != "/dev/null" -a "$DEBUG_FILE" != "" ]; then
                 echo $@>>$DEBUG_FILE
                 $@ 2>>$DEBUG_FILE
         else
@@ -259,27 +263,18 @@ coccinelle () {
 
 }
 
-if [ "$DEBUG_FILE" = "" ]; then
-    echo 'You have not explicitly specified the debug file to use.'
-    echo 'Using default "/dev/null" as debug file.'
-    echo 'Debug logs will be printed to stdout.'
-    echo 'You can specify the debug file with "make coccicheck DEBUG_FILE=<debug_file>"'
-    echo ''
-    DEBUG_FILE="/dev/null"
-fi
-
-if [ -f $DEBUG_FILE ]; then
-	echo "Debug file $DEBUG_FILE exists, bailing"
-	exit
+if [ "$DEBUG_FILE" != "/dev/null" -a "$DEBUG_FILE" != "" ]; then
+	if [ -f $DEBUG_FILE ]; then
+		echo "Debug file $DEBUG_FILE exists, bailing"
+		exit
+	fi
+else
+	DEBUG_FILE="/dev/null"
 fi
 
 if [ "$COCCI" = "" ] ; then
     for f in `find $srctree/scripts/coccinelle/ -name '*.cocci' -type f | sort`; do
-        if grep -q "virtual[[:space:]]\+$MODE" "$f"; then
-                coccinelle $f
-        else
-                echo "warning: Skipping $f as it does not match mode '$MODE'"
-        fi
+	coccinelle $f
     done
 else
     coccinelle $COCCI

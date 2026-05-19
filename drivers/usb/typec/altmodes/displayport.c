@@ -65,13 +65,6 @@ struct dp_altmode {
 	enum dp_state state;
 	bool hpd;
 	bool pending_hpd;
-	u32 irq_hpd_count;
-	/*
-	 * hpd is mandatory for irq_hpd assertion, so irq_hpd also needs its own pending flag if
-	 * both hpd and irq_hpd are asserted in the first Status Update before the pin assignment
-	 * is configured.
-	 */
-	bool pending_irq_hpd;
 
 	struct mutex lock; /* device lock */
 	struct work_struct work;
@@ -163,7 +156,6 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
 {
 	bool configured = !!DP_CONF_GET_PIN_ASSIGN(dp->data.conf);
 	bool hpd = !!(dp->data.status & DP_STATUS_HPD_STATE);
-	bool irq_hpd = !!(dp->data.status & DP_STATUS_IRQ_HPD);
 	u8 con = DP_STATUS_CONNECTION(dp->data.status);
 	int ret = 0;
 
@@ -183,8 +175,6 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
 				dp->hpd = hpd;
 				dp->pending_hpd = true;
 			}
-			if (dp->hpd && dp->pending_hpd && irq_hpd)
-				dp->pending_irq_hpd = true;
 		}
 	} else {
 		drm_connector_oob_hotplug_event(dp->connector_fwnode,
@@ -192,10 +182,6 @@ static int dp_altmode_status_update(struct dp_altmode *dp)
 						      connector_status_disconnected);
 		dp->hpd = hpd;
 		sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
-		if (hpd && irq_hpd) {
-			dp->irq_hpd_count++;
-			sysfs_notify(&dp->alt->dev.kobj, "displayport", "irq_hpd");
-		}
 	}
 
 	return ret;
@@ -215,11 +201,6 @@ static int dp_altmode_configured(struct dp_altmode *dp)
 						connector_status_connected);
 		sysfs_notify(&dp->alt->dev.kobj, "displayport", "hpd");
 		dp->pending_hpd = false;
-		if (dp->pending_irq_hpd) {
-			dp->irq_hpd_count++;
-			sysfs_notify(&dp->alt->dev.kobj, "displayport", "irq_hpd");
-			dp->pending_irq_hpd = false;
-		}
 	}
 
 	return dp_altmode_notify(dp);
@@ -276,7 +257,7 @@ static void dp_altmode_work(struct work_struct *work)
 	case DP_STATE_ENTER:
 		ret = typec_altmode_enter(dp->alt, NULL);
 		if (ret && ret != -EBUSY)
-			dev_err(&dp->alt->dev, "failed to enter mode: %d\n", ret);
+			dev_err(&dp->alt->dev, "failed to enter mode\n");
 		break;
 	case DP_STATE_ENTER_PRIME:
 		ret = typec_cable_altmode_enter(dp->alt, TYPEC_PLUG_SOP_P, NULL);
@@ -730,19 +711,10 @@ static ssize_t hpd_show(struct device *dev, struct device_attribute *attr, char 
 }
 static DEVICE_ATTR_RO(hpd);
 
-static ssize_t irq_hpd_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct dp_altmode *dp = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%d\n", dp->irq_hpd_count);
-}
-static DEVICE_ATTR_RO(irq_hpd);
-
 static struct attribute *displayport_attrs[] = {
 	&dev_attr_configuration.attr,
 	&dev_attr_pin_assignment.attr,
 	&dev_attr_hpd.attr,
-	&dev_attr_irq_hpd.attr,
 	NULL
 };
 
@@ -763,11 +735,9 @@ int dp_altmode_probe(struct typec_altmode *alt)
 	struct fwnode_handle *fwnode;
 	struct dp_altmode *dp;
 
-	/* Port can only be DFP_U. */
-	if (typec_altmode_get_data_role(alt) != TYPEC_HOST)
-		return -EPROTO;
+	/* FIXME: Port can only be DFP_U. */
 
-	/* Make sure we have compatible pin configurations */
+	/* Make sure we have compatiple pin configurations */
 	if (!(DP_CAP_PIN_ASSIGN_DFP_D(port->vdo) &
 	      DP_CAP_PIN_ASSIGN_UFP_D(alt->vdo)) &&
 	    !(DP_CAP_PIN_ASSIGN_UFP_D(port->vdo) &
@@ -809,10 +779,8 @@ int dp_altmode_probe(struct typec_altmode *alt)
 	if (plug)
 		typec_altmode_set_drvdata(plug, dp);
 
-	if (!alt->mode_selection) {
-		dp->state = plug ? DP_STATE_ENTER_PRIME : DP_STATE_ENTER;
-		schedule_work(&dp->work);
-	}
+	dp->state = plug ? DP_STATE_ENTER_PRIME : DP_STATE_ENTER;
+	schedule_work(&dp->work);
 
 	return 0;
 }
@@ -835,7 +803,7 @@ void dp_altmode_remove(struct typec_altmode *alt)
 EXPORT_SYMBOL_GPL(dp_altmode_remove);
 
 static const struct typec_device_id dp_typec_id[] = {
-	{ USB_TYPEC_DP_SID },
+	{ USB_TYPEC_DP_SID, USB_TYPEC_DP_MODE },
 	{ },
 };
 MODULE_DEVICE_TABLE(typec, dp_typec_id);

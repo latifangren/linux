@@ -17,8 +17,6 @@
 #include <linux/lsm_hooks.h>
 #include <uapi/linux/lsm.h>
 
-#include "lsm.h"
-
 /**
  * lsm_name_to_attr - map an LSM attribute name to its ID
  * @name: name of the attribute

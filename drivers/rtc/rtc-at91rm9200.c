@@ -640,7 +640,7 @@ static SIMPLE_DEV_PM_OPS(at91_rtc_pm_ops, at91_rtc_suspend, at91_rtc_resume);
  * triggering a section mismatch warning.
  */
 static struct platform_driver at91_rtc_driver __refdata = {
-	.remove		= __exit_p(at91_rtc_remove),
+	.remove_new	= __exit_p(at91_rtc_remove),
 	.shutdown	= at91_rtc_shutdown,
 	.driver		= {
 		.name	= "at91_rtc",
@@ -654,3 +654,4 @@ module_platform_driver_probe(at91_rtc_driver, at91_rtc_probe);
 MODULE_AUTHOR("Rick Bronson");
 MODULE_DESCRIPTION("RTC driver for Atmel AT91RM9200");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:at91_rtc");

@@ -24,7 +24,6 @@
 #include <linux/crc-ccitt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/nvmem-consumer.h>
 #include <linux/slab.h>
 
 #include "rt2x00.h"
@@ -640,7 +639,7 @@ static bool rt2800_check_firmware_crc(const u8 *data, const size_t len)
 	/*
 	 * Use the crc ccitt algorithm.
 	 * This will return the same value as the legacy driver which
-	 * used bit ordering reversion on both the firmware bytes
+	 * used bit ordering reversion on the both the firmware bytes
 	 * before input input as well as on the final output.
 	 * Obviously using crc ccitt directly is much more efficient.
 	 */
@@ -3608,7 +3607,7 @@ static void rt2800_config_channel_rf55xx(struct rt2x00_dev *rt2x00dev,
 			rt2800_rfcsr_write(rt2x00dev, 52, 0x0C);
 			rt2800_rfcsr_write(rt2x00dev, 54, 0xF8);
 			if (rf->channel <= 50) {
-				rt2800_rfcsr_write(rt2x00dev, 55, 0x06);
+				rt2800_rfcsr_write(rt2x00dev, 55, 0x06),
 				rt2800_rfcsr_write(rt2x00dev, 56, 0xD3);
 			} else if (rf->channel >= 52) {
 				rt2800_rfcsr_write(rt2x00dev, 55, 0x04);
@@ -8883,10 +8882,13 @@ static void rt2800_rxiq_calibration(struct rt2x00_dev *rt2x00dev)
 
 	for (ch_idx = 0; ch_idx < 2; ch_idx = ch_idx + 1) {
 		if (ch_idx == 0) {
+			rfval = rfb0r1 & (~0x3);
 			rfval = rfb0r1 | 0x1;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 1, rfval);
+			rfval = rfb0r2 & (~0x33);
 			rfval = rfb0r2 | 0x11;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 2, rfval);
+			rfval = rfb0r42 & (~0x50);
 			rfval = rfb0r42 | 0x10;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 42, rfval);
 
@@ -8899,10 +8901,13 @@ static void rt2800_rxiq_calibration(struct rt2x00_dev *rt2x00dev)
 
 			rt2800_bbp_dcoc_write(rt2x00dev, 1, 0x00);
 		} else {
+			rfval = rfb0r1 & (~0x3);
 			rfval = rfb0r1 | 0x2;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 1, rfval);
+			rfval = rfb0r2 & (~0x33);
 			rfval = rfb0r2 | 0x22;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 2, rfval);
+			rfval = rfb0r42 & (~0x50);
 			rfval = rfb0r42 | 0x40;
 			rt2800_rfcsr_write_bank(rt2x00dev, 0, 42, rfval);
 
@@ -9394,7 +9399,7 @@ static void rt2800_loft_search(struct rt2x00_dev *rt2x00dev, u8 ch_idx,
 				   p0, p1, pf, idx0, idx1, ibit);
 
 			if (bidx != 5 && pf <= p0 && pf < p1) {
-				/* no need to adjust idxf[] */;
+				idxf[iorq] = idxf[iorq];
 			} else if (p0 < p1) {
 				pf = p0;
 				idxf[iorq] = idx0 & 0x3F;
@@ -10963,36 +10968,6 @@ int rt2800_read_eeprom_efuse(struct rt2x00_dev *rt2x00dev)
 }
 EXPORT_SYMBOL_GPL(rt2800_read_eeprom_efuse);
 
-int rt2800_read_eeprom_nvmem(struct rt2x00_dev *rt2x00dev)
-{
-	struct device *dev = rt2x00dev->dev;
-	unsigned int len = rt2x00dev->ops->eeprom_size;
-	struct nvmem_cell *cell;
-	const void *data;
-	size_t retlen;
-
-	cell = nvmem_cell_get(dev, "eeprom");
-	if (IS_ERR(cell))
-		return PTR_ERR(cell);
-
-	data = nvmem_cell_read(cell, &retlen);
-	nvmem_cell_put(cell);
-
-	if (IS_ERR(data))
-		return PTR_ERR(data);
-
-	if (retlen != len) {
-		dev_err(rt2x00dev->dev, "invalid eeprom size, required: 0x%04x\n", len);
-		kfree(data);
-		return -EINVAL;
-	}
-
-	memcpy(rt2x00dev->eeprom, data, len);
-	kfree(data);
-	return 0;
-}
-EXPORT_SYMBOL_GPL(rt2800_read_eeprom_nvmem);
-
 static u8 rt2800_get_txmixer_gain_24g(struct rt2x00_dev *rt2x00dev)
 {
 	u16 word;
@@ -11042,9 +11017,7 @@ static int rt2800_validate_eeprom(struct rt2x00_dev *rt2x00dev)
 	 * Start validation of the data that has been read.
 	 */
 	mac = rt2800_eeprom_addr(rt2x00dev, EEPROM_MAC_ADDR_0);
-	retval = rt2x00lib_set_mac_address(rt2x00dev, mac);
-	if (retval)
-		return retval;
+	rt2x00lib_set_mac_address(rt2x00dev, mac);
 
 	word = rt2800_eeprom_read(rt2x00dev, EEPROM_NIC_CONF0);
 	if (word == 0xffff) {
@@ -11907,12 +11880,13 @@ static int rt2800_probe_hw_mode(struct rt2x00_dev *rt2x00dev)
 	/*
 	 * Create channel information and survey arrays
 	 */
-	info = kzalloc_objs(*info, spec->num_channels);
+	info = kcalloc(spec->num_channels, sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	rt2x00dev->chan_survey =
-		kzalloc_objs(struct rt2x00_chan_survey, spec->num_channels);
+		kcalloc(spec->num_channels, sizeof(struct rt2x00_chan_survey),
+			GFP_KERNEL);
 	if (!rt2x00dev->chan_survey) {
 		kfree(info);
 		return -ENOMEM;
@@ -12132,7 +12106,7 @@ void rt2800_get_key_seq(struct ieee80211_hw *hw,
 }
 EXPORT_SYMBOL_GPL(rt2800_get_key_seq);
 
-int rt2800_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx, u32 value)
+int rt2800_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
 {
 	struct rt2x00_dev *rt2x00dev = hw->priv;
 	u32 reg;

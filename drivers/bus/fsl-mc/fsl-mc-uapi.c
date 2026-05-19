@@ -48,7 +48,6 @@ enum fsl_mc_cmd_index {
 	DPRC_GET_POOL,
 	DPRC_GET_POOL_COUNT,
 	DPRC_GET_CONNECTION,
-	DPRC_GET_MEM,
 	DPCI_GET_LINK_STATE,
 	DPCI_GET_PEER_ATTR,
 	DPAIOP_GET_SL_VERSION,
@@ -194,12 +193,6 @@ static struct fsl_mc_cmd_desc fsl_mc_accepted_cmds[] = {
 		.cmdid_mask = 0xFFF0,
 		.token = true,
 		.size = 32,
-	},
-	[DPRC_GET_MEM] = {
-		.cmdid_value = 0x16D0,
-		.cmdid_mask = 0xFFF0,
-		.token = true,
-		.size = 12,
 	},
 
 	[DPCI_GET_LINK_STATE] = {
@@ -483,7 +476,7 @@ static int fsl_mc_uapi_dev_open(struct inode *inode, struct file *filep)
 	struct fsl_mc_bus *mc_bus;
 	int error;
 
-	priv_data = kzalloc_obj(*priv_data);
+	priv_data = kzalloc(sizeof(*priv_data), GFP_KERNEL);
 	if (!priv_data)
 		return -ENOMEM;
 

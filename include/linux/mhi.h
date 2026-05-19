@@ -34,6 +34,7 @@ struct mhi_buf_info;
  * @MHI_CB_SYS_ERROR: MHI device entered error state (may recover)
  * @MHI_CB_FATAL_ERROR: MHI device entered fatal error state
  * @MHI_CB_BW_REQ: Received a bandwidth switch request from device
+ * @MHI_CB_EE_SBL_MODE: MHI device entered SBL mode
  */
 enum mhi_callback {
 	MHI_CB_IDLE,
@@ -45,6 +46,7 @@ enum mhi_callback {
 	MHI_CB_SYS_ERROR,
 	MHI_CB_FATAL_ERROR,
 	MHI_CB_BW_REQ,
+	MHI_CB_EE_SBL_MODE,
 };
 
 /**
@@ -215,6 +217,7 @@ enum mhi_db_brst_mode {
  * @lpm_notify: The channel master requires low power mode notifications
  * @offload_channel: The client manages the channel completely
  * @doorbell_mode_switch: Channel switches to doorbell mode on M0 transition
+ * @auto_queue: Framework will automatically queue buffers for DL traffic
  * @wake-capable: Channel capable of waking up the system
  */
 struct mhi_channel_config {
@@ -231,6 +234,7 @@ struct mhi_channel_config {
 	bool lpm_notify;
 	bool offload_channel;
 	bool doorbell_mode_switch;
+	bool auto_queue;
 	bool wake_capable;
 };
 
@@ -719,6 +723,12 @@ enum mhi_state mhi_get_mhi_state(struct mhi_controller *mhi_cntrl);
 void mhi_soc_reset(struct mhi_controller *mhi_cntrl);
 
 /**
+ * mhi_device_get - Disable device low power mode
+ * @mhi_dev: Device associated with the channel
+ */
+void mhi_device_get(struct mhi_device *mhi_dev);
+
+/**
  * mhi_device_get_sync - Disable device low power mode. Synchronously
  *                       take the controller out of suspended state
  * @mhi_dev: Device associated with the channel
@@ -742,6 +752,18 @@ void mhi_device_put(struct mhi_device *mhi_dev);
 int mhi_prepare_for_transfer(struct mhi_device *mhi_dev);
 
 /**
+ * mhi_prepare_for_transfer_autoqueue - Setup UL and DL channels with auto queue
+ *                                      buffers for DL traffic
+ * @mhi_dev: Device associated with the channels
+ *
+ * Allocate and initialize the channel context and also issue the START channel
+ * command to both channels. Channels can be started only if both host and
+ * device execution environments match and channels are in a DISABLED state.
+ * The MHI core will automatically allocate and queue buffers for the DL traffic.
+ */
+int mhi_prepare_for_transfer_autoqueue(struct mhi_device *mhi_dev);
+
+/**
  * mhi_unprepare_from_transfer - Reset UL and DL channels for data transfer.
  *                               Issue the RESET channel command and let the
  *                               device clean-up the context so no incoming
@@ -755,6 +777,18 @@ int mhi_prepare_for_transfer(struct mhi_device *mhi_dev);
  * @mhi_dev: Device associated with the channels
  */
 void mhi_unprepare_from_transfer(struct mhi_device *mhi_dev);
+
+/**
+ * mhi_queue_dma - Send or receive DMA mapped buffers from client device
+ *                 over MHI channel
+ * @mhi_dev: Device associated with the channels
+ * @dir: DMA direction for the channel
+ * @mhi_buf: Buffer for holding the DMA mapped data
+ * @len: Buffer length
+ * @mflags: MHI transfer flags used for the transfer
+ */
+int mhi_queue_dma(struct mhi_device *mhi_dev, enum dma_data_direction dir,
+		  struct mhi_buf *mhi_buf, size_t len, enum mhi_flags mflags);
 
 /**
  * mhi_queue_buf - Send or receive raw buffers from client device over MHI

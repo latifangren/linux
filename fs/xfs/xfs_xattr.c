@@ -4,7 +4,7 @@
  * Portions Copyright (C) 2000-2008 Silicon Graphics, Inc.
  */
 
-#include "xfs_platform.h"
+#include "xfs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
 #include "xfs_log_format.h"
@@ -51,7 +51,8 @@ xfs_attr_grab_log_assist(
 		return error;
 	xfs_set_using_logged_xattrs(mp);
 
-	xfs_warn_experimental(mp, XFS_EXPERIMENTAL_LARP);
+	xfs_warn_mount(mp, XFS_OPSTATE_WARNED_LARP,
+ "EXPERIMENTAL logged extended attributes feature in use. Use at your own risk!");
 
 	return 0;
 }
@@ -243,7 +244,7 @@ __xfs_xattr_put_listent(
 	offset = context->buffer + context->count;
 	memcpy(offset, prefix, prefix_len);
 	offset += prefix_len;
-	memcpy(offset, (char *)name, namelen);			/* real name */
+	strncpy(offset, (char *)name, namelen);			/* real name */
 	offset += namelen;
 	*offset = '\0';
 
@@ -332,8 +333,8 @@ xfs_vn_listxattr(
 	memset(&context, 0, sizeof(context));
 	context.dp = XFS_I(inode);
 	context.resynch = 1;
-	context.bufsize = size;
 	context.buffer = size ? data : NULL;
+	context.bufsize = size;
 	context.firstu = context.bufsize;
 	context.put_listent = xfs_xattr_put_listent;
 

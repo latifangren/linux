@@ -230,10 +230,6 @@ properties:
           connector:
             type: object
 
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
-
           mode:
             description: A string that determines the mode in which to
               run the port.
@@ -260,12 +256,7 @@ properties:
               voltage.
 
         dependencies:
-          usb-role-switch:
-            oneOf:
-              - required:
-                  - connector
-              - required:
-                  - port
+          usb-role-switch: [ connector ]
 
       usb2-1:
         type: object
@@ -276,10 +267,6 @@ properties:
           # that binding to be selected for the subnode
           connector:
             type: object
-
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
 
           mode:
             description: A string that determines the mode in which to
@@ -319,10 +306,6 @@ properties:
           connector:
             type: object
 
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
-
           mode:
             description: A string that determines the mode in which to
               run the port.
@@ -360,10 +343,6 @@ properties:
           # that binding to be selected for the subnode
           connector:
             type: object
-
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
 
           mode:
             description: A string that determines the mode in which to
@@ -426,10 +405,6 @@ properties:
             description: A phandle to the regulator supplying the VBUS
               voltage.
 
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
-
       usb3-1:
         type: object
         additionalProperties: false
@@ -462,10 +437,6 @@ properties:
           vbus-supply:
             description: A phandle to the regulator supplying the VBUS
               voltage.
-
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
 
       usb3-2:
         type: object
@@ -500,10 +471,6 @@ properties:
             description: A phandle to the regulator supplying the VBUS
               voltage.
 
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
-
       usb3-3:
         type: object
         additionalProperties: false
@@ -536,10 +503,6 @@ properties:
           vbus-supply:
             description: A phandle to the regulator supplying the VBUS
               voltage.
-
-          port:
-            description: connection to a USB Type C controller
-            $ref: /schemas/graph.yaml#/properties/port
 
 additionalProperties: false
 

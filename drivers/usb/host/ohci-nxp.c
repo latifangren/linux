@@ -169,13 +169,13 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 
 	ret = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 	if (ret)
-		goto err_put_client;
+		goto fail_disable;
 
 	dev_dbg(&pdev->dev, "%s: " DRIVER_DESC " (nxp)\n", hcd_name);
 	if (usb_disabled()) {
 		dev_err(&pdev->dev, "USB is disabled\n");
 		ret = -ENODEV;
-		goto err_put_client;
+		goto fail_disable;
 	}
 
 	/* Enable USB host clock */
@@ -183,7 +183,7 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 	if (IS_ERR(usb_host_clk)) {
 		dev_err(&pdev->dev, "failed to acquire and start USB OHCI clock\n");
 		ret = PTR_ERR(usb_host_clk);
-		goto err_put_client;
+		goto fail_disable;
 	}
 
 	isp1301_configure();
@@ -192,13 +192,13 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 	if (!hcd) {
 		dev_err(&pdev->dev, "Failed to allocate HC buffer\n");
 		ret = -ENOMEM;
-		goto err_put_client;
+		goto fail_disable;
 	}
 
 	hcd->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(hcd->regs)) {
 		ret = PTR_ERR(hcd->regs);
-		goto err_put_hcd;
+		goto fail_resource;
 	}
 	hcd->rsrc_start = res->start;
 	hcd->rsrc_len = resource_size(res);
@@ -206,7 +206,7 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		ret = -ENXIO;
-		goto err_put_hcd;
+		goto fail_resource;
 	}
 
 	ohci_nxp_start_hc();
@@ -220,9 +220,9 @@ static int ohci_hcd_nxp_probe(struct platform_device *pdev)
 	}
 
 	ohci_nxp_stop_hc();
-err_put_hcd:
+fail_resource:
 	usb_put_hcd(hcd);
-err_put_client:
+fail_disable:
 	put_device(&isp1301_i2c_client->dev);
 	isp1301_i2c_client = NULL;
 	return ret;

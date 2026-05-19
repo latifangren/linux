@@ -367,8 +367,17 @@ int tipc_aead_key_validate(struct tipc_aead_key *ukey, struct genl_info *info)
  */
 static int tipc_aead_key_generate(struct tipc_aead_key *skey)
 {
-	/* Fill the key's content with a random value via stdrng */
-	return crypto_stdrng_get_bytes(skey->key, skey->keylen);
+	int rc = 0;
+
+	/* Fill the key's content with a random value via RNG cipher */
+	rc = crypto_get_default_rng();
+	if (likely(!rc)) {
+		rc = crypto_rng_get_bytes(crypto_default_rng, skey->key,
+					  skey->keylen);
+		crypto_put_default_rng();
+	}
+
+	return rc;
 }
 
 static struct tipc_aead *tipc_aead_get(struct tipc_aead __rcu *aead)
@@ -515,7 +524,7 @@ static int tipc_aead_init(struct tipc_aead **aead, struct tipc_aead_key *ukey,
 		return -EEXIST;
 
 	/* Allocate a new AEAD */
-	tmp = kzalloc_obj(*tmp, GFP_ATOMIC);
+	tmp = kzalloc(sizeof(*tmp), GFP_ATOMIC);
 	if (unlikely(!tmp))
 		return -ENOMEM;
 
@@ -551,7 +560,7 @@ static int tipc_aead_init(struct tipc_aead **aead, struct tipc_aead_key *ukey,
 			break;
 		}
 
-		tfm_entry = kmalloc_obj(*tfm_entry);
+		tfm_entry = kmalloc(sizeof(*tfm_entry), GFP_KERNEL);
 		if (unlikely(!tfm_entry)) {
 			crypto_free_aead(tfm);
 			err = -ENOMEM;
@@ -628,7 +637,7 @@ static int tipc_aead_clone(struct tipc_aead **dst, struct tipc_aead *src)
 	if (unlikely(*dst))
 		return -EEXIST;
 
-	aead = kzalloc_obj(*aead, GFP_ATOMIC);
+	aead = kzalloc(sizeof(*aead), GFP_ATOMIC);
 	if (unlikely(!aead))
 		return -ENOMEM;
 
@@ -1463,7 +1472,7 @@ int tipc_crypto_start(struct tipc_crypto **crypto, struct net *net,
 		return -EEXIST;
 
 	/* Allocate crypto */
-	c = kzalloc_obj(*c, GFP_ATOMIC);
+	c = kzalloc(sizeof(*c), GFP_ATOMIC);
 	if (!c)
 		return -ENOMEM;
 
@@ -1788,7 +1797,7 @@ exit:
  * @b: bearer where the message has been received
  *
  * If the decryption is successful, the decrypted skb is returned directly or
- * as the callback, the encryption header and auth tag will be trimmed out
+ * as the callback, the encryption header and auth tag will be trimed out
  * before forwarding to tipc_rcv() via the tipc_crypto_rcv_complete().
  * Otherwise, the skb will be freed!
  * Note: RX key(s) can be re-aligned, or in case of no key suitable, TX

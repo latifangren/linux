@@ -48,8 +48,11 @@ static int sm4_ecb_do_crypt(struct skcipher_request *req, const u32 *rkey)
 
 		nblocks = nbytes / SM4_BLOCK_SIZE;
 		if (nblocks) {
-			scoped_ksimd()
-				sm4_neon_crypt(rkey, dst, src, nblocks);
+			kernel_neon_begin();
+
+			sm4_neon_crypt(rkey, dst, src, nblocks);
+
+			kernel_neon_end();
 		}
 
 		err = skcipher_walk_done(&walk, nbytes % SM4_BLOCK_SIZE);
@@ -123,9 +126,12 @@ static int sm4_cbc_decrypt(struct skcipher_request *req)
 
 		nblocks = nbytes / SM4_BLOCK_SIZE;
 		if (nblocks) {
-			scoped_ksimd()
-				sm4_neon_cbc_dec(ctx->rkey_dec, dst, src,
-						 walk.iv, nblocks);
+			kernel_neon_begin();
+
+			sm4_neon_cbc_dec(ctx->rkey_dec, dst, src,
+					 walk.iv, nblocks);
+
+			kernel_neon_end();
 		}
 
 		err = skcipher_walk_done(&walk, nbytes % SM4_BLOCK_SIZE);
@@ -151,9 +157,12 @@ static int sm4_ctr_crypt(struct skcipher_request *req)
 
 		nblocks = nbytes / SM4_BLOCK_SIZE;
 		if (nblocks) {
-			scoped_ksimd()
-				sm4_neon_ctr_crypt(ctx->rkey_enc, dst, src,
-						   walk.iv, nblocks);
+			kernel_neon_begin();
+
+			sm4_neon_ctr_crypt(ctx->rkey_enc, dst, src,
+					   walk.iv, nblocks);
+
+			kernel_neon_end();
 
 			dst += nblocks * SM4_BLOCK_SIZE;
 			src += nblocks * SM4_BLOCK_SIZE;

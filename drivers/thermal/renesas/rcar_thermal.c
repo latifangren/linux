@@ -277,7 +277,7 @@ static int rcar_thermal_get_temp(struct thermal_zone_device *zone, int *temp)
 	return rcar_thermal_get_current_temp(priv, temp);
 }
 
-static const struct thermal_zone_device_ops rcar_thermal_zone_ops = {
+static struct thermal_zone_device_ops rcar_thermal_zone_ops = {
 	.get_temp	= rcar_thermal_get_temp,
 };
 
@@ -534,6 +534,7 @@ error_unregister:
 	return ret;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int rcar_thermal_suspend(struct device *dev)
 {
 	struct rcar_thermal_common *common = dev_get_drvdata(dev);
@@ -566,14 +567,15 @@ static int rcar_thermal_resume(struct device *dev)
 
 	return 0;
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(rcar_thermal_pm_ops, rcar_thermal_suspend,
-				rcar_thermal_resume);
+static SIMPLE_DEV_PM_OPS(rcar_thermal_pm_ops, rcar_thermal_suspend,
+			 rcar_thermal_resume);
 
 static struct platform_driver rcar_thermal_driver = {
 	.driver	= {
 		.name	= "rcar_thermal",
-		.pm = pm_sleep_ptr(&rcar_thermal_pm_ops),
+		.pm = &rcar_thermal_pm_ops,
 		.of_match_table = rcar_thermal_dt_ids,
 	},
 	.probe		= rcar_thermal_probe,

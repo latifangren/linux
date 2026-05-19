@@ -39,7 +39,6 @@ struct token_sysfs_data {
 struct smbios_device {
 	struct list_head list;
 	struct device *device;
-	int priority;
 	int (*call_fn)(struct calling_interface_buffer *arg);
 };
 
@@ -146,7 +145,7 @@ int dell_smbios_error(int value)
 }
 EXPORT_SYMBOL_GPL(dell_smbios_error);
 
-int dell_smbios_register_device(struct device *d, int priority, void *call_fn)
+int dell_smbios_register_device(struct device *d, void *call_fn)
 {
 	struct smbios_device *priv;
 
@@ -155,7 +154,6 @@ int dell_smbios_register_device(struct device *d, int priority, void *call_fn)
 		return -ENOMEM;
 	get_device(d);
 	priv->device = d;
-	priv->priority = priority;
 	priv->call_fn = call_fn;
 	mutex_lock(&smbios_mutex);
 	list_add_tail(&priv->list, &smbios_device_list);
@@ -294,25 +292,28 @@ EXPORT_SYMBOL_GPL(dell_smbios_call_filter);
 
 int dell_smbios_call(struct calling_interface_buffer *buffer)
 {
-	struct smbios_device *selected = NULL;
+	int (*call_fn)(struct calling_interface_buffer *) = NULL;
+	struct device *selected_dev = NULL;
 	struct smbios_device *priv;
 	int ret;
 
 	mutex_lock(&smbios_mutex);
 	list_for_each_entry(priv, &smbios_device_list, list) {
-		if (!selected || priv->priority >= selected->priority) {
-			dev_dbg(priv->device, "Trying device ID: %d\n", priv->priority);
-			selected = priv;
+		if (!selected_dev || priv->device->id >= selected_dev->id) {
+			dev_dbg(priv->device, "Trying device ID: %d\n",
+				priv->device->id);
+			call_fn = priv->call_fn;
+			selected_dev = priv->device;
 		}
 	}
 
-	if (!selected) {
+	if (!selected_dev) {
 		ret = -ENODEV;
 		pr_err("No dell-smbios drivers are loaded\n");
 		goto out_smbios_call;
 	}
 
-	ret = selected->call_fn(buffer);
+	ret = call_fn(buffer);
 
 out_smbios_call:
 	mutex_unlock(&smbios_mutex);
@@ -495,12 +496,12 @@ static int build_tokens_sysfs(struct platform_device *dev)
 	int ret;
 	int i, j;
 
-	token_entries = kzalloc_objs(*token_entries, da_num_tokens);
+	token_entries = kcalloc(da_num_tokens, sizeof(*token_entries), GFP_KERNEL);
 	if (!token_entries)
 		return -ENOMEM;
 
 	/* need to store both location and value + terminator*/
-	token_attrs = kzalloc_objs(*token_attrs, (2 * da_num_tokens) + 1);
+	token_attrs = kcalloc((2 * da_num_tokens) + 1, sizeof(*token_attrs), GFP_KERNEL);
 	if (!token_attrs)
 		goto out_allocate_attrs;
 

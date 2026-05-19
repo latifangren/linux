@@ -166,7 +166,7 @@ static void intel_th_remove(struct device *dev)
 	pm_runtime_enable(dev);
 }
 
-static const struct bus_type intel_th_bus = {
+static struct bus_type intel_th_bus = {
 	.name		= "intel_th",
 	.match		= intel_th_match,
 	.probe		= intel_th_probe,
@@ -815,14 +815,14 @@ static int intel_th_output_open(struct inode *inode, struct file *file)
 
 	if (!dev->driver) {
 		err = -ENODEV;
-		goto err_put_dev;
+		goto out_put_device;
 	}
 
 	thdrv = to_intel_th_driver(dev->driver);
 	fops = fops_get(thdrv->fops);
 	if (!fops) {
 		err = -ENODEV;
-		goto err_put_dev;
+		goto out_put_device;
 	}
 
 	replace_fops(file, fops);
@@ -832,12 +832,12 @@ static int intel_th_output_open(struct inode *inode, struct file *file)
 	if (file->f_op->open) {
 		err = file->f_op->open(inode, file);
 		if (err)
-			goto err_put_dev;
+			goto out_put_device;
 	}
 
 	return 0;
 
-err_put_dev:
+out_put_device:
 	put_device(dev);
 
 	return err;
@@ -880,9 +880,8 @@ static irqreturn_t intel_th_irq(int irq, void *data)
 /**
  * intel_th_alloc() - allocate a new Intel TH device and its subdevices
  * @dev:	parent device
- * @drvdata:	data private to the driver
  * @devres:	resources indexed by th_mmio_idx
- * @ndevres:	number of entries in the @devres resources
+ * @irq:	irq number
  */
 struct intel_th *
 intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
@@ -891,7 +890,7 @@ intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
 	int err, r, nr_mmios = 0;
 	struct intel_th *th;
 
-	th = kzalloc_obj(*th);
+	th = kzalloc(sizeof(*th), GFP_KERNEL);
 	if (!th)
 		return ERR_PTR(-ENOMEM);
 

@@ -21,7 +21,6 @@
 #include "mgmt/user_session.h"
 #include "crypto_ctx.h"
 #include "auth.h"
-#include "stats.h"
 
 int ksmbd_debug_types;
 
@@ -96,7 +95,7 @@ static inline int check_conn_state(struct ksmbd_work *work)
 
 	if (ksmbd_conn_exiting(work->conn) ||
 	    ksmbd_conn_need_reconnect(work->conn)) {
-		rsp_hdr = smb_get_msg(work->response_buf);
+		rsp_hdr = work->response_buf;
 		rsp_hdr->Status.CifsError = STATUS_CONNECTION_DISCONNECTED;
 		return 1;
 	}
@@ -146,8 +145,6 @@ andx_again:
 	}
 
 	ret = cmds->proc(work);
-	if (conn->ops->inc_reqs)
-		conn->ops->inc_reqs(command);
 
 	if (ret < 0)
 		ksmbd_debug(CONN, "Failed to process %u [%d]\n", command, ret);
@@ -362,14 +359,12 @@ static void server_ctrl_handle_init(struct server_ctrl_struct *ctrl)
 {
 	int ret;
 
-	ksmbd_proc_reset();
 	ret = ksmbd_conn_transport_init();
 	if (ret) {
 		server_queue_ctrl_reset_work();
 		return;
 	}
 
-	pr_info("running\n");
 	WRITE_ONCE(server_conf.state, SERVER_STATE_RUNNING);
 }
 
@@ -409,7 +404,7 @@ static int __queue_ctrl_work(int type)
 {
 	struct server_ctrl_struct *ctrl;
 
-	ctrl = kmalloc_obj(struct server_ctrl_struct, KSMBD_DEFAULT_GFP);
+	ctrl = kmalloc(sizeof(struct server_ctrl_struct), KSMBD_DEFAULT_GFP);
 	if (!ctrl)
 		return -ENOMEM;
 
@@ -535,7 +530,6 @@ static int ksmbd_server_shutdown(void)
 {
 	WRITE_ONCE(server_conf.state, SERVER_STATE_SHUTTING_DOWN);
 
-	ksmbd_proc_cleanup();
 	class_unregister(&ksmbd_control_class);
 	ksmbd_workqueue_destroy();
 	ksmbd_ipc_release();
@@ -558,9 +552,6 @@ static int __init ksmbd_server_init(void)
 		pr_err("Unable to register ksmbd-control class\n");
 		return ret;
 	}
-
-	ksmbd_proc_init();
-	create_proc_sessions();
 
 	ksmbd_server_tcp_callbacks_init();
 
@@ -629,11 +620,17 @@ static void __exit ksmbd_server_exit(void)
 MODULE_AUTHOR("Namjae Jeon <linkinjeon@kernel.org>");
 MODULE_DESCRIPTION("Linux kernel CIFS/SMB SERVER");
 MODULE_LICENSE("GPL");
+MODULE_SOFTDEP("pre: ecb");
+MODULE_SOFTDEP("pre: hmac");
+MODULE_SOFTDEP("pre: md5");
 MODULE_SOFTDEP("pre: nls");
 MODULE_SOFTDEP("pre: aes");
 MODULE_SOFTDEP("pre: cmac");
+MODULE_SOFTDEP("pre: sha256");
+MODULE_SOFTDEP("pre: sha512");
 MODULE_SOFTDEP("pre: aead2");
 MODULE_SOFTDEP("pre: ccm");
 MODULE_SOFTDEP("pre: gcm");
+MODULE_SOFTDEP("pre: crc32");
 module_init(ksmbd_server_init)
 module_exit(ksmbd_server_exit)

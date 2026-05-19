@@ -11,7 +11,7 @@ static struct nft_flow_rule *nft_flow_rule_alloc(int num_actions)
 {
 	struct nft_flow_rule *flow;
 
-	flow = kzalloc_obj(struct nft_flow_rule);
+	flow = kzalloc(sizeof(struct nft_flow_rule), GFP_KERNEL);
 	if (!flow)
 		return NULL;
 
@@ -111,7 +111,7 @@ struct nft_flow_rule *nft_flow_rule_create(struct net *net,
 
 	expr = nft_expr_first(rule);
 
-	ctx = kzalloc_obj(struct nft_offload_ctx);
+	ctx = kzalloc(sizeof(struct nft_offload_ctx), GFP_KERNEL);
 	if (!ctx) {
 		err = -ENOMEM;
 		goto err_out;
@@ -220,7 +220,6 @@ static int nft_chain_offload_priority(const struct nft_base_chain *basechain)
 
 bool nft_chain_offload_support(const struct nft_base_chain *basechain)
 {
-	struct nf_hook_ops *ops;
 	struct net_device *dev;
 	struct nft_hook *hook;
 
@@ -228,16 +227,13 @@ bool nft_chain_offload_support(const struct nft_base_chain *basechain)
 		return false;
 
 	list_for_each_entry(hook, &basechain->hook_list, list) {
-		list_for_each_entry(ops, &hook->ops_list, list) {
-			if (ops->pf != NFPROTO_NETDEV ||
-			    ops->hooknum != NF_NETDEV_INGRESS)
-				return false;
+		if (hook->ops.pf != NFPROTO_NETDEV ||
+		    hook->ops.hooknum != NF_NETDEV_INGRESS)
+			return false;
 
-			dev = ops->dev;
-			if (!dev->netdev_ops->ndo_setup_tc &&
-			    !flow_indr_dev_exists())
-				return false;
-		}
+		dev = hook->ops.dev;
+		if (!dev->netdev_ops->ndo_setup_tc && !flow_indr_dev_exists())
+			return false;
 	}
 
 	return true;
@@ -459,37 +455,34 @@ static int nft_flow_block_chain(struct nft_base_chain *basechain,
 				const struct net_device *this_dev,
 				enum flow_block_command cmd)
 {
-	struct nf_hook_ops *ops;
+	struct net_device *dev;
 	struct nft_hook *hook;
 	int err, i = 0;
 
 	list_for_each_entry(hook, &basechain->hook_list, list) {
-		list_for_each_entry(ops, &hook->ops_list, list) {
-			if (this_dev && this_dev != ops->dev)
-				continue;
+		dev = hook->ops.dev;
+		if (this_dev && this_dev != dev)
+			continue;
 
-			err = nft_chain_offload_cmd(basechain, ops->dev, cmd);
-			if (err < 0 && cmd == FLOW_BLOCK_BIND) {
-				if (!this_dev)
-					goto err_flow_block;
+		err = nft_chain_offload_cmd(basechain, dev, cmd);
+		if (err < 0 && cmd == FLOW_BLOCK_BIND) {
+			if (!this_dev)
+				goto err_flow_block;
 
-				return err;
-			}
-			i++;
+			return err;
 		}
+		i++;
 	}
 
 	return 0;
 
 err_flow_block:
 	list_for_each_entry(hook, &basechain->hook_list, list) {
-		list_for_each_entry(ops, &hook->ops_list, list) {
-			if (i-- <= 0)
-				break;
+		if (i-- <= 0)
+			break;
 
-			nft_chain_offload_cmd(basechain, ops->dev,
-					      FLOW_BLOCK_UNBIND);
-		}
+		dev = hook->ops.dev;
+		nft_chain_offload_cmd(basechain, dev, FLOW_BLOCK_UNBIND);
 	}
 	return err;
 }
@@ -645,7 +638,7 @@ static struct nft_chain *__nft_offload_get_chain(const struct nftables_pernet *n
 			found = NULL;
 			basechain = nft_base_chain(chain);
 			list_for_each_entry(hook, &basechain->hook_list, list) {
-				if (!nft_hook_find_ops(hook, dev))
+				if (hook->ops.dev != dev)
 					continue;
 
 				found = hook;

@@ -294,6 +294,7 @@ static int ads1119_single_conversion(struct ads1119_state *st,
 	*val = sign_extend32(sample, chan->scan_type.realbits - 1);
 	ret = IIO_VAL_INT;
 pdown:
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 	return ret;
 }
@@ -338,24 +339,19 @@ static int ads1119_read_raw(struct iio_dev *indio_dev,
 {
 	struct ads1119_state *st = iio_priv(indio_dev);
 	unsigned int index = chan->address;
-	int ret;
 
 	if (index >= st->num_channels_cfg)
 		return -EINVAL;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
-		ret = ads1119_single_conversion(st, chan, val, false);
-		iio_device_release_direct(indio_dev);
-		return ret;
+		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
+			return ads1119_single_conversion(st, chan, val, false);
+		unreachable();
 	case IIO_CHAN_INFO_OFFSET:
-		if (!iio_device_claim_direct(indio_dev))
-			return -EBUSY;
-		ret = ads1119_single_conversion(st, chan, val, true);
-		iio_device_release_direct(indio_dev);
-		return ret;
+		iio_device_claim_direct_scoped(return -EBUSY, indio_dev)
+			return ads1119_single_conversion(st, chan, val, true);
+		unreachable();
 	case IIO_CHAN_INFO_SCALE:
 		*val = st->vref_uV / 1000;
 		*val /= st->channels_cfg[index].gain;
@@ -472,6 +468,7 @@ static int ads1119_triggered_buffer_postdisable(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return 0;
@@ -507,10 +504,12 @@ static irqreturn_t ads1119_trigger_handler(int irq, void *private)
 	struct ads1119_state *st = iio_priv(indio_dev);
 	struct {
 		s16 sample;
-		aligned_s64 timestamp;
-	} scan = { };
+		s64 timestamp __aligned(8);
+	} scan;
 	unsigned int index;
 	int ret;
+
+	memset(&scan, 0, sizeof(scan));
 
 	if (!iio_trigger_using_own(indio_dev)) {
 		index = find_first_bit(indio_dev->active_scan_mask,
@@ -533,8 +532,8 @@ static irqreturn_t ads1119_trigger_handler(int irq, void *private)
 
 	scan.sample = ret;
 
-	iio_push_to_buffers_with_ts(indio_dev, &scan, sizeof(scan),
-				    iio_get_time_ns(indio_dev));
+	iio_push_to_buffers_with_timestamp(indio_dev, &scan,
+					   iio_get_time_ns(indio_dev));
 done:
 	iio_trigger_notify_done(indio_dev->trig);
 	return IRQ_HANDLED;
@@ -694,7 +693,8 @@ static int ads1119_probe(struct i2c_client *client)
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*st));
 	if (!indio_dev)
-		return -ENOMEM;
+		return dev_err_probe(dev, -ENOMEM,
+				     "Failed to allocate IIO device\n");
 
 	st = iio_priv(indio_dev);
 	st->client = client;
@@ -748,7 +748,8 @@ static int ads1119_probe(struct i2c_client *client)
 						  indio_dev->name,
 						  iio_device_id(indio_dev));
 		if (!st->trig)
-			return -ENOMEM;
+			return dev_err_probe(dev, -ENOMEM,
+					     "Failed to allocate IIO trigger\n");
 
 		st->trig->ops = &ads1119_trigger_ops;
 		iio_trigger_set_drvdata(st->trig, indio_dev);
@@ -775,7 +776,8 @@ static int ads1119_probe(struct i2c_client *client)
 
 	ret = devm_add_action_or_reset(dev, ads1119_powerdown, st);
 	if (ret)
-		return ret;
+		return dev_err_probe(dev, ret,
+				     "Failed to add powerdown action\n");
 
 	return devm_iio_device_register(dev, indio_dev);
 }
@@ -805,7 +807,7 @@ static const struct of_device_id __maybe_unused ads1119_of_match[] = {
 MODULE_DEVICE_TABLE(of, ads1119_of_match);
 
 static const struct i2c_device_id ads1119_id[] = {
-	{ "ads1119" },
+	{ "ads1119", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ads1119_id);

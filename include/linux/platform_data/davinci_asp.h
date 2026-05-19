@@ -59,8 +59,7 @@ struct davinci_mcasp_pdata {
 	bool i2s_accurate_sck;
 
 	/* McASP specific fields */
-	int tdm_slots_tx;
-	int tdm_slots_rx;
+	int tdm_slots;
 	u8 op_mode;
 	u8 dismod;
 	u8 num_serializer;

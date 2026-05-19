@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: (BSD-3-Clause OR GPL-2.0-only)
 /* Copyright(c) 2014 - 2020 Intel Corporation */
-#include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/pci.h>
 #include "adf_cfg.h"
@@ -163,14 +162,8 @@ int adf_ae_stop(struct adf_accel_dev *accel_dev)
 static int adf_ae_reset(struct adf_accel_dev *accel_dev, int ae)
 {
 	struct adf_fw_loader_data *loader_data = accel_dev->fw_loader;
-	unsigned long reset_delay;
 
 	qat_hal_reset(loader_data->fw_loader);
-
-	reset_delay = loader_data->fw_loader->chip_info->reset_delay_us;
-	if (reset_delay)
-		fsleep(reset_delay);
-
 	if (qat_hal_clr_reset(loader_data->fw_loader))
 		return -EFAULT;
 
@@ -185,7 +178,7 @@ int adf_ae_init(struct adf_accel_dev *accel_dev)
 	if (!hw_device->fw_name)
 		return 0;
 
-	loader_data = kzalloc_obj(*loader_data);
+	loader_data = kzalloc(sizeof(*loader_data), GFP_KERNEL);
 	if (!loader_data)
 		return -ENOMEM;
 

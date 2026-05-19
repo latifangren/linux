@@ -16,7 +16,6 @@
 #include <linux/remoteproc.h>
 #include <linux/remoteproc/mtk_scp.h>
 #include <linux/rpmsg/mtk_rpmsg.h>
-#include <linux/string.h>
 
 #include "mtk_common.h"
 #include "remoteproc_internal.h"
@@ -1078,7 +1077,7 @@ static void scp_unregister_ipi(struct platform_device *pdev, u32 id)
 	scp_ipi_unregister(scp, id);
 }
 
-static int scp_send_ipi(struct platform_device *pdev, u32 id, const void *buf,
+static int scp_send_ipi(struct platform_device *pdev, u32 id, void *buf,
 			unsigned int len, unsigned int wait)
 {
 	struct mtk_scp *scp = platform_get_drvdata(pdev);
@@ -1111,74 +1110,22 @@ static void scp_remove_rpmsg_subdev(struct mtk_scp *scp)
 	}
 }
 
-/**
- * scp_get_default_fw_path() - Get default SCP firmware path
- * @dev:     SCP Device
- * @core_id: SCP Core number
- *
- * This function generates a path based on the following format:
- *     mediatek/(soc_model)/scp(_cX).img; for multi-core or
- *     mediatek/(soc_model)/scp.img for single core SCP HW
- *
- * Return: A devm allocated string containing the full path to
- *         a SCP firmware or an error pointer
- */
-static const char *scp_get_default_fw_path(struct device *dev, int core_id)
-{
-	struct device_node *np = core_id < 0 ? dev->of_node : dev->parent->of_node;
-	const char *compatible, *soc;
-	char scp_fw_file[7];
-	int ret;
-
-	/* Use only the first compatible string */
-	ret = of_property_read_string_index(np, "compatible", 0, &compatible);
-	if (ret)
-		return ERR_PTR(ret);
-
-	/* If the compatible string's length is implausible bail out early */
-	if (strlen(compatible) < strlen("mediatek,mtXXXX-scp"))
-		return ERR_PTR(-EINVAL);
-
-	/* If the compatible string starts with "mediatek,mt" assume that it's ok */
-	if (!str_has_prefix(compatible, "mediatek,mt"))
-		return ERR_PTR(-EINVAL);
-
-	if (core_id >= 0)
-		ret = snprintf(scp_fw_file, sizeof(scp_fw_file), "scp_c%d", core_id);
-	else
-		ret = snprintf(scp_fw_file, sizeof(scp_fw_file), "scp");
-	if (ret >= sizeof(scp_fw_file))
-		return ERR_PTR(-ENAMETOOLONG);
-
-	/* Not using strchr here, as strlen of a const gets optimized by compiler */
-	soc = &compatible[strlen("mediatek,")];
-
-	return devm_kasprintf(dev, GFP_KERNEL, "mediatek/%.*s/%s.img",
-			      (int)strlen("mtXXXX"), soc, scp_fw_file);
-}
-
 static struct mtk_scp *scp_rproc_init(struct platform_device *pdev,
 				      struct mtk_scp_of_cluster *scp_cluster,
-				      const struct mtk_scp_of_data *of_data,
-				      int core_id)
+				      const struct mtk_scp_of_data *of_data)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct mtk_scp *scp;
 	struct rproc *rproc;
 	struct resource *res;
-	const char *fw_name;
+	const char *fw_name = "scp.img";
 	int ret, i;
 	const struct mtk_scp_sizes_data *scp_sizes;
 
 	ret = rproc_of_parse_firmware(dev, 0, &fw_name);
-	if (ret) {
-		fw_name = scp_get_default_fw_path(dev, core_id);
-		if (IS_ERR(fw_name)) {
-			dev_err(dev, "Cannot get firmware path: %ld\n", PTR_ERR(fw_name));
-			return ERR_CAST(fw_name);
-		}
-	}
+	if (ret < 0 && ret != -EINVAL)
+		return ERR_PTR(ret);
 
 	rproc = devm_rproc_alloc(dev, np->name, &scp_ops, fw_name, sizeof(*scp));
 	if (!rproc) {
@@ -1282,7 +1229,7 @@ static int scp_add_single_core(struct platform_device *pdev,
 	struct mtk_scp *scp;
 	int ret;
 
-	scp = scp_rproc_init(pdev, scp_cluster, of_device_get_match_data(dev), -1);
+	scp = scp_rproc_init(pdev, scp_cluster, of_device_get_match_data(dev));
 	if (IS_ERR(scp))
 		return PTR_ERR(scp);
 
@@ -1304,6 +1251,7 @@ static int scp_add_multi_core(struct platform_device *pdev,
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev_of_node(dev);
 	struct platform_device *cpdev;
+	struct device_node *child;
 	struct list_head *scp_list = &scp_cluster->mtk_scp_list;
 	const struct mtk_scp_of_data **cluster_of_data;
 	struct mtk_scp *scp, *temp;
@@ -1312,10 +1260,11 @@ static int scp_add_multi_core(struct platform_device *pdev,
 
 	cluster_of_data = (const struct mtk_scp_of_data **)of_device_get_match_data(dev);
 
-	for_each_available_child_of_node_scoped(np, child) {
+	for_each_available_child_of_node(np, child) {
 		if (!cluster_of_data[core_id]) {
 			ret = -EINVAL;
 			dev_err(dev, "Not support core %d\n", core_id);
+			of_node_put(child);
 			goto init_fail;
 		}
 
@@ -1323,20 +1272,23 @@ static int scp_add_multi_core(struct platform_device *pdev,
 		if (!cpdev) {
 			ret = -ENODEV;
 			dev_err(dev, "Not found platform device for core %d\n", core_id);
+			of_node_put(child);
 			goto init_fail;
 		}
 
-		scp = scp_rproc_init(cpdev, scp_cluster, cluster_of_data[core_id], core_id);
+		scp = scp_rproc_init(cpdev, scp_cluster, cluster_of_data[core_id]);
 		put_device(&cpdev->dev);
 		if (IS_ERR(scp)) {
 			ret = PTR_ERR(scp);
 			dev_err(dev, "Failed to initialize core %d rproc\n", core_id);
+			of_node_put(child);
 			goto init_fail;
 		}
 
 		ret = rproc_add(scp->rproc);
 		if (ret) {
 			dev_err(dev, "Failed to add rproc of core %d\n", core_id);
+			of_node_put(child);
 			scp_free(scp);
 			goto init_fail;
 		}
@@ -1592,51 +1544,12 @@ static const struct of_device_id mtk_scp_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, mtk_scp_of_match);
 
-static int __maybe_unused scp_suspend(struct device *dev)
-{
-	struct mtk_scp *scp = dev_get_drvdata(dev);
-	struct rproc *rproc = scp->rproc;
-
-	/*
-	 * Only unprepare if the SCP is running and holding the clock.
-	 *
-	 * Note: `scp_ops` doesn't implement .attach() callback, hence
-	 * `rproc->state` can never be RPROC_ATTACHED.  Otherwise, it
-	 * should also be checked here.
-	 */
-	if (rproc->state == RPROC_RUNNING)
-		clk_unprepare(scp->clk);
-	return 0;
-}
-
-static int __maybe_unused scp_resume(struct device *dev)
-{
-	struct mtk_scp *scp = dev_get_drvdata(dev);
-	struct rproc *rproc = scp->rproc;
-
-	/*
-	 * Only prepare if the SCP was running and holding the clock.
-	 *
-	 * Note: `scp_ops` doesn't implement .attach() callback, hence
-	 * `rproc->state` can never be RPROC_ATTACHED.  Otherwise, it
-	 * should also be checked here.
-	 */
-	if (rproc->state == RPROC_RUNNING)
-		return clk_prepare(scp->clk);
-	return 0;
-}
-
-static const struct dev_pm_ops scp_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(scp_suspend, scp_resume)
-};
-
 static struct platform_driver mtk_scp_driver = {
 	.probe = scp_probe,
 	.remove = scp_remove,
 	.driver = {
 		.name = "mtk-scp",
 		.of_match_table = mtk_scp_of_match,
-		.pm = &scp_pm_ops,
 	},
 };
 

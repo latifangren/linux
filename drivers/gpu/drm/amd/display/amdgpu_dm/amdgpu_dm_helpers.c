@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: MIT
 /*
  * Copyright 2015 Advanced Micro Devices, Inc.
  *
@@ -23,8 +22,6 @@
  * Authors: AMD
  *
  */
-
-#include <acpi/video.h>
 
 #include <linux/string.h>
 #include <linux/acpi.h>
@@ -56,21 +53,16 @@ static u32 edid_extract_panel_id(struct edid *edid)
 	       (u32)EDID_PRODUCT_ID(edid);
 }
 
-static void apply_edid_quirks(struct drm_device *dev, struct edid *edid, struct dc_edid_caps *edid_caps)
+static void apply_edid_quirks(struct edid *edid, struct dc_edid_caps *edid_caps)
 {
 	uint32_t panel_id = edid_extract_panel_id(edid);
 
 	switch (panel_id) {
-	/* Workaround for monitors that need a delay after detecting the link */
-	case drm_edid_encode_panel_id('G', 'B', 'T', 0x3215):
-		drm_dbg_driver(dev, "Add 10s delay for link detection for panel id %X\n", panel_id);
-		edid_caps->panel_patch.wait_after_dpcd_poweroff_ms = 10000;
-		break;
 	/* Workaround for some monitors which does not work well with FAMS */
 	case drm_edid_encode_panel_id('S', 'A', 'M', 0x0E5E):
 	case drm_edid_encode_panel_id('S', 'A', 'M', 0x7053):
 	case drm_edid_encode_panel_id('S', 'A', 'M', 0x71AC):
-		drm_dbg_driver(dev, "Disabling FAMS on monitor with panel id %X\n", panel_id);
+		DRM_DEBUG_DRIVER("Disabling FAMS on monitor with panel id %X\n", panel_id);
 		edid_caps->panel_patch.disable_fams = true;
 		break;
 	/* Workaround for some monitors that do not clear DPCD 0x317 if FreeSync is unsupported */
@@ -79,12 +71,11 @@ static void apply_edid_quirks(struct drm_device *dev, struct edid *edid, struct 
 	case drm_edid_encode_panel_id('B', 'O', 'E', 0x092A):
 	case drm_edid_encode_panel_id('L', 'G', 'D', 0x06D1):
 	case drm_edid_encode_panel_id('M', 'S', 'F', 0x1003):
-		drm_dbg_driver(dev, "Clearing DPCD 0x317 on monitor with panel id %X\n", panel_id);
+		DRM_DEBUG_DRIVER("Clearing DPCD 0x317 on monitor with panel id %X\n", panel_id);
 		edid_caps->panel_patch.remove_sink_ext_caps = true;
 		break;
 	case drm_edid_encode_panel_id('S', 'D', 'C', 0x4154):
-	case drm_edid_encode_panel_id('S', 'D', 'C', 0x4171):
-		drm_dbg_driver(dev, "Disabling VSC on monitor with panel id %X\n", panel_id);
+		DRM_DEBUG_DRIVER("Disabling VSC on monitor with panel id %X\n", panel_id);
 		edid_caps->panel_patch.disable_colorimetry = true;
 		break;
 	default:
@@ -108,7 +99,6 @@ enum dc_edid_status dm_helpers_parse_edid_caps(
 {
 	struct amdgpu_dm_connector *aconnector = link->priv;
 	struct drm_connector *connector = &aconnector->base;
-	struct drm_device *dev = connector->dev;
 	struct edid *edid_buf = edid ? (struct edid *) edid->raw_edid : NULL;
 	struct cea_sad *sads;
 	int sad_count = -1;
@@ -131,7 +121,6 @@ enum dc_edid_status dm_helpers_parse_edid_caps(
 	edid_caps->serial_number = edid_buf->serial;
 	edid_caps->manufacture_week = edid_buf->mfg_week;
 	edid_caps->manufacture_year = edid_buf->mfg_year;
-	edid_caps->analog = !(edid_buf->input & DRM_EDID_INPUT_DIGITAL);
 
 	drm_edid_get_monitor_name(edid_buf,
 				  edid_caps->display_name,
@@ -139,10 +128,7 @@ enum dc_edid_status dm_helpers_parse_edid_caps(
 
 	edid_caps->edid_hdmi = connector->display_info.is_hdmi;
 
-	if (edid_caps->edid_hdmi)
-		populate_hdmi_info_from_connector(&connector->display_info.hdmi, edid_caps);
-
-	apply_edid_quirks(dev, edid_buf, edid_caps);
+	apply_edid_quirks(edid_buf, edid_caps);
 
 	sad_count = drm_edid_to_sad((struct edid *) edid->raw_edid, &sads);
 	if (sad_count <= 0)
@@ -617,7 +603,7 @@ bool dm_helpers_submit_i2c(
 		return false;
 	}
 
-	msgs = kzalloc_objs(struct i2c_msg, num);
+	msgs = kcalloc(num, sizeof(struct i2c_msg), GFP_KERNEL);
 
 	if (!msgs)
 		return false;
@@ -634,19 +620,6 @@ bool dm_helpers_submit_i2c(
 	kfree(msgs);
 
 	return result;
-}
-
-bool dm_helpers_execute_fused_io(
-		struct dc_context *ctx,
-		struct dc_link *link,
-		union dmub_rb_cmd *commands,
-		uint8_t count,
-		uint32_t timeout_us
-)
-{
-	struct amdgpu_device *dev = ctx->driver_context;
-
-	return amdgpu_dm_execute_fused_io(dev, link, commands, count, timeout_us);
 }
 
 static bool execute_synaptics_rc_command(struct drm_dp_aux *aux,
@@ -669,8 +642,6 @@ static bool execute_synaptics_rc_command(struct drm_dp_aux *aux,
 		// write rc data
 		memmove(rc_data, data, length);
 		ret = drm_dp_dpcd_write(aux, SYNAPTICS_RC_DATA, rc_data, sizeof(rc_data));
-		if (ret < 0)
-			goto err;
 	}
 
 	// write rc offset
@@ -679,21 +650,20 @@ static bool execute_synaptics_rc_command(struct drm_dp_aux *aux,
 	rc_offset[2] = (unsigned char) (offset >> 16) & 0xFF;
 	rc_offset[3] = (unsigned char) (offset >> 24) & 0xFF;
 	ret = drm_dp_dpcd_write(aux, SYNAPTICS_RC_OFFSET, rc_offset, sizeof(rc_offset));
-	if (ret < 0)
-		goto err;
 
 	// write rc length
 	rc_length[0] = (unsigned char) length & 0xFF;
 	rc_length[1] = (unsigned char) (length >> 8) & 0xFF;
 	ret = drm_dp_dpcd_write(aux, SYNAPTICS_RC_LENGTH, rc_length, sizeof(rc_length));
-	if (ret < 0)
-		goto err;
 
 	// write rc cmd
 	rc_cmd = cmd | 0x80;
 	ret = drm_dp_dpcd_write(aux, SYNAPTICS_RC_COMMAND, &rc_cmd, sizeof(rc_cmd));
-	if (ret < 0)
-		goto err;
+
+	if (ret < 0) {
+		DRM_ERROR("%s: write cmd ..., err = %d\n",  __func__, ret);
+		return false;
+	}
 
 	// poll until active is 0
 	for (i = 0; i < 10; i++) {
@@ -716,10 +686,6 @@ static bool execute_synaptics_rc_command(struct drm_dp_aux *aux,
 	drm_dbg_dp(aux->drm_dev, "success = %d\n", success);
 
 	return success;
-
-err:
-	DRM_ERROR("%s: write cmd ..., err = %d\n",  __func__, ret);
-	return false;
 }
 
 static void apply_synaptics_fifo_reset_wa(struct drm_dp_aux *aux)
@@ -910,12 +876,6 @@ bool dm_helpers_dp_write_dsc_enable(
 	return ret;
 }
 
-bool dm_helpers_dp_write_hblank_reduction(struct dc_context *ctx, const struct dc_stream_state *stream)
-{
-	// TODO
-	return false;
-}
-
 bool dm_helpers_is_dp_sink_present(struct dc_link *link)
 {
 	bool dp_sink_present;
@@ -932,72 +892,6 @@ bool dm_helpers_is_dp_sink_present(struct dc_link *link)
 	return dp_sink_present;
 }
 
-static int
-dm_helpers_probe_acpi_edid(void *data, u8 *buf, unsigned int block, size_t len)
-{
-	struct drm_connector *connector = data;
-	struct acpi_device *acpidev = ACPI_COMPANION(connector->dev->dev);
-	unsigned short start = block * EDID_LENGTH;
-	struct edid *edid;
-	int r;
-
-	if (!acpidev)
-		return -ENODEV;
-
-	/* fetch the entire edid from BIOS */
-	r = acpi_video_get_edid(acpidev, ACPI_VIDEO_DISPLAY_LCD, -1, (void *)&edid);
-	if (r < 0) {
-		drm_dbg(connector->dev, "Failed to get EDID from ACPI: %d\n", r);
-		return r;
-	}
-	if (len > r || start > r || start + len > r) {
-		r = -EINVAL;
-		goto cleanup;
-	}
-
-	/* sanity check */
-	if (edid->revision < 4 || !(edid->input & DRM_EDID_INPUT_DIGITAL) ||
-	    (edid->input & DRM_EDID_DIGITAL_TYPE_MASK) == DRM_EDID_DIGITAL_TYPE_UNDEF) {
-		r = -EINVAL;
-		goto cleanup;
-	}
-
-	memcpy(buf, (void *)edid + start, len);
-	r = 0;
-
-cleanup:
-	kfree(edid);
-
-	return r;
-}
-
-static const struct drm_edid *
-dm_helpers_read_acpi_edid(struct amdgpu_dm_connector *aconnector)
-{
-	struct drm_connector *connector = &aconnector->base;
-
-	if (amdgpu_dc_debug_mask & DC_DISABLE_ACPI_EDID)
-		return NULL;
-
-	switch (connector->connector_type) {
-	case DRM_MODE_CONNECTOR_LVDS:
-	case DRM_MODE_CONNECTOR_eDP:
-		break;
-	default:
-		return NULL;
-	}
-
-	if (connector->force == DRM_FORCE_OFF)
-		return NULL;
-
-	return drm_edid_read_custom(connector, dm_helpers_probe_acpi_edid, connector);
-}
-
-void populate_hdmi_info_from_connector(struct drm_hdmi_info *hdmi, struct dc_edid_caps *edid_caps)
-{
-	edid_caps->scdc_present = hdmi->scdc.supported;
-}
-
 enum dc_edid_status dm_helpers_read_local_edid(
 		struct dc_context *ctx,
 		struct dc_link *link,
@@ -1006,59 +900,46 @@ enum dc_edid_status dm_helpers_read_local_edid(
 	struct amdgpu_dm_connector *aconnector = link->priv;
 	struct drm_connector *connector = &aconnector->base;
 	struct i2c_adapter *ddc;
-	int retry = 25;
-	enum dc_edid_status edid_status = EDID_NO_RESPONSE;
-	const struct drm_edid *drm_edid;
-	const struct edid *edid;
+	int retry = 3;
+	enum dc_edid_status edid_status;
+	struct edid *edid;
 
 	if (link->aux_mode)
 		ddc = &aconnector->dm_dp_aux.aux.ddc;
 	else
 		ddc = &aconnector->i2c->base;
 
-	if (link->dc->hwss.prepare_ddc)
-		link->dc->hwss.prepare_ddc(link);
-
 	/* some dongles read edid incorrectly the first time,
 	 * do check sum and retry to make sure read correct edid.
 	 */
 	do {
-		drm_edid = dm_helpers_read_acpi_edid(aconnector);
-		if (drm_edid)
-			drm_info(connector->dev, "Using ACPI provided EDID for %s\n", connector->name);
-		else
-			drm_edid = drm_edid_read_ddc(connector, ddc);
-		drm_edid_connector_update(connector, drm_edid);
+
+		edid = drm_get_edid(&aconnector->base, ddc);
 
 		/* DP Compliance Test 4.2.2.6 */
 		if (link->aux_mode && connector->edid_corrupt)
 			drm_dp_send_real_edid_checksum(&aconnector->dm_dp_aux.aux, connector->real_edid_checksum);
 
-		if (!drm_edid && connector->edid_corrupt) {
+		if (!edid && connector->edid_corrupt) {
 			connector->edid_corrupt = false;
 			return EDID_BAD_CHECKSUM;
 		}
 
-		if (!drm_edid)
-			continue;
-
-		edid = drm_edid_raw(drm_edid); // FIXME: Get rid of drm_edid_raw()
-		if (!edid ||
-		    edid->extensions >= sizeof(sink->dc_edid.raw_edid) / EDID_LENGTH)
-			return EDID_BAD_INPUT;
+		if (!edid)
+			return EDID_NO_RESPONSE;
 
 		sink->dc_edid.length = EDID_LENGTH * (edid->extensions + 1);
 		memmove(sink->dc_edid.raw_edid, (uint8_t *)edid, sink->dc_edid.length);
 
 		/* We don't need the original edid anymore */
-		drm_edid_free(drm_edid);
+		kfree(edid);
 
 		edid_status = dm_helpers_parse_edid_caps(
 						link,
 						&sink->dc_edid,
 						&sink->edid_caps);
 
-	} while ((edid_status == EDID_BAD_CHECKSUM || edid_status == EDID_NO_RESPONSE) && --retry > 0);
+	} while (edid_status == EDID_BAD_CHECKSUM && --retry > 0);
 
 	if (edid_status != EDID_OK)
 		DRM_ERROR("EDID err: %d, on connector: %s",
@@ -1124,12 +1005,6 @@ void dm_set_dcn_clocks(struct dc_context *ctx, struct dc_clocks *clks)
 	/* TODO: something */
 }
 
-void dm_helpers_dmu_timeout(struct dc_context *ctx)
-{
-	// TODO:
-	//amdgpu_device_gpu_recover(dc_context->driver-context, NULL);
-}
-
 void dm_helpers_smu_timeout(struct dc_context *ctx, unsigned int msg_id, unsigned int param, unsigned int timeout_us)
 {
 	// TODO:
@@ -1156,19 +1031,11 @@ void dm_helpers_init_panel_settings(
 
 void dm_helpers_override_panel_settings(
 	struct dc_context *ctx,
-	struct dc_link *link)
+	struct dc_panel_config *panel_config)
 {
-	unsigned int panel_inst = 0;
-
 	// Feature DSC
 	if (amdgpu_dc_debug_mask & DC_DISABLE_DSC)
-		link->panel_config.dsc.disable_dsc_edp = true;
-
-	if (dc_get_edp_link_panel_inst(ctx->dc, link, &panel_inst) && panel_inst == 1) {
-		link->panel_config.psr.disable_psr = true;
-		link->panel_config.psr.disallow_psrsu = true;
-		link->panel_config.psr.disallow_replay = true;
-	}
+		panel_config->dsc.disable_dsc_edp = true;
 }
 
 void *dm_helpers_allocate_gpu_mem(

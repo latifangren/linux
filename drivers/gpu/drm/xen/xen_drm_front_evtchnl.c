@@ -212,8 +212,9 @@ int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info)
 	cfg = &front_info->cfg;
 
 	front_info->evt_pairs =
-			kzalloc_objs(struct xen_drm_front_evtchnl_pair,
-				     cfg->num_connectors);
+			kcalloc(cfg->num_connectors,
+				sizeof(struct xen_drm_front_evtchnl_pair),
+				GFP_KERNEL);
 	if (!front_info->evt_pairs) {
 		ret = -ENOMEM;
 		goto fail;

@@ -171,7 +171,8 @@ static int __init us3_freq_init(void)
 	     impl == CHEETAH_PLUS_IMPL ||
 	     impl == JAGUAR_IMPL ||
 	     impl == PANTHER_IMPL)) {
-		us3_freq_table = kzalloc_objs(*us3_freq_table, NR_CPUS);
+		us3_freq_table = kzalloc(NR_CPUS * sizeof(*us3_freq_table),
+					 GFP_KERNEL);
 		if (!us3_freq_table)
 			return -ENOMEM;
 

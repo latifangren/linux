@@ -38,7 +38,6 @@
 #include <asm/cacheflush.h>
 #include <asm/io.h>
 #include <linux/unaligned.h>
-#include <linux/string_choices.h>
 
 #define ATMCI_MAX_NR_SLOTS	2
 
@@ -542,6 +541,7 @@ static int atmci_regs_show(struct seq_file *s, void *v)
 	memcpy_fromio(buf, host->regs, ATMCI_REGS_SIZE);
 	spin_unlock_bh(&host->lock);
 
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	seq_printf(s, "MR:\t0x%08x%s%s ",
@@ -609,12 +609,12 @@ static void atmci_init_debugfs(struct atmel_mci_slot *slot)
 	if (!root)
 		return;
 
-	debugfs_create_file("regs", 0400, root, host, &atmci_regs_fops);
-	debugfs_create_file("req", 0400, root, slot, &atmci_req_fops);
-	debugfs_create_u32("state", 0400, root, &host->state);
-	debugfs_create_xul("pending_events", 0400, root,
+	debugfs_create_file("regs", S_IRUSR, root, host, &atmci_regs_fops);
+	debugfs_create_file("req", S_IRUSR, root, slot, &atmci_req_fops);
+	debugfs_create_u32("state", S_IRUSR, root, &host->state);
+	debugfs_create_xul("pending_events", S_IRUSR, root,
 			   &host->pending_events);
-	debugfs_create_xul("completed_events", 0400, root,
+	debugfs_create_xul("completed_events", S_IRUSR, root,
 			   &host->completed_events);
 }
 
@@ -629,13 +629,14 @@ static int atmci_of_init(struct atmel_mci *host)
 {
 	struct device *dev = host->dev;
 	struct device_node *np = dev->of_node;
+	struct device_node *cnp;
 	u32 slot_id;
 	int err;
 
 	if (!np)
 		return dev_err_probe(dev, -EINVAL, "device node not found\n");
 
-	for_each_child_of_node_scoped(np, cnp) {
+	for_each_child_of_node(np, cnp) {
 		if (of_property_read_u32(cnp, "reg", &slot_id)) {
 			dev_warn(dev, "reg property is missing for %pOF\n", cnp);
 			continue;
@@ -644,6 +645,7 @@ static int atmci_of_init(struct atmel_mci *host)
 		if (slot_id >= ATMCI_MAX_NR_SLOTS) {
 			dev_warn(dev, "can't have more than %d slots\n",
 			         ATMCI_MAX_NR_SLOTS);
+			of_node_put(cnp);
 			break;
 		}
 
@@ -656,8 +658,10 @@ static int atmci_of_init(struct atmel_mci *host)
 					      "cd", GPIOD_IN, "cd-gpios");
 		err = PTR_ERR_OR_ZERO(host->pdata[slot_id].detect_pin);
 		if (err) {
-			if (err != -ENOENT)
+			if (err != -ENOENT) {
+				of_node_put(cnp);
 				return err;
+			}
 			host->pdata[slot_id].detect_pin = NULL;
 		}
 
@@ -669,8 +673,10 @@ static int atmci_of_init(struct atmel_mci *host)
 					      "wp", GPIOD_IN, "wp-gpios");
 		err = PTR_ERR_OR_ZERO(host->pdata[slot_id].wp_pin);
 		if (err) {
-			if (err != -ENOENT)
+			if (err != -ENOENT) {
+				of_node_put(cnp);
 				return err;
+			}
 			host->pdata[slot_id].wp_pin = NULL;
 		}
 	}
@@ -708,7 +714,7 @@ static inline unsigned int atmci_convert_chksize(struct atmel_mci *host,
 
 static void atmci_timeout_timer(struct timer_list *t)
 {
-	struct atmel_mci *host = timer_container_of(host, t, timer);
+	struct atmel_mci *host = from_timer(host, t, timer);
 	struct device *dev = host->dev;
 
 	dev_dbg(dev, "software timeout\n");
@@ -1586,7 +1592,7 @@ static void atmci_request_end(struct atmel_mci *host, struct mmc_request *mrq)
 
 	WARN_ON(host->cmd || host->data);
 
-	timer_delete(&host->timer);
+	del_timer(&host->timer);
 
 	/*
 	 * Update the MMC clock rate if necessary. This may be
@@ -1646,8 +1652,7 @@ static void atmci_command_complete(struct atmel_mci *host,
 
 static void atmci_detect_change(struct timer_list *t)
 {
-	struct atmel_mci_slot	*slot = timer_container_of(slot, t,
-								detect_timer);
+	struct atmel_mci_slot	*slot = from_timer(slot, t, detect_timer);
 	bool			present;
 	bool			present_old;
 
@@ -2242,7 +2247,7 @@ static int atmci_init_slot(struct atmel_mci *host,
 	struct atmel_mci_slot		*slot;
 	int ret;
 
-	mmc = devm_mmc_alloc_host(dev, sizeof(*slot));
+	mmc = mmc_alloc_host(sizeof(struct atmel_mci_slot), dev);
 	if (!mmc)
 		return -ENOMEM;
 
@@ -2258,7 +2263,7 @@ static int atmci_init_slot(struct atmel_mci *host,
 	        "slot[%u]: bus_width=%u, detect_pin=%d, "
 		"detect_is_active_high=%s, wp_pin=%d\n",
 		id, slot_data->bus_width, desc_to_gpio(slot_data->detect_pin),
-		str_true_false(!gpiod_is_active_low(slot_data->detect_pin)),
+		!gpiod_is_active_low(slot_data->detect_pin) ? "true" : "false",
 		desc_to_gpio(slot_data->wp_pin));
 
 	mmc->ops = &atmci_ops;
@@ -2315,8 +2320,10 @@ static int atmci_init_slot(struct atmel_mci *host,
 	host->slot[id] = slot;
 	mmc_regulator_get_supply(mmc);
 	ret = mmc_add_host(mmc);
-	if (ret)
+	if (ret) {
+		mmc_free_host(mmc);
 		return ret;
+	}
 
 	if (slot->detect_pin) {
 		timer_setup(&slot->detect_timer, atmci_detect_change, 0);
@@ -2350,10 +2357,11 @@ static void atmci_cleanup_slot(struct atmel_mci_slot *slot,
 
 	if (slot->detect_pin) {
 		free_irq(gpiod_to_irq(slot->detect_pin), slot);
-		timer_delete_sync(&slot->detect_timer);
+		del_timer_sync(&slot->detect_timer);
 	}
 
 	slot->host->slot[id] = NULL;
+	mmc_free_host(slot->mmc);
 }
 
 static int atmci_configure_dma(struct atmel_mci *host)
@@ -2561,6 +2569,7 @@ static int atmci_probe(struct platform_device *pdev)
 	dev_info(dev, "Atmel MCI controller at 0x%08lx irq %d, %u slots\n",
 		 host->mapbase, irq, nr_slots);
 
+	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);
 
 	return 0;
@@ -2576,7 +2585,7 @@ err_init_slot:
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
 
-	timer_delete_sync(&host->timer);
+	del_timer_sync(&host->timer);
 	if (!IS_ERR(host->dma.chan))
 		dma_release_channel(host->dma.chan);
 err_dma_probe_defer:
@@ -2604,7 +2613,7 @@ static void atmci_remove(struct platform_device *pdev)
 	atmci_writel(host, ATMCI_CR, ATMCI_CR_MCIDIS);
 	atmci_readl(host, ATMCI_SR);
 
-	timer_delete_sync(&host->timer);
+	del_timer_sync(&host->timer);
 	if (!IS_ERR(host->dma.chan))
 		dma_release_channel(host->dma.chan);
 
@@ -2616,6 +2625,7 @@ static void atmci_remove(struct platform_device *pdev)
 	pm_runtime_put_noidle(dev);
 }
 
+#ifdef CONFIG_PM
 static int atmci_runtime_suspend(struct device *dev)
 {
 	struct atmel_mci *host = dev_get_drvdata(dev);
@@ -2635,10 +2645,12 @@ static int atmci_runtime_resume(struct device *dev)
 
 	return clk_prepare_enable(host->mck);
 }
+#endif
 
 static const struct dev_pm_ops atmci_dev_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
-	RUNTIME_PM_OPS(atmci_runtime_suspend, atmci_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
+	SET_RUNTIME_PM_OPS(atmci_runtime_suspend, atmci_runtime_resume, NULL)
 };
 
 static struct platform_driver atmci_driver = {
@@ -2648,7 +2660,7 @@ static struct platform_driver atmci_driver = {
 		.name		= "atmel_mci",
 		.probe_type	= PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table	= atmci_dt_ids,
-		.pm		= pm_ptr(&atmci_dev_pm_ops),
+		.pm		= &atmci_dev_pm_ops,
 	},
 };
 module_platform_driver(atmci_driver);

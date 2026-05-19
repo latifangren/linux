@@ -21,7 +21,7 @@
  * too.
  *
  * The ->count variable represents how many more tasks can acquire this
- * semaphore.  If it's zero, there may be waiters.
+ * semaphore.  If it's zero, there may be tasks waiting on the wait_list.
  */
 
 #include <linux/compiler.h>
@@ -34,48 +34,12 @@
 #include <linux/spinlock.h>
 #include <linux/ftrace.h>
 #include <trace/events/lock.h>
-#include <linux/hung_task.h>
 
 static noinline void __down(struct semaphore *sem);
 static noinline int __down_interruptible(struct semaphore *sem);
 static noinline int __down_killable(struct semaphore *sem);
 static noinline int __down_timeout(struct semaphore *sem, long timeout);
 static noinline void __up(struct semaphore *sem, struct wake_q_head *wake_q);
-
-#ifdef CONFIG_DETECT_HUNG_TASK_BLOCKER
-static inline void hung_task_sem_set_holder(struct semaphore *sem)
-{
-	WRITE_ONCE((sem)->last_holder, (unsigned long)current);
-}
-
-static inline void hung_task_sem_clear_if_holder(struct semaphore *sem)
-{
-	if (READ_ONCE((sem)->last_holder) == (unsigned long)current)
-		WRITE_ONCE((sem)->last_holder, 0UL);
-}
-
-unsigned long sem_last_holder(struct semaphore *sem)
-{
-	return READ_ONCE(sem->last_holder);
-}
-#else
-static inline void hung_task_sem_set_holder(struct semaphore *sem)
-{
-}
-static inline void hung_task_sem_clear_if_holder(struct semaphore *sem)
-{
-}
-unsigned long sem_last_holder(struct semaphore *sem)
-{
-	return 0UL;
-}
-#endif
-
-static inline void __sem_acquire(struct semaphore *sem)
-{
-	sem->count--;
-	hung_task_sem_set_holder(sem);
-}
 
 /**
  * down - acquire the semaphore
@@ -95,7 +59,7 @@ void __sched down(struct semaphore *sem)
 	might_sleep();
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
-		__sem_acquire(sem);
+		sem->count--;
 	else
 		__down(sem);
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
@@ -119,7 +83,7 @@ int __sched down_interruptible(struct semaphore *sem)
 	might_sleep();
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
-		__sem_acquire(sem);
+		sem->count--;
 	else
 		result = __down_interruptible(sem);
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
@@ -146,7 +110,7 @@ int __sched down_killable(struct semaphore *sem)
 	might_sleep();
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
-		__sem_acquire(sem);
+		sem->count--;
 	else
 		result = __down_killable(sem);
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
@@ -176,7 +140,7 @@ int __sched down_trylock(struct semaphore *sem)
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	count = sem->count - 1;
 	if (likely(count >= 0))
-		__sem_acquire(sem);
+		sem->count = count;
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
 
 	return (count < 0);
@@ -201,7 +165,7 @@ int __sched down_timeout(struct semaphore *sem, long timeout)
 	might_sleep();
 	raw_spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
-		__sem_acquire(sem);
+		sem->count--;
 	else
 		result = __down_timeout(sem, timeout);
 	raw_spin_unlock_irqrestore(&sem->lock, flags);
@@ -223,10 +187,7 @@ void __sched up(struct semaphore *sem)
 	DEFINE_WAKE_Q(wake_q);
 
 	raw_spin_lock_irqsave(&sem->lock, flags);
-
-	hung_task_sem_clear_if_holder(sem);
-
-	if (likely(!sem->first_waiter))
+	if (likely(list_empty(&sem->wait_list)))
 		sem->count++;
 	else
 		__up(sem, &wake_q);
@@ -244,21 +205,6 @@ struct semaphore_waiter {
 	bool up;
 };
 
-static inline
-void sem_del_waiter(struct semaphore *sem, struct semaphore_waiter *waiter)
-{
-	if (list_empty(&waiter->list)) {
-		sem->first_waiter = NULL;
-		return;
-	}
-
-	if (sem->first_waiter == waiter) {
-		sem->first_waiter = list_first_entry(&waiter->list,
-						     struct semaphore_waiter, list);
-	}
-	list_del(&waiter->list);
-}
-
 /*
  * Because this function is inlined, the 'state' parameter will be
  * constant, and thus optimised away by the compiler.  Likewise the
@@ -267,15 +213,9 @@ void sem_del_waiter(struct semaphore *sem, struct semaphore_waiter *waiter)
 static inline int __sched ___down_common(struct semaphore *sem, long state,
 								long timeout)
 {
-	struct semaphore_waiter waiter, *first;
+	struct semaphore_waiter waiter;
 
-	first = sem->first_waiter;
-	if (first) {
-		list_add_tail(&waiter.list, &first->list);
-	} else {
-		INIT_LIST_HEAD(&waiter.list);
-		sem->first_waiter = &waiter;
-	}
+	list_add_tail(&waiter.list, &sem->wait_list);
 	waiter.task = current;
 	waiter.up = false;
 
@@ -288,18 +228,16 @@ static inline int __sched ___down_common(struct semaphore *sem, long state,
 		raw_spin_unlock_irq(&sem->lock);
 		timeout = schedule_timeout(timeout);
 		raw_spin_lock_irq(&sem->lock);
-		if (waiter.up) {
-			hung_task_sem_set_holder(sem);
+		if (waiter.up)
 			return 0;
-		}
 	}
 
  timed_out:
-	sem_del_waiter(sem, &waiter);
+	list_del(&waiter.list);
 	return -ETIME;
 
  interrupted:
-	sem_del_waiter(sem, &waiter);
+	list_del(&waiter.list);
 	return -EINTR;
 }
 
@@ -308,13 +246,9 @@ static inline int __sched __down_common(struct semaphore *sem, long state,
 {
 	int ret;
 
-	hung_task_set_blocker(sem, BLOCKER_TYPE_SEM);
-
 	trace_contention_begin(sem, 0);
 	ret = ___down_common(sem, state, timeout);
 	trace_contention_end(sem, ret);
-
-	hung_task_clear_blocker();
 
 	return ret;
 }
@@ -342,9 +276,9 @@ static noinline int __sched __down_timeout(struct semaphore *sem, long timeout)
 static noinline void __sched __up(struct semaphore *sem,
 				  struct wake_q_head *wake_q)
 {
-	struct semaphore_waiter *waiter = sem->first_waiter;
-
-	sem_del_waiter(sem, waiter);
+	struct semaphore_waiter *waiter = list_first_entry(&sem->wait_list,
+						struct semaphore_waiter, list);
+	list_del(&waiter->list);
 	waiter->up = true;
 	wake_q_add(wake_q, waiter->task);
 }

@@ -2,7 +2,7 @@
 #ifndef _ASM_SCS_H
 #define _ASM_SCS_H
 
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 #include <asm/asm-offsets.h>
 
 #ifdef CONFIG_SHADOW_CALL_STACK
@@ -49,6 +49,6 @@ _skip_scs:
 .endm
 
 #endif /* CONFIG_SHADOW_CALL_STACK */
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_SCS_H */

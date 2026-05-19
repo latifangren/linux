@@ -488,7 +488,6 @@ void svc_xprt_enqueue(struct svc_xprt *xprt)
 	pool = svc_pool_for_cpu(xprt->xpt_server);
 
 	percpu_counter_inc(&pool->sp_sockets_queued);
-	xprt->xpt_qtime = ktime_get();
 	lwq_enqueue(&xprt->xpt_ready, &pool->sp_xprts);
 
 	svc_pool_wake_idle_thread(pool);
@@ -620,10 +619,16 @@ int svc_port_is_privileged(struct sockaddr *sin)
  * The only somewhat efficient mechanism would be if drop old
  * connections from the same IP first. But right now we don't even
  * record the client IP in svc_sock.
+ *
+ * single-threaded services that expect a lot of clients will probably
+ * need to set sv_maxconn to override the default value which is based
+ * on the number of threads
  */
 static void svc_check_conn_limits(struct svc_serv *serv)
 {
-	if (serv->sv_tmpcnt > XPT_MAX_TMP_CONN) {
+	unsigned int limit = serv->sv_maxconn ? serv->sv_maxconn : 64;
+
+	if (serv->sv_tmpcnt > limit) {
 		struct svc_xprt *xprt = NULL, *xprti;
 		spin_lock_bh(&serv->sv_lock);
 		if (!list_empty(&serv->sv_tempsocks)) {
@@ -650,13 +655,23 @@ static void svc_check_conn_limits(struct svc_serv *serv)
 	}
 }
 
-static bool svc_fill_pages(struct svc_rqst *rqstp, struct page **pages,
-			   unsigned long npages)
+static bool svc_alloc_arg(struct svc_rqst *rqstp)
 {
-	unsigned long filled, ret;
+	struct svc_serv *serv = rqstp->rq_server;
+	struct xdr_buf *arg = &rqstp->rq_arg;
+	unsigned long pages, filled, ret;
 
-	for (filled = 0; filled < npages; filled = ret) {
-		ret = alloc_pages_bulk(GFP_KERNEL, npages, pages);
+	pages = (serv->sv_max_mesg + 2 * PAGE_SIZE) >> PAGE_SHIFT;
+	if (pages > RPCSVC_MAXPAGES) {
+		pr_warn_once("svc: warning: pages=%lu > RPCSVC_MAXPAGES=%lu\n",
+			     pages, RPCSVC_MAXPAGES);
+		/* use as many pages as possible */
+		pages = RPCSVC_MAXPAGES;
+	}
+
+	for (filled = 0; filled < pages; filled = ret) {
+		ret = alloc_pages_bulk_array(GFP_KERNEL, pages,
+					     rqstp->rq_pages);
 		if (ret > filled)
 			/* Made progress, don't sleep yet */
 			continue;
@@ -666,40 +681,11 @@ static bool svc_fill_pages(struct svc_rqst *rqstp, struct page **pages,
 			set_current_state(TASK_RUNNING);
 			return false;
 		}
-		trace_svc_alloc_arg_err(npages, ret);
+		trace_svc_alloc_arg_err(pages, ret);
 		memalloc_retry_wait(GFP_KERNEL);
 	}
-	return true;
-}
-
-static bool svc_alloc_arg(struct svc_rqst *rqstp)
-{
-	struct xdr_buf *arg = &rqstp->rq_arg;
-	unsigned long pages, nfree;
-
-	pages = rqstp->rq_maxpages;
-
-	nfree = rqstp->rq_pages_nfree;
-	if (nfree) {
-		if (!svc_fill_pages(rqstp, rqstp->rq_pages, nfree))
-			return false;
-		rqstp->rq_pages_nfree = 0;
-	}
-
-	if (WARN_ON_ONCE(rqstp->rq_next_page < rqstp->rq_respages))
-		return false;
-	nfree = rqstp->rq_next_page - rqstp->rq_respages;
-	if (nfree) {
-		if (!svc_fill_pages(rqstp, rqstp->rq_respages, nfree))
-			return false;
-	}
-
-	rqstp->rq_next_page = rqstp->rq_respages;
-	rqstp->rq_page_end = &rqstp->rq_respages[pages];
-	/* svc_rqst_replace_page() dereferences *rq_next_page even
-	 * at rq_page_end; NULL prevents releasing a garbage page.
-	 */
-	rqstp->rq_page_end[0] = NULL;
+	rqstp->rq_page_end = &rqstp->rq_pages[pages];
+	rqstp->rq_pages[pages] = NULL; /* this might be seen in nfsd_splice_actor() */
 
 	/* Make arg->head point to first page and arg->pages point to rest */
 	arg->head[0].iov_base = page_address(rqstp->rq_pages[0]);
@@ -742,21 +728,15 @@ svc_thread_should_sleep(struct svc_rqst *rqstp)
 	return true;
 }
 
-static bool svc_schedule_timeout(long timeo)
-{
-	return schedule_timeout(timeo ? timeo : MAX_SCHEDULE_TIMEOUT) == 0;
-}
-
-static bool svc_thread_wait_for_work(struct svc_rqst *rqstp, long timeo)
+static void svc_thread_wait_for_work(struct svc_rqst *rqstp)
 {
 	struct svc_pool *pool = rqstp->rq_pool;
-	bool did_timeout = false;
 
 	if (svc_thread_should_sleep(rqstp)) {
 		set_current_state(TASK_IDLE | TASK_FREEZABLE);
 		llist_add(&rqstp->rq_idle, &pool->sp_idle_threads);
 		if (likely(svc_thread_should_sleep(rqstp)))
-			did_timeout = svc_schedule_timeout(timeo);
+			schedule();
 
 		while (!llist_del_first_this(&pool->sp_idle_threads,
 					     &rqstp->rq_idle)) {
@@ -768,7 +748,7 @@ static bool svc_thread_wait_for_work(struct svc_rqst *rqstp, long timeo)
 			 * for this new work.  This thread can safely sleep
 			 * until woken again.
 			 */
-			did_timeout = svc_schedule_timeout(timeo);
+			schedule();
 			set_current_state(TASK_IDLE | TASK_FREEZABLE);
 		}
 		__set_current_state(TASK_RUNNING);
@@ -776,7 +756,6 @@ static bool svc_thread_wait_for_work(struct svc_rqst *rqstp, long timeo)
 		cond_resched();
 	}
 	try_to_freeze();
-	return did_timeout;
 }
 
 static void svc_add_new_temp_xprt(struct svc_serv *serv, struct svc_xprt *newxpt)
@@ -870,38 +849,25 @@ static void svc_thread_wake_next(struct svc_rqst *rqstp)
 /**
  * svc_recv - Receive and process the next request on any transport
  * @rqstp: an idle RPC service thread
- * @timeo: timeout (in jiffies) (0 means infinite timeout)
  *
  * This code is carefully organised not to touch any cachelines in
  * the shared svc_serv structure, only cachelines in the local
  * svc_pool.
- *
- * If the timeout is 0, then the sleep will never time out.
- *
- * Returns -ETIMEDOUT if idle for an extended period
- *         -EBUSY if there is more work to do than available threads
- *         0 otherwise.
  */
-int svc_recv(struct svc_rqst *rqstp, long timeo)
+void svc_recv(struct svc_rqst *rqstp)
 {
 	struct svc_pool *pool = rqstp->rq_pool;
-	bool did_timeout;
-	int ret = 0;
 
 	if (!svc_alloc_arg(rqstp))
-		return ret;
+		return;
 
-	did_timeout = svc_thread_wait_for_work(rqstp, timeo);
-
-	if (did_timeout && svc_thread_should_sleep(rqstp) &&
-	    pool->sp_nrthrmin && pool->sp_nrthreads > pool->sp_nrthrmin)
-		ret = -ETIMEDOUT;
+	svc_thread_wait_for_work(rqstp);
 
 	clear_bit(SP_TASK_PENDING, &pool->sp_flags);
 
 	if (svc_thread_should_stop(rqstp)) {
 		svc_thread_wake_next(rqstp);
-		return ret;
+		return;
 	}
 
 	rqstp->rq_xprt = svc_xprt_dequeue(pool);
@@ -913,22 +879,10 @@ int svc_recv(struct svc_rqst *rqstp, long timeo)
 		 * cache information to be provided.  When there are no
 		 * idle threads, we reduce the wait time.
 		 */
-		if (pool->sp_idle_threads.first) {
+		if (pool->sp_idle_threads.first)
 			rqstp->rq_chandle.thread_wait = 5 * HZ;
-		} else {
+		else
 			rqstp->rq_chandle.thread_wait = 1 * HZ;
-			/*
-			 * No idle threads: signal -EBUSY so the caller
-			 * can consider spawning another thread. Use
-			 * SP_TASK_STARTING to limit this signal to one
-			 * thread at a time; the caller clears this flag
-			 * after starting a new thread.
-			 */
-			if (!did_timeout && timeo &&
-			    !test_and_set_bit(SP_TASK_STARTING,
-					      &pool->sp_flags))
-				ret = -EBUSY;
-		}
 
 		trace_svc_xprt_dequeue(rqstp);
 		svc_handle_xprt(rqstp, xprt);
@@ -947,7 +901,6 @@ int svc_recv(struct svc_rqst *rqstp, long timeo)
 		}
 	}
 #endif
-	return ret;
 }
 EXPORT_SYMBOL_GPL(svc_recv);
 
@@ -983,7 +936,7 @@ void svc_send(struct svc_rqst *rqstp)
  */
 static void svc_age_temp_xprts(struct timer_list *t)
 {
-	struct svc_serv *serv = timer_container_of(serv, t, sv_temptimer);
+	struct svc_serv *serv = from_timer(serv, t, sv_temptimer);
 	struct svc_xprt *xprt;
 	struct list_head *le, *next;
 
@@ -1176,7 +1129,6 @@ static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
  * svc_xprt_destroy_all - Destroy transports associated with @serv
  * @serv: RPC service to be shut down
  * @net: target network namespace
- * @unregister: true if it is OK to unregister the destroyed xprts
  *
  * Server threads may still be running (especially in the case where the
  * service is still running in other network namespaces).
@@ -1189,8 +1141,7 @@ static void svc_clean_up_xprts(struct svc_serv *serv, struct net *net)
  * threads, we may need to wait a little while and then check again to
  * see if they're done.
  */
-void svc_xprt_destroy_all(struct svc_serv *serv, struct net *net,
-			  bool unregister)
+void svc_xprt_destroy_all(struct svc_serv *serv, struct net *net)
 {
 	int delay = 0;
 
@@ -1200,9 +1151,6 @@ void svc_xprt_destroy_all(struct svc_serv *serv, struct net *net,
 		svc_clean_up_xprts(serv, net);
 		msleep(delay++);
 	}
-
-	if (unregister)
-		svc_rpcb_cleanup(serv, net);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_destroy_all);
 
@@ -1305,6 +1253,7 @@ static noinline int svc_deferred_recv(struct svc_rqst *rqstp)
 	rqstp->rq_addrlen     = dr->addrlen;
 	/* Save off transport header len in case we get deferred again */
 	rqstp->rq_daddr       = dr->daddr;
+	rqstp->rq_respages    = rqstp->rq_pages;
 	rqstp->rq_xprt_ctxt   = dr->xprt_ctxt;
 
 	dr->xprt_ctxt = NULL;

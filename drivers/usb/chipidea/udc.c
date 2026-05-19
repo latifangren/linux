@@ -360,8 +360,8 @@ static int add_td_to_list(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq,
 {
 	int i;
 	u32 temp;
-	struct td_node *lastnode, *node = kzalloc_obj(struct td_node,
-						      GFP_ATOMIC);
+	struct td_node *lastnode, *node = kzalloc(sizeof(struct td_node),
+						  GFP_ATOMIC);
 
 	if (node == NULL)
 		return -ENOMEM;
@@ -753,16 +753,9 @@ static int _hardware_enqueue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 		do {
 			hw_write(ci, OP_USBCMD, USBCMD_ATDTW, USBCMD_ATDTW);
 			tmp_stat = hw_read(ci, OP_ENDPTSTAT, BIT(n));
-		} while (!hw_read(ci, OP_USBCMD, USBCMD_ATDTW) && tmp_stat);
+		} while (!hw_read(ci, OP_USBCMD, USBCMD_ATDTW));
 		hw_write(ci, OP_USBCMD, USBCMD_ATDTW, 0);
 		if (tmp_stat)
-			goto done;
-
-		/* OP_ENDPTSTAT will be clear by HW when the endpoint met
-		 * err. This dTD don't push to dQH if current dTD point is
-		 * not the last one in previous request.
-		 */
-		if (hwep->qh.ptr->curr != cpu_to_le32(prevlastnode->dma))
 			goto done;
 	}
 
@@ -824,7 +817,6 @@ static int _hardware_dequeue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 	unsigned remaining_length;
 	unsigned actual = hwreq->req.length;
 	struct ci_hdrc *ci = hwep->ci;
-	bool is_isoc = hwep->type == USB_ENDPOINT_XFER_ISOC;
 
 	if (hwreq->req.status != -EALREADY)
 		return -EINVAL;
@@ -838,7 +830,7 @@ static int _hardware_dequeue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 			int n = hw_ep_bit(hwep->num, hwep->dir);
 
 			if (ci->rev == CI_REVISION_24 ||
-			    ci->rev == CI_REVISION_22 || is_isoc)
+			    ci->rev == CI_REVISION_22)
 				if (!hw_read(ci, OP_ENDPTSTAT, BIT(n)))
 					reprime_dtd(ci, hwep, node);
 			hwreq->req.status = -EALREADY;
@@ -857,15 +849,11 @@ static int _hardware_dequeue(struct ci_hw_ep *hwep, struct ci_hw_req *hwreq)
 			hwreq->req.status = -EPROTO;
 			break;
 		} else if ((TD_STATUS_TR_ERR & hwreq->req.status)) {
-			if (is_isoc) {
-				hwreq->req.status = 0;
-			} else {
-				hwreq->req.status = -EILSEQ;
-				break;
-			}
+			hwreq->req.status = -EILSEQ;
+			break;
 		}
 
-		if (remaining_length && !is_isoc) {
+		if (remaining_length) {
 			if (hwep->dir == TX) {
 				hwreq->req.status = -EPROTO;
 				break;
@@ -1645,7 +1633,7 @@ static struct usb_request *ep_alloc_request(struct usb_ep *ep, gfp_t gfp_flags)
 	if (ep == NULL)
 		return NULL;
 
-	hwreq = kzalloc_obj(struct ci_hw_req, gfp_flags);
+	hwreq = kzalloc(sizeof(struct ci_hw_req), gfp_flags);
 	if (hwreq != NULL) {
 		INIT_LIST_HEAD(&hwreq->queue);
 		INIT_LIST_HEAD(&hwreq->tds);
@@ -1977,11 +1965,6 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
 	else
 		hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
-
-	if (ci->platdata->notify_event) {
-		_gadget->connected = is_on;
-		ci->platdata->notify_event(ci, CI_HDRC_CONTROLLER_PULLUP_EVENT);
-	}
 	pm_runtime_put_sync(ci->dev);
 
 	return 0;

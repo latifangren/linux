@@ -494,7 +494,7 @@ static int i5k_amb_probe(struct platform_device *pdev)
 	struct resource *reso;
 	int i, res;
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -568,7 +568,7 @@ static struct platform_driver i5k_amb_driver = {
 		.name = DRVNAME,
 	},
 	.probe = i5k_amb_probe,
-	.remove = i5k_amb_remove,
+	.remove_new = i5k_amb_remove,
 };
 
 static int __init i5k_amb_init(void)

@@ -222,7 +222,7 @@ static int nsim_bpf_create_prog(struct nsim_dev *nsim_dev,
 	char name[16];
 	int ret;
 
-	state = kzalloc_obj(*state);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (!state)
 		return -ENOMEM;
 
@@ -302,8 +302,7 @@ static int nsim_setup_prog_checks(struct netdevsim *ns, struct netdev_bpf *bpf)
 		NSIM_EA(bpf->extack, "attempt to load offloaded prog to drv");
 		return -EINVAL;
 	}
-	if (bpf->prog && !bpf->prog->aux->xdp_has_frags &&
-	    ns->netdev->mtu > NSIM_XDP_MAX_MTU) {
+	if (ns->netdev->mtu > NSIM_XDP_MAX_MTU) {
 		NSIM_EA(bpf->extack, "MTU too large w/ XDP enabled");
 		return -EINVAL;
 	}
@@ -501,7 +500,7 @@ nsim_bpf_map_alloc(struct netdevsim *ns, struct bpf_offloaded_map *offmap)
 	if (offmap->map.map_flags)
 		return -EINVAL;
 
-	nmap = kzalloc_obj(*nmap, GFP_KERNEL_ACCOUNT);
+	nmap = kzalloc(sizeof(*nmap), GFP_KERNEL_ACCOUNT);
 	if (!nmap)
 		return -ENOMEM;
 

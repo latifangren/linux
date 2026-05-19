@@ -4,7 +4,6 @@
  */
 
 #include <drm/drm_cache.h>
-#include <drm/drm_print.h>
 
 #include "gem/i915_gem_internal.h"
 
@@ -151,7 +150,7 @@ __intel_timeline_create(struct intel_gt *gt,
 	struct intel_timeline *timeline;
 	int err;
 
-	timeline = kzalloc_obj(*timeline);
+	timeline = kzalloc(sizeof(*timeline), GFP_KERNEL);
 	if (!timeline)
 		return ERR_PTR(-ENOMEM);
 

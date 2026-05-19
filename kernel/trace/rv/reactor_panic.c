@@ -13,9 +13,9 @@
 #include <linux/init.h>
 #include <linux/rv.h>
 
-__printf(1, 0) static void rv_panic_reaction(const char *msg, va_list args)
+static void rv_panic_reaction(char *msg)
 {
-	vpanic(msg, args);
+	panic(msg);
 }
 
 static struct rv_reactor rv_panic = {

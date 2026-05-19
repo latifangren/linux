@@ -8,7 +8,6 @@
  *
  */
 
-#include <linux/bitfield.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
@@ -96,7 +95,8 @@ static int amd_fch_gpio_get_direction(struct gpio_chip *gc, unsigned int gpio)
 	return ret ? GPIO_LINE_DIRECTION_OUT : GPIO_LINE_DIRECTION_IN;
 }
 
-static int amd_fch_gpio_set(struct gpio_chip *gc, unsigned int gpio, int value)
+static void amd_fch_gpio_set(struct gpio_chip *gc,
+			     unsigned int gpio, int value)
 {
 	unsigned long flags;
 	struct amd_fch_gpio_priv *priv = gpiochip_get_data(gc);
@@ -113,23 +113,21 @@ static int amd_fch_gpio_set(struct gpio_chip *gc, unsigned int gpio, int value)
 	writel_relaxed(mask, ptr);
 
 	spin_unlock_irqrestore(&priv->lock, flags);
-
-	return 0;
 }
 
 static int amd_fch_gpio_get(struct gpio_chip *gc,
 			    unsigned int offset)
 {
 	unsigned long flags;
-	u32 val;
+	int ret;
 	struct amd_fch_gpio_priv *priv = gpiochip_get_data(gc);
 	void __iomem *ptr = amd_fch_gpio_addr(priv, offset);
 
 	spin_lock_irqsave(&priv->lock, flags);
-	val = readl_relaxed(ptr);
+	ret = (readl_relaxed(ptr) & AMD_FCH_GPIO_FLAG_READ);
 	spin_unlock_irqrestore(&priv->lock, flags);
 
-	return FIELD_GET(AMD_FCH_GPIO_FLAG_READ, val);
+	return ret;
 }
 
 static int amd_fch_gpio_request(struct gpio_chip *chip,

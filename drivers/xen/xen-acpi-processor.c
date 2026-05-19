@@ -61,7 +61,8 @@ static int push_cxx_to_hypervisor(struct acpi_processor *_pr)
 	unsigned int i, ok;
 	int ret = 0;
 
-	dst_cx_states = kzalloc_objs(struct xen_processor_cx, _pr->power.count);
+	dst_cx_states = kcalloc(_pr->power.count,
+				sizeof(struct xen_processor_cx), GFP_KERNEL);
 	if (!dst_cx_states)
 		return -ENOMEM;
 
@@ -141,8 +142,8 @@ xen_copy_pss_data(struct acpi_processor *_pr,
 	BUILD_BUG_ON(sizeof(struct xen_processor_px) !=
 		     sizeof(struct acpi_processor_px));
 
-	dst_states = kzalloc_objs(struct xen_processor_px,
-				  _pr->performance->state_count);
+	dst_states = kcalloc(_pr->performance->state_count,
+			     sizeof(struct xen_processor_px), GFP_KERNEL);
 	if (!dst_states)
 		return ERR_PTR(-ENOMEM);
 
@@ -408,7 +409,8 @@ static int check_acpi_ids(struct acpi_processor *pr_backup)
 		return -ENOMEM;
 	}
 
-	acpi_psd = kzalloc_objs(struct acpi_psd_package, nr_acpi_bits);
+	acpi_psd = kcalloc(nr_acpi_bits, sizeof(struct acpi_psd_package),
+			   GFP_KERNEL);
 	if (!acpi_psd) {
 		bitmap_free(acpi_id_present);
 		bitmap_free(acpi_id_cst_present);
@@ -490,7 +492,7 @@ static void xen_acpi_processor_resume_worker(struct work_struct *dummy)
 		pr_info("ACPI data upload failed, error = %d\n", rc);
 }
 
-static void xen_acpi_processor_resume(void *data)
+static void xen_acpi_processor_resume(void)
 {
 	static DECLARE_WORK(wq, xen_acpi_processor_resume_worker);
 
@@ -504,12 +506,8 @@ static void xen_acpi_processor_resume(void *data)
 	schedule_work(&wq);
 }
 
-static const struct syscore_ops xap_syscore_ops = {
+static struct syscore_ops xap_syscore_ops = {
 	.resume	= xen_acpi_processor_resume,
-};
-
-static struct syscore xap_syscore = {
-	.ops = &xap_syscore_ops,
 };
 
 static int __init xen_acpi_processor_init(void)
@@ -562,7 +560,7 @@ static int __init xen_acpi_processor_init(void)
 	if (rc)
 		goto err_unregister;
 
-	register_syscore(&xap_syscore);
+	register_syscore_ops(&xap_syscore_ops);
 
 	return 0;
 err_unregister:
@@ -579,7 +577,7 @@ static void __exit xen_acpi_processor_exit(void)
 {
 	int i;
 
-	unregister_syscore(&xap_syscore);
+	unregister_syscore_ops(&xap_syscore_ops);
 	bitmap_free(acpi_ids_done);
 	bitmap_free(acpi_id_present);
 	bitmap_free(acpi_id_cst_present);

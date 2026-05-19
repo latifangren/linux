@@ -195,17 +195,13 @@ static const struct platform_suspend_ops s5pv210_suspend_ops = {
 /*
  * Syscore operations used to delay restore of certain registers.
  */
-static void s5pv210_pm_resume(void *data)
+static void s5pv210_pm_resume(void)
 {
 	s3c_pm_do_restore_core(s5pv210_core_save, ARRAY_SIZE(s5pv210_core_save));
 }
 
-static const struct syscore_ops s5pv210_pm_syscore_ops = {
+static struct syscore_ops s5pv210_pm_syscore_ops = {
 	.resume		= s5pv210_pm_resume,
-};
-
-static struct syscore s5pv210_pm_syscore = {
-	.ops = &s5pv210_pm_syscore_ops,
 };
 
 /*
@@ -213,6 +209,6 @@ static struct syscore s5pv210_pm_syscore = {
  */
 void __init s5pv210_pm_init(void)
 {
-	register_syscore(&s5pv210_pm_syscore);
+	register_syscore_ops(&s5pv210_pm_syscore_ops);
 	suspend_set_ops(&s5pv210_suspend_ops);
 }

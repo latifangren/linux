@@ -624,6 +624,9 @@ int register_cdrom(struct gendisk *disk, struct cdrom_device_info *cdi)
 	if (check_media_type == 1)
 		cdi->options |= (int) CDO_CHECK_TYPE;
 
+	if (CDROM_CAN(CDC_MRW_W))
+		cdi->exit = cdrom_mrw_exit;
+
 	if (cdi->ops->read_cdda_bpc)
 		cdi->cdda_method = CDDA_BPC_FULL;
 	else
@@ -647,6 +650,9 @@ void unregister_cdrom(struct cdrom_device_info *cdi)
 	mutex_lock(&cdrom_mutex);
 	list_del(&cdi->list);
 	mutex_unlock(&cdrom_mutex);
+
+	if (cdi->exit)
+		cdi->exit(cdi);
 
 	cd_dbg(CD_REG_UNREG, "drive \"/dev/%s\" unregistered\n", cdi->name);
 }
@@ -1100,7 +1106,7 @@ int open_for_data(struct cdrom_device_info *cdi)
 		}
 	}
 
-	cd_dbg(CD_OPEN, "all seems well, opening the device\n");
+	cd_dbg(CD_OPEN, "all seems well, opening the devicen");
 
 	/* all seems well, we can open the device */
 	ret = cdo->open(cdi, 0); /* open for data */
@@ -1258,8 +1264,6 @@ void cdrom_release(struct cdrom_device_info *cdi)
 		cd_dbg(CD_CLOSE, "Use count for \"/dev/%s\" now zero\n",
 		       cdi->name);
 		cdrom_dvd_rw_close_write(cdi);
-		if (CDROM_CAN(CDC_MRW_W))
-			cdrom_mrw_exit(cdi);
 
 		if ((cdo->capability & CDC_LOCK) && !cdi->keeplocked) {
 			cd_dbg(CD_CLOSE, "Unlocking door!\n");
@@ -1318,7 +1322,7 @@ static int cdrom_slot_status(struct cdrom_device_info *cdi, int slot)
 	if (cdi->sanyo_slot)
 		return CDS_NO_INFO;
 	
-	info = kmalloc_obj(*info);
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -1347,7 +1351,7 @@ int cdrom_number_of_slots(struct cdrom_device_info *cdi)
 	/* cdrom_read_mech_status requires a valid value for capacity: */
 	cdi->capacity = 0; 
 
-	info = kmalloc_obj(*info);
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -1406,7 +1410,7 @@ static int cdrom_select_disc(struct cdrom_device_info *cdi, int slot)
 		return cdrom_load_unload(cdi, -1);
 	}
 
-	info = kmalloc_obj(*info);
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -2311,7 +2315,7 @@ static int cdrom_ioctl_media_changed(struct cdrom_device_info *cdi,
 	/* Prevent arg from speculatively bypassing the length check */
 	arg = array_index_nospec(arg, cdi->capacity);
 
-	info = kmalloc_obj(*info);
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
@@ -3608,7 +3612,7 @@ static int cdrom_sysctl_handler(const struct ctl_table *ctl, int write,
 }
 
 /* Place files in /proc/sys/dev/cdrom */
-static const struct ctl_table cdrom_table[] = {
+static struct ctl_table cdrom_table[] = {
 	{
 		.procname	= "info",
 		.data		= &cdrom_sysctl_settings.info, 
@@ -3673,7 +3677,8 @@ static void cdrom_sysctl_register(void)
 
 static void cdrom_sysctl_unregister(void)
 {
-	unregister_sysctl_table(cdrom_sysctl_header);
+	if (cdrom_sysctl_header)
+		unregister_sysctl_table(cdrom_sysctl_header);
 }
 
 #else /* CONFIG_SYSCTL */

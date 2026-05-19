@@ -419,8 +419,8 @@ static int udf_mknod(struct mnt_idmap *idmap, struct inode *dir,
 	return udf_add_nondir(dentry, inode);
 }
 
-static struct dentry *udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-				struct dentry *dentry, umode_t mode)
+static int udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+		     struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
 	struct udf_fileident_iter iter;
@@ -430,7 +430,7 @@ static struct dentry *udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 
 	inode = udf_new_inode(dir, S_IFDIR | mode);
 	if (IS_ERR(inode))
-		return ERR_CAST(inode);
+		return PTR_ERR(inode);
 
 	iinfo = UDF_I(inode);
 	inode->i_op = &udf_dir_inode_operations;
@@ -439,7 +439,7 @@ static struct dentry *udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	if (err) {
 		clear_nlink(inode);
 		discard_new_inode(inode);
-		return ERR_PTR(err);
+		return err;
 	}
 	set_nlink(inode, 2);
 	iter.fi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
@@ -456,7 +456,7 @@ static struct dentry *udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	if (err) {
 		clear_nlink(inode);
 		discard_new_inode(inode);
-		return ERR_PTR(err);
+		return err;
 	}
 	iter.fi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
 	iter.fi.icb.extLocation = cpu_to_lelb(iinfo->i_location);
@@ -471,7 +471,7 @@ static struct dentry *udf_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 	mark_inode_dirty(dir);
 	d_instantiate_new(dentry, inode);
 
-	return NULL;
+	return 0;
 }
 
 static int empty_dir(struct inode *dir)
@@ -550,7 +550,7 @@ static int udf_unlink(struct inode *dir, struct dentry *dentry)
 		goto end_unlink;
 
 	if (!inode->i_nlink) {
-		udf_debug("Deleting nonexistent file (%llu), %u\n",
+		udf_debug("Deleting nonexistent file (%lu), %u\n",
 			  inode->i_ino, inode->i_nlink);
 		set_nlink(inode, 1);
 	}
@@ -638,7 +638,7 @@ static int udf_symlink(struct mnt_idmap *idmap, struct inode *dir,
 		memset(epos.bh->b_data, 0x00, bsize);
 		set_buffer_uptodate(epos.bh);
 		unlock_buffer(epos.bh);
-		mmb_mark_buffer_dirty(epos.bh, &iinfo->i_metadata_bhs);
+		mark_buffer_dirty_inode(epos.bh, inode);
 		ea = epos.bh->b_data + udf_ext0_offset(inode);
 	} else
 		ea = iinfo->i_data + iinfo->i_lenEAttr;
@@ -809,7 +809,7 @@ static int udf_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 					       &diriter);
 		if (retval == -ENOENT) {
 			udf_err(old_inode->i_sb,
-				"directory (ino %llu) has no '..' entry\n",
+				"directory (ino %lu) has no '..' entry\n",
 				old_inode->i_ino);
 			retval = -EFSCORRUPTED;
 		}
@@ -821,7 +821,7 @@ static int udf_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 				old_dir->i_ino) {
 			retval = -EFSCORRUPTED;
 			udf_err(old_inode->i_sb,
-				"directory (ino %llu) has parent entry pointing to another inode (%llu != %u)\n",
+				"directory (ino %lu) has parent entry pointing to another inode (%lu != %u)\n",
 				old_inode->i_ino, old_dir->i_ino,
 				udf_get_lb_pblock(old_inode->i_sb, &tloc, 0));
 			goto out_oiter;
@@ -869,7 +869,7 @@ static int udf_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 	retval = udf_fiiter_find_entry(old_dir, &old_dentry->d_name, &oiter);
 	if (retval) {
 		udf_err(old_dir->i_sb,
-			"failed to find renamed entry again in directory (ino %llu)\n",
+			"failed to find renamed entry again in directory (ino %lu)\n",
 			old_dir->i_ino);
 	} else {
 		udf_fiiter_delete_entry(&oiter);

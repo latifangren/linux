@@ -27,9 +27,6 @@
 #ifndef _DRM_MODE_H
 #define _DRM_MODE_H
 
-#include <linux/bits.h>
-#include <linux/const.h>
-
 #include "drm.h"
 
 #if defined(__cplusplus)
@@ -168,10 +165,6 @@ extern "C" {
 /* Link Status options */
 #define DRM_MODE_LINK_STATUS_GOOD	0
 #define DRM_MODE_LINK_STATUS_BAD	1
-
-/* Panel type property */
-#define DRM_MODE_PANEL_TYPE_UNKNOWN	0
-#define DRM_MODE_PANEL_TYPE_OLED	1
 
 /*
  * DRM_MODE_ROTATE_<degrees>
@@ -636,7 +629,6 @@ struct drm_mode_connector_set_property {
 #define DRM_MODE_OBJECT_FB 0xfbfbfbfb
 #define DRM_MODE_OBJECT_BLOB 0xbbbbbbbb
 #define DRM_MODE_OBJECT_PLANE 0xeeeeeeee
-#define DRM_MODE_OBJECT_COLOROP 0xfafafafa
 #define DRM_MODE_OBJECT_ANY 0
 
 struct drm_mode_obj_get_properties {
@@ -854,20 +846,6 @@ struct drm_color_ctm {
 	__u64 matrix[9];
 };
 
-struct drm_color_ctm_3x4 {
-	/*
-	 * Conversion matrix with 3x4 dimensions in S31.32 sign-magnitude
-	 * (not two's complement!) format.
-	 *
-	 * out   matrix          in
-	 * |R|   |0  1  2  3 |   | R |
-	 * |G| = |4  5  6  7 | x | G |
-	 * |B|   |8  9  10 11|   | B |
-	 *                       |1.0|
-	 */
-	__u64 matrix[12];
-};
-
 struct drm_color_lut {
 	/*
 	 * Values are mapped linearly to 0.0 - 1.0 range, with 0x0 == 0.0 and
@@ -877,125 +855,6 @@ struct drm_color_lut {
 	__u16 green;
 	__u16 blue;
 	__u16 reserved;
-};
-
-/*
- * struct drm_color_lut32
- *
- * 32-bit per channel color LUT entry, similar to drm_color_lut.
- */
-struct drm_color_lut32 {
-	__u32 red;
-	__u32 green;
-	__u32 blue;
-	__u32 reserved;
-};
-
-/**
- * enum drm_colorop_type - Type of color operation
- *
- * drm_colorops can be of many different types. Each type behaves differently
- * and defines a different set of properties. This enum defines all types and
- * gives a high-level description.
- */
-enum drm_colorop_type {
-	/**
-	 * @DRM_COLOROP_1D_CURVE:
-	 *
-	 * enum string "1D Curve"
-	 *
-	 * A 1D curve that is being applied to all color channels. The
-	 * curve is specified via the CURVE_1D_TYPE colorop property.
-	 */
-	DRM_COLOROP_1D_CURVE,
-
-	/**
-	 * @DRM_COLOROP_1D_LUT:
-	 *
-	 * enum string "1D LUT"
-	 *
-	 * A simple 1D LUT of uniformly spaced &drm_color_lut32 entries,
-	 * packed into a blob via the DATA property. The driver's
-	 * expected LUT size is advertised via the SIZE property.
-	 *
-	 * The DATA blob is an array of struct drm_color_lut32 with size
-	 * of "size".
-	 */
-	DRM_COLOROP_1D_LUT,
-
-	/**
-	 * @DRM_COLOROP_CTM_3X4:
-	 *
-	 * enum string "3x4 Matrix"
-	 *
-	 * A 3x4 matrix. Its values are specified via the
-	 * &drm_color_ctm_3x4 struct provided via the DATA property.
-	 *
-	 * The DATA blob is a float[12]:
-	 * out   matrix          in
-	 * | R |   | 0  1  2  3  |   | R |
-	 * | G | = | 4  5  6  7  | x | G |
-	 * | B |   | 8  9  10 12 |   | B |
-	 */
-	DRM_COLOROP_CTM_3X4,
-
-	/**
-	 * @DRM_COLOROP_MULTIPLIER:
-	 *
-	 * enum string "Multiplier"
-	 *
-	 * A simple multiplier, applied to all color values. The
-	 * multiplier is specified as a S31.32 via the MULTIPLIER
-	 * property.
-	 */
-	DRM_COLOROP_MULTIPLIER,
-
-	/**
-	 * @DRM_COLOROP_3D_LUT:
-	 *
-	 * enum string "3D LUT"
-	 *
-	 * A 3D LUT of &drm_color_lut32 entries,
-	 * packed into a blob via the DATA property. The driver's expected
-	 * LUT size is advertised via the SIZE property, i.e., a 3D LUT with
-	 * 17x17x17 entries will have SIZE set to 17.
-	 *
-	 * The DATA blob is a 3D array of struct drm_color_lut32 with dimension
-	 * length of "size".
-	 * The LUT elements are traversed like so:
-	 *
-	 *   for B in range 0..n
-	 *     for G in range 0..n
-	 *       for R in range 0..n
-	 *        index = R + n * (G + n * B)
-	 *         color = lut3d[index]
-	 */
-	DRM_COLOROP_3D_LUT,
-};
-
-/**
- * enum drm_colorop_lut3d_interpolation_type - type of 3DLUT interpolation
- */
-enum drm_colorop_lut3d_interpolation_type {
-	/**
-	 * @DRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL:
-	 *
-	 * Tetrahedral 3DLUT interpolation
-	 */
-	DRM_COLOROP_LUT3D_INTERPOLATION_TETRAHEDRAL,
-};
-
-/**
- * enum drm_colorop_lut1d_interpolation_type - type of interpolation for 1D LUTs
- */
-enum drm_colorop_lut1d_interpolation_type {
-	/**
-	 * @DRM_COLOROP_LUT1D_INTERPOLATION_LINEAR:
-	 *
-	 * Linear interpolation. Values between points of the LUT will be
-	 * linearly interpolated.
-	 */
-	DRM_COLOROP_LUT1D_INTERPOLATION_LINEAR,
 };
 
 /**
@@ -1103,14 +962,6 @@ struct hdr_output_metadata {
  * Request that the kernel sends back a vblank event (see
  * struct drm_event_vblank) with the &DRM_EVENT_FLIP_COMPLETE type when the
  * page-flip is done.
- *
- * When used with atomic uAPI, one event will be delivered per CRTC included in
- * the atomic commit. A CRTC is included in an atomic commit if one of its
- * properties is set, or if a property is set on a connector or plane linked
- * via the CRTC_ID property to the CRTC. At least one CRTC must be included,
- * and all pulled in CRTCs must be either previously or newly powered on (in
- * other words, a powered off CRTC which stays off cannot be included in the
- * atomic commit).
  */
 #define DRM_MODE_PAGE_FLIP_EVENT 0x01
 /**
@@ -1551,83 +1402,6 @@ struct drm_mode_closefb {
 	__u32 fb_id;
 	__u32 pad;
 };
-
-/*
- * Put 16-bit ARGB values into a standard 64-bit representation that can be
- * used for ioctl parameters, inter-driver communication, etc.
- *
- * If the component values being provided contain less than 16 bits of
- * precision, use a conversion ratio to get a better color approximation.
- * The ratio is computed as (2^16 - 1) / (2^bpc - 1), where bpc and 16 are
- * the input and output precision, respectively.
- * Also note bpc must be greater than 0.
- */
-#define __DRM_ARGB64_PREP(c, shift)					\
-	(((__u64)(c) & __GENMASK(15, 0)) << (shift))
-
-#define __DRM_ARGB64_PREP_BPC(c, shift, bpc)				\
-({									\
-	__u16 mask = __GENMASK((bpc) - 1, 0);				\
-	__u16 conv = __KERNEL_DIV_ROUND_CLOSEST((mask & (c)) *		\
-						__GENMASK(15, 0), mask);\
-	__DRM_ARGB64_PREP(conv, shift);					\
-})
-
-#define DRM_ARGB64_PREP(alpha, red, green, blue)			\
-(									\
-	__DRM_ARGB64_PREP(alpha, 48) |					\
-	__DRM_ARGB64_PREP(red,   32) |					\
-	__DRM_ARGB64_PREP(green, 16) |					\
-	__DRM_ARGB64_PREP(blue,   0)					\
-)
-
-#define DRM_ARGB64_PREP_BPC(alpha, red, green, blue, bpc)		\
-({									\
-	__typeof__(bpc) __bpc = bpc;					\
-	__DRM_ARGB64_PREP_BPC(alpha, 48, __bpc) |			\
-	__DRM_ARGB64_PREP_BPC(red,   32, __bpc) |			\
-	__DRM_ARGB64_PREP_BPC(green, 16, __bpc) |			\
-	__DRM_ARGB64_PREP_BPC(blue,   0, __bpc);			\
-})
-
-/*
- * Extract the specified color component from a standard 64-bit ARGB value.
- *
- * If the requested precision is less than 16 bits, make use of a conversion
- * ratio calculated as (2^bpc - 1) / (2^16 - 1), where bpc and 16 are the
- * output and input precision, respectively.
- *
- * If speed is more important than accuracy, use DRM_ARGB64_GET*_BPCS()
- * instead of DRM_ARGB64_GET*_BPC() in order to replace the expensive
- * division with a simple bit right-shift operation.
- */
-#define __DRM_ARGB64_GET(c, shift)					\
-	((__u16)(((__u64)(c) >> (shift)) & __GENMASK(15, 0)))
-
-#define __DRM_ARGB64_GET_BPC(c, shift, bpc)				\
-({									\
-	__u16 comp = __DRM_ARGB64_GET(c, shift);			\
-	__KERNEL_DIV_ROUND_CLOSEST(comp * __GENMASK((bpc) - 1, 0),	\
-				   __GENMASK(15, 0));			\
-})
-
-#define __DRM_ARGB64_GET_BPCS(c, shift, bpc)				\
-	(__DRM_ARGB64_GET(c, shift) >> (16 - (bpc)))
-
-#define DRM_ARGB64_GETA(c)		__DRM_ARGB64_GET(c, 48)
-#define DRM_ARGB64_GETR(c)		__DRM_ARGB64_GET(c, 32)
-#define DRM_ARGB64_GETG(c)		__DRM_ARGB64_GET(c, 16)
-#define DRM_ARGB64_GETB(c)		__DRM_ARGB64_GET(c, 0)
-
-#define DRM_ARGB64_GETA_BPC(c, bpc)	__DRM_ARGB64_GET_BPC(c, 48, bpc)
-#define DRM_ARGB64_GETR_BPC(c, bpc)	__DRM_ARGB64_GET_BPC(c, 32, bpc)
-#define DRM_ARGB64_GETG_BPC(c, bpc)	__DRM_ARGB64_GET_BPC(c, 16, bpc)
-#define DRM_ARGB64_GETB_BPC(c, bpc)	__DRM_ARGB64_GET_BPC(c, 0, bpc)
-
-#define DRM_ARGB64_GETA_BPCS(c, bpc)	__DRM_ARGB64_GET_BPCS(c, 48, bpc)
-#define DRM_ARGB64_GETR_BPCS(c, bpc)	__DRM_ARGB64_GET_BPCS(c, 32, bpc)
-#define DRM_ARGB64_GETG_BPCS(c, bpc)	__DRM_ARGB64_GET_BPCS(c, 16, bpc)
-#define DRM_ARGB64_GETB_BPCS(c, bpc)	__DRM_ARGB64_GET_BPCS(c, 0, bpc)
 
 #if defined(__cplusplus)
 }

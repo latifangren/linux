@@ -707,7 +707,7 @@ static struct rbd_client *rbd_client_create(struct ceph_options *ceph_opts)
 	int ret = -ENOMEM;
 
 	dout("%s:\n", __func__);
-	rbdc = kmalloc_obj(struct rbd_client);
+	rbdc = kmalloc(sizeof(struct rbd_client), GFP_KERNEL);
 	if (!rbdc)
 		goto out_opt;
 
@@ -2572,9 +2572,9 @@ static int rbd_img_fill_request(struct rbd_img_request *img_req,
 	}
 
 	for_each_obj_request(img_req, obj_req) {
-		obj_req->bvec_pos.bvecs = kmalloc_objs(*obj_req->bvec_pos.bvecs,
-						       obj_req->bvec_count,
-						       GFP_NOIO);
+		obj_req->bvec_pos.bvecs = kmalloc_array(obj_req->bvec_count,
+					      sizeof(*obj_req->bvec_pos.bvecs),
+					      GFP_NOIO);
 		if (!obj_req->bvec_pos.bvecs)
 			return -ENOMEM;
 	}
@@ -3078,9 +3078,9 @@ static int setup_copyup_bvecs(struct rbd_obj_request *obj_req, u64 obj_overlap)
 
 	rbd_assert(!obj_req->copyup_bvecs);
 	obj_req->copyup_bvec_count = calc_pages_for(0, obj_overlap);
-	obj_req->copyup_bvecs = kzalloc_objs(*obj_req->copyup_bvecs,
-					     obj_req->copyup_bvec_count,
-					     GFP_NOIO);
+	obj_req->copyup_bvecs = kcalloc(obj_req->copyup_bvec_count,
+					sizeof(*obj_req->copyup_bvecs),
+					GFP_NOIO);
 	if (!obj_req->copyup_bvecs)
 		return -ENOMEM;
 
@@ -4973,6 +4973,7 @@ static int rbd_init_disk(struct rbd_device *rbd_dev)
 	rbd_dev->tag_set.ops = &rbd_mq_ops;
 	rbd_dev->tag_set.queue_depth = rbd_dev->opts->queue_depth;
 	rbd_dev->tag_set.numa_node = NUMA_NO_NODE;
+	rbd_dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 	rbd_dev->tag_set.nr_hw_queues = num_present_cpus();
 	rbd_dev->tag_set.cmd_size = sizeof(struct rbd_img_request);
 
@@ -5289,7 +5290,7 @@ static struct rbd_spec *rbd_spec_alloc(void)
 {
 	struct rbd_spec *spec;
 
-	spec = kzalloc_obj(*spec);
+	spec = kzalloc(sizeof (*spec), GFP_KERNEL);
 	if (!spec)
 		return NULL;
 
@@ -5352,7 +5353,7 @@ static struct rbd_device *__rbd_dev_create(struct rbd_spec *spec)
 {
 	struct rbd_device *rbd_dev;
 
-	rbd_dev = kzalloc_obj(*rbd_dev);
+	rbd_dev = kzalloc(sizeof(*rbd_dev), GFP_KERNEL);
 	if (!rbd_dev)
 		return NULL;
 
@@ -6509,7 +6510,7 @@ static int rbd_add_parse_args(const char *buf,
 
 	/* Initialize all rbd options to the defaults */
 
-	pctx.opts = kzalloc_obj(*pctx.opts);
+	pctx.opts = kzalloc(sizeof(*pctx.opts), GFP_KERNEL);
 	if (!pctx.opts)
 		goto out_mem;
 
@@ -7290,10 +7291,8 @@ static ssize_t do_rbd_remove(const char *buf, size_t count)
 		 * Prevent new IO from being queued and wait for existing
 		 * IO to complete/fail.
 		 */
-		unsigned int memflags = blk_mq_freeze_queue(rbd_dev->disk->queue);
-
+		blk_mq_freeze_queue(rbd_dev->disk->queue);
 		blk_mark_disk_dead(rbd_dev->disk);
-		blk_mq_unfreeze_queue(rbd_dev->disk->queue, memflags);
 	}
 
 	del_gendisk(rbd_dev->disk);
@@ -7398,7 +7397,7 @@ static int __init rbd_init(void)
 	 * The number of active work items is limited by the number of
 	 * rbd devices * queue depth, so leave @max_active at default.
 	 */
-	rbd_wq = alloc_workqueue(RBD_DRV_NAME, WQ_MEM_RECLAIM | WQ_PERCPU, 0);
+	rbd_wq = alloc_workqueue(RBD_DRV_NAME, WQ_MEM_RECLAIM, 0);
 	if (!rbd_wq) {
 		rc = -ENOMEM;
 		goto err_out_slab;

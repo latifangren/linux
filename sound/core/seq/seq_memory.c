@@ -441,7 +441,9 @@ int snd_seq_pool_init(struct snd_seq_pool *pool)
 	if (snd_BUG_ON(!pool))
 		return -EINVAL;
 
-	cellptr = kvmalloc_objs(struct snd_seq_event_cell, pool->size);
+	cellptr = kvmalloc_array(pool->size,
+				 sizeof(struct snd_seq_event_cell),
+				 GFP_KERNEL);
 	if (!cellptr)
 		return -ENOMEM;
 
@@ -516,7 +518,7 @@ struct snd_seq_pool *snd_seq_pool_new(int poolsize)
 	struct snd_seq_pool *pool;
 
 	/* create pool block */
-	pool = kzalloc_obj(*pool);
+	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
 	if (!pool)
 		return NULL;
 	spin_lock_init(&pool->lock);

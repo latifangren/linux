@@ -27,7 +27,7 @@
  * cache size, the idea being that when the cache is at its maximum number
  * of entries, then this should be the average number of entries per bucket.
  */
-#define TARGET_BUCKET_SIZE	8
+#define TARGET_BUCKET_SIZE	64
 
 struct nfsd_drc_bucket {
 	struct rb_root rb_head;
@@ -237,6 +237,10 @@ void nfsd_reply_cache_shutdown(struct nfsd_net *nn)
 
 }
 
+/*
+ * Move cache entry to end of LRU list, and queue the cleaner to run if it's
+ * not already scheduled.
+ */
 static void
 lru_put_end(struct nfsd_drc_bucket *b, struct nfsd_cacherep *rp)
 {
@@ -268,6 +272,13 @@ nfsd_prune_bucket_locked(struct nfsd_net *nn, struct nfsd_drc_bucket *b,
 
 	/* The bucket LRU is ordered oldest-first. */
 	list_for_each_entry_safe(rp, tmp, &b->lru_head, c_lru) {
+		/*
+		 * Don't free entries attached to calls that are still
+		 * in-progress, but do keep scanning the list.
+		 */
+		if (rp->c_state == RC_INPROG)
+			continue;
+
 		if (atomic_read(&nn->num_drc_entries) <= nn->max_drc_entries &&
 		    time_before(expiry, rp->c_timestamp))
 			break;
@@ -442,6 +453,8 @@ out:
 				nn->longest_chain_cachesize,
 				atomic_read(&nn->num_drc_entries));
 	}
+
+	lru_put_end(b, ret);
 	return ret;
 }
 
@@ -467,11 +480,10 @@ int nfsd_cache_lookup(struct svc_rqst *rqstp, unsigned int start,
 		      unsigned int len, struct nfsd_cacherep **cacherep)
 {
 	struct nfsd_net		*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
-	struct nfsd_thread_local_info *ntli = rqstp->rq_private;
 	struct nfsd_cacherep	*rp, *found;
 	__wsum			csum;
 	struct nfsd_drc_bucket	*b;
-	int type = ntli->ntli_cachetype;
+	int type = rqstp->rq_cachetype;
 	LIST_HEAD(dispose);
 	int rtn = RC_DOIT;
 

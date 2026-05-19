@@ -104,6 +104,7 @@ struct ofdpa_group_tbl_entry {
 	u32 cmd;
 	u32 group_id; /* key */
 	u16 group_count;
+	u32 *group_ids;
 	union {
 		struct {
 			u8 pop_vlan;
@@ -122,8 +123,6 @@ struct ofdpa_group_tbl_entry {
 			u32 group_id;
 		} l3_unicast;
 	};
-
-	u32 group_ids[] __counted_by(group_count);
 };
 
 struct ofdpa_fdb_tbl_entry {
@@ -839,7 +838,7 @@ static int ofdpa_flow_tbl_ig_port(struct ofdpa_port *ofdpa_port, int flags,
 {
 	struct ofdpa_flow_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -861,7 +860,7 @@ static int ofdpa_flow_tbl_vlan(struct ofdpa_port *ofdpa_port,
 {
 	struct ofdpa_flow_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -887,7 +886,7 @@ static int ofdpa_flow_tbl_term_mac(struct ofdpa_port *ofdpa_port,
 {
 	struct ofdpa_flow_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -927,7 +926,7 @@ static int ofdpa_flow_tbl_bridge(struct ofdpa_port *ofdpa_port,
 	bool dflt = !eth_dst || eth_dst_mask;
 	bool wild = false;
 
-	entry = kzalloc_obj(*entry, GFP_ATOMIC);
+	entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
 	if (!entry)
 		return -ENOMEM;
 
@@ -977,7 +976,7 @@ static int ofdpa_flow_tbl_ucast4_routing(struct ofdpa_port *ofdpa_port,
 {
 	struct ofdpa_flow_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1007,7 +1006,7 @@ static int ofdpa_flow_tbl_acl(struct ofdpa_port *ofdpa_port, int flags,
 	u32 priority;
 	struct ofdpa_flow_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1060,6 +1059,19 @@ ofdpa_group_tbl_find(const struct ofdpa *ofdpa,
 	return NULL;
 }
 
+static void ofdpa_group_tbl_entry_free(struct ofdpa_group_tbl_entry *entry)
+{
+	switch (ROCKER_GROUP_TYPE_GET(entry->group_id)) {
+	case ROCKER_OF_DPA_GROUP_TYPE_L2_FLOOD:
+	case ROCKER_OF_DPA_GROUP_TYPE_L2_MCAST:
+		kfree(entry->group_ids);
+		break;
+	default:
+		break;
+	}
+	kfree(entry);
+}
+
 static int ofdpa_group_tbl_add(struct ofdpa_port *ofdpa_port, int flags,
 			       struct ofdpa_group_tbl_entry *match)
 {
@@ -1073,7 +1085,7 @@ static int ofdpa_group_tbl_add(struct ofdpa_port *ofdpa_port, int flags,
 
 	if (found) {
 		hash_del(&found->entry);
-		kfree(found);
+		ofdpa_group_tbl_entry_free(found);
 		found = match;
 		found->cmd = ROCKER_TLV_CMD_TYPE_OF_DPA_GROUP_MOD;
 	} else {
@@ -1110,14 +1122,14 @@ static int ofdpa_group_tbl_del(struct ofdpa_port *ofdpa_port, int flags,
 
 	spin_unlock_irqrestore(&ofdpa->group_tbl_lock, lock_flags);
 
-	kfree(match);
+	ofdpa_group_tbl_entry_free(match);
 
 	if (found) {
 		err = rocker_cmd_exec(ofdpa_port->rocker_port,
 				      ofdpa_flags_nowait(flags),
 				      ofdpa_cmd_group_tbl_del,
 				      found, NULL, NULL);
-		kfree(found);
+		ofdpa_group_tbl_entry_free(found);
 	}
 
 	return err;
@@ -1138,7 +1150,7 @@ static int ofdpa_group_l2_interface(struct ofdpa_port *ofdpa_port,
 {
 	struct ofdpa_group_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1154,13 +1166,18 @@ static int ofdpa_group_l2_fan_out(struct ofdpa_port *ofdpa_port,
 {
 	struct ofdpa_group_tbl_entry *entry;
 
-	entry = kzalloc_flex(*entry, group_ids, group_count);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
-	entry->group_count = group_count;
 	entry->group_id = group_id;
+	entry->group_count = group_count;
 
+	entry->group_ids = kcalloc(group_count, sizeof(u32), GFP_KERNEL);
+	if (!entry->group_ids) {
+		kfree(entry);
+		return -ENOMEM;
+	}
 	memcpy(entry->group_ids, group_ids, group_count * sizeof(u32));
 
 	return ofdpa_group_tbl_do(ofdpa_port, flags, entry);
@@ -1182,7 +1199,7 @@ static int ofdpa_group_l3_unicast(struct ofdpa_port *ofdpa_port, int flags,
 {
 	struct ofdpa_group_tbl_entry *entry;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1256,7 +1273,7 @@ static int ofdpa_port_ipv4_neigh(struct ofdpa_port *ofdpa_port,
 	bool removing;
 	int err = 0;
 
-	entry = kzalloc_obj(*entry, GFP_ATOMIC);
+	entry = kzalloc(sizeof(*entry), GFP_ATOMIC);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1369,7 +1386,7 @@ static int ofdpa_port_ipv4_nh(struct ofdpa_port *ofdpa_port,
 	bool resolved = true;
 	int err = 0;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
 
@@ -1849,7 +1866,7 @@ static int ofdpa_port_fdb_learn(struct ofdpa_port *ofdpa_port,
 	if (!(flags & OFDPA_OP_FLAG_LEARNED))
 		return 0;
 
-	lw = kzalloc_obj(*lw, GFP_ATOMIC);
+	lw = kzalloc(sizeof(*lw), GFP_ATOMIC);
 	if (!lw)
 		return -ENOMEM;
 
@@ -1887,7 +1904,7 @@ static int ofdpa_port_fdb(struct ofdpa_port *ofdpa_port,
 	bool removing = (flags & OFDPA_OP_FLAG_REMOVE);
 	unsigned long lock_flags;
 
-	fdb = kzalloc_obj(*fdb);
+	fdb = kzalloc(sizeof(*fdb), GFP_KERNEL);
 	if (!fdb)
 		return -ENOMEM;
 
@@ -1916,7 +1933,7 @@ static int ofdpa_port_fdb(struct ofdpa_port *ofdpa_port,
 	spin_unlock_irqrestore(&ofdpa->fdb_tbl_lock, lock_flags);
 
 	/* Check if adding and already exists, or removing and can't find */
-	if (!found == removing) {
+	if (!found != !removing) {
 		kfree(fdb);
 		if (!found && removing)
 			return 0;
@@ -1965,7 +1982,7 @@ err_out:
 
 static void ofdpa_fdb_cleanup(struct timer_list *t)
 {
-	struct ofdpa *ofdpa = timer_container_of(ofdpa, t, fdb_cleanup_timer);
+	struct ofdpa *ofdpa = from_timer(ofdpa, t, fdb_cleanup_timer);
 	struct ofdpa_port *ofdpa_port;
 	struct ofdpa_fdb_tbl_entry *entry;
 	struct hlist_node *tmp;
@@ -2215,7 +2232,7 @@ static __be16 ofdpa_port_internal_vlan_id_get(struct ofdpa_port *ofdpa_port,
 	unsigned long lock_flags;
 	int i;
 
-	entry = kzalloc_obj(*entry);
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return 0;
 
@@ -2369,7 +2386,7 @@ static void ofdpa_fini(struct rocker *rocker)
 	struct hlist_node *tmp;
 	int bkt;
 
-	timer_delete_sync(&ofdpa->fdb_cleanup_timer);
+	del_timer_sync(&ofdpa->fdb_cleanup_timer);
 	flush_workqueue(rocker->rocker_owq);
 
 	spin_lock_irqsave(&ofdpa->flow_tbl_lock, flags);

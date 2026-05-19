@@ -118,7 +118,7 @@ static int verify_ruleset(struct setid_ruleset *pol)
 			res = -EINVAL;
 
 			/* fix it up */
-			nrule = kmalloc_obj(struct setid_rule);
+			nrule = kmalloc(sizeof(struct setid_rule), GFP_KERNEL);
 			if (!nrule)
 				return -ENOMEM;
 			if (pol->type == UID){
@@ -146,7 +146,7 @@ static ssize_t handle_policy_update(struct file *file,
 	if (len >= KMALLOC_MAX_SIZE)
 		return -EINVAL;
 
-	pol = kmalloc_obj(struct setid_ruleset);
+	pol = kmalloc(sizeof(struct setid_ruleset), GFP_KERNEL);
 	if (!pol)
 		return -ENOMEM;
 	pol->policy_str = NULL;
@@ -175,7 +175,7 @@ static ssize_t handle_policy_update(struct file *file,
 		}
 		*end = '\0';
 
-		rule = kmalloc_obj(struct setid_rule);
+		rule = kmalloc(sizeof(struct setid_rule), GFP_KERNEL);
 		if (!rule) {
 			err = -ENOMEM;
 			goto out_free_buf;
@@ -308,7 +308,7 @@ static const struct file_operations safesetid_gid_file_fops = {
 	.write = safesetid_gid_file_write,
 };
 
-int __init safesetid_init_securityfs(void)
+static int __init safesetid_init_securityfs(void)
 {
 	int ret;
 	struct dentry *policy_dir;
@@ -345,3 +345,4 @@ error:
 	securityfs_remove(policy_dir);
 	return ret;
 }
+fs_initcall(safesetid_init_securityfs);

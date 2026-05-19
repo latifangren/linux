@@ -167,8 +167,7 @@ static int tb_port_clx(struct tb_port *port)
  * @port: USB4 port to check
  * @clx: Mask of CL states to check
  *
- * Return: %true if any of the given CL states is enabled for @port,
- * %false otherwise.
+ * Returns true if any of the given CL states is enabled for @port.
  */
 bool tb_port_clx_is_enabled(struct tb_port *port, unsigned int clx)
 {
@@ -178,8 +177,6 @@ bool tb_port_clx_is_enabled(struct tb_port *port, unsigned int clx)
 /**
  * tb_switch_clx_is_supported() - Is CLx supported on this type of router
  * @sw: The router to check CLx support for
- *
- * Return: %true if CLx is supported, %false otherwise.
  */
 static bool tb_switch_clx_is_supported(const struct tb_switch *sw)
 {
@@ -206,7 +203,7 @@ static bool tb_switch_clx_is_supported(const struct tb_switch *sw)
  * Can be called for any router. Initializes the current CL state by
  * reading it from the hardware.
  *
- * Return: %0 on success, negative errno otherwise.
+ * Returns %0 in case of success and negative errno in case of failure.
  */
 int tb_switch_clx_init(struct tb_switch *sw)
 {
@@ -316,7 +313,7 @@ static bool validate_mask(unsigned int clx)
  * is not inter-domain link. The complete set of conditions is described in CM
  * Guide 1.0 section 8.1.
  *
- * Return: %0 on success, negative errno otherwise.
+ * Returns %0 on success or an error code on failure.
  */
 int tb_switch_clx_enable(struct tb_switch *sw, unsigned int clx)
 {
@@ -393,7 +390,8 @@ int tb_switch_clx_enable(struct tb_switch *sw, unsigned int clx)
  * Disables all CL states of the given router. Can be called on any
  * router and if the states were not enabled already does nothing.
  *
- * Return: CL states that were disabled or negative errno otherwise.
+ * Returns the CL states that were disabled or negative errno in case of
+ * failure.
  */
 int tb_switch_clx_disable(struct tb_switch *sw)
 {

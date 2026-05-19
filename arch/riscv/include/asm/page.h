@@ -12,7 +12,9 @@
 #include <linux/pfn.h>
 #include <linux/const.h>
 
-#include <vdso/page.h>
+#define PAGE_SHIFT	CONFIG_PAGE_SHIFT
+#define PAGE_SIZE	(_AC(1, UL) << PAGE_SHIFT)
+#define PAGE_MASK	(~(PAGE_SIZE - 1))
 
 #define HPAGE_SHIFT		PMD_SHIFT
 #define HPAGE_SIZE		(_AC(1, UL) << HPAGE_SHIFT)
@@ -26,22 +28,21 @@
  */
 #ifdef CONFIG_MMU
 #ifdef CONFIG_64BIT
-#define PAGE_OFFSET_L5		_AC(0xff60000000000000, UL)
+#define PAGE_OFFSET		kernel_map.page_offset
+/*
+ * By default, CONFIG_PAGE_OFFSET value corresponds to SV57 address space so
+ * define the PAGE_OFFSET value for SV48 and SV39.
+ */
 #define PAGE_OFFSET_L4		_AC(0xffffaf8000000000, UL)
 #define PAGE_OFFSET_L3		_AC(0xffffffd600000000, UL)
-#ifdef CONFIG_XIP_KERNEL
-#define PAGE_OFFSET		PAGE_OFFSET_L3
 #else
-#define PAGE_OFFSET		kernel_map.page_offset
-#endif /* CONFIG_XIP_KERNEL */
-#else
-#define PAGE_OFFSET		_AC(0xc0000000, UL)
+#define PAGE_OFFSET		_AC(CONFIG_PAGE_OFFSET, UL)
 #endif /* CONFIG_64BIT */
 #else
 #define PAGE_OFFSET		((unsigned long)phys_ram_base)
 #endif /* CONFIG_MMU */
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #ifdef CONFIG_RISCV_ISA_ZICBOZ
 void clear_page(void *page);
@@ -50,7 +51,9 @@ void clear_page(void *page);
 #endif
 #define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
 
-#define copy_user_page(vto, vfrom, vaddr, topg) copy_page(vto, vfrom)
+#define clear_user_page(pgaddr, vaddr, page)	clear_page(pgaddr)
+#define copy_user_page(vto, vfrom, vaddr, topg) \
+			memcpy((vto), (vfrom), PAGE_SIZE)
 
 /*
  * Use struct definitions to apply C type checking
@@ -97,6 +100,7 @@ typedef struct page *pgtable_t;
 #define ARCH_PFN_OFFSET		(PFN_DOWN((unsigned long)phys_ram_base))
 
 struct kernel_mapping {
+	unsigned long page_offset;
 	unsigned long virt_addr;
 	unsigned long virt_offset;
 	uintptr_t phys_addr;
@@ -110,7 +114,6 @@ struct kernel_mapping {
 	uintptr_t xiprom;
 	uintptr_t xiprom_sz;
 #else
-	unsigned long page_offset;
 	unsigned long va_kernel_pa_offset;
 #endif
 };
@@ -188,6 +191,9 @@ extern phys_addr_t __phys_addr_symbol(unsigned long x);
 #define virt_to_page(vaddr)	(pfn_to_page(virt_to_pfn(vaddr)))
 #define page_to_virt(page)	(pfn_to_virt(page_to_pfn(page)))
 
+#define page_to_phys(page)	(pfn_to_phys(page_to_pfn(page)))
+#define phys_to_page(paddr)	(pfn_to_page(phys_to_pfn(paddr)))
+
 #define sym_to_pfn(x)           __phys_to_pfn(__pa_symbol(x))
 
 unsigned long kaslr_offset(void);
@@ -197,14 +203,14 @@ static __always_inline void *pfn_to_kaddr(unsigned long pfn)
 	return __va(pfn << PAGE_SHIFT);
 }
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #define virt_addr_valid(vaddr)	({						\
 	unsigned long _addr = (unsigned long)vaddr;				\
 	(unsigned long)(_addr) >= PAGE_OFFSET && pfn_valid(virt_to_pfn(_addr));	\
 })
 
-#define VMA_DATA_DEFAULT_FLAGS	VMA_DATA_FLAGS_NON_EXEC
+#define VM_DATA_DEFAULT_FLAGS	VM_DATA_FLAGS_NON_EXEC
 
 #include <asm-generic/memory_model.h>
 #include <asm-generic/getorder.h>

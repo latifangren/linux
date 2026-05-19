@@ -21,9 +21,7 @@ static inline struct cgroup_cls_state *css_cls_state(struct cgroup_subsys_state 
 struct cgroup_cls_state *task_cls_state(struct task_struct *p)
 {
 	return css_cls_state(task_css_check(p, net_cls_cgrp_id,
-					    rcu_read_lock_held() ||
-					    rcu_read_lock_bh_held() ||
-					    rcu_read_lock_trace_held()));
+					    rcu_read_lock_bh_held()));
 }
 EXPORT_SYMBOL_GPL(task_cls_state);
 
@@ -32,7 +30,7 @@ cgrp_css_alloc(struct cgroup_subsys_state *parent_css)
 {
 	struct cgroup_cls_state *cs;
 
-	cs = kzalloc_obj(*cs);
+	cs = kzalloc(sizeof(*cs), GFP_KERNEL);
 	if (!cs)
 		return ERR_PTR(-ENOMEM);
 
@@ -93,7 +91,7 @@ static void update_classid_task(struct task_struct *p, u32 classid)
 	/* Only update the leader task, when many threads in this task,
 	 * so it can avoid the useless traversal.
 	 */
-	if (!thread_group_leader(p))
+	if (p != p->group_leader)
 		return;
 
 	do {

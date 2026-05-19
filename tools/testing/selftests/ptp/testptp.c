@@ -120,7 +120,6 @@ static void usage(char *progname)
 		" -c         query the ptp clock's capabilities\n"
 		" -d name    device to open\n"
 		" -e val     read 'val' external time stamp events\n"
-		" -E val     enable rising (1), falling (2), or both (3) edges\n"
 		" -f val     adjust the ptp clock frequency by 'val' ppb\n"
 		" -F chan    Enable single channel mask and keep device open for debugfs verification.\n"
 		" -g         get the ptp clock time\n"
@@ -179,7 +178,6 @@ int main(int argc, char *argv[])
 	int adjphase = 0;
 	int capabilities = 0;
 	int extts = 0;
-	int edge = 0;
 	int flagtest = 0;
 	int gettime = 0;
 	int index = 0;
@@ -204,7 +202,7 @@ int main(int argc, char *argv[])
 
 	progname = strrchr(argv[0], '/');
 	progname = progname ? 1+progname : argv[0];
-	while (EOF != (c = getopt(argc, argv, "cd:e:E:f:F:ghH:i:k:lL:n:o:p:P:rsSt:T:w:x:Xy:z"))) {
+	while (EOF != (c = getopt(argc, argv, "cd:e:f:F:ghH:i:k:lL:n:o:p:P:rsSt:T:w:x:Xy:z"))) {
 		switch (c) {
 		case 'c':
 			capabilities = 1;
@@ -214,11 +212,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'e':
 			extts = atoi(optarg);
-			break;
-		case 'E':
-			edge = atoi(optarg);
-			edge = (edge & 1 ? PTP_RISING_EDGE : 0) |
-				(edge & 2 ? PTP_FALLING_EDGE : 0);
 			break;
 		case 'f':
 			adjfreq = atoi(optarg);
@@ -451,7 +444,7 @@ int main(int argc, char *argv[])
 		if (!readonly) {
 			memset(&extts_request, 0, sizeof(extts_request));
 			extts_request.index = index;
-			extts_request.flags = PTP_ENABLE_FEATURE | edge;
+			extts_request.flags = PTP_ENABLE_FEATURE;
 			if (ioctl(fd, PTP_EXTTS_REQUEST, &extts_request)) {
 				perror("PTP_EXTTS_REQUEST");
 				extts = 0;

@@ -1,6 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017-2018 Netronome Systems, Inc.
+ *
+ * This software is licensed under the GNU General License Version 2,
+ * June 1991 as shown in the file COPYING in the top-level directory of this
+ * source tree.
+ *
+ * THE COPYRIGHT HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS"
+ * WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING,
+ * BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE. THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE
+ * OF THE PROGRAM IS WITH YOU. SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME
+ * THE COST OF ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
  */
 
 #include <linux/bpf.h>
@@ -15,7 +25,6 @@
 #include <linux/rhashtable.h>
 #include <linux/rtnetlink.h>
 #include <linux/rwsem.h>
-#include <net/netdev_lock.h>
 #include <net/xdp.h>
 
 /* Protects offdevs, members of bpf_offload_netdev and offload members
@@ -72,7 +81,7 @@ static int __bpf_offload_dev_netdev_register(struct bpf_offload_dev *offdev,
 	struct bpf_offload_netdev *ondev;
 	int err;
 
-	ondev = kzalloc_obj(*ondev);
+	ondev = kzalloc(sizeof(*ondev), GFP_KERNEL);
 	if (!ondev)
 		return -ENOMEM;
 
@@ -182,7 +191,7 @@ static int __bpf_prog_dev_bound_init(struct bpf_prog *prog, struct net_device *n
 	struct bpf_prog_offload *offload;
 	int err;
 
-	offload = kzalloc_obj(*offload, GFP_USER);
+	offload = kzalloc(sizeof(*offload), GFP_USER);
 	if (!offload)
 		return -ENOMEM;
 
@@ -435,8 +444,9 @@ static struct ns_common *bpf_prog_offload_info_fill_ns(void *private_data)
 
 	if (aux->offload) {
 		args->info->ifindex = aux->offload->netdev->ifindex;
-		net = maybe_get_net(dev_net(aux->offload->netdev));
-		ns = net ? &net->ns : NULL;
+		net = dev_net(aux->offload->netdev);
+		get_net(net);
+		ns = &net->ns;
 	} else {
 		args->info->ifindex = 0;
 		ns = NULL;
@@ -518,14 +528,13 @@ struct bpf_map *bpf_map_offload_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(-ENOMEM);
 
 	bpf_map_init_from_attr(&offmap->map, attr);
+
 	rtnl_lock();
+	down_write(&bpf_devs_lock);
 	offmap->netdev = __dev_get_by_index(net, attr->map_ifindex);
 	err = bpf_dev_offload_check(offmap->netdev);
 	if (err)
-		goto err_unlock_rtnl;
-
-	netdev_lock_ops(offmap->netdev);
-	down_write(&bpf_devs_lock);
+		goto err_unlock;
 
 	ondev = bpf_offload_find_netdev(offmap->netdev);
 	if (!ondev) {
@@ -539,15 +548,12 @@ struct bpf_map *bpf_map_offload_map_alloc(union bpf_attr *attr)
 
 	list_add_tail(&offmap->offloads, &ondev->maps);
 	up_write(&bpf_devs_lock);
-	netdev_unlock_ops(offmap->netdev);
 	rtnl_unlock();
 
 	return &offmap->map;
 
 err_unlock:
 	up_write(&bpf_devs_lock);
-	netdev_unlock_ops(offmap->netdev);
-err_unlock_rtnl:
 	rtnl_unlock();
 	bpf_map_area_free(offmap);
 	return ERR_PTR(err);
@@ -646,8 +652,9 @@ static struct ns_common *bpf_map_offload_info_fill_ns(void *private_data)
 
 	if (args->offmap->netdev) {
 		args->info->ifindex = args->offmap->netdev->ifindex;
-		net = maybe_get_net(dev_net(args->offmap->netdev));
-		ns = net ? &net->ns : NULL;
+		net = dev_net(args->offmap->netdev);
+		get_net(net);
+		ns = &net->ns;
 	} else {
 		args->info->ifindex = 0;
 		ns = NULL;
@@ -775,7 +782,7 @@ bpf_offload_dev_create(const struct bpf_prog_offload_ops *ops, void *priv)
 {
 	struct bpf_offload_dev *offdev;
 
-	offdev = kzalloc_obj(*offdev);
+	offdev = kzalloc(sizeof(*offdev), GFP_KERNEL);
 	if (!offdev)
 		return ERR_PTR(-ENOMEM);
 

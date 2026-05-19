@@ -134,7 +134,7 @@ static int lrw_next_index(u32 *counter)
 /*
  * We compute the tweak masks twice (both before and after the ECB encryption or
  * decryption) to avoid having to allocate a temporary buffer and/or make
- * multiple calls to the 'ecb(..)' instance, which usually would be slower than
+ * mutliple calls to the 'ecb(..)' instance, which usually would be slower than
  * just doing the lrw_next_index() calls again.
  */
 static int lrw_xor_tweak(struct skcipher_request *req, bool second_pass)
@@ -167,7 +167,7 @@ static int lrw_xor_tweak(struct skcipher_request *req, bool second_pass)
 
 	while (w.nbytes) {
 		unsigned int avail = w.nbytes;
-		const be128 *wsrc;
+		be128 *wsrc;
 		be128 *wdst;
 
 		wsrc = w.src.virt.addr;
@@ -420,7 +420,7 @@ static void __exit lrw_module_exit(void)
 	crypto_unregister_template(&lrw_tmpl);
 }
 
-module_init(lrw_module_init);
+subsys_initcall(lrw_module_init);
 module_exit(lrw_module_exit);
 
 MODULE_LICENSE("GPL");

@@ -146,7 +146,7 @@ static inline int devnode_find(struct video_device *vdev, int from, int to)
 
 struct video_device *video_device_alloc(void)
 {
-	return kzalloc_obj(struct video_device);
+	return kzalloc(sizeof(struct video_device), GFP_KERNEL);
 }
 EXPORT_SYMBOL(video_device_alloc);
 
@@ -229,7 +229,7 @@ static void v4l2_device_release(struct device *cd)
 		v4l2_device_put(v4l2_dev);
 }
 
-static const struct class video_class = {
+static struct class video_class = {
 	.name = VIDEO_NAME,
 	.dev_groups = video_device_groups,
 };
@@ -411,7 +411,7 @@ static int v4l2_mmap(struct file *filp, struct vm_area_struct *vm)
 static int v4l2_open(struct inode *inode, struct file *filp)
 {
 	struct video_device *vdev;
-	int ret;
+	int ret = 0;
 
 	/* Check if the video device is available */
 	mutex_lock(&videodev_lock);
@@ -424,27 +424,16 @@ static int v4l2_open(struct inode *inode, struct file *filp)
 	/* and increase the device refcount */
 	video_get(vdev);
 	mutex_unlock(&videodev_lock);
-
-	if (!video_is_registered(vdev)) {
-		ret = -ENODEV;
-		goto done;
+	if (vdev->fops->open) {
+		if (video_is_registered(vdev))
+			ret = vdev->fops->open(filp);
+		else
+			ret = -ENODEV;
 	}
 
-	ret = vdev->fops->open(filp);
-	if (ret)
-		goto done;
-
-	/* All drivers must use v4l2_fh. */
-	if (WARN_ON(!test_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags))) {
-		vdev->fops->release(filp);
-		ret = -ENODEV;
-	}
-
-done:
 	if (vdev->dev_debug & V4L2_DEV_DEBUG_FOP)
 		dprintk("%s: open (%d)\n",
 			video_device_node_name(vdev), ret);
-
 	/* decrease the refcount in case of an error */
 	if (ret)
 		video_put(vdev);
@@ -455,7 +444,7 @@ done:
 static int v4l2_release(struct inode *inode, struct file *filp)
 {
 	struct video_device *vdev = video_devdata(filp);
-	int ret;
+	int ret = 0;
 
 	/*
 	 * We need to serialize the release() with queueing new requests.
@@ -463,12 +452,14 @@ static int v4l2_release(struct inode *inode, struct file *filp)
 	 * operation, and that should not be mixed with queueing a new
 	 * request at the same time.
 	 */
-	if (v4l2_device_supports_requests(vdev->v4l2_dev)) {
-		mutex_lock(&vdev->v4l2_dev->mdev->req_queue_mutex);
-		ret = vdev->fops->release(filp);
-		mutex_unlock(&vdev->v4l2_dev->mdev->req_queue_mutex);
-	} else {
-		ret = vdev->fops->release(filp);
+	if (vdev->fops->release) {
+		if (v4l2_device_supports_requests(vdev->v4l2_dev)) {
+			mutex_lock(&vdev->v4l2_dev->mdev->req_queue_mutex);
+			ret = vdev->fops->release(filp);
+			mutex_unlock(&vdev->v4l2_dev->mdev->req_queue_mutex);
+		} else {
+			ret = vdev->fops->release(filp);
+		}
 	}
 
 	if (vdev->dev_debug & V4L2_DEV_DEBUG_FOP)
@@ -581,13 +572,13 @@ static void determine_valid_ioctls(struct video_device *vdev)
 	   and that can't be tested here. If the bit for these control ioctls
 	   is set, then the ioctl is valid. But if it is 0, then it can still
 	   be valid if the filehandle passed the control handler. */
-	if (vdev->ctrl_handler || ops->vidioc_query_ext_ctrl)
+	if (vdev->ctrl_handler || ops->vidioc_queryctrl)
 		__set_bit(_IOC_NR(VIDIOC_QUERYCTRL), valid_ioctls);
 	if (vdev->ctrl_handler || ops->vidioc_query_ext_ctrl)
 		__set_bit(_IOC_NR(VIDIOC_QUERY_EXT_CTRL), valid_ioctls);
-	if (vdev->ctrl_handler || ops->vidioc_g_ext_ctrls)
+	if (vdev->ctrl_handler || ops->vidioc_g_ctrl || ops->vidioc_g_ext_ctrls)
 		__set_bit(_IOC_NR(VIDIOC_G_CTRL), valid_ioctls);
-	if (vdev->ctrl_handler || ops->vidioc_s_ext_ctrls)
+	if (vdev->ctrl_handler || ops->vidioc_s_ctrl || ops->vidioc_s_ext_ctrls)
 		__set_bit(_IOC_NR(VIDIOC_S_CTRL), valid_ioctls);
 	if (vdev->ctrl_handler || ops->vidioc_g_ext_ctrls)
 		__set_bit(_IOC_NR(VIDIOC_G_EXT_CTRLS), valid_ioctls);
@@ -931,9 +922,6 @@ int __video_register_device(struct video_device *vdev,
 	/* the device_caps field MUST be set for all but subdevs */
 	if (WARN_ON(type != VFL_TYPE_SUBDEV && !vdev->device_caps))
 		return -EINVAL;
-	/* the open and release file operations are mandatory */
-	if (WARN_ON(!vdev->fops || !vdev->fops->open || !vdev->fops->release))
-		return -EINVAL;
 
 	/* v4l2_fh support */
 	spin_lock_init(&vdev->fh_lock);
@@ -1126,7 +1114,8 @@ void video_unregister_device(struct video_device *vdev)
 	 */
 	clear_bit(V4L2_FL_REGISTERED, &vdev->flags);
 	mutex_unlock(&videodev_lock);
-	v4l2_event_wake_all(vdev);
+	if (test_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags))
+		v4l2_event_wake_all(vdev);
 	device_unregister(&vdev->dev);
 }
 EXPORT_SYMBOL(video_unregister_device);

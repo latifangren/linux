@@ -93,7 +93,7 @@ struct clk *tegra_clk_register_pll_out(const char *name,
 	struct clk *clk;
 	struct clk_init_data init;
 
-	pll_out = kzalloc_obj(*pll_out);
+	pll_out = kzalloc(sizeof(*pll_out), GFP_KERNEL);
 	if (!pll_out)
 		return ERR_PTR(-ENOMEM);
 

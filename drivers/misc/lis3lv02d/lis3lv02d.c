@@ -12,9 +12,9 @@
 #include <linux/kernel.h>
 #include <linux/sched/signal.h>
 #include <linux/dmi.h>
-#include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/types.h>
+#include <linux/platform_device.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/delay.h>
@@ -230,7 +230,7 @@ static int lis3lv02d_get_pwron_wait(struct lis3lv02d *lis3)
 			return 0;
 		}
 
-		dev_err(&lis3->fdev->dev, "Error unknown odrs-index: %d\n", odr_idx);
+		dev_err(&lis3->pdev->dev, "Error unknown odrs-index: %d\n", odr_idx);
 		return -ENXIO;
 	}
 
@@ -630,7 +630,10 @@ static ssize_t lis3lv02d_misc_read(struct file *file, char __user *buf,
 		schedule();
 	}
 
-	byte_data = min(data, 255);
+	if (data < 255)
+		byte_data = data;
+	else
+		byte_data = 255;
 
 	/* make sure we are not going into copy_to_user() with
 	 * TASK_INTERRUPTIBLE state */
@@ -691,7 +694,7 @@ int lis3lv02d_joystick_enable(struct lis3lv02d *lis3)
 	input_dev->phys       = DRIVER_NAME "/input0";
 	input_dev->id.bustype = BUS_HOST;
 	input_dev->id.vendor  = 0;
-	input_dev->dev.parent = &lis3->fdev->dev;
+	input_dev->dev.parent = &lis3->pdev->dev;
 
 	input_dev->open = lis3lv02d_joystick_open;
 	input_dev->close = lis3lv02d_joystick_close;
@@ -852,27 +855,32 @@ static DEVICE_ATTR(position, S_IRUGO, lis3lv02d_position_show, NULL);
 static DEVICE_ATTR(rate, S_IRUGO | S_IWUSR, lis3lv02d_rate_show,
 					    lis3lv02d_rate_set);
 
-static struct attribute *lis3lv02d_attrs[] = {
+static struct attribute *lis3lv02d_attributes[] = {
 	&dev_attr_selftest.attr,
 	&dev_attr_position.attr,
 	&dev_attr_rate.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(lis3lv02d);
+
+static const struct attribute_group lis3lv02d_attribute_group = {
+	.attrs = lis3lv02d_attributes
+};
+
 
 static int lis3lv02d_add_fs(struct lis3lv02d *lis3)
 {
-	lis3->fdev = faux_device_create_with_groups(DRIVER_NAME, NULL, NULL, lis3lv02d_groups);
-	if (!lis3->fdev)
-		return -ENODEV;
+	lis3->pdev = platform_device_register_simple(DRIVER_NAME, -1, NULL, 0);
+	if (IS_ERR(lis3->pdev))
+		return PTR_ERR(lis3->pdev);
 
-	faux_device_set_drvdata(lis3->fdev, lis3);
-	return 0;
+	platform_set_drvdata(lis3->pdev, lis3);
+	return sysfs_create_group(&lis3->pdev->dev.kobj, &lis3lv02d_attribute_group);
 }
 
 void lis3lv02d_remove_fs(struct lis3lv02d *lis3)
 {
-	faux_device_destroy(lis3->fdev);
+	sysfs_remove_group(&lis3->pdev->dev.kobj, &lis3lv02d_attribute_group);
+	platform_device_unregister(lis3->pdev);
 	if (lis3->pm_dev) {
 		/* Barrier after the sysfs remove */
 		pm_runtime_barrier(lis3->pm_dev);
@@ -952,7 +960,7 @@ int lis3lv02d_init_dt(struct lis3lv02d *lis3)
 	if (!lis3->of_node)
 		return 0;
 
-	pdata = kzalloc_obj(*pdata);
+	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return -ENOMEM;
 
@@ -1230,12 +1238,10 @@ int lis3lv02d_init_device(struct lis3lv02d *lis3)
 	else
 		thread_fn = NULL;
 
-	if (thread_fn)
-		irq_flags |= IRQF_ONESHOT;
-
 	err = request_threaded_irq(lis3->irq, lis302dl_interrupt,
 				thread_fn,
-				irq_flags | IRQF_TRIGGER_RISING,
+				IRQF_TRIGGER_RISING | IRQF_ONESHOT |
+				irq_flags,
 				DRIVER_NAME, lis3);
 
 	if (err < 0) {

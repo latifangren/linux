@@ -7,7 +7,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/export.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
@@ -92,7 +91,7 @@ static ssize_t show_##name(struct device *dev,				\
 	int ret;							\
 									\
 	device_lock(dev);						\
-	ret = sysfs_emit(buf, "%u\n", scmdev->attrs.name);		\
+	ret = sprintf(buf, "%u\n", scmdev->attrs.name);			\
 	device_unlock(dev);						\
 									\
 	return ret;							\
@@ -207,7 +206,7 @@ static int scm_add(struct chsc_scm_info *scm_info, size_t num)
 			put_device(&scmdev->dev);
 			continue;
 		}
-		scmdev = kzalloc_obj(*scmdev);
+		scmdev = kzalloc(sizeof(*scmdev), GFP_KERNEL);
 		if (!scmdev)
 			return -ENODEV;
 		scmdev_setup(scmdev, sale, scm_info->is, scm_info->mbc);

@@ -30,25 +30,25 @@
 
 int fw_iso_buffer_alloc(struct fw_iso_buffer *buffer, int page_count)
 {
-	struct page **page_array __free(kfree) = kzalloc_objs(page_array[0],
-							      page_count);
+	int i;
 
-	if (!page_array)
+	buffer->page_count = 0;
+	buffer->page_count_mapped = 0;
+	buffer->pages = kmalloc_array(page_count, sizeof(buffer->pages[0]),
+				      GFP_KERNEL);
+	if (buffer->pages == NULL)
 		return -ENOMEM;
 
-	// Retrieve noncontiguous pages. The descriptors for 1394 OHCI isochronous DMA contexts
-	// have a set of address and length per each, while the reason to use pages is the
-	// convenience to map them into virtual address space of user process.
-	unsigned long nr_populated = alloc_pages_bulk(GFP_KERNEL | GFP_DMA32 | __GFP_ZERO,
-						      page_count, page_array);
-	if (nr_populated != page_count) {
-		// Assuming the above call fills page_array sequentially from the beginning.
-		release_pages(page_array, nr_populated);
+	for (i = 0; i < page_count; i++) {
+		buffer->pages[i] = alloc_page(GFP_KERNEL | GFP_DMA32 | __GFP_ZERO);
+		if (buffer->pages[i] == NULL)
+			break;
+	}
+	buffer->page_count = i;
+	if (i < page_count) {
+		fw_iso_buffer_destroy(buffer, NULL);
 		return -ENOMEM;
 	}
-
-	buffer->page_count = page_count;
-	buffer->pages = no_free_ptr(page_array);
 
 	return 0;
 }
@@ -56,32 +56,22 @@ int fw_iso_buffer_alloc(struct fw_iso_buffer *buffer, int page_count)
 int fw_iso_buffer_map_dma(struct fw_iso_buffer *buffer, struct fw_card *card,
 			  enum dma_data_direction direction)
 {
-	dma_addr_t *dma_addrs __free(kfree) = kzalloc_objs(dma_addrs[0],
-							   buffer->page_count);
+	dma_addr_t address;
 	int i;
 
-	if (!dma_addrs)
-		return -ENOMEM;
+	buffer->direction = direction;
 
-	// Retrieve DMA mapping addresses for the pages. They are not contiguous. Maintain the cache
-	// coherency for the pages by hand.
 	for (i = 0; i < buffer->page_count; i++) {
-		// The dma_map_phys() with a physical address per page is available here, instead.
-		dma_addr_t dma_addr = dma_map_page(card->device, buffer->pages[i], 0, PAGE_SIZE,
-						   direction);
-		if (dma_mapping_error(card->device, dma_addr))
+		address = dma_map_page(card->device, buffer->pages[i],
+				       0, PAGE_SIZE, direction);
+		if (dma_mapping_error(card->device, address))
 			break;
 
-		dma_addrs[i] = dma_addr;
+		set_page_private(buffer->pages[i], address);
 	}
-	if (i < buffer->page_count) {
-		while (i-- > 0)
-			dma_unmap_page(card->device, dma_addrs[i], PAGE_SIZE, buffer->direction);
+	buffer->page_count_mapped = i;
+	if (i < buffer->page_count)
 		return -ENOMEM;
-	}
-
-	buffer->direction = direction;
-	buffer->dma_addrs = no_free_ptr(dma_addrs);
 
 	return 0;
 }
@@ -106,31 +96,34 @@ EXPORT_SYMBOL(fw_iso_buffer_init);
 void fw_iso_buffer_destroy(struct fw_iso_buffer *buffer,
 			   struct fw_card *card)
 {
-	if (buffer->dma_addrs) {
-		for (int i = 0; i < buffer->page_count; ++i) {
-			dma_addr_t dma_addr = buffer->dma_addrs[i];
-			dma_unmap_page(card->device, dma_addr, PAGE_SIZE, buffer->direction);
-		}
-		kfree(buffer->dma_addrs);
-		buffer->dma_addrs = NULL;
-	}
+	int i;
+	dma_addr_t address;
 
-	if (buffer->pages) {
-		release_pages(buffer->pages, buffer->page_count);
-		kfree(buffer->pages);
-		buffer->pages = NULL;
+	for (i = 0; i < buffer->page_count_mapped; i++) {
+		address = page_private(buffer->pages[i]);
+		dma_unmap_page(card->device, address,
+			       PAGE_SIZE, buffer->direction);
 	}
+	for (i = 0; i < buffer->page_count; i++)
+		__free_page(buffer->pages[i]);
 
+	kfree(buffer->pages);
+	buffer->pages = NULL;
 	buffer->page_count = 0;
+	buffer->page_count_mapped = 0;
 }
 EXPORT_SYMBOL(fw_iso_buffer_destroy);
 
 /* Convert DMA address to offset into virtually contiguous buffer. */
 size_t fw_iso_buffer_lookup(struct fw_iso_buffer *buffer, dma_addr_t completed)
 {
-	for (int i = 0; i < buffer->page_count; i++) {
-		dma_addr_t dma_addr = buffer->dma_addrs[i];
-		ssize_t offset = (ssize_t)completed - (ssize_t)dma_addr;
+	size_t i;
+	dma_addr_t address;
+	ssize_t offset;
+
+	for (i = 0; i < buffer->page_count; i++) {
+		address = page_private(buffer->pages[i]);
+		offset = (ssize_t)completed - (ssize_t)address;
 		if (offset > 0 && offset <= PAGE_SIZE)
 			return (i << PAGE_SHIFT) + offset;
 	}
@@ -138,14 +131,14 @@ size_t fw_iso_buffer_lookup(struct fw_iso_buffer *buffer, dma_addr_t completed)
 	return 0;
 }
 
-struct fw_iso_context *__fw_iso_context_create(struct fw_card *card, int type, int channel,
-		int speed, size_t header_size, size_t header_storage_size,
-		union fw_iso_callback callback, void *callback_data)
+struct fw_iso_context *fw_iso_context_create(struct fw_card *card,
+		int type, int channel, int speed, size_t header_size,
+		fw_iso_callback_t callback, void *callback_data)
 {
 	struct fw_iso_context *ctx;
 
-	ctx = card->driver->allocate_iso_context(card, type, channel, header_size,
-						 header_storage_size);
+	ctx = card->driver->allocate_iso_context(card,
+						 type, channel, header_size);
 	if (IS_ERR(ctx))
 		return ctx;
 
@@ -153,10 +146,8 @@ struct fw_iso_context *__fw_iso_context_create(struct fw_card *card, int type, i
 	ctx->type = type;
 	ctx->channel = channel;
 	ctx->speed = speed;
-	ctx->flags = 0;
 	ctx->header_size = header_size;
-	ctx->header_storage_size = header_storage_size;
-	ctx->callback = callback;
+	ctx->callback.sc = callback;
 	ctx->callback_data = callback_data;
 
 	trace_isoc_outbound_allocate(ctx, channel, speed);
@@ -165,7 +156,7 @@ struct fw_iso_context *__fw_iso_context_create(struct fw_card *card, int type, i
 
 	return ctx;
 }
-EXPORT_SYMBOL(__fw_iso_context_create);
+EXPORT_SYMBOL(fw_iso_context_create);
 
 void fw_iso_context_destroy(struct fw_iso_context *ctx)
 {

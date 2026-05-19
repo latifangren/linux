@@ -53,20 +53,23 @@
 	};
 };
 
-&gpio4 {
-	gpio-line-names =
-		"", "", "", "",
-		"", "", "", "",
-		"", "", "", "",
-		"", "", "PWGIN", "",
-		"", "", "", "",
-		"", "", "", "",
-		"", "", "", "",
-		"", "", "", "";
-};
+&ldb {
+	fsl,dual-channel;
+	status = "okay";
 
-&hdmi {
-	ddc-i2c-bus = <&mux2_i2c1>;
+	lvds0: lvds-channel@0 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		status = "okay";
+
+		port@4 {
+			reg = <4>;
+
+			lvds0_out: endpoint {
+				remote-endpoint = <&stdp4028_in>;
+			};
+		};
+	};
 };
 
 &i2c2 {
@@ -126,23 +129,8 @@
 	};
 };
 
-&ldb {
-	fsl,dual-channel;
-	status = "okay";
-
-	lvds0: lvds-channel@0 {
-		fsl,data-mapping = "spwg";
-		fsl,data-width = <24>;
-		status = "okay";
-
-		port@4 {
-			reg = <4>;
-
-			lvds0_out: endpoint {
-				remote-endpoint = <&stdp4028_in>;
-			};
-		};
-	};
+&hdmi {
+	ddc-i2c-bus = <&mux2_i2c1>;
 };
 
 &mux1_i2c1 {
@@ -298,12 +286,7 @@
 	port@4 {
 		reg = <4>;
 		label = "cpu";
-		phy-mode = "gmii";
 		ethernet = <&switch_nic>;
 		phy-handle = <&switchphy4>;
 	};
-};
-
-&usdhc4 {
-	status = "disabled";
 };

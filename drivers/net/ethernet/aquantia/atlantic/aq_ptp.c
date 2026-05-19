@@ -51,7 +51,7 @@ struct ptp_tx_timeout {
 
 struct aq_ptp_s {
 	struct aq_nic_s *aq_nic;
-	struct kernel_hwtstamp_config hwtstamp_config;
+	struct hwtstamp_config hwtstamp_config;
 	spinlock_t ptp_lock;
 	spinlock_t ptp_ring_lock;
 	struct ptp_clock *ptp_clock;
@@ -567,7 +567,7 @@ static void aq_ptp_rx_hwtstamp(struct aq_ptp_s *aq_ptp, struct skb_shared_hwtsta
 }
 
 void aq_ptp_hwtstamp_config_get(struct aq_ptp_s *aq_ptp,
-				struct kernel_hwtstamp_config *config)
+				struct hwtstamp_config *config)
 {
 	*config = aq_ptp->hwtstamp_config;
 }
@@ -588,7 +588,7 @@ static void aq_ptp_prepare_filters(struct aq_ptp_s *aq_ptp)
 }
 
 int aq_ptp_hwtstamp_config_set(struct aq_ptp_s *aq_ptp,
-			       struct kernel_hwtstamp_config *config)
+			       struct hwtstamp_config *config)
 {
 	struct aq_nic_s *aq_nic = aq_ptp->aq_nic;
 	const struct aq_hw_ops *hw_ops;
@@ -1130,7 +1130,8 @@ static void aq_ptp_gpio_init(struct ptp_clock_info *info,
 	if (!info->n_pins)
 		return;
 
-	info->pin_config = kzalloc_objs(struct ptp_pin_desc, info->n_pins);
+	info->pin_config = kcalloc(info->n_pins, sizeof(struct ptp_pin_desc),
+				   GFP_KERNEL);
 
 	if (!info->pin_config)
 		return;
@@ -1182,7 +1183,7 @@ int aq_ptp_init(struct aq_nic_s *aq_nic, unsigned int idx_vec)
 
 	aq_ptp_offset_init(&mbox.info.ptp_offset);
 
-	aq_ptp = kzalloc_obj(*aq_ptp);
+	aq_ptp = kzalloc(sizeof(*aq_ptp), GFP_KERNEL);
 	if (!aq_ptp) {
 		err = -ENOMEM;
 		goto err_exit;

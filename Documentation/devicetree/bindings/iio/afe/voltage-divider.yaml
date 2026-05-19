@@ -29,6 +29,7 @@ description: |
             |
            GND
 
+
 properties:
   compatible:
     const: voltage-divider

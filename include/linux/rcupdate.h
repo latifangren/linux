@@ -24,22 +24,12 @@
 #include <linux/compiler.h>
 #include <linux/atomic.h>
 #include <linux/irqflags.h>
-#include <linux/sched.h>
+#include <linux/preempt.h>
 #include <linux/bottom_half.h>
 #include <linux/lockdep.h>
 #include <linux/cleanup.h>
 #include <asm/processor.h>
 #include <linux/context_tracking_irq.h>
-
-token_context_lock(RCU, __reentrant_ctx_lock);
-token_context_lock_instance(RCU, RCU_SCHED);
-token_context_lock_instance(RCU, RCU_BH);
-
-/*
- * A convenience macro that can be used for RCU-protected globals or struct
- * members; adds type qualifier __rcu, and also enforces __guarded_by(RCU).
- */
-#define __rcu_guarded __rcu __guarded_by(RCU)
 
 #define ULONG_CMP_GE(a, b)	(ULONG_MAX / 2 >= (a) - (b))
 #define ULONG_CMP_LT(a, b)	(ULONG_MAX / 2 < (a) - (b))
@@ -131,6 +121,12 @@ void rcu_init(void);
 extern int rcu_scheduler_active;
 void rcu_sched_clock_irq(int user);
 
+#ifdef CONFIG_TASKS_RCU_GENERIC
+void rcu_init_tasks_generic(void);
+#else
+static inline void rcu_init_tasks_generic(void) { }
+#endif
+
 #ifdef CONFIG_RCU_STALL_COMMON
 void rcu_sysrq_start(void);
 void rcu_sysrq_end(void);
@@ -139,7 +135,7 @@ static inline void rcu_sysrq_start(void) { }
 static inline void rcu_sysrq_end(void) { }
 #endif /* #else #ifdef CONFIG_RCU_STALL_COMMON */
 
-#if defined(CONFIG_NO_HZ_FULL) && (!defined(CONFIG_GENERIC_ENTRY) || !defined(CONFIG_VIRT_XFER_TO_GUEST_WORK))
+#if defined(CONFIG_NO_HZ_FULL) && (!defined(CONFIG_GENERIC_ENTRY) || !defined(CONFIG_KVM_XFER_TO_GUEST_WORK))
 void rcu_irq_work_resched(void);
 #else
 static __always_inline void rcu_irq_work_resched(void) { }
@@ -185,7 +181,36 @@ void rcu_tasks_torture_stats_print(char *tt, char *tf);
 # define synchronize_rcu_tasks synchronize_rcu
 # endif
 
-#define rcu_tasks_qs(t, preempt) rcu_tasks_classic_qs((t), (preempt))
+# ifdef CONFIG_TASKS_TRACE_RCU
+// Bits for ->trc_reader_special.b.need_qs field.
+#define TRC_NEED_QS		0x1  // Task needs a quiescent state.
+#define TRC_NEED_QS_CHECKED	0x2  // Task has been checked for needing quiescent state.
+
+u8 rcu_trc_cmpxchg_need_qs(struct task_struct *t, u8 old, u8 new);
+void rcu_tasks_trace_qs_blkd(struct task_struct *t);
+
+# define rcu_tasks_trace_qs(t)							\
+	do {									\
+		int ___rttq_nesting = READ_ONCE((t)->trc_reader_nesting);	\
+										\
+		if (unlikely(READ_ONCE((t)->trc_reader_special.b.need_qs) == TRC_NEED_QS) &&	\
+		    likely(!___rttq_nesting)) {					\
+			rcu_trc_cmpxchg_need_qs((t), TRC_NEED_QS, TRC_NEED_QS_CHECKED);	\
+		} else if (___rttq_nesting && ___rttq_nesting != INT_MIN &&	\
+			   !READ_ONCE((t)->trc_reader_special.b.blocked)) {	\
+			rcu_tasks_trace_qs_blkd(t);				\
+		}								\
+	} while (0)
+void rcu_tasks_trace_torture_stats_print(char *tt, char *tf);
+# else
+# define rcu_tasks_trace_qs(t) do { } while (0)
+# endif
+
+#define rcu_tasks_qs(t, preempt)					\
+do {									\
+	rcu_tasks_classic_qs((t), (preempt));				\
+	rcu_tasks_trace_qs(t);						\
+} while (0)
 
 # ifdef CONFIG_TASKS_RUDE_RCU
 void synchronize_rcu_tasks_rude(void);
@@ -204,6 +229,18 @@ void exit_tasks_rcu_finish(void);
 static inline void exit_tasks_rcu_start(void) { }
 static inline void exit_tasks_rcu_finish(void) { }
 #endif /* #else #ifdef CONFIG_TASKS_RCU_GENERIC */
+
+/**
+ * rcu_trace_implies_rcu_gp - does an RCU Tasks Trace grace period imply an RCU grace period?
+ *
+ * As an accident of implementation, an RCU Tasks Trace grace period also
+ * acts as an RCU grace period.  However, this could change at any time.
+ * Code relying on this accident must call this function to verify that
+ * this accident is still happening.
+ *
+ * You have been warned!
+ */
+static inline bool rcu_trace_implies_rcu_gp(void) { return true; }
 
 /**
  * cond_resched_tasks_rcu_qs - Report potential quiescent states to RCU
@@ -394,8 +431,7 @@ static inline void rcu_preempt_sleep_check(void) { }
 
 // See RCU_LOCKDEP_WARN() for an explanation of the double call to
 // debug_lockdep_rcu_enabled().
-static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx_lock_RCU *ctx)
-	__assumes_shared_ctx_lock(RCU) __assumes_shared_ctx_lock(ctx)
+static inline bool lockdep_assert_rcu_helper(bool c)
 {
 	return debug_lockdep_rcu_enabled() &&
 	       (c || !rcu_is_watching() || !rcu_lockdep_current_cpu_online()) &&
@@ -408,7 +444,7 @@ static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx
  * Splats if lockdep is enabled and there is no rcu_read_lock() in effect.
  */
 #define lockdep_assert_in_rcu_read_lock() \
-	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_lock_map), RCU))
+	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_lock_map)))
 
 /**
  * lockdep_assert_in_rcu_read_lock_bh - WARN if not protected by rcu_read_lock_bh()
@@ -418,7 +454,7 @@ static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx
  * actual rcu_read_lock_bh() is required.
  */
 #define lockdep_assert_in_rcu_read_lock_bh() \
-	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_bh_lock_map), RCU_BH))
+	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_bh_lock_map)))
 
 /**
  * lockdep_assert_in_rcu_read_lock_sched - WARN if not protected by rcu_read_lock_sched()
@@ -428,7 +464,7 @@ static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx
  * instead an actual rcu_read_lock_sched() is required.
  */
 #define lockdep_assert_in_rcu_read_lock_sched() \
-	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_sched_lock_map), RCU_SCHED))
+	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_sched_lock_map)))
 
 /**
  * lockdep_assert_in_rcu_reader - WARN if not within some type of RCU reader
@@ -446,17 +482,17 @@ static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx
 	WARN_ON_ONCE(lockdep_assert_rcu_helper(!lock_is_held(&rcu_lock_map) &&			\
 					       !lock_is_held(&rcu_bh_lock_map) &&		\
 					       !lock_is_held(&rcu_sched_lock_map) &&		\
-					       preemptible(), RCU))
+					       preemptible()))
 
 #else /* #ifdef CONFIG_PROVE_RCU */
 
 #define RCU_LOCKDEP_WARN(c, s) do { } while (0 && (c))
 #define rcu_sleep_check() do { } while (0)
 
-#define lockdep_assert_in_rcu_read_lock() __assume_shared_ctx_lock(RCU)
-#define lockdep_assert_in_rcu_read_lock_bh() __assume_shared_ctx_lock(RCU_BH)
-#define lockdep_assert_in_rcu_read_lock_sched() __assume_shared_ctx_lock(RCU_SCHED)
-#define lockdep_assert_in_rcu_reader() __assume_shared_ctx_lock(RCU)
+#define lockdep_assert_in_rcu_read_lock() do { } while (0)
+#define lockdep_assert_in_rcu_read_lock_bh() do { } while (0)
+#define lockdep_assert_in_rcu_read_lock_sched() do { } while (0)
+#define lockdep_assert_in_rcu_reader() do { } while (0)
 
 #endif /* #else #ifdef CONFIG_PROVE_RCU */
 
@@ -476,11 +512,11 @@ static __always_inline bool lockdep_assert_rcu_helper(bool c, const struct __ctx
 #endif /* #else #ifdef __CHECKER__ */
 
 #define __unrcu_pointer(p, local)					\
-context_unsafe(								\
+({									\
 	typeof(*p) *local = (typeof(*p) *__force)(p);			\
 	rcu_check_sparse(p, __rcu);					\
-	((typeof(*p) __force __kernel *)(local))			\
-)
+	((typeof(*p) __force __kernel *)(local)); 			\
+})
 /**
  * unrcu_pointer - mark a pointer as not being RCU protected
  * @p: pointer needing to lose its __rcu property
@@ -556,7 +592,7 @@ context_unsafe(								\
  * other macros that it invokes.
  */
 #define rcu_assign_pointer(p, v)					      \
-context_unsafe(							      \
+do {									      \
 	uintptr_t _r_a_p__v = (uintptr_t)(v);				      \
 	rcu_check_sparse(p, __rcu);					      \
 									      \
@@ -564,7 +600,7 @@ context_unsafe(							      \
 		WRITE_ONCE((p), (typeof(p))(_r_a_p__v));		      \
 	else								      \
 		smp_store_release(&p, RCU_INITIALIZER((typeof(p))_r_a_p__v)); \
-)
+} while (0)
 
 /**
  * rcu_replace_pointer() - replace an RCU pointer, returning its old value
@@ -683,24 +719,6 @@ context_unsafe(							      \
 				(c) || rcu_read_lock_sched_held(), \
 				__rcu)
 
-/**
- * rcu_dereference_all_check() - rcu_dereference_all with debug checking
- * @p: The pointer to read, prior to dereferencing
- * @c: The conditions under which the dereference will take place
- *
- * This is similar to rcu_dereference_check(), but allows protection
- * by all forms of vanilla RCU readers, including preemption disabled,
- * bh-disabled, and interrupt-disabled regions of code.  Note that "vanilla
- * RCU" excludes SRCU and the various Tasks RCU flavors.  Please note
- * that this macro should not be backported to any Linux-kernel version
- * preceding v5.0 due to changes in synchronize_rcu() semantics prior
- * to that version.
- */
-#define rcu_dereference_all_check(p, c) \
-	__rcu_dereference_check((p), __UNIQUE_ID(rcu), \
-				(c) || rcu_read_lock_any_held(), \
-				__rcu)
-
 /*
  * The tracing infrastructure traces RCU (we want that), but unfortunately
  * some of the RCU checks causes tracing to lock up the system.
@@ -756,14 +774,6 @@ context_unsafe(							      \
 #define rcu_dereference_sched(p) rcu_dereference_sched_check(p, 0)
 
 /**
- * rcu_dereference_all() - fetch RCU-all-protected pointer for dereferencing
- * @p: The pointer to read, prior to dereferencing
- *
- * Makes rcu_dereference_check() do the dirty work.
- */
-#define rcu_dereference_all(p) rcu_dereference_all_check(p, 0)
-
-/**
  * rcu_pointer_handoff() - Hand off a pointer from RCU to other mechanism
  * @p: The pointer to hand off
  *
@@ -796,9 +806,11 @@ context_unsafe(							      \
  * sections, invocation of the corresponding RCU callback is deferred
  * until after the all the other CPUs exit their critical sections.
  *
- * Both synchronize_rcu() and call_rcu() also wait for regions of code
- * with preemption disabled, including regions of code with interrupts or
- * softirqs disabled.
+ * In v5.0 and later kernels, synchronize_rcu() and call_rcu() also
+ * wait for regions of code with preemption disabled, including regions of
+ * code with interrupts or softirqs disabled.  In pre-v5.0 kernels, which
+ * define synchronize_sched(), only code enclosed within rcu_read_lock()
+ * and rcu_read_unlock() are guaranteed to be waited for.
  *
  * Note, however, that RCU callbacks are permitted to run concurrently
  * with new RCU read-side critical sections.  One way that this can happen
@@ -831,10 +843,9 @@ context_unsafe(							      \
  * only when acquiring spinlocks that are subject to priority inheritance.
  */
 static __always_inline void rcu_read_lock(void)
-	__acquires_shared(RCU)
 {
 	__rcu_read_lock();
-	__acquire_shared(RCU);
+	__acquire(RCU);
 	rcu_lock_acquire(&rcu_lock_map);
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_lock() used illegally while idle");
@@ -854,20 +865,20 @@ static __always_inline void rcu_read_lock(void)
  * rcu_read_unlock() - marks the end of an RCU read-side critical section.
  *
  * In almost all situations, rcu_read_unlock() is immune from deadlock.
- * This deadlock immunity also extends to the scheduler's runqueue
- * and priority-inheritance spinlocks, courtesy of the quiescent-state
- * deferral that is carried out when rcu_read_unlock() is invoked with
- * interrupts disabled.
+ * In recent kernels that have consolidated synchronize_sched() and
+ * synchronize_rcu_bh() into synchronize_rcu(), this deadlock immunity
+ * also extends to the scheduler's runqueue and priority-inheritance
+ * spinlocks, courtesy of the quiescent-state deferral that is carried
+ * out when rcu_read_unlock() is invoked with interrupts disabled.
  *
  * See rcu_read_lock() for more information.
  */
 static inline void rcu_read_unlock(void)
-	__releases_shared(RCU)
 {
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_unlock() used illegally while idle");
 	rcu_lock_release(&rcu_lock_map); /* Keep acq info for rls diags. */
-	__release_shared(RCU);
+	__release(RCU);
 	__rcu_read_unlock();
 }
 
@@ -886,11 +897,9 @@ static inline void rcu_read_unlock(void)
  * was invoked from some other task.
  */
 static inline void rcu_read_lock_bh(void)
-	__acquires_shared(RCU) __acquires_shared(RCU_BH)
 {
 	local_bh_disable();
-	__acquire_shared(RCU);
-	__acquire_shared(RCU_BH);
+	__acquire(RCU_BH);
 	rcu_lock_acquire(&rcu_bh_lock_map);
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_lock_bh() used illegally while idle");
@@ -902,13 +911,11 @@ static inline void rcu_read_lock_bh(void)
  * See rcu_read_lock_bh() for more information.
  */
 static inline void rcu_read_unlock_bh(void)
-	__releases_shared(RCU) __releases_shared(RCU_BH)
 {
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_unlock_bh() used illegally while idle");
 	rcu_lock_release(&rcu_bh_lock_map);
-	__release_shared(RCU_BH);
-	__release_shared(RCU);
+	__release(RCU_BH);
 	local_bh_enable();
 }
 
@@ -928,11 +935,9 @@ static inline void rcu_read_unlock_bh(void)
  * rcu_read_lock_sched() was invoked from an NMI handler.
  */
 static inline void rcu_read_lock_sched(void)
-	__acquires_shared(RCU) __acquires_shared(RCU_SCHED)
 {
 	preempt_disable();
-	__acquire_shared(RCU);
-	__acquire_shared(RCU_SCHED);
+	__acquire(RCU_SCHED);
 	rcu_lock_acquire(&rcu_sched_lock_map);
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_lock_sched() used illegally while idle");
@@ -940,11 +945,9 @@ static inline void rcu_read_lock_sched(void)
 
 /* Used by lockdep and tracing: cannot be traced, cannot call lockdep. */
 static inline notrace void rcu_read_lock_sched_notrace(void)
-	__acquires_shared(RCU) __acquires_shared(RCU_SCHED)
 {
 	preempt_disable_notrace();
-	__acquire_shared(RCU);
-	__acquire_shared(RCU_SCHED);
+	__acquire(RCU_SCHED);
 }
 
 /**
@@ -953,39 +956,19 @@ static inline notrace void rcu_read_lock_sched_notrace(void)
  * See rcu_read_lock_sched() for more information.
  */
 static inline void rcu_read_unlock_sched(void)
-	__releases_shared(RCU) __releases_shared(RCU_SCHED)
 {
 	RCU_LOCKDEP_WARN(!rcu_is_watching(),
 			 "rcu_read_unlock_sched() used illegally while idle");
 	rcu_lock_release(&rcu_sched_lock_map);
-	__release_shared(RCU_SCHED);
-	__release_shared(RCU);
+	__release(RCU_SCHED);
 	preempt_enable();
 }
 
 /* Used by lockdep and tracing: cannot be traced, cannot call lockdep. */
 static inline notrace void rcu_read_unlock_sched_notrace(void)
-	__releases_shared(RCU) __releases_shared(RCU_SCHED)
 {
-	__release_shared(RCU_SCHED);
-	__release_shared(RCU);
+	__release(RCU_SCHED);
 	preempt_enable_notrace();
-}
-
-static __always_inline void rcu_read_lock_dont_migrate(void)
-	__acquires_shared(RCU)
-{
-	if (IS_ENABLED(CONFIG_PREEMPT_RCU))
-		migrate_disable();
-	rcu_read_lock();
-}
-
-static inline void rcu_read_unlock_migrate(void)
-	__releases_shared(RCU)
-{
-	rcu_read_unlock();
-	if (IS_ENABLED(CONFIG_PREEMPT_RCU))
-		migrate_enable();
 }
 
 /**
@@ -1027,10 +1010,10 @@ static inline void rcu_read_unlock_migrate(void)
  * ordering guarantees for either the CPU or the compiler.
  */
 #define RCU_INIT_POINTER(p, v) \
-	context_unsafe( \
+	do { \
 		rcu_check_sparse(p, __rcu); \
 		WRITE_ONCE(p, RCU_INITIALIZER(v)); \
-	)
+	} while (0)
 
 /**
  * RCU_POINTER_INITIALIZER() - statically initialize an RCU protected pointer
@@ -1042,6 +1025,12 @@ static inline void rcu_read_unlock_migrate(void)
 #define RCU_POINTER_INITIALIZER(p, v) \
 		.p = RCU_INITIALIZER(v)
 
+/*
+ * Does the specified offset indicate that the corresponding rcu_head
+ * structure can be handled by kvfree_rcu()?
+ */
+#define __is_kvfree_rcu_offset(offset) ((offset) < 4096)
+
 /**
  * kfree_rcu() - kfree an object after a grace period.
  * @ptr: pointer to kfree for double-argument invocations.
@@ -1052,18 +1041,18 @@ static inline void rcu_read_unlock_migrate(void)
  * when they are used in a kernel module, that module must invoke the
  * high-latency rcu_barrier() function at module-unload time.
  *
- * The kfree_rcu() function handles this issue. In order to have a universal
- * callback function handling different offsets of rcu_head, the callback needs
- * to determine the starting address of the freed object, which can be a large
- * kmalloc or vmalloc allocation. To allow simply aligning the pointer down to
- * page boundary for those, only offsets up to 4095 bytes can be accommodated.
+ * The kfree_rcu() function handles this issue.  Rather than encoding a
+ * function address in the embedded rcu_head structure, kfree_rcu() instead
+ * encodes the offset of the rcu_head structure within the base structure.
+ * Because the functions are not allowed in the low-order 4096 bytes of
+ * kernel virtual memory, offsets up to 4095 bytes can be accommodated.
  * If the offset is larger than 4095 bytes, a compile-time error will
  * be generated in kvfree_rcu_arg_2(). If this error is triggered, you can
  * either fall back to use of call_rcu() or rearrange the structure to
  * position the rcu_head structure into the first 4096 bytes.
  *
- * The object to be freed can be allocated either by kmalloc(),
- * kmalloc_nolock(), or kmem_cache_alloc().
+ * The object to be freed can be allocated either by kmalloc() or
+ * kmem_cache_alloc().
  *
  * Note that the allowable offset might decrease in the future.
  *
@@ -1093,23 +1082,14 @@ static inline void rcu_read_unlock_migrate(void)
 #define kfree_rcu_mightsleep(ptr) kvfree_rcu_arg_1(ptr)
 #define kvfree_rcu_mightsleep(ptr) kvfree_rcu_arg_1(ptr)
 
-/*
- * In mm/slab_common.c, no suitable header to include here.
- */
-void kvfree_call_rcu(struct rcu_head *head, void *ptr);
-
-/*
- * The BUILD_BUG_ON() makes sure the rcu_head offset can be handled. See the
- * comment of kfree_rcu() for details.
- */
 #define kvfree_rcu_arg_2(ptr, rhf)					\
 do {									\
 	typeof (ptr) ___p = (ptr);					\
 									\
-	if (___p) {							\
-		BUILD_BUG_ON(offsetof(typeof(*(ptr)), rhf) >= 4096);	\
-		kvfree_call_rcu(&((___p)->rhf), (void *) (___p));	\
-	}								\
+	if (___p) {									\
+		BUILD_BUG_ON(!__is_kvfree_rcu_offset(offsetof(typeof(*(ptr)), rhf)));	\
+		kvfree_call_rcu(&((___p)->rhf), (void *) (___p));			\
+	}										\
 } while (0)
 
 #define kvfree_rcu_arg_1(ptr)					\
@@ -1178,7 +1158,18 @@ rcu_head_after_call_rcu(struct rcu_head *rhp, rcu_callback_t f)
 extern int rcu_expedited;
 extern int rcu_normal;
 
-DEFINE_LOCK_GUARD_0(rcu, rcu_read_lock(), rcu_read_unlock())
-DECLARE_LOCK_GUARD_0_ATTRS(rcu, __acquires_shared(RCU), __releases_shared(RCU))
+DEFINE_LOCK_GUARD_0(rcu,
+	do {
+		rcu_read_lock();
+		/*
+		 * sparse doesn't call the cleanup function,
+		 * so just release immediately and don't track
+		 * the context. We don't need to anyway, since
+		 * the whole point of the guard is to not need
+		 * the explicit unlock.
+		 */
+		__release(RCU);
+	} while (0),
+	rcu_read_unlock())
 
 #endif /* __LINUX_RCUPDATE_H */

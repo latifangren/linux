@@ -40,7 +40,6 @@
 #include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-#include <net/gro.h>
 
 #include "gemini.h"
 
@@ -554,7 +553,7 @@ static int gmac_setup_txqs(struct net_device *netdev)
 
 	rwptr_reg = port->dma_base + GMAC_SW_TX_QUEUE0_PTR_REG;
 
-	skb_tab = kzalloc_objs(*skb_tab, len);
+	skb_tab = kcalloc(len, sizeof(*skb_tab), GFP_KERNEL);
 	if (!skb_tab)
 		return -ENOMEM;
 
@@ -940,7 +939,8 @@ static int geth_setup_freeq(struct gemini_ethernet *geth)
 	}
 
 	/* Allocate a mapping to page look-up index */
-	geth->freeq_pages = kzalloc_objs(*geth->freeq_pages, pages);
+	geth->freeq_pages = kcalloc(pages, sizeof(*geth->freeq_pages),
+				    GFP_KERNEL);
 	if (!geth->freeq_pages)
 		goto err_freeq;
 	geth->num_freeq_pages = pages;
@@ -1854,8 +1854,9 @@ static int gmac_open(struct net_device *netdev)
 	gmac_enable_tx_rx(netdev);
 	netif_tx_start_all_queues(netdev);
 
-	hrtimer_setup(&port->rx_coalesce_timer, &gmac_coalesce_delay_expired, CLOCK_MONOTONIC,
-		      HRTIMER_MODE_REL);
+	hrtimer_init(&port->rx_coalesce_timer, CLOCK_MONOTONIC,
+		     HRTIMER_MODE_REL);
+	port->rx_coalesce_timer.function = &gmac_coalesce_delay_expired;
 
 	netdev_dbg(netdev, "opened\n");
 

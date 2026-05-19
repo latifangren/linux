@@ -32,8 +32,6 @@
 #define DIMM_IDX_MAX_ON_ICXD	2
 #define CHAN_RANK_MAX_ON_SPR	8
 #define DIMM_IDX_MAX_ON_SPR	2
-#define CHAN_RANK_MAX_ON_EMR	8
-#define DIMM_IDX_MAX_ON_EMR	2
 
 #define CHAN_RANK_MAX		CHAN_RANK_MAX_ON_HSX
 #define DIMM_IDX_MAX		DIMM_IDX_MAX_ON_HSX
@@ -96,15 +94,16 @@ static int get_dimm_temp(struct peci_dimmtemp *priv, int dimm_no, long *val)
 {
 	int dimm_order = dimm_no % priv->gen_info->dimm_idx_max;
 	int chan_rank = dimm_no / priv->gen_info->dimm_idx_max;
+	int ret = 0;
 	u32 data;
-	int ret;
 
+	mutex_lock(&priv->dimm[dimm_no].temp.state.lock);
 	if (!peci_sensor_need_update(&priv->dimm[dimm_no].temp.state))
 		goto skip_update;
 
 	ret = peci_pcs_read(priv->peci_dev, PECI_PCS_DDR_DIMM_TEMP, chan_rank, &data);
 	if (ret)
-		return ret;
+		goto unlock;
 
 	priv->dimm[dimm_no].temp.value = __dimm_temp(data, dimm_order) * MILLIDEGREE_PER_DEGREE;
 
@@ -112,7 +111,9 @@ static int get_dimm_temp(struct peci_dimmtemp *priv, int dimm_no, long *val)
 
 skip_update:
 	*val = priv->dimm[dimm_no].temp.value;
-	return 0;
+unlock:
+	mutex_unlock(&priv->dimm[dimm_no].temp.state.lock);
+	return ret;
 }
 
 static int update_thresholds(struct peci_dimmtemp *priv, int dimm_no)
@@ -142,9 +143,10 @@ static int get_dimm_thresholds(struct peci_dimmtemp *priv, enum peci_dimm_thresh
 {
 	int ret;
 
+	mutex_lock(&priv->dimm[dimm_no].thresholds.state.lock);
 	ret = update_thresholds(priv, dimm_no);
 	if (ret)
-		return ret;
+		goto unlock;
 
 	switch (type) {
 	case temp_max_type:
@@ -157,6 +159,9 @@ static int get_dimm_thresholds(struct peci_dimmtemp *priv, enum peci_dimm_thresh
 		ret = -EOPNOTSUPP;
 		break;
 	}
+unlock:
+	mutex_unlock(&priv->dimm[dimm_no].thresholds.state.lock);
+
 	return ret;
 }
 
@@ -342,6 +347,8 @@ static int create_dimm_temp_info(struct peci_dimmtemp *priv)
 		ret = create_dimm_temp_label(priv, i);
 		if (ret)
 			return ret;
+		mutex_init(&priv->dimm[i].thresholds.state.lock);
+		mutex_init(&priv->dimm[i].temp.state.lock);
 	}
 
 	dev = devm_hwmon_device_register_with_info(priv->dev, priv->name, priv,
@@ -564,12 +571,6 @@ read_thresholds_spr(struct peci_dimmtemp *priv, int dimm_order, int chan_rank, u
 	return 0;
 }
 
-static int read_thresholds_emr(struct peci_dimmtemp *priv, int dimm_order,
-			       int chan_rank, u32 *data)
-{
-	return read_thresholds_spr(priv, dimm_order, chan_rank, data);
-}
-
 static const struct dimm_info dimm_hsx = {
 	.chan_rank_max	= CHAN_RANK_MAX_ON_HSX,
 	.dimm_idx_max	= DIMM_IDX_MAX_ON_HSX,
@@ -619,13 +620,6 @@ static const struct dimm_info dimm_spr = {
 	.read_thresholds = &read_thresholds_spr,
 };
 
-static const struct dimm_info dimm_emr = {
-	.chan_rank_max  = CHAN_RANK_MAX_ON_EMR,
-	.dimm_idx_max  = DIMM_IDX_MAX_ON_EMR,
-	.min_peci_revision = 0x40,
-	.read_thresholds = &read_thresholds_emr,
-};
-
 static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
 	{
 		.name = "peci_cpu.dimmtemp.hsx",
@@ -655,10 +649,6 @@ static const struct auxiliary_device_id peci_dimmtemp_ids[] = {
 		.name = "peci_cpu.dimmtemp.spr",
 		.driver_data = (kernel_ulong_t)&dimm_spr,
 	},
-	{
-		.name = "peci_cpu.dimmtemp.emr",
-		.driver_data = (kernel_ulong_t)&dimm_emr,
-	},
 	{ }
 };
 MODULE_DEVICE_TABLE(auxiliary, peci_dimmtemp_ids);
@@ -674,4 +664,4 @@ MODULE_AUTHOR("Jae Hyun Yoo <jae.hyun.yoo@linux.intel.com>");
 MODULE_AUTHOR("Iwona Winiarska <iwona.winiarska@intel.com>");
 MODULE_DESCRIPTION("PECI dimmtemp driver");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("PECI_CPU");
+MODULE_IMPORT_NS(PECI_CPU);

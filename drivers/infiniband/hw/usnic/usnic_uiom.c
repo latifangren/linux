@@ -56,7 +56,7 @@ static int usnic_uiom_dma_fault(struct iommu_domain *domain,
 				unsigned long iova, int flags,
 				void *token)
 {
-	usnic_err("Device %s iommu fault domain 0x%p va 0x%lx flags 0x%x\n",
+	usnic_err("Device %s iommu fault domain 0x%pK va 0x%lx flags 0x%x\n",
 		dev_name(dev),
 		domain, iova, flags);
 	return -ENOSYS;
@@ -149,8 +149,9 @@ static int usnic_uiom_get_pages(unsigned long addr, size_t size, int writable,
 		off = 0;
 
 		while (ret) {
-			chunk = kmalloc_flex(*chunk, page_list,
-					     min_t(int, ret, USNIC_UIOM_PAGE_CHUNK));
+			chunk = kmalloc(struct_size(chunk, page_list,
+					min_t(int, ret, USNIC_UIOM_PAGE_CHUNK)),
+					GFP_KERNEL);
 			if (!chunk) {
 				ret = -ENOMEM;
 				goto out;
@@ -350,7 +351,7 @@ struct usnic_uiom_reg *usnic_uiom_reg_get(struct usnic_uiom_pd *pd,
 	vpn_start = (addr & PAGE_MASK) >> PAGE_SHIFT;
 	vpn_last = vpn_start + npages - 1;
 
-	uiomr = kmalloc_obj(*uiomr);
+	uiomr = kmalloc(sizeof(*uiomr), GFP_KERNEL);
 	if (!uiomr)
 		return ERR_PTR(-ENOMEM);
 
@@ -438,7 +439,7 @@ struct usnic_uiom_pd *usnic_uiom_alloc_pd(struct device *dev)
 	struct usnic_uiom_pd *pd;
 	void *domain;
 
-	pd = kzalloc_obj(*pd);
+	pd = kzalloc(sizeof(*pd), GFP_KERNEL);
 	if (!pd)
 		return ERR_PTR(-ENOMEM);
 
@@ -468,7 +469,7 @@ int usnic_uiom_attach_dev_to_pd(struct usnic_uiom_pd *pd, struct device *dev)
 	struct usnic_uiom_dev *uiom_dev;
 	int err;
 
-	uiom_dev = kzalloc_obj(*uiom_dev, GFP_ATOMIC);
+	uiom_dev = kzalloc(sizeof(*uiom_dev), GFP_ATOMIC);
 	if (!uiom_dev)
 		return -ENOMEM;
 	uiom_dev->dev = dev;
@@ -532,7 +533,7 @@ struct device **usnic_uiom_get_dev_list(struct usnic_uiom_pd *pd)
 	int i = 0;
 
 	spin_lock(&pd->lock);
-	devs = kzalloc_objs(*devs, pd->dev_cnt + 1, GFP_ATOMIC);
+	devs = kcalloc(pd->dev_cnt + 1, sizeof(*devs), GFP_ATOMIC);
 	if (!devs) {
 		devs = ERR_PTR(-ENOMEM);
 		goto out;

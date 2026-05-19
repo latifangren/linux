@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/kernel.h>
@@ -10,9 +9,9 @@
 #include <linux/smp.h>
 #include <linux/swap.h>
 #include <linux/rmap.h>
-#include <linux/pgalloc.h>
 #include <linux/hugetlb.h>
 
+#include <asm/pgalloc.h>
 #include <asm/tlb.h>
 
 #ifndef CONFIG_MMU_GATHER_NO_GATHER
@@ -34,7 +33,7 @@ static bool tlb_next_batch(struct mmu_gather *tlb)
 	if (tlb->batch_count == MAX_GATHER_BATCH_COUNT)
 		return false;
 
-	batch = (void *)__get_free_page(GFP_NOWAIT);
+	batch = (void *)__get_free_page(GFP_NOWAIT | __GFP_NOWARN);
 	if (!batch)
 		return false;
 
@@ -211,9 +210,10 @@ bool __tlb_remove_folio_pages(struct mmu_gather *tlb, struct page *page,
 					     PAGE_SIZE);
 }
 
-bool __tlb_remove_page_size(struct mmu_gather *tlb, struct page *page, int page_size)
+bool __tlb_remove_page_size(struct mmu_gather *tlb, struct page *page,
+		bool delay_rmap, int page_size)
 {
-	return __tlb_remove_folio_pages_size(tlb, page, 1, false, page_size);
+	return __tlb_remove_folio_pages_size(tlb, page, 1, delay_rmap, page_size);
 }
 
 #endif /* MMU_GATHER_NO_GATHER */
@@ -247,16 +247,8 @@ static void __tlb_remove_table_free(struct mmu_table_batch *batch)
  * IRQs delays the completion of the TLB flush we can never observe an already
  * freed page.
  *
- * Not all systems IPI every CPU for this purpose:
- *
- * - Some architectures have HW support for cross-CPU synchronisation of TLB
- *   flushes, so there's no IPI at all.
- *
- * - Paravirt guests can do this TLB flushing in the hypervisor, or coordinate
- *   with the hypervisor to defer flushing on preempted vCPUs.
- *
- * Such systems need to delay the freeing by some other means, this is that
- * means.
+ * Architectures that do not have this (PPC) need to delay the freeing by some
+ * other means, this is that means.
  *
  * What we do is batch the freed directory pages (tables) and RCU free them.
  * We use the sched RCU variant, as that guarantees that IRQ/preempt disabling
@@ -296,25 +288,6 @@ static void tlb_remove_table_free(struct mmu_table_batch *batch)
 	call_rcu(&batch->rcu, tlb_remove_table_rcu);
 }
 
-/**
- * tlb_remove_table_sync_rcu - synchronize with software page-table walkers
- *
- * Like tlb_remove_table_sync_one() but uses RCU grace period instead of IPI
- * broadcast. Use in slow paths where sleeping is acceptable.
- *
- * Software/Lockless page-table walkers use local_irq_disable(), which is also
- * an RCU read-side critical section. synchronize_rcu() waits for all such
- * sections, providing the same guarantee as tlb_remove_table_sync_one() but
- * without disrupting all CPUs with IPIs.
- *
- * Do not use for freeing memory. Use RCU callbacks instead to avoid latency
- * spikes.
- */
-void tlb_remove_table_sync_rcu(void)
-{
-	synchronize_rcu();
-}
-
 #else /* !CONFIG_MMU_GATHER_RCU_TABLE_FREE */
 
 static void tlb_remove_table_free(struct mmu_table_batch *batch)
@@ -339,33 +312,10 @@ static inline void tlb_table_invalidate(struct mmu_gather *tlb)
 	}
 }
 
-#ifdef CONFIG_PT_RECLAIM
-static inline void __tlb_remove_table_one_rcu(struct rcu_head *head)
-{
-	struct ptdesc *ptdesc;
-
-	ptdesc = container_of(head, struct ptdesc, pt_rcu_head);
-	__tlb_remove_table(ptdesc);
-}
-
-static inline void __tlb_remove_table_one(void *table)
-{
-	struct ptdesc *ptdesc;
-
-	ptdesc = table;
-	call_rcu(&ptdesc->pt_rcu_head, __tlb_remove_table_one_rcu);
-}
-#else
-static inline void __tlb_remove_table_one(void *table)
-{
-	tlb_remove_table_sync_rcu();
-	__tlb_remove_table(table);
-}
-#endif /* CONFIG_PT_RECLAIM */
-
 static void tlb_remove_table_one(void *table)
 {
-	__tlb_remove_table_one(table);
+	tlb_remove_table_sync_one();
+	__tlb_remove_table(table);
 }
 
 static void tlb_table_flush(struct mmu_gather *tlb)
@@ -384,7 +334,7 @@ void tlb_remove_table(struct mmu_gather *tlb, void *table)
 	struct mmu_table_batch **batch = &tlb->batch;
 
 	if (*batch == NULL) {
-		*batch = (struct mmu_table_batch *)__get_free_page(GFP_NOWAIT);
+		*batch = (struct mmu_table_batch *)__get_free_page(GFP_NOWAIT | __GFP_NOWARN);
 		if (*batch == NULL) {
 			tlb_table_invalidate(tlb);
 			tlb_remove_table_one(table);
@@ -444,7 +394,6 @@ static void __tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
 #ifdef CONFIG_MMU_GATHER_PAGE_SIZE
 	tlb->page_size = 0;
 #endif
-	tlb->vma_pfn = 0;
 
 	tlb->fully_unshared_tables = 0;
 	__tlb_reset_range(tlb);

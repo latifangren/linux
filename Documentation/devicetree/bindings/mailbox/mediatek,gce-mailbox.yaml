@@ -25,7 +25,6 @@ properties:
           - mediatek,mt8188-gce
           - mediatek,mt8192-gce
           - mediatek,mt8195-gce
-          - mediatek,mt8196-gce
       - items:
           - const: mediatek,mt6795-gce
           - const: mediatek,mt8173-gce
@@ -50,15 +49,23 @@ properties:
     items:
       - const: gce
 
-  iommus:
-    maxItems: 1
-
 required:
   - compatible
   - "#mbox-cells"
   - reg
   - interrupts
   - clocks
+
+allOf:
+  - if:
+      not:
+        properties:
+          compatible:
+            contains:
+              const: mediatek,mt8195-gce
+    then:
+      required:
+        - clock-names
 
 additionalProperties: false
 

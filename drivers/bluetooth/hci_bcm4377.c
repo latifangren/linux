@@ -420,7 +420,7 @@ struct bcm4377_ring_state {
  * payloads_dma:DMA address for payload buffer
  * events: pointer to array of completions if waiting is allowed
  * msgids: bitmap to keep track of used message ids
- * lock: Spinlock to protect access to ring structures used in the irq handler
+ * lock: Spinlock to protect access to ring structurs used in the irq handler
  */
 struct bcm4377_transfer_ring {
 	enum bcm4377_transfer_ring_id ring_id;
@@ -1435,7 +1435,7 @@ static int bcm4377_check_bdaddr(struct bcm4377_data *bcm4377)
 
 	bda = (struct hci_rp_read_bd_addr *)skb->data;
 	if (!bcm4377_is_valid_bdaddr(bcm4377, &bda->bdaddr))
-		hci_set_quirk(bcm4377->hdev, HCI_QUIRK_USE_BDADDR_PROPERTY);
+		set_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &bcm4377->hdev->quirks);
 
 	kfree_skb(skb);
 	return 0;
@@ -2389,13 +2389,13 @@ static int bcm4377_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	hdev->setup = bcm4377_hci_setup;
 
 	if (bcm4377->hw->broken_mws_transport_config)
-		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_MWS_TRANSPORT_CONFIG);
+		set_bit(HCI_QUIRK_BROKEN_MWS_TRANSPORT_CONFIG, &hdev->quirks);
 	if (bcm4377->hw->broken_ext_scan)
-		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_EXT_SCAN);
+		set_bit(HCI_QUIRK_BROKEN_EXT_SCAN, &hdev->quirks);
 	if (bcm4377->hw->broken_le_coded)
-		hci_set_quirk(hdev, HCI_QUIRK_BROKEN_LE_CODED);
+		set_bit(HCI_QUIRK_BROKEN_LE_CODED, &hdev->quirks);
 	if (bcm4377->hw->broken_le_ext_adv_report_phy)
-		hci_set_quirk(hdev, HCI_QUIRK_FIXUP_LE_EXT_ADV_REPORT_PHY);
+		set_bit(HCI_QUIRK_FIXUP_LE_EXT_ADV_REPORT_PHY, &hdev->quirks);
 
 	pci_set_drvdata(pdev, bcm4377);
 	hci_set_drvdata(hdev, bcm4377);
@@ -2416,9 +2416,8 @@ static int bcm4377_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 					hdev);
 }
 
-static int bcm4377_suspend(struct device *dev)
+static int bcm4377_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct bcm4377_data *bcm4377 = pci_get_drvdata(pdev);
 	int ret;
 
@@ -2432,9 +2431,8 @@ static int bcm4377_suspend(struct device *dev)
 	return 0;
 }
 
-static int bcm4377_resume(struct device *dev)
+static int bcm4377_resume(struct pci_dev *pdev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct bcm4377_data *bcm4377 = pci_get_drvdata(pdev);
 
 	iowrite32(BCM4377_BAR0_SLEEP_CONTROL_UNQUIESCE,
@@ -2442,8 +2440,6 @@ static int bcm4377_resume(struct device *dev)
 
 	return hci_resume_dev(bcm4377->hdev);
 }
-
-static DEFINE_SIMPLE_DEV_PM_OPS(bcm4377_ops, bcm4377_suspend, bcm4377_resume);
 
 static const struct dmi_system_id bcm4377_dmi_board_table[] = {
 	{
@@ -2545,7 +2541,8 @@ static struct pci_driver bcm4377_pci_driver = {
 	.name = "hci_bcm4377",
 	.id_table = bcm4377_devid_table,
 	.probe = bcm4377_probe,
-	.driver.pm = &bcm4377_ops,
+	.suspend = bcm4377_suspend,
+	.resume = bcm4377_resume,
 };
 module_pci_driver(bcm4377_pci_driver);
 

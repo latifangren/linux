@@ -16,7 +16,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 
@@ -49,15 +48,12 @@ static const struct pin_config_item conf_items[] = {
 	PCONFDUMP(PIN_CONFIG_INPUT_SCHMITT_ENABLE, "input schmitt enabled", NULL, false),
 	PCONFDUMP(PIN_CONFIG_MODE_LOW_POWER, "pin low power", "mode", true),
 	PCONFDUMP(PIN_CONFIG_OUTPUT_ENABLE, "output enabled", NULL, false),
-	PCONFDUMP(PIN_CONFIG_LEVEL, "pin output", "level", true),
+	PCONFDUMP(PIN_CONFIG_OUTPUT, "pin output", "level", true),
 	PCONFDUMP(PIN_CONFIG_OUTPUT_IMPEDANCE_OHMS, "output impedance", "ohms", true),
 	PCONFDUMP(PIN_CONFIG_POWER_SOURCE, "pin power source", "selector", true),
 	PCONFDUMP(PIN_CONFIG_SLEEP_HARDWARE_STATE, "sleep hardware state", NULL, false),
 	PCONFDUMP(PIN_CONFIG_SLEW_RATE, "slew rate", NULL, true),
 	PCONFDUMP(PIN_CONFIG_SKEW_DELAY, "skew delay", NULL, true),
-	PCONFDUMP(PIN_CONFIG_SKEW_DELAY_INPUT_PS, "input skew delay", "ps", true),
-	PCONFDUMP(PIN_CONFIG_SKEW_DELAY_OUTPUT_PS, "output skew delay", "ps", true),
-	PCONFDUMP(PIN_CONFIG_INPUT_VOLTAGE_UV, "input voltage in microvolt", "uV", true),
 };
 
 static void pinconf_generic_dump_one(struct pinctrl_dev *pctldev,
@@ -69,12 +65,11 @@ static void pinconf_generic_dump_one(struct pinctrl_dev *pctldev,
 	int i;
 
 	for (i = 0; i < nitems; i++) {
-		const struct pin_config_item *item = &items[i];
 		unsigned long config;
 		int ret;
 
 		/* We want to check out this parameter */
-		config = pinconf_to_config_packed(item->param, 0);
+		config = pinconf_to_config_packed(items[i].param, 0);
 		if (gname)
 			ret = pin_config_group_get(dev_name(pctldev->dev),
 						   gname, &config);
@@ -91,22 +86,15 @@ static void pinconf_generic_dump_one(struct pinctrl_dev *pctldev,
 		if (*print_sep)
 			seq_puts(s, ", ");
 		*print_sep = 1;
-		seq_puts(s, item->display);
+		seq_puts(s, items[i].display);
 		/* Print unit if available */
-		if (item->has_arg) {
+		if (items[i].has_arg) {
 			u32 val = pinconf_to_config_argument(config);
 
-			if (item->format)
-				seq_printf(s, " (%u %s)", val, item->format);
+			if (items[i].format)
+				seq_printf(s, " (%u %s)", val, items[i].format);
 			else
 				seq_printf(s, " (0x%x)", val);
-
-			if (item->values && item->num_values) {
-				if (val < item->num_values)
-					seq_printf(s, " \"%s\"", item->values[val]);
-				else
-					seq_puts(s, " \"(unknown)\"");
-			}
 		}
 	}
 }
@@ -116,7 +104,7 @@ static void pinconf_generic_dump_one(struct pinctrl_dev *pctldev,
  * @pctldev:	Pincontrol device
  * @s:		File to print to
  * @gname:	Group name specifying pins
- * @pin:	Pin number specifying pin
+ * @pin:	Pin number specyfying pin
  *
  * Print the pinconf configuration for the requested pin(s) to @s. Pins can be
  * specified either by pin using @pin or by group using @gname. Only one needs
@@ -195,59 +183,41 @@ static const struct pinconf_generic_params dt_params[] = {
 	{ "low-power-enable", PIN_CONFIG_MODE_LOW_POWER, 1 },
 	{ "output-disable", PIN_CONFIG_OUTPUT_ENABLE, 0 },
 	{ "output-enable", PIN_CONFIG_OUTPUT_ENABLE, 1 },
-	{ "output-high", PIN_CONFIG_LEVEL, 1, },
+	{ "output-high", PIN_CONFIG_OUTPUT, 1, },
 	{ "output-impedance-ohms", PIN_CONFIG_OUTPUT_IMPEDANCE_OHMS, 0 },
-	{ "output-low", PIN_CONFIG_LEVEL, 0, },
+	{ "output-low", PIN_CONFIG_OUTPUT, 0, },
 	{ "power-source", PIN_CONFIG_POWER_SOURCE, 0 },
 	{ "sleep-hardware-state", PIN_CONFIG_SLEEP_HARDWARE_STATE, 0 },
 	{ "slew-rate", PIN_CONFIG_SLEW_RATE, 0 },
 	{ "skew-delay", PIN_CONFIG_SKEW_DELAY, 0 },
-	{ "skew-delay-input-ps", PIN_CONFIG_SKEW_DELAY_INPUT_PS, 0 },
-	{ "skew-delay-output-ps", PIN_CONFIG_SKEW_DELAY_OUTPUT_PS, 0 },
-	{ "input-threshold-voltage-microvolt", PIN_CONFIG_INPUT_VOLTAGE_UV, 0 },
 };
 
 /**
- * parse_fw_cfg() - Parse firmware pinconf parameters
- * @fwnode:	firmware node
+ * parse_dt_cfg() - Parse DT pinconf parameters
+ * @np:	DT node
  * @params:	Array of describing generic parameters
  * @count:	Number of entries in @params
  * @cfg:	Array of parsed config options
  * @ncfg:	Number of entries in @cfg
  *
- * Parse the config options described in @params from @fwnode and puts the result
+ * Parse the config options described in @params from @np and puts the result
  * in @cfg. @cfg does not need to be empty, entries are added beginning at
  * @ncfg. @ncfg is updated to reflect the number of entries after parsing. @cfg
  * needs to have enough memory allocated to hold all possible entries.
  */
-static int parse_fw_cfg(struct fwnode_handle *fwnode,
-			const struct pinconf_generic_params *params,
-			unsigned int count, unsigned long *cfg,
-			unsigned int *ncfg)
+static void parse_dt_cfg(struct device_node *np,
+			 const struct pinconf_generic_params *params,
+			 unsigned int count, unsigned long *cfg,
+			 unsigned int *ncfg)
 {
-	unsigned long *properties;
-	int i, test;
-
-	properties = bitmap_zalloc(count, GFP_KERNEL);
+	int i;
 
 	for (i = 0; i < count; i++) {
 		u32 val;
 		int ret;
 		const struct pinconf_generic_params *par = &params[i];
 
-		if (par->values && par->num_values) {
-			ret = fwnode_property_match_property_string(fwnode,
-								    par->property,
-								    par->values, par->num_values);
-			if (ret == -ENOENT)
-				return ret;
-			if (ret >= 0) {
-				val = ret;
-				ret = 0;
-			}
-		} else {
-			ret = fwnode_property_read_u32(fwnode, par->property, &val);
-		}
+		ret = of_property_read_u32(np, par->property, &val);
 
 		/* property not found */
 		if (ret == -EINVAL)
@@ -257,46 +227,10 @@ static int parse_fw_cfg(struct fwnode_handle *fwnode,
 		if (ret)
 			val = par->default_value;
 
-		/* if param is greater than count, these are custom properties */
-		if (par->param <= count) {
-			ret = test_and_set_bit(par->param, properties);
-			if (ret) {
-				pr_err("%pfw: conflicting setting detected for %s\n",
-				       fwnode, par->property);
-				bitmap_free(properties);
-				return -EINVAL;
-			}
-		}
-
 		pr_debug("found %s with value %u\n", par->property, val);
 		cfg[*ncfg] = pinconf_to_config_packed(par->param, val);
 		(*ncfg)++;
 	}
-
-	if (test_bit(PIN_CONFIG_DRIVE_STRENGTH, properties) &&
-			test_bit(PIN_CONFIG_DRIVE_STRENGTH_UA, properties))
-		pr_err("%pfw: cannot have multiple drive strength properties\n",
-		       fwnode);
-
-	test = test_bit(PIN_CONFIG_BIAS_BUS_HOLD, properties) +
-		test_bit(PIN_CONFIG_BIAS_DISABLE, properties) +
-		test_bit(PIN_CONFIG_BIAS_HIGH_IMPEDANCE, properties) +
-		test_bit(PIN_CONFIG_BIAS_PULL_UP, properties) +
-		test_bit(PIN_CONFIG_BIAS_PULL_PIN_DEFAULT, properties) +
-		test_bit(PIN_CONFIG_BIAS_PULL_DOWN, properties);
-	if (test > 1)
-		pr_err("%pfw: cannot have multiple bias configurations\n",
-		       fwnode);
-
-	test = test_bit(PIN_CONFIG_DRIVE_OPEN_DRAIN, properties) +
-		test_bit(PIN_CONFIG_DRIVE_OPEN_SOURCE, properties) +
-		test_bit(PIN_CONFIG_DRIVE_PUSH_PULL, properties);
-	if (test > 1)
-		pr_err("%pfw: cannot have multiple drive configurations\n",
-		       fwnode);
-
-	bitmap_free(properties);
-	return 0;
 }
 
 /**
@@ -308,51 +242,45 @@ static int parse_fw_cfg(struct fwnode_handle *fwnode,
  * @pmux: array with pin mux value entries
  * @npins: number of pins
  *
- * pinmux property: mux value [0,7]bits and pin identity [8,31]bits.
+ * pinmux propertity: mux value [0,7]bits and pin identity [8,31]bits.
  */
 int pinconf_generic_parse_dt_pinmux(struct device_node *np, struct device *dev,
 				    unsigned int **pid, unsigned int **pmux,
 				    unsigned int *npins)
 {
-	struct fwnode_handle *fwnode = of_fwnode_handle(np);
 	unsigned int *pid_t;
 	unsigned int *pmux_t;
+	struct property *prop;
 	unsigned int npins_t, i;
+	u32 value;
 	int ret;
 
-	ret = fwnode_property_count_u32(fwnode, "pinmux");
-	if (ret < 0) {
+	prop = of_find_property(np, "pinmux", NULL);
+	if (!prop) {
 		dev_info(dev, "Missing pinmux property\n");
-		return ret;
-	}
-
-	npins_t = ret;
-	if (npins_t == 0) {
-		dev_info(dev, "pinmux property doesn't have entries\n");
-		return -ENODATA;
+		return -ENOENT;
 	}
 
 	if (!pid || !pmux || !npins) {
-		dev_err(dev, "parameters error\n");
+		dev_err(dev, "paramers error\n");
 		return -EINVAL;
 	}
 
+	npins_t = prop->length / sizeof(u32);
 	pid_t = devm_kcalloc(dev, npins_t, sizeof(*pid_t), GFP_KERNEL);
 	pmux_t = devm_kcalloc(dev, npins_t, sizeof(*pmux_t), GFP_KERNEL);
 	if (!pid_t || !pmux_t) {
 		dev_err(dev, "kalloc memory fail\n");
 		return -ENOMEM;
 	}
-
-	ret = fwnode_property_read_u32_array(fwnode, "pinmux", pmux_t, npins_t);
-	if (ret) {
-		dev_err(dev, "get pinmux value fail\n");
-		goto exit;
-	}
-
 	for (i = 0; i < npins_t; i++) {
-		pid_t[i] = pmux_t[i] >> 8;
-		pmux_t[i] = pmux_t[i] & 0xff;
+		ret = of_property_read_u32_index(np, "pinmux", i, &value);
+		if (ret) {
+			dev_err(dev, "get pinmux value fail\n");
+			goto exit;
+		}
+		pmux_t[i] = value & 0xff;
+		pid_t[i] = (value >> 8) & 0xffffff;
 	}
 	*pid = pid_t;
 	*pmux = pmux_t;
@@ -382,11 +310,9 @@ int pinconf_generic_parse_dt_config(struct device_node *np,
 {
 	unsigned long *cfg;
 	unsigned int max_cfg, ncfg = 0;
-	struct fwnode_handle *fwnode;
 	int ret;
 
-	fwnode = of_fwnode_handle(np);
-	if (!fwnode)
+	if (!np)
 		return -EINVAL;
 
 	/* allocate a temporary array big enough to hold one of each option */
@@ -397,16 +323,13 @@ int pinconf_generic_parse_dt_config(struct device_node *np,
 	if (!cfg)
 		return -ENOMEM;
 
-	ret = parse_fw_cfg(fwnode, dt_params, ARRAY_SIZE(dt_params), cfg, &ncfg);
-	if (ret)
-		goto out;
+	parse_dt_cfg(np, dt_params, ARRAY_SIZE(dt_params), cfg, &ncfg);
 	if (pctldev && pctldev->desc->num_custom_params &&
-		pctldev->desc->custom_params) {
-		ret = parse_fw_cfg(fwnode, pctldev->desc->custom_params,
-				   pctldev->desc->num_custom_params, cfg, &ncfg);
-		if (ret)
-			goto out;
-	}
+		pctldev->desc->custom_params)
+		parse_dt_cfg(np, pctldev->desc->custom_params,
+			     pctldev->desc->num_custom_params, cfg, &ncfg);
+
+	ret = 0;
 
 	/* no configs found at all */
 	if (ncfg == 0) {
@@ -432,6 +355,75 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(pinconf_generic_parse_dt_config);
+
+int pinconf_generic_dt_node_to_map_pinmux(struct pinctrl_dev *pctldev,
+					  struct device_node *np,
+					  struct pinctrl_map **map,
+					  unsigned int *num_maps)
+{
+	struct device *dev = pctldev->dev;
+	struct device_node *pnode;
+	unsigned long *configs = NULL;
+	unsigned int num_configs = 0;
+	struct property *prop;
+	unsigned int reserved_maps;
+	int reserve;
+	int ret;
+
+	prop = of_find_property(np, "pinmux", NULL);
+	if (!prop) {
+		dev_info(dev, "Missing pinmux property\n");
+		return -ENOENT;
+	}
+
+	pnode = of_get_parent(np);
+	if (!pnode) {
+		dev_info(dev, "Missing function node\n");
+		return -EINVAL;
+	}
+
+	reserved_maps = 0;
+	*map = NULL;
+	*num_maps = 0;
+
+	ret = pinconf_generic_parse_dt_config(np, pctldev, &configs,
+					      &num_configs);
+	if (ret < 0) {
+		dev_err(dev, "%pOF: could not parse node property\n", np);
+		return ret;
+	}
+
+	reserve = 1;
+	if (num_configs)
+		reserve++;
+
+	ret = pinctrl_utils_reserve_map(pctldev, map, &reserved_maps,
+					num_maps, reserve);
+	if (ret < 0)
+		goto exit;
+
+	ret = pinctrl_utils_add_map_mux(pctldev, map,
+					&reserved_maps, num_maps, np->name,
+					pnode->name);
+	if (ret < 0)
+		goto exit;
+
+	if (num_configs) {
+		ret = pinctrl_utils_add_map_configs(pctldev, map, &reserved_maps,
+						    num_maps, np->name, configs,
+						    num_configs, PIN_MAP_TYPE_CONFIGS_GROUP);
+		if (ret < 0)
+			goto exit;
+	}
+
+exit:
+	kfree(configs);
+	if (ret)
+		pinctrl_utils_free_map(pctldev, *map, *num_maps);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(pinconf_generic_dt_node_to_map_pinmux);
 
 int pinconf_generic_dt_subnode_to_map(struct pinctrl_dev *pctldev,
 		struct device_node *np, struct pinctrl_map **map,

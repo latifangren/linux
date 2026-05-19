@@ -2518,22 +2518,38 @@ bool bpf_jit_needs_zext(void)
 	return true;
 }
 
-struct bpf_prog *bpf_int_jit_compile(struct bpf_verifier_env *env, struct bpf_prog *prog)
+struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *prog)
 {
 	struct bpf_binary_header *header = NULL;
+	struct bpf_prog *tmp, *orig_prog = prog;
 	int proglen, oldproglen = 0;
 	struct jit_context ctx = {};
+	bool tmp_blinded = false;
 	u8 *image = NULL;
 	int *addrs;
 	int pass;
 	int i;
 
 	if (!prog->jit_requested)
-		return prog;
+		return orig_prog;
 
-	addrs = kmalloc_objs(*addrs, prog->len);
-	if (!addrs)
-		return prog;
+	tmp = bpf_jit_blind_constants(prog);
+	/*
+	 * If blinding was requested and we failed during blinding,
+	 * we must fall back to the interpreter.
+	 */
+	if (IS_ERR(tmp))
+		return orig_prog;
+	if (tmp != prog) {
+		tmp_blinded = true;
+		prog = tmp;
+	}
+
+	addrs = kmalloc_array(prog->len, sizeof(*addrs), GFP_KERNEL);
+	if (!addrs) {
+		prog = orig_prog;
+		goto out;
+	}
 
 	/*
 	 * Before first pass, make a rough estimation of addrs[]
@@ -2558,6 +2574,7 @@ out_image:
 			image = NULL;
 			if (header)
 				bpf_jit_binary_free(header);
+			prog = orig_prog;
 			goto out_addrs;
 		}
 		if (image) {
@@ -2571,8 +2588,10 @@ out_image:
 		if (proglen == oldproglen) {
 			header = bpf_jit_binary_alloc(proglen, &image,
 						      1, jit_fill_hole);
-			if (!header)
+			if (!header) {
+				prog = orig_prog;
 				goto out_addrs;
+			}
 		}
 		oldproglen = proglen;
 		cond_resched();
@@ -2585,10 +2604,16 @@ out_image:
 		prog->bpf_func = (void *)image;
 		prog->jited = 1;
 		prog->jited_len = proglen;
+	} else {
+		prog = orig_prog;
 	}
 
 out_addrs:
 	kfree(addrs);
+out:
+	if (tmp_blinded)
+		bpf_jit_prog_release_other(prog, prog == orig_prog ?
+					   tmp : orig_prog);
 	return prog;
 }
 

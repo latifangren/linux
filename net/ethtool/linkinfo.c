@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-#include "common.h"
 #include "netlink.h"
+#include "common.h"
 
 struct linkinfo_req_info {
 	struct ethnl_req_info		base;

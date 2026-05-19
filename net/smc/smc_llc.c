@@ -997,14 +997,13 @@ static int smc_llc_cli_conf_link(struct smc_link *link,
 }
 
 static void smc_llc_save_add_link_rkeys(struct smc_link *link,
-					struct smc_link *link_new,
-					u8 *llc_msg)
+					struct smc_link *link_new)
 {
 	struct smc_llc_msg_add_link_v2_ext *ext;
 	struct smc_link_group *lgr = link->lgr;
 	int max, i;
 
-	ext = (struct smc_llc_msg_add_link_v2_ext *)(llc_msg +
+	ext = (struct smc_llc_msg_add_link_v2_ext *)((u8 *)lgr->wr_rx_buf_v2 +
 						     SMC_WR_TX_SIZE);
 	max = min_t(u8, ext->num_rkeys, SMC_LLC_RKEYS_PER_MSG_V2);
 	down_write(&lgr->rmbs_lock);
@@ -1040,7 +1039,7 @@ int smc_llc_cli_add_link(struct smc_link *link, struct smc_llc_qentry *qentry)
 	if (!llc->qp_mtu)
 		goto out_reject;
 
-	ini = kzalloc_obj(*ini);
+	ini = kzalloc(sizeof(*ini), GFP_KERNEL);
 	if (!ini) {
 		rc = -ENOMEM;
 		goto out_reject;
@@ -1099,9 +1098,7 @@ int smc_llc_cli_add_link(struct smc_link *link, struct smc_llc_qentry *qentry)
 	if (rc)
 		goto out_clear_lnk;
 	if (lgr->smc_version == SMC_V2) {
-		u8 *llc_msg = smc_link_shared_v2_rxbuf(link) ?
-			(u8 *)lgr->wr_rx_buf_v2 : (u8 *)llc;
-		smc_llc_save_add_link_rkeys(link, lnk_new, llc_msg);
+		smc_llc_save_add_link_rkeys(link, lnk_new);
 	} else {
 		rc = smc_llc_cli_rkey_exchange(link, lnk_new);
 		if (rc) {
@@ -1180,7 +1177,7 @@ static void smc_llc_cli_add_link_invite(struct smc_link *link,
 	if (lgr->type == SMC_LGR_SINGLE && lgr->max_links <= 1)
 		goto out;
 
-	ini = kzalloc_obj(*ini);
+	ini = kzalloc(sizeof(*ini), GFP_KERNEL);
 	if (!ini)
 		goto out;
 
@@ -1419,7 +1416,7 @@ int smc_llc_srv_add_link(struct smc_link *link,
 	    req_qentry->msg.raw.hdr.common.llc_type == SMC_LLC_REQ_ADD_LINK)
 		send_req_add_link_resp = true;
 
-	ini = kzalloc_obj(*ini);
+	ini = kzalloc(sizeof(*ini), GFP_KERNEL);
 	if (!ini) {
 		rc = -ENOMEM;
 		goto out;
@@ -1501,9 +1498,7 @@ int smc_llc_srv_add_link(struct smc_link *link,
 	if (rc)
 		goto out_err;
 	if (lgr->smc_version == SMC_V2) {
-		u8 *llc_msg = smc_link_shared_v2_rxbuf(link) ?
-			(u8 *)lgr->wr_rx_buf_v2 : (u8 *)add_llc;
-		smc_llc_save_add_link_rkeys(link, link_new, llc_msg);
+		smc_llc_save_add_link_rkeys(link, link_new);
 	} else {
 		rc = smc_llc_srv_rkey_exchange(link, link_new);
 		if (rc)
@@ -1812,12 +1807,8 @@ static void smc_llc_rmt_delete_rkey(struct smc_link_group *lgr)
 	if (lgr->smc_version == SMC_V2) {
 		struct smc_llc_msg_delete_rkey_v2 *llcv2;
 
-		if (smc_link_shared_v2_rxbuf(link)) {
-			memcpy(lgr->wr_rx_buf_v2, llc, sizeof(*llc));
-			llcv2 = (struct smc_llc_msg_delete_rkey_v2 *)lgr->wr_rx_buf_v2;
-		} else {
-			llcv2 = (struct smc_llc_msg_delete_rkey_v2 *)llc;
-		}
+		memcpy(lgr->wr_rx_buf_v2, llc, sizeof(*llc));
+		llcv2 = (struct smc_llc_msg_delete_rkey_v2 *)lgr->wr_rx_buf_v2;
 		llcv2->num_inval_rkeys = 0;
 
 		max = min_t(u8, llcv2->num_rkeys, SMC_LLC_RKEYS_PER_MSG_V2);
@@ -2069,7 +2060,7 @@ static void smc_llc_enqueue(struct smc_link *link, union smc_llc_msg *llc)
 	struct smc_llc_qentry *qentry;
 	unsigned long flags;
 
-	qentry = kmalloc_obj(*qentry, GFP_ATOMIC);
+	qentry = kmalloc(sizeof(*qentry), GFP_ATOMIC);
 	if (!qentry)
 		return;
 	qentry->link = link;
@@ -2157,8 +2148,6 @@ void smc_llc_lgr_init(struct smc_link_group *lgr, struct smc_sock *smc)
 	init_waitqueue_head(&lgr->llc_msg_waiter);
 	init_rwsem(&lgr->llc_conf_mutex);
 	lgr->llc_testlink_time = READ_ONCE(net->smc.sysctl_smcr_testlink_time);
-	lgr->max_send_wr = (u16)(READ_ONCE(net->smc.sysctl_smcr_max_send_wr));
-	lgr->max_recv_wr = (u16)(READ_ONCE(net->smc.sysctl_smcr_max_recv_wr));
 }
 
 /* called after lgr was removed from lgr_list */

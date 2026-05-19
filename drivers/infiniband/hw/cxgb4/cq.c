@@ -1095,10 +1095,10 @@ int c4iw_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 
 	if (ucontext) {
 		ret = -ENOMEM;
-		mm = kmalloc_obj(*mm);
+		mm = kmalloc(sizeof(*mm), GFP_KERNEL);
 		if (!mm)
 			goto err_remove_handle;
-		mm2 = kmalloc_obj(*mm2);
+		mm2 = kmalloc(sizeof(*mm2), GFP_KERNEL);
 		if (!mm2)
 			goto err_free_mm;
 

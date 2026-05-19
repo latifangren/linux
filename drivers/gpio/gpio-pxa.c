@@ -315,14 +315,12 @@ static int pxa_gpio_get(struct gpio_chip *chip, unsigned offset)
 	return !!(gplr & GPIO_bit(offset));
 }
 
-static int pxa_gpio_set(struct gpio_chip *chip, unsigned int offset, int value)
+static void pxa_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 	void __iomem *base = gpio_bank_base(chip, offset);
 
 	writel_relaxed(GPIO_bit(offset),
 		       base + (value ? GPSR_OFFSET : GPCR_OFFSET));
-
-	return 0;
 }
 
 #ifdef CONFIG_OF_GPIO
@@ -638,8 +636,9 @@ static int pxa_gpio_probe(struct platform_device *pdev)
 	if (!pxa_last_gpio)
 		return -EINVAL;
 
-	pchip->irqdomain = irq_domain_create_legacy(dev_fwnode(&pdev->dev), pxa_last_gpio + 1,
-						    irq_base, 0, &pxa_irq_domain_ops, pchip);
+	pchip->irqdomain = irq_domain_add_legacy(pdev->dev.of_node,
+						 pxa_last_gpio + 1, irq_base,
+						 0, &pxa_irq_domain_ops, pchip);
 	if (!pchip->irqdomain)
 		return -ENOMEM;
 
@@ -747,7 +746,7 @@ static int __init pxa_gpio_dt_init(void)
 device_initcall(pxa_gpio_dt_init);
 
 #ifdef CONFIG_PM
-static int pxa_gpio_suspend(void *data)
+static int pxa_gpio_suspend(void)
 {
 	struct pxa_gpio_chip *pchip = pxa_gpio_chip;
 	struct pxa_gpio_bank *c;
@@ -768,7 +767,7 @@ static int pxa_gpio_suspend(void *data)
 	return 0;
 }
 
-static void pxa_gpio_resume(void *data)
+static void pxa_gpio_resume(void)
 {
 	struct pxa_gpio_chip *pchip = pxa_gpio_chip;
 	struct pxa_gpio_bank *c;
@@ -792,18 +791,14 @@ static void pxa_gpio_resume(void *data)
 #define pxa_gpio_resume		NULL
 #endif
 
-static const struct syscore_ops pxa_gpio_syscore_ops = {
+static struct syscore_ops pxa_gpio_syscore_ops = {
 	.suspend	= pxa_gpio_suspend,
 	.resume		= pxa_gpio_resume,
 };
 
-static struct syscore pxa_gpio_syscore = {
-	.ops = &pxa_gpio_syscore_ops,
-};
-
 static int __init pxa_gpio_sysinit(void)
 {
-	register_syscore(&pxa_gpio_syscore);
+	register_syscore_ops(&pxa_gpio_syscore_ops);
 	return 0;
 }
 postcore_initcall(pxa_gpio_sysinit);

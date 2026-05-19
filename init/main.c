@@ -13,7 +13,6 @@
 #define DEBUG		/* Enable initcall_debug */
 
 #include <linux/types.h>
-#include <linux/export.h>
 #include <linux/extable.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
@@ -36,7 +35,6 @@
 #include <linux/kmod.h>
 #include <linux/kprobes.h>
 #include <linux/kmsan.h>
-#include <linux/ksysfs.h>
 #include <linux/vmalloc.h>
 #include <linux/kernel_stat.h>
 #include <linux/start_kernel.h>
@@ -52,8 +50,8 @@
 #include <linux/writeback.h>
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
-#include <linux/memcontrol.h>
 #include <linux/cgroup.h>
+#include <linux/efi.h>
 #include <linux/tick.h>
 #include <linux/sched/isolation.h>
 #include <linux/interrupt.h>
@@ -104,9 +102,6 @@
 #include <linux/randomize_kstack.h>
 #include <linux/pidfs.h>
 #include <linux/ptdump.h>
-#include <linux/time_namespace.h>
-#include <linux/unaligned.h>
-#include <linux/vdso_datastore.h>
 #include <net/net_namespace.h>
 
 #include <asm/io.h>
@@ -165,7 +160,6 @@ static size_t initargs_offs;
 
 static char *execute_command;
 static char *ramdisk_execute_command = "/init";
-static bool __initdata ramdisk_execute_command_set;
 
 /*
  * Used to generate warnings if static_key manipulation functions are used
@@ -273,7 +267,7 @@ static void * __init get_boot_config_from_initrd(size_t *_size)
 {
 	u32 size, csum;
 	char *data;
-	u8 *hdr;
+	u32 *hdr;
 	int i;
 
 	if (!initrd_end)
@@ -292,9 +286,9 @@ static void * __init get_boot_config_from_initrd(size_t *_size)
 	return NULL;
 
 found:
-	hdr = (u8 *)(data - 8);
-	size = get_unaligned_le32(hdr);
-	csum = get_unaligned_le32(hdr + 4);
+	hdr = (u32 *)(data - 8);
+	size = le32_to_cpu(hdr[0]);
+	csum = le32_to_cpu(hdr[1]);
 
 	data = ((void *)hdr) - size;
 	if ((unsigned long)data < initrd_start) {
@@ -627,7 +621,6 @@ static int __init rdinit_setup(char *str)
 	unsigned int i;
 
 	ramdisk_execute_command = str;
-	ramdisk_execute_command_set = true;
 	/* See "auto" comment in init_setup */
 	for (i = 1; i < MAX_INIT_ARGS; i++)
 		argv_init[i] = NULL;
@@ -659,11 +652,15 @@ static void __init setup_command_line(char *command_line)
 
 	len = xlen + strlen(boot_command_line) + ilen + 1;
 
-	saved_command_line = memblock_alloc_or_panic(len, SMP_CACHE_BYTES);
+	saved_command_line = memblock_alloc(len, SMP_CACHE_BYTES);
+	if (!saved_command_line)
+		panic("%s: Failed to allocate %zu bytes\n", __func__, len);
 
 	len = xlen + strlen(command_line) + 1;
 
-	static_command_line = memblock_alloc_or_panic(len, SMP_CACHE_BYTES);
+	static_command_line = memblock_alloc(len, SMP_CACHE_BYTES);
+	if (!static_command_line)
+		panic("%s: Failed to allocate %zu bytes\n", __func__, len);
 
 	if (xlen) {
 		/*
@@ -769,7 +766,10 @@ static int __init do_early_param(char *param, char *val,
 	const struct obs_kernel_param *p;
 
 	for (p = __setup_start; p < __setup_end; p++) {
-		if (p->early && parameq(param, p->str)) {
+		if ((p->early && parameq(param, p->str)) ||
+		    (strcmp(param, "console") == 0 &&
+		     strcmp(p->str, "earlycon") == 0)
+		) {
 			if (p->setup_func(val) != 0)
 				pr_warn("Malformed early option '%s'\n", param);
 		}
@@ -835,14 +835,7 @@ static inline void initcall_debug_enable(void)
 #ifdef CONFIG_RANDOMIZE_KSTACK_OFFSET
 DEFINE_STATIC_KEY_MAYBE_RO(CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT,
 			   randomize_kstack_offset);
-DEFINE_PER_CPU(struct rnd_state, kstack_rnd_state);
-
-static int __init random_kstack_init(void)
-{
-	prandom_seed_full_state(&kstack_rnd_state);
-	return 0;
-}
-late_initcall(random_kstack_init);
+DEFINE_PER_CPU(u32, kstack_offset);
 
 static int __init early_randomize_kstack_offset(char *buf)
 {
@@ -918,101 +911,6 @@ static void __init early_numa_node_init(void)
 #endif
 }
 
-#define KERNEL_CMDLINE_PREFIX		"Kernel command line: "
-#define KERNEL_CMDLINE_PREFIX_LEN	(sizeof(KERNEL_CMDLINE_PREFIX) - 1)
-#define KERNEL_CMDLINE_CONTINUATION	" \\"
-#define KERNEL_CMDLINE_CONTINUATION_LEN	(sizeof(KERNEL_CMDLINE_CONTINUATION) - 1)
-
-#define MIN_CMDLINE_LOG_WRAP_IDEAL_LEN	(KERNEL_CMDLINE_PREFIX_LEN + \
-					 KERNEL_CMDLINE_CONTINUATION_LEN)
-#define CMDLINE_LOG_WRAP_IDEAL_LEN	(CONFIG_CMDLINE_LOG_WRAP_IDEAL_LEN > \
-					 MIN_CMDLINE_LOG_WRAP_IDEAL_LEN ? \
-					 CONFIG_CMDLINE_LOG_WRAP_IDEAL_LEN : \
-					 MIN_CMDLINE_LOG_WRAP_IDEAL_LEN)
-
-#define IDEAL_CMDLINE_LEN		(CMDLINE_LOG_WRAP_IDEAL_LEN - KERNEL_CMDLINE_PREFIX_LEN)
-#define IDEAL_CMDLINE_SPLIT_LEN		(IDEAL_CMDLINE_LEN - KERNEL_CMDLINE_CONTINUATION_LEN)
-
-/**
- * print_kernel_cmdline() - Print the kernel cmdline with wrapping.
- * @cmdline: The cmdline to print.
- *
- * Print the kernel command line, trying to wrap based on the Kconfig knob
- * CONFIG_CMDLINE_LOG_WRAP_IDEAL_LEN.
- *
- * Wrapping is based on spaces, ignoring quotes. All lines are prefixed
- * with "Kernel command line: " and lines that are not the last line have
- * a " \" suffix added to them. The prefix and suffix count towards the
- * line length for wrapping purposes. The ideal length will be exceeded
- * if no appropriate place to wrap is found.
- *
- * Example output if CONFIG_CMDLINE_LOG_WRAP_IDEAL_LEN is 40:
- *   Kernel command line: loglevel=7 \
- *   Kernel command line: init=/sbin/init \
- *   Kernel command line: root=PARTUUID=8c3efc1a-768b-6642-8d0c-89eb782f19f0/PARTNROFF=1 \
- *   Kernel command line: rootwait ro \
- *   Kernel command line: my_quoted_arg="The \
- *   Kernel command line: quick brown fox \
- *   Kernel command line: jumps over the \
- *   Kernel command line: lazy dog."
- */
-static void __init print_kernel_cmdline(const char *cmdline)
-{
-	size_t len;
-
-	/* Config option of 0 or anything longer than the max disables wrapping */
-	if (CONFIG_CMDLINE_LOG_WRAP_IDEAL_LEN == 0 ||
-	    IDEAL_CMDLINE_LEN >= COMMAND_LINE_SIZE - 1) {
-		pr_notice("%s%s\n", KERNEL_CMDLINE_PREFIX, cmdline);
-		return;
-	}
-
-	len = strlen(cmdline);
-	while (len > IDEAL_CMDLINE_LEN) {
-		const char *first_space;
-		const char *prev_cutoff;
-		const char *cutoff;
-		int to_print;
-		size_t used;
-
-		/* Find the last ' ' that wouldn't make the line too long */
-		prev_cutoff = NULL;
-		cutoff = cmdline;
-		while (true) {
-			cutoff = strchr(cutoff + 1, ' ');
-			if (!cutoff || cutoff - cmdline > IDEAL_CMDLINE_SPLIT_LEN)
-				break;
-			prev_cutoff = cutoff;
-		}
-		if (prev_cutoff)
-			cutoff = prev_cutoff;
-		else if (!cutoff)
-			break;
-
-		/* Find the beginning and end of the string of spaces */
-		first_space = cutoff;
-		while (first_space > cmdline && first_space[-1] == ' ')
-			first_space--;
-		to_print = first_space - cmdline;
-		while (*cutoff == ' ')
-			cutoff++;
-		used = cutoff - cmdline;
-
-		/* If the whole string is used, break and do the final printout */
-		if (len == used)
-			break;
-
-		if (to_print)
-			pr_notice("%s%.*s%s\n", KERNEL_CMDLINE_PREFIX,
-				  to_print, cmdline, KERNEL_CMDLINE_CONTINUATION);
-
-		len -= used;
-		cmdline += used;
-	}
-	if (len)
-		pr_notice("%s%s\n", KERNEL_CMDLINE_PREFIX, cmdline);
-}
-
 asmlinkage __visible __init __no_sanitize_address __noreturn __no_stack_protector
 void start_kernel(void)
 {
@@ -1037,7 +935,6 @@ void start_kernel(void)
 	page_address_init();
 	pr_notice("%s", linux_banner);
 	setup_arch(&command_line);
-	mm_core_init_early();
 	/* Static keys and static calls are needed by LSMs */
 	jump_label_init();
 	static_call_init();
@@ -1050,7 +947,7 @@ void start_kernel(void)
 	early_numa_node_init();
 	boot_cpu_hotplug_init();
 
-	print_kernel_cmdline(saved_command_line);
+	pr_notice("Kernel command line: %s\n", saved_command_line);
 	/* parameters may set static keys */
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
@@ -1077,7 +974,6 @@ void start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_core_init();
-	maple_tree_init();
 	poking_init();
 	ftrace_init();
 
@@ -1095,6 +991,7 @@ void start_kernel(void)
 		 "Interrupts were enabled *very* early, fixing it\n"))
 		local_irq_disable();
 	radix_tree_init();
+	maple_tree_init();
 
 	/*
 	 * Set up housekeeping before setting up workqueues to allow the unbound
@@ -1110,7 +1007,6 @@ void start_kernel(void)
 	workqueue_init_early();
 
 	rcu_init();
-	kvfree_rcu_init();
 
 	/* Trace events are available after this */
 	trace_init();
@@ -1124,11 +1020,10 @@ void start_kernel(void)
 	init_IRQ();
 	tick_init();
 	rcu_init_nohz();
-	timers_init();
+	init_timers();
 	srcu_init();
 	hrtimers_init();
 	softirq_init();
-	vdso_setup_data_pages();
 	timekeeping_init();
 	time_init();
 
@@ -1189,12 +1084,15 @@ void start_kernel(void)
 
 	pid_idr_init();
 	anon_vma_init();
+#ifdef CONFIG_X86
+	if (efi_enabled(EFI_RUNTIME_SERVICES))
+		efi_enter_virtual_mode();
+#endif
 	thread_stack_cache_init();
 	cred_init();
 	fork_init();
 	proc_caches_init();
 	uts_ns_init();
-	time_ns_init();
 	key_init();
 	security_init();
 	dbg_late_init();
@@ -1207,7 +1105,6 @@ void start_kernel(void)
 	nsfs_init();
 	pidfs_init();
 	cpuset_init();
-	mem_cgroup_init();
 	cgroup_init();
 	taskstats_init_early();
 	delayacct_init();
@@ -1263,10 +1160,16 @@ static int __init initcall_blacklist(char *str)
 		str_entry = strsep(&str, ",");
 		if (str_entry) {
 			pr_debug("blacklisting initcall %s\n", str_entry);
-			entry = memblock_alloc_or_panic(sizeof(*entry),
+			entry = memblock_alloc(sizeof(*entry),
 					       SMP_CACHE_BYTES);
-			entry->buf = memblock_alloc_or_panic(strlen(str_entry) + 1,
+			if (!entry)
+				panic("%s: Failed to allocate %zu bytes\n",
+				      __func__, sizeof(*entry));
+			entry->buf = memblock_alloc(strlen(str_entry) + 1,
 						    SMP_CACHE_BYTES);
+			if (!entry->buf)
+				panic("%s: Failed to allocate %zu bytes\n",
+				      __func__, strlen(str_entry) + 1);
 			strcpy(entry->buf, str_entry);
 			list_add(&entry->next, &blacklisted_initcalls);
 		}
@@ -1335,12 +1238,6 @@ trace_initcall_finish_cb(void *data, initcall_t fn, int ret)
 		 fn, ret, (unsigned long long)ktime_us_delta(rettime, *calltime));
 }
 
-static __init_or_module void
-trace_initcall_level_cb(void *data, const char *level)
-{
-	printk(KERN_DEBUG "entering initcall level: %s\n", level);
-}
-
 static ktime_t initcall_calltime;
 
 #ifdef TRACEPOINTS_ENABLED
@@ -1352,12 +1249,10 @@ static void __init initcall_debug_enable(void)
 					    &initcall_calltime);
 	ret |= register_trace_initcall_finish(trace_initcall_finish_cb,
 					      &initcall_calltime);
-	ret |= register_trace_initcall_level(trace_initcall_level_cb, NULL);
 	WARN(ret, "Failed to register initcall tracepoints\n");
 }
 # define do_trace_initcall_start	trace_initcall_start
 # define do_trace_initcall_finish	trace_initcall_finish
-# define do_trace_initcall_level	trace_initcall_level
 #else
 static inline void do_trace_initcall_start(initcall_t fn)
 {
@@ -1370,12 +1265,6 @@ static inline void do_trace_initcall_finish(initcall_t fn, int ret)
 	if (!initcall_debug)
 		return;
 	trace_initcall_finish_cb(&initcall_calltime, fn, ret);
-}
-static inline void do_trace_initcall_level(const char *level)
-{
-	if (!initcall_debug)
-		return;
-	trace_initcall_level_cb(NULL, level);
 }
 #endif /* !TRACEPOINTS_ENABLED */
 
@@ -1449,7 +1338,7 @@ static void __init do_initcall_level(int level, char *command_line)
 		   level, level,
 		   NULL, ignore_unknown_bootoption);
 
-	do_trace_initcall_level(initcall_level_names[level]);
+	trace_initcall_level(initcall_level_names[level]);
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(initcall_from_entry(fn));
 }
@@ -1483,7 +1372,6 @@ static void __init do_initcalls(void)
 static void __init do_basic_setup(void)
 {
 	cpuset_init_smp();
-	ksysfs_init();
 	driver_init();
 	init_irq_proc();
 	do_ctors();
@@ -1494,7 +1382,7 @@ static void __init do_pre_smp_initcalls(void)
 {
 	initcall_entry_t *fn;
 
-	do_trace_initcall_level("early");
+	trace_initcall_level("early");
 	for (fn = __initcall_start; fn < __initcall0_start; fn++)
 		do_one_initcall(initcall_from_entry(fn));
 }
@@ -1689,6 +1577,7 @@ static noinline void __init kernel_init_freeable(void)
 
 	init_mm_internals();
 
+	rcu_init_tasks_generic();
 	do_pre_smp_initcalls();
 	lockup_detector_init();
 
@@ -1711,12 +1600,7 @@ static noinline void __init kernel_init_freeable(void)
 	 * check if there is an early userspace init.  If yes, let it do all
 	 * the work
 	 */
-	int ramdisk_command_access;
-	ramdisk_command_access = init_eaccess(ramdisk_execute_command);
-	if (ramdisk_command_access != 0) {
-		if (ramdisk_execute_command_set)
-			pr_warn("check access for rdinit=%s failed: %i, ignoring\n",
-				ramdisk_execute_command, ramdisk_command_access);
+	if (init_eaccess(ramdisk_execute_command) != 0) {
 		ramdisk_execute_command = NULL;
 		prepare_namespace();
 	}

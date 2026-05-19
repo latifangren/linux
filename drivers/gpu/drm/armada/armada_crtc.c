@@ -13,7 +13,6 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
 
@@ -921,7 +920,7 @@ static int armada_drm_crtc_create(struct drm_device *drm, struct device *dev,
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
-	dcrtc = kzalloc_obj(*dcrtc);
+	dcrtc = kzalloc(sizeof(*dcrtc), GFP_KERNEL);
 	if (!dcrtc) {
 		DRM_ERROR("failed to allocate Armada crtc\n");
 		return -ENOMEM;
@@ -970,7 +969,7 @@ static int armada_drm_crtc_create(struct drm_device *drm, struct device *dev,
 
 	dcrtc->crtc.port = port;
 
-	primary = kzalloc_obj(*primary);
+	primary = kzalloc(sizeof(*primary), GFP_KERNEL);
 	if (!primary) {
 		ret = -ENOMEM;
 		goto err_crtc;
@@ -1085,7 +1084,7 @@ MODULE_DEVICE_TABLE(platform, armada_lcd_platform_ids);
 
 struct platform_driver armada_lcd_platform_driver = {
 	.probe	= armada_lcd_probe,
-	.remove = armada_lcd_remove,
+	.remove_new = armada_lcd_remove,
 	.driver = {
 		.name	= "armada-lcd",
 		.owner	=  THIS_MODULE,

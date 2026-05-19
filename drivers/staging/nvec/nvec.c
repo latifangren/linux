@@ -648,6 +648,7 @@ static irqreturn_t nvec_interrupt(int irq, void *dev)
 		break;
 	case 2:		/* first byte after command */
 		if (status == (I2C_SL_IRQ | RNW | RCVD)) {
+			udelay(33);
 			if (nvec->rx->data[0] != 0x01) {
 				dev_err(nvec->dev,
 					"Read without prior read command\n");
@@ -659,11 +660,6 @@ static irqreturn_t nvec_interrupt(int irq, void *dev)
 			nvec_tx_set(nvec);
 			to_send = nvec->tx->data[0];
 			nvec->tx->pos = 1;
-			/*
-			 * delay ACK due to AP20 HW Bug
-			 * do not replace by usleep_range
-			 */
-			udelay(33);
 		} else if (status == (I2C_SL_IRQ)) {
 			nvec->rx->data[1] = received;
 			nvec->rx->pos = 2;
@@ -813,12 +809,13 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 
 	nvec->irq = platform_get_irq(pdev, 0);
 	if (nvec->irq < 0)
-		return nvec->irq;
+		return -ENODEV;
 
 	i2c_clk = devm_clk_get(dev, "div-clk");
-	if (IS_ERR(i2c_clk))
-		return dev_err_probe(dev, PTR_ERR(i2c_clk),
-				     "failed to get controller clock\n");
+	if (IS_ERR(i2c_clk)) {
+		dev_err(dev, "failed to get controller clock\n");
+		return -ENODEV;
+	}
 
 	nvec->rst = devm_reset_control_get_exclusive(dev, "i2c");
 	if (IS_ERR(nvec->rst)) {
@@ -850,8 +847,10 @@ static int tegra_nvec_probe(struct platform_device *pdev)
 
 	err = devm_request_irq(dev, nvec->irq, nvec_interrupt, IRQF_NO_AUTOEN,
 			       "nvec", nvec);
-	if (err)
-		return dev_err_probe(dev, err, "couldn't request irq\n");
+	if (err) {
+		dev_err(dev, "couldn't request irq\n");
+		return -ENODEV;
+	}
 
 	tegra_init_i2c_slave(nvec);
 

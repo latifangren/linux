@@ -33,6 +33,8 @@
 #include <linux/sched/task.h>
 #include <linux/util_macros.h>
 
+#include <linux/platform_data/ina2xx.h>
+
 /* INA2XX registers definition */
 #define INA2XX_CONFIG                   0x00
 #define INA2XX_SHUNT_VOLTAGE            0x01	/* readonly */
@@ -148,7 +150,7 @@ struct ina2xx_chip_info {
 	/* data buffer needs space for channel data and timestamp */
 	struct {
 		u16 chan[4];
-		aligned_s64 ts;
+		u64 ts __aligned(8);
 	} scan;
 };
 
@@ -764,7 +766,7 @@ static int ina2xx_work_buffer(struct iio_dev *indio_dev)
 		chip->scan.chan[i++] = val;
 	}
 
-	iio_push_to_buffers_with_ts(indio_dev, &chip->scan, sizeof(chip->scan), time);
+	iio_push_to_buffers_with_timestamp(indio_dev, &chip->scan, time);
 
 	return 0;
 };
@@ -978,8 +980,16 @@ static int ina2xx_probe(struct i2c_client *client)
 
 	mutex_init(&chip->state_lock);
 
-	if (of_property_read_u32(client->dev.of_node, "shunt-resistor", &val) < 0)
-		val = INA2XX_RSHUNT_DEFAULT;
+	if (of_property_read_u32(client->dev.of_node,
+				 "shunt-resistor", &val) < 0) {
+		struct ina2xx_platform_data *pdata =
+		    dev_get_platdata(&client->dev);
+
+		if (pdata)
+			val = pdata->shunt_uohms;
+		else
+			val = INA2XX_RSHUNT_DEFAULT;
+	}
 
 	ret = set_shunt_resistor(chip, val);
 	if (ret)

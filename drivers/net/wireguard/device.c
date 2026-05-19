@@ -81,7 +81,7 @@ static int wg_pm_notification(struct notifier_block *nb, unsigned long action, v
 	list_for_each_entry(wg, &device_list, device_list) {
 		mutex_lock(&wg->device_update_lock);
 		list_for_each_entry(peer, &wg->peer_list, peer_list) {
-			timer_delete(&peer->timer_zero_key_material);
+			del_timer(&peer->timer_zero_key_material);
 			wg_noise_handshake_clear(&peer->handshake);
 			wg_noise_keypairs_clear(&peer->keypairs);
 		}
@@ -302,20 +302,18 @@ static void wg_setup(struct net_device *dev)
 	/* We need to keep the dst around in case of icmp replies. */
 	netif_keep_dst(dev);
 
-	netif_set_tso_max_size(dev, GSO_MAX_SIZE);
-
+	memset(wg, 0, sizeof(*wg));
 	wg->dev = dev;
 }
 
-static int wg_newlink(struct net_device *dev,
-		      struct rtnl_newlink_params *params,
+static int wg_newlink(struct net *src_net, struct net_device *dev,
+		      struct nlattr *tb[], struct nlattr *data[],
 		      struct netlink_ext_ack *extack)
 {
-	struct net *link_net = rtnl_newlink_link_net(params);
 	struct wg_device *wg = netdev_priv(dev);
 	int ret = -ENOMEM;
 
-	rcu_assign_pointer(wg->creating_net, link_net);
+	rcu_assign_pointer(wg->creating_net, src_net);
 	init_rwsem(&wg->static_identity.lock);
 	mutex_init(&wg->socket_update_lock);
 	mutex_init(&wg->device_update_lock);
@@ -333,8 +331,7 @@ static int wg_newlink(struct net_device *dev,
 		goto err_free_peer_hashtable;
 
 	wg->handshake_receive_wq = alloc_workqueue("wg-kex-%s",
-			WQ_CPU_INTENSIVE | WQ_FREEZABLE | WQ_PERCPU, 0,
-			dev->name);
+			WQ_CPU_INTENSIVE | WQ_FREEZABLE, 0, dev->name);
 	if (!wg->handshake_receive_wq)
 		goto err_free_index_hashtable;
 
@@ -344,8 +341,7 @@ static int wg_newlink(struct net_device *dev,
 		goto err_destroy_handshake_receive;
 
 	wg->packet_crypt_wq = alloc_workqueue("wg-crypt-%s",
-			WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_PERCPU, 0,
-			dev->name);
+			WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM, 0, dev->name);
 	if (!wg->packet_crypt_wq)
 		goto err_destroy_handshake_send;
 
@@ -368,7 +364,6 @@ static int wg_newlink(struct net_device *dev,
 	if (ret < 0)
 		goto err_free_handshake_queue;
 
-	netif_threaded_enable(dev);
 	ret = register_netdevice(dev);
 	if (ret < 0)
 		goto err_uninit_ratelimiter;
@@ -411,11 +406,12 @@ static struct rtnl_link_ops link_ops __read_mostly = {
 	.newlink		= wg_newlink,
 };
 
-static void __net_exit wg_netns_exit_rtnl(struct net *net, struct list_head *dev_kill_list)
+static void wg_netns_pre_exit(struct net *net)
 {
 	struct wg_device *wg;
 	struct wg_peer *peer;
 
+	rtnl_lock();
 	list_for_each_entry(wg, &device_list, device_list) {
 		if (rcu_access_pointer(wg->creating_net) == net) {
 			pr_debug("%s: Creating namespace exiting\n", wg->dev->name);
@@ -428,10 +424,11 @@ static void __net_exit wg_netns_exit_rtnl(struct net *net, struct list_head *dev
 			mutex_unlock(&wg->device_update_lock);
 		}
 	}
+	rtnl_unlock();
 }
 
-static struct pernet_operations pernet_ops __read_mostly = {
-	.exit_rtnl = wg_netns_exit_rtnl
+static struct pernet_operations pernet_ops = {
+	.pre_exit = wg_netns_pre_exit
 };
 
 int __init wg_device_init(void)

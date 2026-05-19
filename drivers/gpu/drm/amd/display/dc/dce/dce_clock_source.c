@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/array_size.h>
-
 #include "dm_services.h"
 
 
@@ -58,6 +56,8 @@
 #define FRACT_FB_DIVIDER_DEC_POINTS_MAX_NUM 6
 #define CALC_PLL_CLK_SRC_ERR_TOLERANCE 1
 #define MAX_PLL_CALC_ERROR 0xFFFFFFFF
+
+#define NUM_ELEMENTS(a) (sizeof(a) / sizeof((a)[0]))
 
 static const struct spread_spectrum_data *get_ss_data_entry(
 		struct dce110_clk_src *clk_src,
@@ -539,7 +539,6 @@ static void dce112_get_pix_clk_dividers_helper (
 		struct pll_settings *pll_settings,
 		struct pixel_clk_params *pix_clk_params)
 {
-	(void)clk_src;
 	uint32_t actual_pixel_clock_100hz;
 
 	actual_pixel_clock_100hz = pix_clk_params->requested_pix_clk_100hz;
@@ -611,7 +610,7 @@ static uint32_t dce112_get_pix_clk_dividers(
 			|| pix_clk_params->requested_pix_clk_100hz == 0) {
 		DC_LOG_ERROR(
 			"%s: Invalid parameters!!\n", __func__);
-		return (uint32_t)-1;
+		return -1;
 	}
 
 	memset(pll_settings, 0, sizeof(*pll_settings));
@@ -622,7 +621,7 @@ static uint32_t dce112_get_pix_clk_dividers(
 		pll_settings->calculated_pix_clk_100hz = clk_src->ext_clk_khz * 10;
 		pll_settings->actual_pix_clk_100hz =
 					pix_clk_params->requested_pix_clk_100hz;
-		return (uint32_t)-1;
+		return -1;
 	}
 
 	dce112_get_pix_clk_dividers_helper(clk_src,
@@ -848,7 +847,6 @@ static bool dce110_program_pix_clk(
 		enum dp_link_encoding encoding,
 		struct pll_settings *pll_settings)
 {
-	(void)encoding;
 	struct dce110_clk_src *clk_src = TO_DCE110_CLK_SRC(clock_source);
 	struct bp_pixel_clock_parameters bp_pc_params = {0};
 
@@ -923,7 +921,6 @@ static bool dce112_program_pix_clk(
 		enum dp_link_encoding encoding,
 		struct pll_settings *pll_settings)
 {
-	(void)encoding;
 	struct dce110_clk_src *clk_src = TO_DCE110_CLK_SRC(clock_source);
 	struct bp_pixel_clock_parameters bp_pc_params = {0};
 
@@ -979,12 +976,11 @@ static bool dcn31_program_pix_clk(
 	struct bp_pixel_clock_parameters bp_pc_params = {0};
 	enum transmitter_color_depth bp_pc_colour_depth = TRANSMITTER_COLOR_DEPTH_24;
 
-	// Apply ssed(spread spectrum) dpref clock for edp and dp
-	if (clock_source->ctx->dc->clk_mgr->dp_dto_source_clock_in_khz != 0 &&
-		dc_is_dp_signal(pix_clk_params->signal_type) &&
-		encoding == DP_8b_10b_ENCODING)
+	// Apply ssed(spread spectrum) dpref clock for edp only.
+	if (clock_source->ctx->dc->clk_mgr->dp_dto_source_clock_in_khz != 0
+		&& pix_clk_params->signal_type == SIGNAL_TYPE_EDP
+		&& encoding == DP_8b_10b_ENCODING)
 		dp_dto_ref_khz = clock_source->ctx->dc->clk_mgr->dp_dto_source_clock_in_khz;
-
 	// For these signal types Driver to program DP_DTO without calling VBIOS Command table
 	if (dc_is_dp_signal(pix_clk_params->signal_type) || dc_is_virtual_signal(pix_clk_params->signal_type)) {
 		if (e) {
@@ -1073,7 +1069,6 @@ static bool dcn401_program_pix_clk(
 		enum dp_link_encoding encoding,
 		struct pll_settings *pll_settings)
 {
-	(void)encoding;
 	struct dce110_clk_src *clk_src = TO_DCE110_CLK_SRC(clock_source);
 	unsigned int inst = pix_clk_params->controller_id - CONTROLLER_ID_D0;
 	const struct pixel_rate_range_table_entry *e =
@@ -1110,9 +1105,6 @@ static bool dcn401_program_pix_clk(
 				&dto_params);
 
 	} else {
-		if (pll_settings->actual_pix_clk_100hz > 6000000UL)
-			return false;
-
 		/* disables DP DTO when provided with TMDS signal type */
 		clock_source->ctx->dc->res_pool->dccg->funcs->set_dp_dto(
 				clock_source->ctx->dc->res_pool->dccg,
@@ -1271,7 +1263,7 @@ const struct pixel_rate_range_table_entry *look_up_in_video_optimized_rate_tlb(
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(video_optimized_pixel_rates); i++) {
+	for (i = 0; i < NUM_ELEMENTS(video_optimized_pixel_rates); i++) {
 		const struct pixel_rate_range_table_entry *e = &video_optimized_pixel_rates[i];
 
 		if (e->range_min_khz <= pixel_rate_khz && pixel_rate_khz <= e->range_max_khz) {
@@ -1380,7 +1372,7 @@ static uint32_t dcn3_get_pix_clk_dividers(
 			|| pix_clk_params->requested_pix_clk_100hz == 0) {
 		DC_LOG_ERROR(
 			"%s: Invalid parameters!!\n", __func__);
-		return UINT_MAX;
+		return -1;
 	}
 
 	memset(pll_settings, 0, sizeof(*pll_settings));
@@ -1480,12 +1472,16 @@ static void get_ss_info_from_atombios(
 	if (*ss_entries_num == 0)
 		return;
 
-	ss_info = kzalloc_objs(struct spread_spectrum_info, *ss_entries_num);
+	ss_info = kcalloc(*ss_entries_num,
+			  sizeof(struct spread_spectrum_info),
+			  GFP_KERNEL);
 	ss_info_cur = ss_info;
 	if (ss_info == NULL)
 		return;
 
-	ss_data = kzalloc_objs(struct spread_spectrum_data, *ss_entries_num);
+	ss_data = kcalloc(*ss_entries_num,
+			  sizeof(struct spread_spectrum_data),
+			  GFP_KERNEL);
 	if (ss_data == NULL)
 		goto out_free_info;
 

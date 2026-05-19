@@ -16,7 +16,6 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/platform_device.h>
 
@@ -172,7 +171,8 @@ static int rza2_chip_get(struct gpio_chip *chip, unsigned int offset)
 	return !!(readb(priv->base + RZA2_PIDR(port)) & BIT(pin));
 }
 
-static int rza2_chip_set(struct gpio_chip *chip, unsigned int offset, int value)
+static void rza2_chip_set(struct gpio_chip *chip, unsigned int offset,
+			  int value)
 {
 	struct rza2_pinctrl_priv *priv = gpiochip_get_data(chip);
 	u8 port = RZA2_PIN_ID_TO_PORT(offset);
@@ -187,8 +187,6 @@ static int rza2_chip_set(struct gpio_chip *chip, unsigned int offset, int value)
 		new_value &= ~BIT(pin);
 
 	writeb(new_value, priv->base + RZA2_PODR(port));
-
-	return 0;
 }
 
 static int rza2_chip_direction_output(struct gpio_chip *chip,
@@ -231,8 +229,6 @@ static const char * const rza2_gpio_names[] = {
 static struct gpio_chip chip = {
 	.names = rza2_gpio_names,
 	.base = -1,
-	.request = pinctrl_gpio_request,
-	.free = pinctrl_gpio_free,
 	.get_direction = rza2_chip_get_direction,
 	.direction_input = rza2_chip_direction_input,
 	.direction_output = rza2_chip_direction_output,
@@ -395,7 +391,7 @@ static int rza2_dt_node_to_map(struct pinctrl_dev *pctldev,
 
 	/* Create map where to retrieve function and mux settings from */
 	*num_maps = 0;
-	*map = kzalloc_obj(**map);
+	*map = kzalloc(sizeof(**map), GFP_KERNEL);
 	if (!*map) {
 		ret = -ENOMEM;
 		goto remove_function;
@@ -442,7 +438,7 @@ static int rza2_set_mux(struct pinctrl_dev *pctldev, unsigned int selector,
 			unsigned int group)
 {
 	struct rza2_pinctrl_priv *priv = pinctrl_dev_get_drvdata(pctldev);
-	const struct function_desc *func;
+	struct function_desc *func;
 	unsigned int i, *psel_val;
 	struct group_desc *grp;
 

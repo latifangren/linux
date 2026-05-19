@@ -6,7 +6,7 @@
  */
 
 #include <linux/clk.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -20,17 +20,9 @@
 #include "ufshcd-pltfrm.h"
 #include "ufs-rockchip.h"
 
-static void ufs_rockchip_controller_reset(struct ufs_rockchip_host *host)
-{
-	reset_control_assert(host->rst);
-	udelay(1);
-	reset_control_deassert(host->rst);
-}
-
 static int ufs_rockchip_hce_enable_notify(struct ufs_hba *hba,
 					 enum ufs_notify_change_status status)
 {
-	struct ufs_rockchip_host *host = ufshcd_get_variant(hba);
 	int err = 0;
 
 	if (status == POST_CHANGE) {
@@ -44,9 +36,6 @@ static int ufs_rockchip_hce_enable_notify(struct ufs_hba *hba,
 
 		return ufshcd_vops_phy_initialization(hba);
 	}
-
-	/* PRE_CHANGE */
-	ufs_rockchip_controller_reset(host);
 
 	return 0;
 }
@@ -167,7 +156,9 @@ static int ufs_rockchip_common_init(struct ufs_hba *hba)
 		return dev_err_probe(dev, PTR_ERR(host->rst),
 				"failed to get reset control\n");
 
-	ufs_rockchip_controller_reset(host);
+	reset_control_assert(host->rst);
+	udelay(1);
+	reset_control_deassert(host->rst);
 
 	host->ref_out_clk = devm_clk_get_enabled(dev, "ref_out");
 	if (IS_ERR(host->ref_out_clk))
@@ -291,7 +282,9 @@ static int ufs_rockchip_runtime_resume(struct device *dev)
 		return err;
 	}
 
-	ufs_rockchip_controller_reset(host);
+	reset_control_assert(host->rst);
+	udelay(1);
+	reset_control_deassert(host->rst);
 
 	return ufshcd_runtime_resume(dev);
 }

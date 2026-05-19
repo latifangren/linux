@@ -55,7 +55,7 @@ static int ubi_nvmem_reg_read(void *priv, unsigned int from,
 	if (err)
 		return err;
 
-	return 0;
+	return bytes_left == 0 ? 0 : -EIO;
 }
 
 static int ubi_nvmem_add(struct ubi_volume_info *vi)
@@ -75,7 +75,7 @@ static int ubi_nvmem_add(struct ubi_volume_info *vi)
 	    WARN_ON_ONCE(vi->size <= 0))
 		return -EINVAL;
 
-	unv = kzalloc_obj(struct ubi_nvmem);
+	unv = kzalloc(sizeof(struct ubi_nvmem), GFP_KERNEL);
 	if (!unv)
 		return -ENOMEM;
 

@@ -12,7 +12,7 @@ void foo(struct __sk_buff *skb)
 }
 
 SEC("tc")
-__success
+__failure __msg("foo() doesn't return scalar")
 int global_func7(struct __sk_buff *skb)
 {
 	foo(skb);

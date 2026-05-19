@@ -7,15 +7,14 @@
  * Author: Gary R Hook <ghook@amd.com>
  */
 
-#include <crypto/internal/des.h>
-#include <crypto/internal/skcipher.h>
-#include <linux/err.h>
-#include <linux/kernel.h>
-#include <linux/list.h>
 #include <linux/module.h>
+#include <linux/sched.h>
+#include <linux/delay.h>
 #include <linux/scatterlist.h>
-#include <linux/slab.h>
-#include <linux/string.h>
+#include <linux/crypto.h>
+#include <crypto/algapi.h>
+#include <crypto/scatterwalk.h>
+#include <crypto/internal/des.h>
 
 #include "ccp-crypto.h"
 
@@ -182,7 +181,7 @@ static int ccp_register_des3_alg(struct list_head *head,
 	struct skcipher_alg *alg;
 	int ret;
 
-	ccp_alg = kzalloc_obj(*ccp_alg);
+	ccp_alg = kzalloc(sizeof(*ccp_alg), GFP_KERNEL);
 	if (!ccp_alg)
 		return -ENOMEM;
 
@@ -193,8 +192,9 @@ static int ccp_register_des3_alg(struct list_head *head,
 	/* Copy the defaults and override as necessary */
 	alg = &ccp_alg->alg;
 	*alg = *def->alg_defaults;
-	strscpy(alg->base.cra_name, def->name);
-	strscpy(alg->base.cra_driver_name, def->driver_name);
+	snprintf(alg->base.cra_name, CRYPTO_MAX_ALG_NAME, "%s", def->name);
+	snprintf(alg->base.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s",
+			def->driver_name);
 	alg->base.cra_blocksize = def->blocksize;
 	alg->ivsize = def->ivsize;
 

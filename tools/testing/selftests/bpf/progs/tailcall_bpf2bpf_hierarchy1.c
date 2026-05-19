@@ -2,7 +2,6 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include "bpf_legacy.h"
-#include "bpf_test_utils.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PROG_ARRAY);
@@ -24,8 +23,6 @@ SEC("tc")
 int entry(struct __sk_buff *skb)
 {
 	int ret = 1;
-
-	clobber_regs_stack();
 
 	count++;
 	subprog_tail(skb);

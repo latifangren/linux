@@ -14,7 +14,7 @@
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/if_vlan.h>
-#include <linux/prandom.h>
+#include <linux/random.h>
 #include <linux/highmem.h>
 #include <linux/sched.h>
 
@@ -94,7 +94,7 @@ static int bpf_fill_maxinsns1(struct bpf_test *self)
 	__u32 k = ~0;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -113,7 +113,7 @@ static int bpf_fill_maxinsns2(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -133,7 +133,7 @@ static int bpf_fill_maxinsns3(struct bpf_test *self)
 	struct rnd_state rnd;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -159,7 +159,7 @@ static int bpf_fill_maxinsns4(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -178,7 +178,7 @@ static int bpf_fill_maxinsns5(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -201,7 +201,7 @@ static int bpf_fill_maxinsns6(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -223,7 +223,7 @@ static int bpf_fill_maxinsns7(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -249,7 +249,7 @@ static int bpf_fill_maxinsns8(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i, jmp_off = len - 3;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -272,7 +272,7 @@ static int bpf_fill_maxinsns9(struct bpf_test *self)
 	struct bpf_insn *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -298,7 +298,7 @@ static int bpf_fill_maxinsns10(struct bpf_test *self)
 	struct bpf_insn *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -324,7 +324,7 @@ static int __bpf_fill_ja(struct bpf_test *self, unsigned int len,
 	unsigned int rlen;
 	int i, j;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -358,7 +358,7 @@ static int bpf_fill_maxinsns12(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -381,7 +381,7 @@ static int bpf_fill_maxinsns13(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -410,7 +410,7 @@ static int bpf_fill_ld_abs_get_processor_id(struct bpf_test *self)
 	struct sock_filter *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -434,7 +434,7 @@ static int __bpf_fill_stxdw(struct bpf_test *self, int size)
 	struct bpf_insn *insn;
 	int i;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -478,13 +478,13 @@ static int __bpf_ld_imm64(struct bpf_insn insns[2], u8 reg, s64 imm64)
  * to overflow the field size of the native instruction, triggering
  * a branch conversion mechanism in some JITs.
  */
-static int __bpf_fill_max_jmp(struct bpf_test *self, int jmp, int imm, bool alu32)
+static int __bpf_fill_max_jmp(struct bpf_test *self, int jmp, int imm)
 {
 	struct bpf_insn *insns;
 	int len = S16_MAX + 5;
 	int i;
 
-	insns = kmalloc_objs(*insns, len);
+	insns = kmalloc_array(len, sizeof(*insns), GFP_KERNEL);
 	if (!insns)
 		return -ENOMEM;
 
@@ -501,7 +501,7 @@ static int __bpf_fill_max_jmp(struct bpf_test *self, int jmp, int imm, bool alu3
 		};
 		int op = ops[(i >> 1) % ARRAY_SIZE(ops)];
 
-		if ((i & 1) || alu32)
+		if (i & 1)
 			insns[i++] = BPF_ALU32_REG(op, R0, R1);
 		else
 			insns[i++] = BPF_ALU64_REG(op, R0, R1);
@@ -516,47 +516,27 @@ static int __bpf_fill_max_jmp(struct bpf_test *self, int jmp, int imm, bool alu3
 }
 
 /* Branch taken by runtime decision */
-static int bpf_fill_max_jmp_taken_32(struct bpf_test *self)
-{
-	return __bpf_fill_max_jmp(self, BPF_JEQ, 1, true);
-}
-
 static int bpf_fill_max_jmp_taken(struct bpf_test *self)
 {
-	return __bpf_fill_max_jmp(self, BPF_JEQ, 1, false);
+	return __bpf_fill_max_jmp(self, BPF_JEQ, 1);
 }
 
 /* Branch not taken by runtime decision */
-static int bpf_fill_max_jmp_not_taken_32(struct bpf_test *self)
-{
-	return __bpf_fill_max_jmp(self, BPF_JEQ, 0, true);
-}
-
 static int bpf_fill_max_jmp_not_taken(struct bpf_test *self)
 {
-	return __bpf_fill_max_jmp(self, BPF_JEQ, 0, false);
+	return __bpf_fill_max_jmp(self, BPF_JEQ, 0);
 }
 
 /* Branch always taken, known at JIT time */
-static int bpf_fill_max_jmp_always_taken_32(struct bpf_test *self)
-{
-	return __bpf_fill_max_jmp(self, BPF_JGE, 0, true);
-}
-
 static int bpf_fill_max_jmp_always_taken(struct bpf_test *self)
 {
-	return __bpf_fill_max_jmp(self, BPF_JGE, 0, false);
+	return __bpf_fill_max_jmp(self, BPF_JGE, 0);
 }
 
 /* Branch never taken, known at JIT time */
-static int bpf_fill_max_jmp_never_taken_32(struct bpf_test *self)
-{
-	return __bpf_fill_max_jmp(self, BPF_JLT, 0, true);
-}
-
 static int bpf_fill_max_jmp_never_taken(struct bpf_test *self)
 {
-	return __bpf_fill_max_jmp(self, BPF_JLT, 0, false);
+	return __bpf_fill_max_jmp(self, BPF_JLT, 0);
 }
 
 /* ALU result computation used in tests */
@@ -626,7 +606,7 @@ static int __bpf_fill_alu_shift(struct bpf_test *self, u8 op,
 	int imm, k;
 	int i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -759,7 +739,7 @@ static int __bpf_fill_alu_shift_same_reg(struct bpf_test *self, u8 op,
 	int i = 0;
 	u64 val;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -1244,7 +1224,7 @@ static int __bpf_fill_alu_imm_regs(struct bpf_test *self, u8 op, bool alu32)
 	u32 imm;
 	int rd;
 
-	insns = kmalloc_objs(*insns, len);
+	insns = kmalloc_array(len, sizeof(*insns), GFP_KERNEL);
 	if (!insns)
 		return -ENOMEM;
 
@@ -1426,7 +1406,7 @@ static int __bpf_fill_alu_reg_pairs(struct bpf_test *self, u8 op, bool alu32)
 	int rd, rs;
 	int i = 0;
 
-	insns = kmalloc_objs(*insns, len);
+	insns = kmalloc_array(len, sizeof(*insns), GFP_KERNEL);
 	if (!insns)
 		return -ENOMEM;
 
@@ -1917,7 +1897,7 @@ static int __bpf_fill_atomic_reg_pairs(struct bpf_test *self, u8 width, u8 op)
 	u64 mem, upd, res;
 	int rd, rs, i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -2163,7 +2143,7 @@ static int bpf_fill_ld_imm64_magn(struct bpf_test *self)
 	int bit, adj, sign;
 	int i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -2217,7 +2197,7 @@ static int __bpf_fill_ld_imm64_bytes(struct bpf_test *self,
 	u32 rand = 1;
 	int i = 0;
 
-	insn = kmalloc_objs(*insn, len);
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
 	if (!insn)
 		return -ENOMEM;
 
@@ -2724,7 +2704,7 @@ static int __bpf_fill_staggered_jumps(struct bpf_test *self,
 	struct bpf_insn *insns;
 	int off, ind;
 
-	insns = kmalloc_objs(*insns, len);
+	insns = kmalloc_array(len, sizeof(*insns), GFP_KERNEL);
 	if (!insns)
 		return -ENOMEM;
 
@@ -14254,38 +14234,6 @@ static struct bpf_test tests[] = {
 	},
 	/* Conditional branch conversions */
 	{
-		"Long conditional jump: taken at runtime (32 bits)",
-		{ },
-		INTERNAL | FLAG_NO_DATA,
-		{ },
-		{ { 0, 1 } },
-		.fill_helper = bpf_fill_max_jmp_taken_32,
-	},
-	{
-		"Long conditional jump: not taken at runtime (32 bits)",
-		{ },
-		INTERNAL | FLAG_NO_DATA,
-		{ },
-		{ { 0, 2 } },
-		.fill_helper = bpf_fill_max_jmp_not_taken_32,
-	},
-	{
-		"Long conditional jump: always taken, known at JIT time (32 bits)",
-		{ },
-		INTERNAL | FLAG_NO_DATA,
-		{ },
-		{ { 0, 1 } },
-		.fill_helper = bpf_fill_max_jmp_always_taken_32,
-	},
-	{
-		"Long conditional jump: never taken, known at JIT time (32 bits)",
-		{ },
-		INTERNAL | FLAG_NO_DATA,
-		{ },
-		{ { 0, 2 } },
-		.fill_helper = bpf_fill_max_jmp_never_taken_32,
-	},
-	{
 		"Long conditional jump: taken at runtime",
 		{ },
 		INTERNAL | FLAG_NO_DATA,
@@ -15461,7 +15409,7 @@ static __init int prepare_tail_call_tests(struct bpf_array **pprogs)
 	int which, err;
 
 	/* Allocate the table of programs to be used for tail calls */
-	progs = kzalloc_flex(*progs, ptrs, ntests + 1);
+	progs = kzalloc(struct_size(progs, ptrs, ntests + 1), GFP_KERNEL);
 	if (!progs)
 		goto out_nomem;
 

@@ -10,6 +10,7 @@
 #include <linux/hwmon.h>
 #include <linux/io.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
@@ -48,6 +49,8 @@
 #define SFCTEMP_K1000	81100L
 
 struct sfctemp {
+	/* serialize access to hardware register and enabled below */
+	struct mutex lock;
 	void __iomem *regs;
 	struct clk *clk_sense;
 	struct clk *clk_bus;
@@ -89,14 +92,15 @@ static void sfctemp_stop(struct sfctemp *sfctemp)
 
 static int sfctemp_enable(struct sfctemp *sfctemp)
 {
-	int ret;
+	int ret = 0;
 
+	mutex_lock(&sfctemp->lock);
 	if (sfctemp->enabled)
-		return 0;
+		goto done;
 
 	ret = clk_prepare_enable(sfctemp->clk_bus);
 	if (ret)
-		return ret;
+		goto err;
 	ret = reset_control_deassert(sfctemp->rst_bus);
 	if (ret)
 		goto err_disable_bus;
@@ -111,7 +115,9 @@ static int sfctemp_enable(struct sfctemp *sfctemp)
 	sfctemp_power_up(sfctemp);
 	sfctemp_run(sfctemp);
 	sfctemp->enabled = true;
-	return 0;
+done:
+	mutex_unlock(&sfctemp->lock);
+	return ret;
 
 err_disable_sense:
 	clk_disable_unprepare(sfctemp->clk_sense);
@@ -119,13 +125,16 @@ err_assert_bus:
 	reset_control_assert(sfctemp->rst_bus);
 err_disable_bus:
 	clk_disable_unprepare(sfctemp->clk_bus);
+err:
+	mutex_unlock(&sfctemp->lock);
 	return ret;
 }
 
 static int sfctemp_disable(struct sfctemp *sfctemp)
 {
+	mutex_lock(&sfctemp->lock);
 	if (!sfctemp->enabled)
-		return 0;
+		goto done;
 
 	sfctemp_stop(sfctemp);
 	sfctemp_power_down(sfctemp);
@@ -134,6 +143,8 @@ static int sfctemp_disable(struct sfctemp *sfctemp)
 	reset_control_assert(sfctemp->rst_bus);
 	clk_disable_unprepare(sfctemp->clk_bus);
 	sfctemp->enabled = false;
+done:
+	mutex_unlock(&sfctemp->lock);
 	return 0;
 }
 
@@ -144,14 +155,22 @@ static void sfctemp_disable_action(void *data)
 
 static int sfctemp_convert(struct sfctemp *sfctemp, long *val)
 {
-	if (!sfctemp->enabled)
-		return -ENODATA;
+	int ret;
+
+	mutex_lock(&sfctemp->lock);
+	if (!sfctemp->enabled) {
+		ret = -ENODATA;
+		goto out;
+	}
 
 	/* calculate temperature in milli Celcius */
 	*val = (long)((readl(sfctemp->regs) & SFCTEMP_DOUT_MSK) >> SFCTEMP_DOUT_POS)
 		* SFCTEMP_Y1000 / SFCTEMP_Z - SFCTEMP_K1000;
 
-	return 0;
+	ret = 0;
+out:
+	mutex_unlock(&sfctemp->lock);
+	return ret;
 }
 
 static umode_t sfctemp_is_visible(const void *data, enum hwmon_sensor_types type,
@@ -244,6 +263,7 @@ static int sfctemp_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	dev_set_drvdata(dev, sfctemp);
+	mutex_init(&sfctemp->lock);
 
 	sfctemp->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(sfctemp->regs))

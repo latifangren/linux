@@ -267,8 +267,7 @@ static void l2tp_ip_destroy_sock(struct sock *sk)
 	}
 }
 
-static int l2tp_ip_bind(struct sock *sk, struct sockaddr_unsized *uaddr,
-			int addr_len)
+static int l2tp_ip_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct sockaddr_l2tpip *addr = (struct sockaddr_l2tpip *)uaddr;
@@ -329,8 +328,7 @@ out:
 	return ret;
 }
 
-static int l2tp_ip_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
-			   int addr_len)
+static int l2tp_ip_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
 	struct sockaddr_l2tpip *lsa = (struct sockaddr_l2tpip *)uaddr;
 	struct l2tp_ip_net *pn = l2tp_ip_pernet(sock_net(sk));
@@ -427,6 +425,7 @@ static int l2tp_ip_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int rc;
 	struct inet_sock *inet = inet_sk(sk);
 	struct rtable *rt = NULL;
+	struct flowi4 *fl4;
 	int connected = 0;
 	__be32 daddr;
 
@@ -456,6 +455,7 @@ static int l2tp_ip_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		if (sk->sk_state != TCP_ESTABLISHED)
 			goto out;
 
+		daddr = inet->inet_daddr;
 		connected = 1;
 	}
 
@@ -482,24 +482,29 @@ static int l2tp_ip_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		goto error;
 	}
 
+	fl4 = &inet->cork.fl.u.ip4;
 	if (connected)
 		rt = dst_rtable(__sk_dst_check(sk, 0));
 
 	rcu_read_lock();
 	if (!rt) {
-		struct flowi4 *fl4 = &inet->cork.fl.u.ip4;
+		const struct ip_options_rcu *inet_opt;
 
-		inet_sk_init_flowi4(inet, fl4);
+		inet_opt = rcu_dereference(inet->inet_opt);
 
-		/* Overwrite ->daddr if msg->msg_name was provided */
-		if (!connected)
-			fl4->daddr = daddr;
+		/* Use correct destination address if we have options. */
+		if (inet_opt && inet_opt->opt.srr)
+			daddr = inet_opt->opt.faddr;
 
 		/* If this fails, retransmit mechanism of transport layer will
 		 * keep trying until route appears or the connection times
 		 * itself out.
 		 */
-		rt = ip_route_output_flow(sock_net(sk), fl4, sk);
+		rt = ip_route_output_ports(sock_net(sk), fl4, sk,
+					   daddr, inet->inet_saddr,
+					   inet->inet_dport, inet->inet_sport,
+					   sk->sk_protocol, ip_sock_rt_tos(sk),
+					   sk->sk_bound_dev_if);
 		if (IS_ERR(rt))
 			goto no_route;
 		if (connected) {
@@ -537,7 +542,7 @@ no_route:
 }
 
 static int l2tp_ip_recvmsg(struct sock *sk, struct msghdr *msg,
-			   size_t len, int flags)
+			   size_t len, int flags, int *addr_len)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	size_t copied = 0;
@@ -570,7 +575,7 @@ static int l2tp_ip_recvmsg(struct sock *sk, struct msghdr *msg,
 		sin->sin_addr.s_addr = ip_hdr(skb)->saddr;
 		sin->sin_port = 0;
 		memset(&sin->sin_zero, 0, sizeof(sin->sin_zero));
-		msg->msg_namelen = sizeof(*sin);
+		*addr_len = sizeof(*sin);
 	}
 	if (inet_cmsg_flags(inet))
 		ip_cmsg_recv(msg, skb);

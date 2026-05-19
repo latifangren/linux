@@ -959,12 +959,11 @@ void fc_fcp_destroy(struct fc_lport *);
 /*
  * SCSI INTERACTION LAYER
  *****************************/
-enum scsi_qc_status fc_queuecommand(struct Scsi_Host *shost,
-				    struct scsi_cmnd *cmnd);
+int fc_queuecommand(struct Scsi_Host *, struct scsi_cmnd *);
 int fc_eh_abort(struct scsi_cmnd *);
 int fc_eh_device_reset(struct scsi_cmnd *);
 int fc_eh_host_reset(struct scsi_cmnd *);
-int fc_sdev_init(struct scsi_device *);
+int fc_slave_alloc(struct scsi_device *);
 
 /*
  * ELS/CT interface

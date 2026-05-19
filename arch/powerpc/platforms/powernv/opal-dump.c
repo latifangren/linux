@@ -286,7 +286,7 @@ out:
 }
 
 static ssize_t dump_attr_read(struct file *filep, struct kobject *kobj,
-			      const struct bin_attribute *bin_attr,
+			      struct bin_attribute *bin_attr,
 			      char *buffer, loff_t pos, size_t count)
 {
 	ssize_t rc;
@@ -329,7 +329,7 @@ static void create_dump_obj(uint32_t id, size_t size, uint32_t type)
 	struct dump_obj *dump;
 	int rc;
 
-	dump = kzalloc_obj(*dump);
+	dump = kzalloc(sizeof(*dump), GFP_KERNEL);
 	if (!dump)
 		return;
 

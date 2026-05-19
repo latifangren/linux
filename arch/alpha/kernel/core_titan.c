@@ -594,7 +594,7 @@ titan_agp_setup(alpha_agp_info *agp)
 	if (!alpha_agpgart_size)
 		return -ENOMEM;
 
-	aper = kmalloc_obj(struct titan_agp_aperture);
+	aper = kmalloc(sizeof(struct titan_agp_aperture), GFP_KERNEL);
 	if (aper == NULL)
 		return -ENOMEM;
 
@@ -760,7 +760,7 @@ titan_agp_info(void)
 	/*
 	 * Allocate the info structure.
 	 */
-	agp = kmalloc_obj(*agp);
+	agp = kmalloc(sizeof(*agp), GFP_KERNEL);
 	if (!agp)
 		return NULL;
 

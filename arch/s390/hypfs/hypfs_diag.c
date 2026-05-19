@@ -7,7 +7,8 @@
  *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
  */
 
-#define pr_fmt(fmt) "hypfs: " fmt
+#define KMSG_COMPONENT "hypfs"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/types.h>
 #include <linux/errno.h>

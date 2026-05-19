@@ -81,9 +81,9 @@ void br_stp_disable_bridge(struct net_bridge *br)
 	br->topology_change_detected = 0;
 	spin_unlock_bh(&br->lock);
 
-	timer_delete_sync(&br->hello_timer);
-	timer_delete_sync(&br->topology_change_timer);
-	timer_delete_sync(&br->tcn_timer);
+	del_timer_sync(&br->hello_timer);
+	del_timer_sync(&br->topology_change_timer);
+	del_timer_sync(&br->tcn_timer);
 	cancel_delayed_work_sync(&br->gc_work);
 }
 
@@ -109,9 +109,9 @@ void br_stp_disable_port(struct net_bridge_port *p)
 
 	br_ifinfo_notify(RTM_NEWLINK, NULL, p);
 
-	timer_delete(&p->message_age_timer);
-	timer_delete(&p->forward_delay_timer);
-	timer_delete(&p->hold_timer);
+	del_timer(&p->message_age_timer);
+	del_timer(&p->forward_delay_timer);
+	del_timer(&p->hold_timer);
 
 	if (!rcu_access_pointer(p->backup_port))
 		br_fdb_delete_by_port(br, p, 0, 0);
@@ -149,9 +149,7 @@ static void br_stp_start(struct net_bridge *br)
 {
 	int err = -ENOENT;
 
-	/* AUTO mode: try bridge-stp helper in init_net only */
-	if (br->stp_mode == BR_STP_MODE_AUTO &&
-	    net_eq(dev_net(br->dev), &init_net))
+	if (net_eq(dev_net(br->dev), &init_net))
 		err = br_stp_call_user(br, "start");
 
 	if (err && err != -ENOENT)
@@ -164,9 +162,8 @@ static void br_stp_start(struct net_bridge *br)
 	else if (br->bridge_forward_delay > BR_MAX_FORWARD_DELAY)
 		__br_set_forward_delay(br, BR_MAX_FORWARD_DELAY);
 
-	if (br->stp_mode == BR_STP_MODE_USER || !err) {
+	if (!err) {
 		br->stp_enabled = BR_USER_STP;
-		br->stp_helper_active = !err;
 		br_debug(br, "userspace STP started\n");
 	} else {
 		br->stp_enabled = BR_KERNEL_STP;
@@ -183,14 +180,12 @@ static void br_stp_start(struct net_bridge *br)
 
 static void br_stp_stop(struct net_bridge *br)
 {
-	if (br->stp_enabled == BR_USER_STP) {
-		if (br->stp_helper_active) {
-			int err = br_stp_call_user(br, "stop");
+	int err;
 
-			if (err)
-				br_err(br, "failed to stop userspace STP (%d)\n", err);
-			br->stp_helper_active = false;
-		}
+	if (br->stp_enabled == BR_USER_STP) {
+		err = br_stp_call_user(br, "stop");
+		if (err)
+			br_err(br, "failed to stop userspace STP (%d)\n", err);
 
 		/* To start timers on any ports left in blocking */
 		spin_lock_bh(&br->lock);
@@ -349,8 +344,8 @@ int br_stp_set_path_cost(struct net_bridge_port *p, unsigned long path_cost)
 
 ssize_t br_show_bridge_id(char *buf, const struct bridge_id *id)
 {
-	return sysfs_emit(buf, "%.2x%.2x.%.2x%.2x%.2x%.2x%.2x%.2x\n",
-			  id->prio[0], id->prio[1],
-			  id->addr[0], id->addr[1], id->addr[2],
-			  id->addr[3], id->addr[4], id->addr[5]);
+	return sprintf(buf, "%.2x%.2x.%.2x%.2x%.2x%.2x%.2x%.2x\n",
+	       id->prio[0], id->prio[1],
+	       id->addr[0], id->addr[1], id->addr[2],
+	       id->addr[3], id->addr[4], id->addr[5]);
 }

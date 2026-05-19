@@ -10,7 +10,6 @@
 #include <linux/netdevice.h>
 #include <linux/netlink.h>
 #include <net/dsa.h>
-#include <net/netdev_lock.h>
 
 #include "conduit.h"
 #include "dsa.h"
@@ -26,10 +25,8 @@ static int dsa_conduit_get_regs_len(struct net_device *dev)
 	int ret = 0;
 	int len;
 
-	if (ops && ops->get_regs_len) {
-		netdev_lock_ops(dev);
+	if (ops->get_regs_len) {
 		len = ops->get_regs_len(dev);
-		netdev_unlock_ops(dev);
 		if (len < 0)
 			return len;
 		ret += len;
@@ -59,16 +56,12 @@ static void dsa_conduit_get_regs(struct net_device *dev,
 	int port = cpu_dp->index;
 	int len;
 
-	if (ops && ops->get_regs_len && ops->get_regs) {
-		netdev_lock_ops(dev);
+	if (ops->get_regs_len && ops->get_regs) {
 		len = ops->get_regs_len(dev);
-		if (len < 0) {
-			netdev_unlock_ops(dev);
+		if (len < 0)
 			return;
-		}
 		regs->len = len;
 		ops->get_regs(dev, regs, data);
-		netdev_unlock_ops(dev);
 		data += regs->len;
 	}
 
@@ -87,56 +80,9 @@ static void dsa_conduit_get_regs(struct net_device *dev,
 	}
 }
 
-static ssize_t dsa_conduit_append_port_stats(struct dsa_switch *ds, int port,
-					     u64 *data, size_t start)
-{
-	int count;
-
-	if (!ds->ops->get_sset_count)
-		return 0;
-
-	count = ds->ops->get_sset_count(ds, port, ETH_SS_STATS);
-	if (count < 0)
-		return count;
-
-	if (ds->ops->get_ethtool_stats)
-		ds->ops->get_ethtool_stats(ds, port, data + start);
-
-	return count;
-}
-
 static void dsa_conduit_get_ethtool_stats(struct net_device *dev,
 					  struct ethtool_stats *stats,
-					  u64 *data)
-{
-	struct dsa_port *dp, *cpu_dp = dev->dsa_ptr;
-	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
-	struct dsa_switch_tree *dst = cpu_dp->dst;
-	int count, mcount = 0;
-
-	if (ops && ops->get_sset_count && ops->get_ethtool_stats) {
-		netdev_lock_ops(dev);
-		mcount = ops->get_sset_count(dev, ETH_SS_STATS);
-		ops->get_ethtool_stats(dev, stats, data);
-		netdev_unlock_ops(dev);
-	}
-
-	list_for_each_entry(dp, &dst->ports, list) {
-		if (!dsa_port_is_dsa(dp) && !dsa_port_is_cpu(dp))
-			continue;
-
-		count = dsa_conduit_append_port_stats(dp->ds, dp->index,
-						      data, mcount);
-		if (count < 0)
-			return;
-
-		mcount += count;
-	}
-}
-
-static void dsa_conduit_get_ethtool_phy_stats(struct net_device *dev,
-					      struct ethtool_stats *stats,
-					      u64 *data)
+					  uint64_t *data)
 {
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
 	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
@@ -144,15 +90,32 @@ static void dsa_conduit_get_ethtool_phy_stats(struct net_device *dev,
 	int port = cpu_dp->index;
 	int count = 0;
 
-	if (dev->phydev && (!ops || !ops->get_ethtool_phy_stats)) {
+	if (ops->get_sset_count && ops->get_ethtool_stats) {
+		count = ops->get_sset_count(dev, ETH_SS_STATS);
+		ops->get_ethtool_stats(dev, stats, data);
+	}
+
+	if (ds->ops->get_ethtool_stats)
+		ds->ops->get_ethtool_stats(ds, port, data + count);
+}
+
+static void dsa_conduit_get_ethtool_phy_stats(struct net_device *dev,
+					      struct ethtool_stats *stats,
+					      uint64_t *data)
+{
+	struct dsa_port *cpu_dp = dev->dsa_ptr;
+	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
+	struct dsa_switch *ds = cpu_dp->ds;
+	int port = cpu_dp->index;
+	int count = 0;
+
+	if (dev->phydev && !ops->get_ethtool_phy_stats) {
 		count = phy_ethtool_get_sset_count(dev->phydev);
 		if (count >= 0)
 			phy_ethtool_get_stats(dev->phydev, stats, data);
-	} else if (ops && ops->get_sset_count && ops->get_ethtool_phy_stats) {
-		netdev_lock_ops(dev);
+	} else if (ops->get_sset_count && ops->get_ethtool_phy_stats) {
 		count = ops->get_sset_count(dev, ETH_SS_PHY_STATS);
 		ops->get_ethtool_phy_stats(dev, stats, data);
-		netdev_unlock_ops(dev);
 	}
 
 	if (count < 0)
@@ -162,84 +125,44 @@ static void dsa_conduit_get_ethtool_phy_stats(struct net_device *dev,
 		ds->ops->get_ethtool_phy_stats(ds, port, data + count);
 }
 
-static void dsa_conduit_append_port_sset_count(struct dsa_switch *ds, int port,
-					       int sset, int *count)
-{
-	if (ds->ops->get_sset_count)
-		*count += ds->ops->get_sset_count(ds, port, sset);
-}
-
 static int dsa_conduit_get_sset_count(struct net_device *dev, int sset)
 {
-	struct dsa_port *dp, *cpu_dp = dev->dsa_ptr;
+	struct dsa_port *cpu_dp = dev->dsa_ptr;
 	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
-	struct dsa_switch_tree *dst = cpu_dp->dst;
+	struct dsa_switch *ds = cpu_dp->ds;
 	int count = 0;
 
-	netdev_lock_ops(dev);
 	if (sset == ETH_SS_PHY_STATS && dev->phydev &&
-	    (!ops || !ops->get_ethtool_phy_stats))
+	    !ops->get_ethtool_phy_stats)
 		count = phy_ethtool_get_sset_count(dev->phydev);
-	else if (ops && ops->get_sset_count)
+	else if (ops->get_sset_count)
 		count = ops->get_sset_count(dev, sset);
-	netdev_unlock_ops(dev);
 
 	if (count < 0)
 		count = 0;
 
-	list_for_each_entry(dp, &dst->ports, list) {
-		if (!dsa_port_is_dsa(dp) && !dsa_port_is_cpu(dp))
-			continue;
-
-		dsa_conduit_append_port_sset_count(dp->ds, dp->index, sset,
-						   &count);
-	}
+	if (ds->ops->get_sset_count)
+		count += ds->ops->get_sset_count(ds, cpu_dp->index, sset);
 
 	return count;
 }
 
-static ssize_t dsa_conduit_append_port_strings(struct dsa_switch *ds, int port,
-					       u32 stringset, u8 *data,
-					       size_t start)
+static void dsa_conduit_get_strings(struct net_device *dev, uint32_t stringset,
+				    uint8_t *data)
 {
+	struct dsa_port *cpu_dp = dev->dsa_ptr;
+	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
+	struct dsa_switch *ds = cpu_dp->ds;
+	int port = cpu_dp->index;
 	int len = ETH_GSTRING_LEN;
-	u8 pfx[8], *ndata;
-	int count, i;
+	int mcount = 0, count, i;
+	uint8_t pfx[4];
+	uint8_t *ndata;
 
-	if (!ds->ops->get_strings)
-		return 0;
-
-	snprintf(pfx, sizeof(pfx), "s%.2d_p%.2d", ds->index, port);
+	snprintf(pfx, sizeof(pfx), "p%.2d", port);
 	/* We do not want to be NULL-terminated, since this is a prefix */
 	pfx[sizeof(pfx) - 1] = '_';
-	ndata = data + start * len;
-	/* This function copies ETH_GSTRINGS_LEN bytes, we will mangle
-	 * the output after to prepend our CPU port prefix we
-	 * constructed earlier
-	 */
-	ds->ops->get_strings(ds, port, stringset, ndata);
-	count = ds->ops->get_sset_count(ds, port, stringset);
-	if (count < 0)
-		return count;
 
-	for (i = 0; i < count; i++) {
-		memmove(ndata + (i * len + sizeof(pfx)),
-			ndata + i * len, len - sizeof(pfx));
-		memcpy(ndata + i * len, pfx, sizeof(pfx));
-	}
-
-	return count;
-}
-
-static void dsa_conduit_get_strings(struct net_device *dev, u32 stringset,
-				    u8 *data)
-{
-	struct dsa_port *dp, *cpu_dp = dev->dsa_ptr;
-	const struct ethtool_ops *ops = cpu_dp->orig_ethtool_ops;
-	struct dsa_switch_tree *dst = cpu_dp->dst;
-	int count, mcount = 0;
-
-	netdev_lock_ops(dev);
 	if (stringset == ETH_SS_PHY_STATS && dev->phydev &&
 	    !ops->get_ethtool_phy_stats) {
 		mcount = phy_ethtool_get_sset_count(dev->phydev);
@@ -253,19 +176,22 @@ static void dsa_conduit_get_strings(struct net_device *dev, u32 stringset,
 			mcount = 0;
 		ops->get_strings(dev, stringset, data);
 	}
-	netdev_unlock_ops(dev);
 
-	list_for_each_entry(dp, &dst->ports, list) {
-		if (!dsa_port_is_dsa(dp) && !dsa_port_is_cpu(dp))
-			continue;
-
-		count = dsa_conduit_append_port_strings(dp->ds, dp->index,
-							stringset, data,
-							mcount);
+	if (ds->ops->get_strings) {
+		ndata = data + mcount * len;
+		/* This function copies ETH_GSTRINGS_LEN bytes, we will mangle
+		 * the output after to prepend our CPU port prefix we
+		 * constructed earlier
+		 */
+		ds->ops->get_strings(ds, port, stringset, ndata);
+		count = ds->ops->get_sset_count(ds, port, stringset);
 		if (count < 0)
 			return;
-
-		mcount += count;
+		for (i = 0; i < count; i++) {
+			memmove(ndata + (i * len + sizeof(pfx)),
+				ndata + i * len, len - sizeof(pfx));
+			memcpy(ndata + i * len, pfx, sizeof(pfx));
+		}
 	}
 }
 

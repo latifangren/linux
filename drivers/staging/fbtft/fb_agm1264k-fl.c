@@ -283,9 +283,8 @@ static int write_vmem(struct fbtft_par *par, size_t offset, size_t len)
 	int ret = 0;
 
 	/* buffer to convert RGB565 -> grayscale16 -> Dithered image 1bpp */
-	signed short *convert_buf = kmalloc_objs(signed short,
-						 par->info->var.xres * par->info->var.yres,
-						 GFP_NOIO);
+	signed short *convert_buf = kmalloc_array(par->info->var.xres *
+		par->info->var.yres, sizeof(signed short), GFP_NOIO);
 
 	if (!convert_buf)
 		return -ENOMEM;
@@ -376,7 +375,7 @@ static int write_vmem(struct fbtft_par *par, size_t offset, size_t len)
 
 			/* write bitmap */
 			gpiod_set_value(par->RS, 1); /* RS->1 (data mode) */
-			ret = par->fbtftops.write(par, buf, len);
+			par->fbtftops.write(par, buf, len);
 			if (ret < 0)
 				dev_err(par->info->device,
 					"write failed and returned: %d\n",

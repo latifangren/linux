@@ -14,7 +14,6 @@
 #include <lantiq_soc.h>
 
 #include "../clk.h"
-#include "../prom.h"
 
 /* infrastructure control register */
 #define SYS1_INFRAC		0x00bc
@@ -72,6 +71,11 @@
 
 static void __iomem *sysctl_membase[3], *status_membase;
 void __iomem *ltq_sys1_membase, *ltq_ebu_membase;
+
+void falcon_trigger_hrst(int level)
+{
+	sysctl_w32(SYSCTL_SYS1, level & 1, SYS1_HRSTOUTC);
+}
 
 static inline void sysctl_wait(struct clk *clk,
 		unsigned int test, unsigned int reg)
@@ -161,7 +165,7 @@ static void falcon_gpe_enable(void)
 static inline void clkdev_add_sys(const char *dev, unsigned int module,
 					unsigned int bits)
 {
-	struct clk *clk = kzalloc_obj(struct clk);
+	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
 
 	if (!clk)
 		return;

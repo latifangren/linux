@@ -39,12 +39,7 @@ do
 		X*)
 			;;
 		*)
-			if test -f tools/testing/selftests/rcutorture/bin/kvm-recheck-${TORTURE_SUITE}.sh
-			then
-				kvm-recheck-${TORTURE_SUITE}.sh $i
-			else
-				echo No kvm-recheck-${TORTURE_SUITE}.sh, so no ${TORTURE_SUITE}-specific analysis.
-			fi
+			kvm-recheck-${TORTURE_SUITE}.sh $i
 		esac
 		if test -f "$i/qemu-retval" && test "`cat $i/qemu-retval`" -ne 0 && test "`cat $i/qemu-retval`" -ne 137
 		then
@@ -54,7 +49,7 @@ do
 		then
 			if test -f "$i/qemu-retval" && test "`cat $i/qemu-retval`" -eq 137
 			then
-				echo "Summary: Potential hang (QEMU killed)"
+				echo QEMU killed
 			fi
 			configcheck.sh $i/.config $i/ConfigFragment > $i/ConfigFragment.diags 2>&1
 			if grep -q '^CONFIG_KCSAN=y$' $i/ConfigFragment.input

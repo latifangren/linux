@@ -15,7 +15,7 @@ static int netdev_alloc_phy_link_topology(struct net_device *dev)
 {
 	struct phy_link_topology *topo;
 
-	topo = kzalloc_obj(*topo);
+	topo = kzalloc(sizeof(*topo), GFP_KERNEL);
 	if (!topo)
 		return -ENOMEM;
 
@@ -43,7 +43,7 @@ int phy_link_topo_add_phy(struct net_device *dev,
 		topo = dev->link_topo;
 	}
 
-	pdn = kzalloc_obj(*pdn);
+	pdn = kzalloc(sizeof(*pdn), GFP_KERNEL);
 	if (!pdn)
 		return -ENOMEM;
 

@@ -334,7 +334,7 @@ static void snd_pcm_proc_info_read(struct snd_pcm_substream *substream,
 		return;
 
 	struct snd_pcm_info *info __free(kfree) =
-		kmalloc_obj(*info);
+		kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return;
 
@@ -592,6 +592,7 @@ static const struct attribute_group *pcm_dev_attr_groups[];
  * PM callbacks: we need to deal only with suspend here, as the resume is
  * triggered either from user-space or the driver's resume callback
  */
+#ifdef CONFIG_PM_SLEEP
 static int do_pcm_suspend(struct device *dev)
 {
 	struct snd_pcm_str *pstr = dev_get_drvdata(dev);
@@ -600,9 +601,10 @@ static int do_pcm_suspend(struct device *dev)
 		snd_pcm_suspend_all(pstr->pcm);
 	return 0;
 }
+#endif
 
 static const struct dev_pm_ops pcm_dev_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(do_pcm_suspend, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(do_pcm_suspend, NULL)
 };
 
 /* device type for PCM -- basically only for passing PM callbacks */
@@ -657,7 +659,7 @@ int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count)
 	}
 	prev = NULL;
 	for (idx = 0, prev = NULL; idx < substream_count; idx++) {
-		substream = kzalloc_obj(*substream);
+		substream = kzalloc(sizeof(*substream), GFP_KERNEL);
 		if (!substream)
 			return -ENOMEM;
 		substream->pcm = pcm;
@@ -713,7 +715,7 @@ static int _snd_pcm_new(struct snd_card *card, const char *id, int device,
 		return -ENXIO;
 	if (rpcm)
 		*rpcm = NULL;
-	pcm = kzalloc_obj(*pcm);
+	pcm = kzalloc(sizeof(*pcm), GFP_KERNEL);
 	if (!pcm)
 		return -ENOMEM;
 	pcm->card = card;
@@ -935,7 +937,7 @@ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
 	if (substream == NULL)
 		return -EAGAIN;
 
-	runtime = kzalloc_obj(*runtime);
+	runtime = kzalloc(sizeof(*runtime), GFP_KERNEL);
 	if (runtime == NULL)
 		return -ENOMEM;
 

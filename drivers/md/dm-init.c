@@ -127,7 +127,7 @@ static char __init *dm_parse_table_entry(struct dm_device *dev, char *str)
 	/* Delimit last field that can be terminated by comma */
 	next = str_field_delimit(&field[i], ',');
 
-	sp = kzalloc_obj(*sp);
+	sp = kzalloc(sizeof(*sp), GFP_KERNEL);
 	if (!sp)
 		return ERR_PTR(-ENOMEM);
 	dev->table[n] = sp;
@@ -244,7 +244,7 @@ static int __init dm_parse_devices(struct list_head *devices, char *str)
 
 	DMDEBUG("parsing \"%s\"", str);
 	while (device) {
-		dev = kzalloc_obj(*dev);
+		dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 		if (!dev)
 			return -ENOMEM;
 		list_add_tail(&dev->list, devices);
@@ -303,10 +303,8 @@ static int __init dm_init_init(void)
 		}
 	}
 
-	if (waitfor[0]) {
-		wait_for_device_probe();
+	if (waitfor[0])
 		DMINFO("all devices available");
-	}
 
 	list_for_each_entry(dev, &devices, list) {
 		if (dm_early_create(&dev->dmi, dev->table,

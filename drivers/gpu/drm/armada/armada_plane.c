@@ -8,7 +8,6 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_plane_helper.h>
-#include <drm/drm_print.h>
 
 #include "armada_crtc.h"
 #include "armada_drm.h"
@@ -95,7 +94,12 @@ int armada_drm_plane_atomic_check(struct drm_plane *plane,
 		return 0;
 	}
 
-	crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+	if (state)
+		crtc_state = drm_atomic_get_existing_crtc_state(state,
+								crtc);
+	else
+		crtc_state = crtc->state;
+
 	ret = drm_atomic_helper_check_plane_state(new_plane_state, crtc_state,
 						  0,
 						  INT_MAX, true, false);
@@ -262,7 +266,7 @@ void armada_plane_reset(struct drm_plane *plane)
 	if (plane->state)
 		__drm_atomic_helper_plane_destroy_state(plane->state);
 	kfree(plane->state);
-	st = kzalloc_obj(*st);
+	st = kzalloc(sizeof(*st), GFP_KERNEL);
 	if (st)
 		__drm_atomic_helper_plane_reset(plane, &st->base);
 }

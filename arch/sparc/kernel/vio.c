@@ -12,7 +12,6 @@
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/irq.h>
 #include <linux/export.h>
 #include <linux/init.h>
@@ -325,7 +324,7 @@ static struct vio_dev *vio_create_one(struct mdesc_handle *hp, u64 mp,
 		return NULL;
 	}
 
-	vdev = kzalloc_obj(*vdev);
+	vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
 	if (!vdev) {
 		printk(KERN_ERR "VIO: Could not allocate vio_dev\n");
 		return NULL;
@@ -379,7 +378,8 @@ static struct vio_dev *vio_create_one(struct mdesc_handle *hp, u64 mp,
 	 * the parent doesn't require the MD node info.
 	 */
 	if (node_name != NULL) {
-		strscpy(vdev->node_name, node_name);
+		(void) snprintf(vdev->node_name, VIO_MAX_NAME_LEN, "%s",
+				node_name);
 
 		err = mdesc_get_node_info(hp, mp, node_name,
 					  &vdev->md_node_info);
@@ -419,13 +419,13 @@ struct vio_remove_node_data {
 	u64 node;
 };
 
-static int vio_md_node_match(struct device *dev, const void *arg)
+static int vio_md_node_match(struct device *dev, void *arg)
 {
 	struct vio_dev *vdev = to_vio_dev(dev);
-	const struct vio_remove_node_data *node_data;
+	struct vio_remove_node_data *node_data;
 	u64 node;
 
-	node_data = (const struct vio_remove_node_data *)arg;
+	node_data = (struct vio_remove_node_data *)arg;
 
 	node = vio_vdev_node(node_data->hp, vdev);
 

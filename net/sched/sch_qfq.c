@@ -392,7 +392,7 @@ static int qfq_change_agg(struct Qdisc *sch, struct qfq_class *cl, u32 weight,
 
 	new_agg = qfq_find_agg(q, lmax, weight);
 	if (new_agg == NULL) { /* create new aggregate */
-		new_agg = kzalloc_obj(*new_agg, GFP_ATOMIC);
+		new_agg = kzalloc(sizeof(*new_agg), GFP_ATOMIC);
 		if (new_agg == NULL)
 			return -ENOBUFS;
 		qfq_init_agg(q, new_agg, lmax, weight);
@@ -426,7 +426,10 @@ static int qfq_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	if (err < 0)
 		return err;
 
-	weight = nla_get_u32_default(tb[TCA_QFQ_WEIGHT], 1);
+	if (tb[TCA_QFQ_WEIGHT])
+		weight = nla_get_u32(tb[TCA_QFQ_WEIGHT]);
+	else
+		weight = 1;
 
 	if (tb[TCA_QFQ_LMAX]) {
 		lmax = nla_get_u32(tb[TCA_QFQ_LMAX]);
@@ -456,7 +459,7 @@ static int qfq_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 
 	if (q->wsum + delta_w > QFQ_MAX_WSUM) {
 		NL_SET_ERR_MSG_FMT_MOD(extack,
-				       "total weight out of range (%d + %u)",
+				       "total weight out of range (%d + %u)\n",
 				       delta_w, q->wsum);
 		return -EINVAL;
 	}
@@ -476,7 +479,7 @@ static int qfq_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	}
 
 	/* create and init new class */
-	cl = kzalloc_obj(struct qfq_class);
+	cl = kzalloc(sizeof(struct qfq_class), GFP_KERNEL);
 	if (cl == NULL)
 		return -ENOBUFS;
 
@@ -508,7 +511,7 @@ set_change_agg:
 	new_agg = qfq_find_agg(q, lmax, weight);
 	if (new_agg == NULL) { /* create new aggregate */
 		sch_tree_unlock(sch);
-		new_agg = kzalloc_obj(*new_agg);
+		new_agg = kzalloc(sizeof(*new_agg), GFP_KERNEL);
 		if (new_agg == NULL) {
 			err = -ENOBUFS;
 			gen_kill_estimator(&cl->rate_est);
@@ -1252,7 +1255,7 @@ static int qfq_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		}
 	}
 
-	gso_segs = qdisc_pkt_segs(skb);
+	gso_segs = skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 	err = qdisc_enqueue(skb, cl->qdisc, to_free);
 	if (unlikely(err != NET_XMIT_SUCCESS)) {
 		pr_debug("qfq_enqueue: enqueue failed %d\n", err);

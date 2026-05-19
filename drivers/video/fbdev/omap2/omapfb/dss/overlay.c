@@ -14,7 +14,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/err.h>
-#include <linux/export.h>
 #include <linux/sysfs.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
@@ -49,7 +48,8 @@ void dss_init_overlays(struct platform_device *pdev)
 
 	num_overlays = dss_feat_get_num_ovls();
 
-	overlays = kzalloc_objs(struct omap_overlay, num_overlays);
+	overlays = kcalloc(num_overlays, sizeof(struct omap_overlay),
+			   GFP_KERNEL);
 
 	BUG_ON(overlays == NULL);
 

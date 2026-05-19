@@ -12,7 +12,8 @@
  *              get_stats()) do the per cpu summing.
  */
 
-#define pr_fmt(fmt) "IPVS: " fmt
+#define KMSG_COMPONENT "IPVS"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/jiffies.h>
@@ -264,8 +265,7 @@ int ip_vs_est_kthread_start(struct netns_ipvs *ipvs,
 	}
 
 	set_user_nice(kd->task, sysctl_est_nice(ipvs));
-	if (sysctl_est_preferred_cpulist(ipvs))
-		kthread_affine_preferred(kd->task, sysctl_est_preferred_cpulist(ipvs));
+	set_cpus_allowed_ptr(kd->task, sysctl_est_cpulist(ipvs));
 
 	pr_info("starting estimator thread %d...\n", kd->id);
 	wake_up_process(kd->task);
@@ -325,7 +325,7 @@ static int ip_vs_est_add_kthread(struct netns_ipvs *ipvs)
 		id = i;
 	}
 
-	kd = kzalloc_obj(*kd);
+	kd = kzalloc(sizeof(*kd), GFP_KERNEL);
 	if (!kd)
 		goto out;
 	kd->ipvs = ipvs;
@@ -443,7 +443,7 @@ add_est:
 
 	td = rcu_dereference_protected(kd->ticks[row], 1);
 	if (!td) {
-		td = kzalloc_obj(*td);
+		td = kzalloc(sizeof(*td), GFP_KERNEL);
 		if (!td) {
 			ret = -ENOMEM;
 			goto out;
@@ -602,7 +602,7 @@ static void ip_vs_est_drain_temp_list(struct netns_ipvs *ipvs)
 	while (1) {
 		int max = 16;
 
-		mutex_lock(&ipvs->service_mutex);
+		mutex_lock(&__ip_vs_mutex);
 
 		while (max-- > 0) {
 			est = hlist_entry_safe(ipvs->est_temp_list.first,
@@ -622,12 +622,12 @@ static void ip_vs_est_drain_temp_list(struct netns_ipvs *ipvs)
 			}
 			goto unlock;
 		}
-		mutex_unlock(&ipvs->service_mutex);
+		mutex_unlock(&__ip_vs_mutex);
 		cond_resched();
 	}
 
 unlock:
-	mutex_unlock(&ipvs->service_mutex);
+	mutex_unlock(&__ip_vs_mutex);
 }
 
 /* Calculate limits for all kthreads */
@@ -647,9 +647,9 @@ static int ip_vs_est_calc_limits(struct netns_ipvs *ipvs, int *chain_max)
 	u64 val;
 
 	INIT_HLIST_HEAD(&chain);
-	mutex_lock(&ipvs->service_mutex);
+	mutex_lock(&__ip_vs_mutex);
 	kd = ipvs->est_kt_arr[0];
-	mutex_unlock(&ipvs->service_mutex);
+	mutex_unlock(&__ip_vs_mutex);
 	s = kd ? kd->calc_stats : NULL;
 	if (!s)
 		goto out;
@@ -748,7 +748,7 @@ static void ip_vs_est_calc_phase(struct netns_ipvs *ipvs)
 	if (!ip_vs_est_calc_limits(ipvs, &chain_max))
 		return;
 
-	mutex_lock(&ipvs->service_mutex);
+	mutex_lock(&__ip_vs_mutex);
 
 	/* Stop all other tasks, so that we can immediately move the
 	 * estimators to est_temp_list without RCU grace period
@@ -815,9 +815,9 @@ walk_chain:
 		/* Give chance estimators to be added (to est_temp_list)
 		 * and deleted (releasing kthread contexts)
 		 */
-		mutex_unlock(&ipvs->service_mutex);
+		mutex_unlock(&__ip_vs_mutex);
 		cond_resched();
-		mutex_lock(&ipvs->service_mutex);
+		mutex_lock(&__ip_vs_mutex);
 
 		/* Current kt released ? */
 		if (id >= ipvs->est_kt_count)
@@ -893,7 +893,7 @@ unlock2:
 	mutex_unlock(&ipvs->est_mutex);
 
 unlock:
-	mutex_unlock(&ipvs->service_mutex);
+	mutex_unlock(&__ip_vs_mutex);
 }
 
 void ip_vs_zero_estimator(struct ip_vs_stats *stats)

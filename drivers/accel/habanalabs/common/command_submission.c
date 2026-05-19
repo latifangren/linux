@@ -907,9 +907,9 @@ static int allocate_cs(struct hl_device *hdev, struct hl_ctx *ctx,
 
 	cntr = &hdev->aggregated_cs_counters;
 
-	cs = kzalloc_obj(*cs, GFP_ATOMIC);
+	cs = kzalloc(sizeof(*cs), GFP_ATOMIC);
 	if (!cs)
-		cs = kzalloc_obj(*cs);
+		cs = kzalloc(sizeof(*cs), GFP_KERNEL);
 
 	if (!cs) {
 		atomic64_inc(&ctx->cs_counters.out_of_mem_drop_cnt);
@@ -936,9 +936,9 @@ static int allocate_cs(struct hl_device *hdev, struct hl_ctx *ctx,
 	kref_init(&cs->refcount);
 	spin_lock_init(&cs->job_lock);
 
-	cs_cmpl = kzalloc_obj(*cs_cmpl, GFP_ATOMIC);
+	cs_cmpl = kzalloc(sizeof(*cs_cmpl), GFP_ATOMIC);
 	if (!cs_cmpl)
-		cs_cmpl = kzalloc_obj(*cs_cmpl);
+		cs_cmpl = kzalloc(sizeof(*cs_cmpl), GFP_KERNEL);
 
 	if (!cs_cmpl) {
 		atomic64_inc(&ctx->cs_counters.out_of_mem_drop_cnt);
@@ -1302,9 +1302,9 @@ struct hl_cs_job *hl_cs_allocate_job(struct hl_device *hdev,
 {
 	struct hl_cs_job *job;
 
-	job = kzalloc_obj(*job, GFP_ATOMIC);
+	job = kzalloc(sizeof(*job), GFP_ATOMIC);
 	if (!job)
-		job = kzalloc_obj(*job);
+		job = kzalloc(sizeof(*job), GFP_KERNEL);
 
 	if (!job)
 		return NULL;
@@ -1420,9 +1420,11 @@ static int hl_cs_copy_chunk_array(struct hl_device *hdev,
 		return -EINVAL;
 	}
 
-	*cs_chunk_array = kmalloc_objs(**cs_chunk_array, num_chunks, GFP_ATOMIC);
+	*cs_chunk_array = kmalloc_array(num_chunks, sizeof(**cs_chunk_array),
+					GFP_ATOMIC);
 	if (!*cs_chunk_array)
-		*cs_chunk_array = kmalloc_objs(**cs_chunk_array, num_chunks);
+		*cs_chunk_array = kmalloc_array(num_chunks,
+					sizeof(**cs_chunk_array), GFP_KERNEL);
 	if (!*cs_chunk_array) {
 		atomic64_inc(&ctx->cs_counters.out_of_mem_drop_cnt);
 		atomic64_inc(&hdev->aggregated_cs_counters.out_of_mem_drop_cnt);
@@ -2038,7 +2040,7 @@ static int cs_ioctl_reserve_signals(struct hl_fpriv *hpriv,
 
 	prop = &hdev->kernel_queues[q_idx].sync_stream_prop;
 
-	handle = kzalloc_obj(*handle);
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
 	if (!handle) {
 		rc = -ENOMEM;
 		goto out;
@@ -2584,7 +2586,7 @@ int hl_cs_ioctl(struct drm_device *ddev, void *data, struct drm_file *file_priv)
 		cs_seq = args->in.seq;
 
 	timeout = flags & HL_CS_FLAGS_CUSTOM_TIMEOUT
-			? secs_to_jiffies(args->in.timeout)
+			? msecs_to_jiffies(args->in.timeout * 1000)
 			: hpriv->hdev->timeout_jiffies;
 
 	switch (cs_type) {
@@ -3051,7 +3053,7 @@ static int hl_multi_cs_wait_ioctl(struct hl_fpriv *hpriv, void *data)
 	}
 
 	/* allocate array for the fences */
-	fence_arr = kmalloc_objs(struct hl_fence *, seq_arr_len);
+	fence_arr = kmalloc_array(seq_arr_len, sizeof(struct hl_fence *), GFP_KERNEL);
 	if (!fence_arr) {
 		rc = -ENOMEM;
 		goto free_seq_arr;
@@ -3410,7 +3412,7 @@ static int _hl_interrupt_wait_ioctl(struct hl_device *hdev, struct hl_ctx *ctx,
 		goto put_cq_cb;
 	}
 
-	pend = kzalloc_obj(*pend);
+	pend = kzalloc(sizeof(*pend), GFP_KERNEL);
 	if (!pend) {
 		rc = -ENOMEM;
 		goto put_cq_cb;
@@ -3519,7 +3521,7 @@ static int _hl_interrupt_wait_ioctl_user_addr(struct hl_device *hdev, struct hl_
 
 	hl_ctx_get(ctx);
 
-	pend = kzalloc_obj(*pend);
+	pend = kzalloc(sizeof(*pend), GFP_KERNEL);
 	if (!pend) {
 		hl_ctx_put(ctx);
 		return -ENOMEM;

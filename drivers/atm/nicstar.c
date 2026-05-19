@@ -43,7 +43,6 @@
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/delay.h>
-#include <linux/hex.h>
 #include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/timer.h>
@@ -301,7 +300,7 @@ static void __exit nicstar_cleanup(void)
 {
 	XPRINTK("nicstar: nicstar_cleanup() called.\n");
 
-	timer_delete_sync(&ns_timer);
+	del_timer_sync(&ns_timer);
 
 	pci_unregister_driver(&nicstar_driver);
 
@@ -373,7 +372,7 @@ static int ns_init_card(int i, struct pci_dev *pcidev)
 		return error;
         }
 
-	card = kmalloc_obj(*card);
+	card = kmalloc(sizeof(*card), GFP_KERNEL);
 	if (!card) {
 		printk
 		    ("nicstar%d: can't allocate memory for device structure.\n",
@@ -867,7 +866,7 @@ static scq_info *get_scq(ns_dev *card, int size, u32 scd)
 	if (size != VBR_SCQSIZE && size != CBR_SCQSIZE)
 		return NULL;
 
-	scq = kmalloc_obj(*scq);
+	scq = kmalloc(sizeof(*scq), GFP_KERNEL);
 	if (!scq)
 		return NULL;
         scq->org = dma_alloc_coherent(&card->pcidev->dev,
@@ -876,7 +875,8 @@ static scq_info *get_scq(ns_dev *card, int size, u32 scd)
 		kfree(scq);
 		return NULL;
 	}
-	scq->skb = kzalloc_objs(*scq->skb, size / NS_SCQE_SIZE);
+	scq->skb = kcalloc(size / NS_SCQE_SIZE, sizeof(*scq->skb),
+			   GFP_KERNEL);
 	if (!scq->skb) {
 		dma_free_coherent(&card->pcidev->dev,
 				  2 * size, scq->org, scq->dma);

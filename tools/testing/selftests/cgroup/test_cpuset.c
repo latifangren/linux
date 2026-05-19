@@ -3,7 +3,7 @@
 #include <linux/limits.h>
 #include <signal.h>
 
-#include "kselftest.h"
+#include "../kselftest.h"
 #include "cgroup_util.h"
 
 static int idle_process_fn(const char *cgroup, void *arg)
@@ -247,10 +247,8 @@ struct cpuset_test {
 int main(int argc, char *argv[])
 {
 	char root[PATH_MAX];
-	int i;
+	int i, ret = EXIT_SUCCESS;
 
-	ksft_print_header();
-	ksft_set_plan(ARRAY_SIZE(tests));
 	if (cg_find_unified_root(root, sizeof(root), NULL))
 		ksft_exit_skip("cgroup v2 isn't mounted\n");
 
@@ -267,10 +265,11 @@ int main(int argc, char *argv[])
 			ksft_test_result_skip("%s\n", tests[i].name);
 			break;
 		default:
+			ret = EXIT_FAILURE;
 			ksft_test_result_fail("%s\n", tests[i].name);
 			break;
 		}
 	}
 
-	ksft_finished();
+	return ret;
 }

@@ -2,10 +2,6 @@
 #ifndef _ASM_RUNTIME_CONST_H
 #define _ASM_RUNTIME_CONST_H
 
-#ifdef MODULE
-  #error "Cannot use runtime-const infrastructure from modules"
-#endif
-
 #include <asm/cacheflush.h>
 
 /* Sigh. You can still run arm64 in BE mode */

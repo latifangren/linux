@@ -45,7 +45,7 @@ static struct dma_fence *rocket_fence_create(struct rocket_core *core)
 {
 	struct dma_fence *fence;
 
-	fence = kzalloc_obj(*fence);
+	fence = kzalloc(sizeof(*fence), GFP_KERNEL);
 	if (!fence)
 		return ERR_PTR(-ENOMEM);
 
@@ -71,7 +71,7 @@ rocket_copy_tasks(struct drm_device *dev,
 	if (!rjob->task_count)
 		return 0;
 
-	rjob->tasks = kvmalloc_objs(*rjob->tasks, job->task_count);
+	rjob->tasks = kvmalloc_array(job->task_count, sizeof(*rjob->tasks), GFP_KERNEL);
 	if (!rjob->tasks) {
 		drm_dbg(dev, "Failed to allocate task array\n");
 		return -ENOMEM;
@@ -222,7 +222,7 @@ static int rocket_job_push(struct rocket_job *job)
 err_unlock:
 	drm_gem_unlock_reservations(bos, job->in_bo_count + job->out_bo_count, &acquire_ctx);
 err:
-	kvfree(bos);
+	kfree(bos);
 
 	return ret;
 }
@@ -390,7 +390,7 @@ static enum drm_gpu_sched_stat rocket_job_timedout(struct drm_sched_job *sched_j
 	atomic_set(&core->reset.pending, 1);
 	rocket_reset(core, sched_job);
 
-	return DRM_GPU_SCHED_STAT_RESET;
+	return DRM_GPU_SCHED_STAT_NOMINAL;
 }
 
 static void rocket_reset_work(struct work_struct *work)
@@ -422,7 +422,7 @@ static irqreturn_t rocket_job_irq_handler(int irq, void *data)
 	u32 raw_status = rocket_pc_readl(core, INTERRUPT_RAW_STATUS);
 
 	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_READ_ERROR);
-	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_WRITE_ERROR);
+	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_READ_ERROR);
 
 	if (!(raw_status & PC_INTERRUPT_RAW_STATUS_DPU_0 ||
 	      raw_status & PC_INTERRUPT_RAW_STATUS_DPU_1))
@@ -496,8 +496,8 @@ void rocket_job_fini(struct rocket_core *core)
 int rocket_job_open(struct rocket_file_priv *rocket_priv)
 {
 	struct rocket_device *rdev = rocket_priv->rdev;
-	struct drm_gpu_scheduler **scheds = kmalloc_objs(*scheds,
-							 rdev->num_cores);
+	struct drm_gpu_scheduler **scheds = kmalloc_array(rdev->num_cores, sizeof(scheds),
+							  GFP_KERNEL);
 	unsigned int core;
 	int ret;
 
@@ -542,7 +542,7 @@ static int rocket_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 	if (job->task_count == 0)
 		return -EINVAL;
 
-	rjob = kzalloc_obj(*rjob);
+	rjob = kzalloc(sizeof(*rjob), GFP_KERNEL);
 	if (!rjob)
 		return -ENOMEM;
 
@@ -552,7 +552,7 @@ static int rocket_ioctl_submit_job(struct drm_device *dev, struct drm_file *file
 
 	ret = drm_sched_job_init(&rjob->base,
 				 &file_priv->sched_entity,
-				 1, NULL, file->client_id);
+				 1, NULL);
 	if (ret)
 		goto out_put_job;
 
@@ -609,7 +609,7 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
 		return -EINVAL;
 	}
 
-	jobs = kvmalloc_objs(*jobs, args->job_count);
+	jobs = kvmalloc_array(args->job_count, sizeof(*jobs), GFP_KERNEL);
 	if (!jobs) {
 		drm_dbg(dev, "Failed to allocate incoming job array\n");
 		return -ENOMEM;
@@ -630,7 +630,7 @@ int rocket_ioctl_submit(struct drm_device *dev, void *data, struct drm_file *fil
 		rocket_ioctl_submit_job(dev, file, &jobs[i]);
 
 exit:
-	kvfree(jobs);
+	kfree(jobs);
 
 	return ret;
 }

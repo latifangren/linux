@@ -929,7 +929,8 @@ static int ep93xx_dma_alloc_chan_resources(struct dma_chan *chan)
 
 	/* Sanity check the channel parameters */
 	if (!edmac->edma->m2m) {
-		if (edmac->dma_cfg.port > EP93XX_DMA_IRDA)
+		if (edmac->dma_cfg.port < EP93XX_DMA_I2S1 ||
+		    edmac->dma_cfg.port > EP93XX_DMA_IRDA)
 			return -EINVAL;
 		if (edmac->dma_cfg.dir != ep93xx_dma_chan_direction(chan))
 			return -EINVAL;
@@ -966,7 +967,7 @@ static int ep93xx_dma_alloc_chan_resources(struct dma_chan *chan)
 	for (i = 0; i < DMA_MAX_CHAN_DESCRIPTORS; i++) {
 		struct ep93xx_dma_desc *desc;
 
-		desc = kzalloc_obj(*desc);
+		desc = kzalloc(sizeof(*desc), GFP_KERNEL);
 		if (!desc) {
 			dev_warn(chan2dev(edmac), "not enough descriptors\n");
 			break;

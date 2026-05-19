@@ -105,7 +105,7 @@ int cw1200_pm_init(struct cw1200_pm_state *pm,
 
 void cw1200_pm_deinit(struct cw1200_pm_state *pm)
 {
-	timer_delete_sync(&pm->stay_awake);
+	del_timer_sync(&pm->stay_awake);
 }
 
 void cw1200_pm_stay_awake(struct cw1200_pm_state *pm,
@@ -207,7 +207,7 @@ int cw1200_wow_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 	wsm_set_ether_type_filter(priv, &cw1200_ether_type_filter_on.hdr);
 
 	/* Allocate state */
-	state = kzalloc_obj(struct cw1200_suspend_state);
+	state = kzalloc(sizeof(struct cw1200_suspend_state), GFP_KERNEL);
 	if (!state)
 		goto revert3;
 

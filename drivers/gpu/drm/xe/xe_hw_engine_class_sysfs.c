@@ -7,7 +7,7 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 
-#include "xe_device_types.h"
+#include "xe_device.h"
 #include "xe_gt.h"
 #include "xe_hw_engine_class_sysfs.h"
 #include "xe_pm.h"
@@ -43,14 +43,16 @@ static ssize_t xe_hw_engine_class_sysfs_attr_show(struct kobject *kobj,
 {
 	struct xe_device *xe = kobj_to_xe(kobj);
 	struct kobj_attribute *kattr;
+	ssize_t ret = -EIO;
 
 	kattr = container_of(attr, struct kobj_attribute, attr);
 	if (kattr->show) {
-		guard(xe_pm_runtime)(xe);
-		return kattr->show(kobj, kattr, buf);
+		xe_pm_runtime_get(xe);
+		ret = kattr->show(kobj, kattr, buf);
+		xe_pm_runtime_put(xe);
 	}
 
-	return -EIO;
+	return ret;
 }
 
 static ssize_t xe_hw_engine_class_sysfs_attr_store(struct kobject *kobj,
@@ -60,14 +62,16 @@ static ssize_t xe_hw_engine_class_sysfs_attr_store(struct kobject *kobj,
 {
 	struct xe_device *xe = kobj_to_xe(kobj);
 	struct kobj_attribute *kattr;
+	ssize_t ret = -EIO;
 
 	kattr = container_of(attr, struct kobj_attribute, attr);
 	if (kattr->store) {
-		guard(xe_pm_runtime)(xe);
-		return kattr->store(kobj, kattr, buf, count);
+		xe_pm_runtime_get(xe);
+		ret = kattr->store(kobj, kattr, buf, count);
+		xe_pm_runtime_put(xe);
 	}
 
-	return -EIO;
+	return ret;
 }
 
 static const struct sysfs_ops xe_hw_engine_class_sysfs_ops = {
@@ -549,7 +553,7 @@ kobj_xe_hw_engine_class(struct xe_device *xe, struct kobject *parent, const char
 	struct kobj_eclass *keclass;
 	int err = 0;
 
-	keclass = kzalloc_obj(*keclass);
+	keclass = kzalloc(sizeof(*keclass), GFP_KERNEL);
 	if (!keclass)
 		return NULL;
 
@@ -582,7 +586,7 @@ static int xe_add_hw_engine_class_defaults(struct xe_device *xe,
 	struct kobject *kobj;
 	int err = 0;
 
-	kobj = kzalloc_obj(*kobj);
+	kobj = kzalloc(sizeof(*kobj), GFP_KERNEL);
 	if (!kobj)
 		return -ENOMEM;
 
@@ -601,7 +605,6 @@ err_object:
 	kobject_put(kobj);
 	return err;
 }
-ALLOW_ERROR_INJECTION(xe_add_hw_engine_class_defaults, ERRNO); /* See xe_pci_probe() */
 
 
 static void hw_engine_class_sysfs_fini(void *arg)
@@ -629,7 +632,7 @@ int xe_hw_engine_class_sysfs_init(struct xe_gt *gt)
 	u16 class_mask = 0;
 	int err = 0;
 
-	kobj = kzalloc_obj(*kobj);
+	kobj = kzalloc(sizeof(*kobj), GFP_KERNEL);
 	if (!kobj)
 		return -ENOMEM;
 

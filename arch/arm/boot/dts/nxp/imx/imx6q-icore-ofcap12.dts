@@ -16,7 +16,6 @@
 	panel {
 		compatible = "koe,tx31d200vm0baa";
 		backlight = <&backlight_lvds>;
-		power-supply = <&reg_3p3v>;
 
 		port {
 			panel_in: endpoint {

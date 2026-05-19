@@ -4,7 +4,6 @@
  * Copyright 2008 Sascha Hauer, kernel@pengutronix.de
  */
 
-#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/init.h>
@@ -1715,14 +1714,7 @@ static int mxcnd_probe(struct platform_device *pdev)
 	this->legacy.chip_delay = 5;
 
 	nand_set_controller_data(this, host);
-
-	struct device_node *np __free(device_node) =
-		of_get_next_child_with_prefix(pdev->dev.of_node, NULL, "nand");
-
-	if (np)
-		nand_set_flash_node(this, np);
-	else
-		nand_set_flash_node(this, pdev->dev.of_node);
+	nand_set_flash_node(this, pdev->dev.of_node);
 
 	host->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(host->clk))

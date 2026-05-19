@@ -37,7 +37,7 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	if (busr->start > busr->end)
 		return ERR_PTR(-EINVAL);
 
-	cfg = kzalloc_obj(*cfg);
+	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
 	if (!cfg)
 		return ERR_PTR(-ENOMEM);
 
@@ -55,7 +55,7 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	bus_range_max = resource_size(cfgres) >> bus_shift;
 	if (bus_range > bus_range_max) {
 		bus_range = bus_range_max;
-		resource_set_size(&cfg->busr, bus_range);
+		cfg->busr.end = busr->start + bus_range - 1;
 		dev_warn(dev, "ECAM area %pR can only accommodate %pR (reduced from %pR desired)\n",
 			 cfgres, &cfg->busr, busr);
 	}
@@ -75,7 +75,7 @@ struct pci_config_window *pci_ecam_create(struct device *dev,
 	}
 
 	if (per_bus_mapping) {
-		cfg->winp = kzalloc_objs(*cfg->winp, bus_range);
+		cfg->winp = kcalloc(bus_range, sizeof(*cfg->winp), GFP_KERNEL);
 		if (!cfg->winp)
 			goto err_exit_malloc;
 	} else {

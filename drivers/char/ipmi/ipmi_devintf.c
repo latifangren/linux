@@ -90,7 +90,7 @@ static int ipmi_open(struct inode *inode, struct file *file)
 	int                      rv;
 	struct ipmi_file_private *priv;
 
-	priv = kmalloc_obj(*priv);
+	priv = kmalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
@@ -122,9 +122,12 @@ out:
 static int ipmi_release(struct inode *inode, struct file *file)
 {
 	struct ipmi_file_private *priv = file->private_data;
+	int                      rv;
 	struct ipmi_recv_msg *msg, *next;
 
-	ipmi_destroy_user(priv->user);
+	rv = ipmi_destroy_user(priv->user);
+	if (rv)
+		return rv;
 
 	list_for_each_entry_safe(msg, next, &priv->recv_msgs, link)
 		ipmi_free_recv_msg(msg);
@@ -813,7 +816,7 @@ static void ipmi_new_smi(int if_num, struct device *device)
 	dev_t dev = MKDEV(ipmi_major, if_num);
 	struct ipmi_reg_list *entry;
 
-	entry = kmalloc_obj(*entry);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry) {
 		pr_err("ipmi_devintf: Unable to create the ipmi class device link\n");
 		return;

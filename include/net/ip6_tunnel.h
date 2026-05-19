@@ -18,6 +18,18 @@
 /* determine capability on a per-packet basis */
 #define IP6_TNL_F_CAP_PER_PACKET 0x40000
 
+/* IPv6 tunnel FMR */
+struct __ip6_tnl_fmr {
+	struct __ip6_tnl_fmr *next; /* next fmr in list */
+	struct in6_addr ip6_prefix;
+	struct in_addr ip4_prefix;
+
+	__u8 ip6_prefix_len;
+	__u8 ip4_prefix_len;
+	__u8 ea_len;
+	__u8 offset;
+};
+
 struct __ip6_tnl_parm {
 	char name[IFNAMSIZ];	/* name of tunnel device */
 	int link;		/* ifindex of underlying L2 interface */
@@ -29,6 +41,7 @@ struct __ip6_tnl_parm {
 	__u32 flags;		/* tunnel flags */
 	struct in6_addr laddr;	/* local tunnel end-point address */
 	struct in6_addr raddr;	/* remote tunnel end-point address */
+	struct __ip6_tnl_fmr *fmrs;	/* FMRs */
 
 	IP_TUNNEL_DECLARE_FLAGS(i_flags);
 	IP_TUNNEL_DECLARE_FLAGS(o_flags);
@@ -152,7 +165,7 @@ int ip6_tnl_get_iflink(const struct net_device *dev);
 int ip6_tnl_change_mtu(struct net_device *dev, int new_mtu);
 
 static inline void ip6tunnel_xmit(struct sock *sk, struct sk_buff *skb,
-				  struct net_device *dev, u16 ip6cb_flags)
+				  struct net_device *dev)
 {
 	int pkt_len, err;
 
@@ -162,16 +175,15 @@ static inline void ip6tunnel_xmit(struct sock *sk, struct sk_buff *skb,
 					     dev->name);
 			DEV_STATS_INC(dev, tx_errors);
 		}
-		kfree_skb_reason(skb, SKB_DROP_REASON_RECURSION_LIMIT);
+		kfree_skb(skb);
 		return;
 	}
 
 	dev_xmit_recursion_inc();
 
 	memset(skb->cb, 0, sizeof(struct inet6_skb_parm));
-	IP6CB(skb)->flags = ip6cb_flags;
 	pkt_len = skb->len - skb_inner_network_offset(skb);
-	err = ip6_local_out(skb_dst_dev_net(skb), sk, skb);
+	err = ip6_local_out(dev_net(skb_dst(skb)->dev), sk, skb);
 
 	if (dev) {
 		if (unlikely(net_xmit_eval(err)))

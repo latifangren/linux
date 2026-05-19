@@ -208,7 +208,7 @@ static void send_dm_alert(struct work_struct *work)
  */
 static void sched_send_work(struct timer_list *t)
 {
-	struct per_cpu_dm_data *data = timer_container_of(data, t, send_timer);
+	struct per_cpu_dm_data *data = from_timer(data, t, send_timer);
 
 	schedule_work(&data->dm_alert_work);
 }
@@ -306,7 +306,8 @@ net_dm_hw_reset_per_cpu_data(struct per_cpu_dm_data *hw_data)
 	struct net_dm_hw_entries *hw_entries;
 	unsigned long flags;
 
-	hw_entries = kzalloc_flex(*hw_entries, entries, dm_hit_limit);
+	hw_entries = kzalloc(struct_size(hw_entries, entries, dm_hit_limit),
+			     GFP_KERNEL);
 	if (!hw_entries) {
 		/* If the memory allocation failed, we try to perform another
 		 * allocation in 1/10 second. Otherwise, the probe function
@@ -855,7 +856,7 @@ net_dm_hw_metadata_copy(const struct devlink_trap_metadata *metadata)
 	const char *trap_group_name;
 	const char *trap_name;
 
-	hw_metadata = kzalloc_obj(*hw_metadata, GFP_ATOMIC);
+	hw_metadata = kzalloc(sizeof(*hw_metadata), GFP_ATOMIC);
 	if (!hw_metadata)
 		return NULL;
 
@@ -1087,7 +1088,7 @@ err_module_put:
 		struct per_cpu_dm_data *hw_data = &per_cpu(dm_hw_cpu_data, cpu);
 		struct sk_buff *skb;
 
-		timer_delete_sync(&hw_data->send_timer);
+		del_timer_sync(&hw_data->send_timer);
 		cancel_work_sync(&hw_data->dm_alert_work);
 		while ((skb = __skb_dequeue(&hw_data->drop_queue))) {
 			struct devlink_trap_metadata *hw_metadata;
@@ -1121,7 +1122,7 @@ static void net_dm_hw_monitor_stop(struct netlink_ext_ack *extack)
 		struct per_cpu_dm_data *hw_data = &per_cpu(dm_hw_cpu_data, cpu);
 		struct sk_buff *skb;
 
-		timer_delete_sync(&hw_data->send_timer);
+		del_timer_sync(&hw_data->send_timer);
 		cancel_work_sync(&hw_data->dm_alert_work);
 		while ((skb = __skb_dequeue(&hw_data->drop_queue))) {
 			struct devlink_trap_metadata *hw_metadata;
@@ -1182,7 +1183,7 @@ err_module_put:
 		struct per_cpu_dm_data *data = &per_cpu(dm_cpu_data, cpu);
 		struct sk_buff *skb;
 
-		timer_delete_sync(&data->send_timer);
+		del_timer_sync(&data->send_timer);
 		cancel_work_sync(&data->dm_alert_work);
 		while ((skb = __skb_dequeue(&data->drop_queue)))
 			consume_skb(skb);
@@ -1210,7 +1211,7 @@ static void net_dm_trace_off_set(void)
 		struct per_cpu_dm_data *data = &per_cpu(dm_cpu_data, cpu);
 		struct sk_buff *skb;
 
-		timer_delete_sync(&data->send_timer);
+		del_timer_sync(&data->send_timer);
 		cancel_work_sync(&data->dm_alert_work);
 		while ((skb = __skb_dequeue(&data->drop_queue)))
 			consume_skb(skb);
@@ -1582,7 +1583,7 @@ static int dropmon_net_event(struct notifier_block *ev_block,
 	case NETDEV_REGISTER:
 		if (WARN_ON_ONCE(rtnl_dereference(dev->dm_private)))
 			break;
-		stat = kzalloc_obj(*stat);
+		stat = kzalloc(sizeof(*stat), GFP_KERNEL);
 		if (!stat)
 			break;
 

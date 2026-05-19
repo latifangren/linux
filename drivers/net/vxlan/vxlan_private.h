@@ -19,28 +19,23 @@ extern const struct rhashtable_params vxlan_vni_rht_params;
 /* per-network namespace private data for this module */
 struct vxlan_net {
 	struct list_head  vxlan_list;
-	/* sock_list is protected by rtnl lock */
 	struct hlist_head sock_list[PORT_HASH_SIZE];
+	spinlock_t	  sock_lock;
 	struct notifier_block nexthop_notifier_block;
-};
-
-struct vxlan_fdb_key {
-	u8 eth_addr[ETH_ALEN];
-	__be32 vni;
 };
 
 /* Forwarding table entry */
 struct vxlan_fdb {
-	struct rhash_head rhnode;
+	struct hlist_node hlist;	/* linked list of entries */
 	struct rcu_head	  rcu;
 	unsigned long	  updated;	/* jiffies */
 	unsigned long	  used;
 	struct list_head  remotes;
-	struct vxlan_fdb_key key;
+	u8		  eth_addr[ETH_ALEN];
 	u16		  state;	/* see ndm_state */
+	__be32		  vni;
 	u16		  flags;	/* see ndm_flags and below */
 	struct list_head  nh_list;
-	struct hlist_node fdb_node;
 	struct nexthop __rcu *nh;
 	struct vxlan_dev  __rcu *vdev;
 };
@@ -188,6 +183,8 @@ int __vxlan_fdb_delete(struct vxlan_dev *vxlan,
 		       const unsigned char *addr, union vxlan_addr ip,
 		       __be16 port, __be32 src_vni, __be32 vni,
 		       u32 ifindex, bool swdev_notify);
+u32 eth_vni_hash(const unsigned char *addr, __be32 vni);
+u32 fdb_head_index(struct vxlan_dev *vxlan, const u8 *mac, __be32 vni);
 int vxlan_fdb_update(struct vxlan_dev *vxlan,
 		     const u8 *mac, union vxlan_addr *ip,
 		     __u16 state, __u16 flags,

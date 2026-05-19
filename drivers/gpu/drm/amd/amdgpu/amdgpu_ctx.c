@@ -212,7 +212,8 @@ static int amdgpu_ctx_init_entity(struct amdgpu_ctx *ctx, u32 hw_ip,
 	int32_t ctx_prio;
 	int r;
 
-	entity = kzalloc_flex(*entity, fences, amdgpu_sched_jobs);
+	entity = kzalloc(struct_size(entity, fences, amdgpu_sched_jobs),
+			 GFP_KERNEL);
 	if (!entity)
 		return  -ENOMEM;
 
@@ -231,17 +232,11 @@ static int amdgpu_ctx_init_entity(struct amdgpu_ctx *ctx, u32 hw_ip,
 	} else {
 		struct amdgpu_fpriv *fpriv;
 
-		/* TODO: Stop using fpriv here, we only need the xcp_id. */
-		fpriv = container_of(ctx->mgr, struct amdgpu_fpriv, ctx_mgr);
+		fpriv = container_of(ctx->ctx_mgr, struct amdgpu_fpriv, ctx_mgr);
 		r = amdgpu_xcp_select_scheds(adev, hw_ip, hw_prio, fpriv,
 						&num_scheds, &scheds);
 		if (r)
-			goto error_free_entity;
-	}
-
-	if (num_scheds == 0) {
-		r = -EINVAL;
-		goto error_free_entity;
+			goto cleanup_entity;
 	}
 
 	/* disable load balance if the hw engine retains context among dependent jobs */
@@ -354,6 +349,7 @@ static int amdgpu_ctx_init(struct amdgpu_ctx_mgr *mgr, int32_t priority,
 	else
 		ctx->stable_pstate = current_stable_pstate;
 
+	ctx->ctx_mgr = &(fpriv->ctx_mgr);
 	return 0;
 }
 
@@ -442,21 +438,18 @@ int amdgpu_ctx_get_entity(struct amdgpu_ctx *ctx, u32 hw_ip, u32 instance,
 	struct drm_sched_entity *ctx_entity;
 
 	if (hw_ip >= AMDGPU_HW_IP_NUM) {
-		drm_err(adev_to_drm(ctx->mgr->adev),
-			"unknown HW IP type: %d\n", hw_ip);
+		DRM_ERROR("unknown HW IP type: %d\n", hw_ip);
 		return -EINVAL;
 	}
 
 	/* Right now all IPs have only one instance - multiple rings. */
 	if (instance != 0) {
-		drm_dbg(adev_to_drm(ctx->mgr->adev),
-			"invalid ip instance: %d\n", instance);
+		DRM_DEBUG("invalid ip instance: %d\n", instance);
 		return -EINVAL;
 	}
 
 	if (ring >= amdgpu_ctx_num_entities[hw_ip]) {
-		drm_dbg(adev_to_drm(ctx->mgr->adev),
-			"invalid ring: %d %d\n", hw_ip, ring);
+		DRM_DEBUG("invalid ring: %d %d\n", hw_ip, ring);
 		return -EINVAL;
 	}
 
@@ -487,7 +480,7 @@ static int amdgpu_ctx_alloc(struct amdgpu_device *adev,
 	struct amdgpu_ctx *ctx;
 	int r;
 
-	ctx = kmalloc_obj(*ctx);
+	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -881,8 +874,7 @@ int amdgpu_ctx_wait_prev_fence(struct amdgpu_ctx *ctx,
 
 	r = dma_fence_wait(other, true);
 	if (r < 0 && r != -ERESTARTSYS)
-		drm_err(adev_to_drm(ctx->mgr->adev),
-			"AMDGPU: Error waiting for fence in ctx %p\n", ctx);
+		DRM_ERROR("Error (%ld) waiting for fence!\n", r);
 
 	dma_fence_put(other);
 	return r;
@@ -927,7 +919,7 @@ long amdgpu_ctx_mgr_entity_flush(struct amdgpu_ctx_mgr *mgr, long timeout)
 	return timeout;
 }
 
-static void amdgpu_ctx_mgr_entity_fini(struct amdgpu_ctx_mgr *mgr)
+void amdgpu_ctx_mgr_entity_fini(struct amdgpu_ctx_mgr *mgr)
 {
 	struct amdgpu_ctx *ctx;
 	struct idr *idp;
@@ -937,7 +929,7 @@ static void amdgpu_ctx_mgr_entity_fini(struct amdgpu_ctx_mgr *mgr)
 
 	idr_for_each_entry(idp, ctx, id) {
 		if (kref_read(&ctx->refcount) != 1) {
-			drm_err(adev_to_drm(mgr->adev), "ctx %p is still alive\n", ctx);
+			DRM_ERROR("ctx %p is still alive\n", ctx);
 			continue;
 		}
 
@@ -952,13 +944,24 @@ static void amdgpu_ctx_mgr_entity_fini(struct amdgpu_ctx_mgr *mgr)
 				drm_sched_entity_fini(entity);
 			}
 		}
-		kref_put(&ctx->refcount, amdgpu_ctx_fini);
 	}
 }
 
 void amdgpu_ctx_mgr_fini(struct amdgpu_ctx_mgr *mgr)
 {
+	struct amdgpu_ctx *ctx;
+	struct idr *idp;
+	uint32_t id;
+
 	amdgpu_ctx_mgr_entity_fini(mgr);
+
+	idp = &mgr->ctx_handles;
+
+	idr_for_each_entry(idp, ctx, id) {
+		if (kref_put(&ctx->refcount, amdgpu_ctx_fini) != 1)
+			DRM_ERROR("ctx %p is still alive\n", ctx);
+	}
+
 	idr_destroy(&mgr->ctx_handles);
 	mutex_destroy(&mgr->lock);
 }

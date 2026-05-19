@@ -99,9 +99,8 @@ int user_statfs(const char __user *pathname, struct kstatfs *st)
 	struct path path;
 	int error;
 	unsigned int lookup_flags = LOOKUP_FOLLOW|LOOKUP_AUTOMOUNT;
-	CLASS(filename, name)(pathname);
 retry:
-	error = filename_lookup(AT_FDCWD, name, lookup_flags, &path, NULL);
+	error = user_path_at(AT_FDCWD, pathname, lookup_flags, &path);
 	if (!error) {
 		error = vfs_statfs(&path, st);
 		path_put(&path);
@@ -115,11 +114,13 @@ retry:
 
 int fd_statfs(int fd, struct kstatfs *st)
 {
-	CLASS(fd_raw, f)(fd);
-
-	if (fd_empty(f))
-		return -EBADF;
-	return vfs_statfs(&fd_file(f)->f_path, st);
+	struct fd f = fdget_raw(fd);
+	int error = -EBADF;
+	if (fd_file(f)) {
+		error = vfs_statfs(&fd_file(f)->f_path, st);
+		fdput(f);
+	}
+	return error;
 }
 
 static int do_statfs_native(struct kstatfs *st, struct statfs __user *p)

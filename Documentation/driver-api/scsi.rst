@@ -18,7 +18,7 @@ optical drives, test equipment, and medical devices) to a host computer.
 
 Although the old parallel (fast/wide/ultra) SCSI bus has largely fallen
 out of use, the SCSI command set is more widely used than ever to
-communicate with devices over a number of different buses.
+communicate with devices over a number of different busses.
 
 The `SCSI protocol <https://www.t10.org/scsi-3.htm>`__ is a big-endian
 peer-to-peer packet based protocol. SCSI commands are 6, 10, 12, or 16
@@ -126,7 +126,7 @@ Manage scsi_dev_info_list, which tracks blacklisted and whitelisted
 devices.
 
 .. kernel-doc:: drivers/scsi/scsi_devinfo.c
-   :export:
+   :internal:
 
 drivers/scsi/scsi_ioctl.c
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -162,6 +162,7 @@ statistics and to pass information directly to the lowlevel driver. I.E.
 plumbing to manage /proc/scsi/\*
 
 .. kernel-doc:: drivers/scsi/scsi_proc.c
+   :internal:
 
 drivers/scsi/scsi_netlink.c
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -192,7 +193,7 @@ else, sequentially scan LUNs up until some maximum is reached, or a LUN
 is seen that cannot have a device attached to it.
 
 .. kernel-doc:: drivers/scsi/scsi_scan.c
-   :export:
+   :internal:
 
 drivers/scsi/scsi_sysctl.c
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -286,7 +287,7 @@ Parallel SCSI (SPI) transport class
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The file drivers/scsi/scsi_transport_spi.c defines transport
-attributes for traditional (fast/wide/ultra) SCSI buses.
+attributes for traditional (fast/wide/ultra) SCSI busses.
 
 .. kernel-doc:: drivers/scsi/scsi_transport_spi.c
    :export:

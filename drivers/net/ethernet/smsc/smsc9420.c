@@ -1179,7 +1179,9 @@ static int smsc9420_alloc_tx_ring(struct smsc9420_pdata *pd)
 
 	BUG_ON(!pd->tx_ring);
 
-	pd->tx_buffers = kmalloc_objs(struct smsc9420_ring_info, TX_RING_SIZE);
+	pd->tx_buffers = kmalloc_array(TX_RING_SIZE,
+				       sizeof(struct smsc9420_ring_info),
+				       GFP_KERNEL);
 	if (!pd->tx_buffers)
 		return -ENOMEM;
 
@@ -1210,7 +1212,9 @@ static int smsc9420_alloc_rx_ring(struct smsc9420_pdata *pd)
 
 	BUG_ON(!pd->rx_ring);
 
-	pd->rx_buffers = kmalloc_objs(struct smsc9420_ring_info, RX_RING_SIZE);
+	pd->rx_buffers = kmalloc_array(RX_RING_SIZE,
+				       sizeof(struct smsc9420_ring_info),
+				       GFP_KERNEL);
 	if (pd->rx_buffers == NULL)
 		goto out;
 

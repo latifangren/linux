@@ -367,7 +367,8 @@ static int ibmpex_find_sensors(struct ibmpex_bmc_data *data)
 		return -ENOENT;
 	data->num_sensors = err;
 
-	data->sensors = kzalloc_objs(*data->sensors, data->num_sensors);
+	data->sensors = kcalloc(data->num_sensors, sizeof(*data->sensors),
+				GFP_KERNEL);
 	if (!data->sensors)
 		return -ENOMEM;
 
@@ -437,7 +438,7 @@ static void ibmpex_register_bmc(int iface, struct device *dev)
 	struct ibmpex_bmc_data *data;
 	int err;
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return;
 

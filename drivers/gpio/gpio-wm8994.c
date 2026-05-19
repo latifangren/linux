@@ -89,8 +89,7 @@ static int wm8994_gpio_direction_out(struct gpio_chip *chip,
 			       WM8994_GPN_DIR | WM8994_GPN_LVL, value);
 }
 
-static int wm8994_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			   int value)
+static void wm8994_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 	struct wm8994_gpio *wm8994_gpio = gpiochip_get_data(chip);
 	struct wm8994 *wm8994 = wm8994_gpio->wm8994;
@@ -98,8 +97,7 @@ static int wm8994_gpio_set(struct gpio_chip *chip, unsigned int offset,
 	if (value)
 		value = WM8994_GPN_LVL;
 
-	return wm8994_set_bits(wm8994, WM8994_GPIO_1 + offset, WM8994_GPN_LVL,
-			       value);
+	wm8994_set_bits(wm8994, WM8994_GPIO_1 + offset, WM8994_GPN_LVL, value);
 }
 
 static int wm8994_gpio_set_config(struct gpio_chip *chip, unsigned int offset,
@@ -194,6 +192,7 @@ static void wm8994_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 	int i;
 
 	for (i = 0; i < chip->ngpio; i++) {
+		int gpio = i + chip->base;
 		int reg;
 
 		/* We report the GPIO even if it's not requested since
@@ -207,13 +206,14 @@ static void wm8994_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 			continue;
 		}
 
-		seq_printf(s, " gpio-%-3d (%-20.20s) ", i,
+		seq_printf(s, " gpio-%-3d (%-20.20s) ", gpio,
 			   label ?: "Unrequested");
 
 		reg = wm8994_reg_read(wm8994, WM8994_GPIO_1 + i);
 		if (reg < 0) {
 			dev_err(wm8994->dev,
-				"GPIO control %d read failed: %d\n", i, reg);
+				"GPIO control %d read failed: %d\n",
+				gpio, reg);
 			seq_printf(s, "\n");
 			continue;
 		}

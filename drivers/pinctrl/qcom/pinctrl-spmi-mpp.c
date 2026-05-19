@@ -11,7 +11,6 @@
 #include <linux/regmap.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 #include <linux/types.h>
 
 #include <linux/pinctrl/pinconf-generic.h>
@@ -370,7 +369,7 @@ static int pmic_mpp_config_get(struct pinctrl_dev *pctldev,
 			return -EINVAL;
 		arg = 1;
 		break;
-	case PIN_CONFIG_LEVEL:
+	case PIN_CONFIG_OUTPUT:
 		arg = pad->out_value;
 		break;
 	case PMIC_MPP_CONF_DTEST_SELECTOR:
@@ -447,7 +446,7 @@ static int pmic_mpp_config_set(struct pinctrl_dev *pctldev, unsigned int pin,
 		case PIN_CONFIG_INPUT_ENABLE:
 			pad->input_enabled = arg ? true : false;
 			break;
-		case PIN_CONFIG_LEVEL:
+		case PIN_CONFIG_OUTPUT:
 			pad->output_enabled = true;
 			pad->out_value = arg;
 			break;
@@ -545,7 +544,7 @@ static void pmic_mpp_config_dbg_show(struct pinctrl_dev *pctldev,
 		seq_printf(s, " %d", pad->aout_level);
 		if (pad->has_pullup)
 			seq_printf(s, " %-8s", biases[pad->pullup]);
-		seq_printf(s, " %-4s", str_high_low(pad->out_value));
+		seq_printf(s, " %-4s", pad->out_value ? "high" : "low");
 		if (pad->dtest)
 			seq_printf(s, " dtest%d", pad->dtest);
 		if (pad->paired)
@@ -576,7 +575,7 @@ static int pmic_mpp_direction_output(struct gpio_chip *chip,
 	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned long config;
 
-	config = pinconf_to_config_packed(PIN_CONFIG_LEVEL, val);
+	config = pinconf_to_config_packed(PIN_CONFIG_OUTPUT, val);
 
 	return pmic_mpp_config_set(state->ctrl, pin, &config, 1);
 }
@@ -600,14 +599,14 @@ static int pmic_mpp_get(struct gpio_chip *chip, unsigned pin)
 	return !!pad->out_value;
 }
 
-static int pmic_mpp_set(struct gpio_chip *chip, unsigned int pin, int value)
+static void pmic_mpp_set(struct gpio_chip *chip, unsigned pin, int value)
 {
 	struct pmic_mpp_state *state = gpiochip_get_data(chip);
 	unsigned long config;
 
-	config = pinconf_to_config_packed(PIN_CONFIG_LEVEL, value);
+	config = pinconf_to_config_packed(PIN_CONFIG_OUTPUT, value);
 
-	return pmic_mpp_config_set(state->ctrl, pin, &config, 1);
+	pmic_mpp_config_set(state->ctrl, pin, &config, 1);
 }
 
 static int pmic_mpp_of_xlate(struct gpio_chip *chip,
@@ -1002,7 +1001,7 @@ static struct platform_driver pmic_mpp_driver = {
 		   .of_match_table = pmic_mpp_of_match,
 	},
 	.probe	= pmic_mpp_probe,
-	.remove = pmic_mpp_remove,
+	.remove_new = pmic_mpp_remove,
 };
 
 module_platform_driver(pmic_mpp_driver);

@@ -43,11 +43,9 @@ extern void public_key_free(struct public_key *key);
 struct public_key_signature {
 	struct asymmetric_key_id *auth_ids[3];
 	u8 *s;			/* Signature */
-	u8 *m;			/* Message data to pass to verifier */
+	u8 *digest;
 	u32 s_size;		/* Number of bytes in signature */
-	u32 m_size;		/* Number of bytes in ->m */
-	bool m_free;		/* T if ->m needs freeing */
-	bool algo_takes_data;	/* T if public key algo operates on data, not a hash */
+	u32 digest_size;	/* Number of bytes in digest */
 	const char *pkey_algo;
 	const char *hash_algo;
 	const char *encoding;
@@ -106,6 +104,9 @@ static inline int restrict_link_by_digsig(struct key *dest_keyring,
 extern int query_asymmetric_key(const struct kernel_pkey_params *,
 				struct kernel_pkey_query *);
 
+extern int encrypt_blob(struct kernel_pkey_params *, const void *, void *);
+extern int decrypt_blob(struct kernel_pkey_params *, const void *, void *);
+extern int create_signature(struct kernel_pkey_params *, const void *, void *);
 extern int verify_signature(const struct key *,
 			    const struct public_key_signature *);
 

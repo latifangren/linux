@@ -27,7 +27,6 @@
 
 #include <linux/delay.h>
 
-#include <drm/drm_print.h>
 #include <drm/drm_util.h>
 
 #include "qxl_drv.h"
@@ -63,7 +62,7 @@ qxl_ring_create(struct qxl_ring_header *header,
 {
 	struct qxl_ring *ring;
 
-	ring = kmalloc_obj(*ring);
+	ring = kmalloc(sizeof(*ring), GFP_KERNEL);
 	if (!ring)
 		return NULL;
 

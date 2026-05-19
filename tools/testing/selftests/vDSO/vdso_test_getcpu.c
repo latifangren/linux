@@ -11,12 +11,14 @@
 #include <sys/auxv.h>
 #include <sys/time.h>
 
-#include "kselftest.h"
+#include "../kselftest.h"
 #include "parse_vdso.h"
 #include "vdso_config.h"
 #include "vdso_call.h"
 
-typedef long (*getcpu_t)(unsigned int *, unsigned int *, void *);
+struct getcpu_cache;
+typedef long (*getcpu_t)(unsigned int *, unsigned int *,
+			 struct getcpu_cache *);
 
 int main(int argc, char **argv)
 {

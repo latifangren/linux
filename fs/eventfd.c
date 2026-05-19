@@ -347,10 +347,13 @@ EXPORT_SYMBOL_GPL(eventfd_fget);
  */
 struct eventfd_ctx *eventfd_ctx_fdget(int fd)
 {
-	CLASS(fd, f)(fd);
-	if (fd_empty(f))
+	struct eventfd_ctx *ctx;
+	struct fd f = fdget(fd);
+	if (!fd_file(f))
 		return ERR_PTR(-EBADF);
-	return eventfd_ctx_fileget(fd_file(f));
+	ctx = eventfd_ctx_fileget(fd_file(f));
+	fdput(f);
+	return ctx;
 }
 EXPORT_SYMBOL_GPL(eventfd_ctx_fdget);
 
@@ -378,7 +381,9 @@ EXPORT_SYMBOL_GPL(eventfd_ctx_fileget);
 
 static int do_eventfd(unsigned int count, int flags)
 {
-	struct eventfd_ctx *ctx __free(kfree) = NULL;
+	struct eventfd_ctx *ctx;
+	struct file *file;
+	int fd;
 
 	/* Check the EFD_* constants for consistency.  */
 	BUILD_BUG_ON(EFD_CLOEXEC != O_CLOEXEC);
@@ -388,7 +393,7 @@ static int do_eventfd(unsigned int count, int flags)
 	if (flags & ~EFD_FLAGS_SET)
 		return -EINVAL;
 
-	ctx = kmalloc_obj(*ctx);
+	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -396,19 +401,27 @@ static int do_eventfd(unsigned int count, int flags)
 	init_waitqueue_head(&ctx->wqh);
 	ctx->count = count;
 	ctx->flags = flags;
+	ctx->id = ida_alloc(&eventfd_ida, GFP_KERNEL);
 
 	flags &= EFD_SHARED_FCNTL_FLAGS;
 	flags |= O_RDWR;
+	fd = get_unused_fd_flags(flags);
+	if (fd < 0)
+		goto err;
 
-	FD_PREPARE(fdf, flags,
-		   anon_inode_getfile_fmode("[eventfd]", &eventfd_fops, ctx,
-					    flags, FMODE_NOWAIT));
-	if (fdf.err)
-		return fdf.err;
+	file = anon_inode_getfile("[eventfd]", &eventfd_fops, ctx, flags);
+	if (IS_ERR(file)) {
+		put_unused_fd(fd);
+		fd = PTR_ERR(file);
+		goto err;
+	}
 
-	ctx->id = ida_alloc(&eventfd_ida, GFP_KERNEL);
-	retain_and_null_ptr(ctx);
-	return fd_publish(fdf);
+	file->f_mode |= FMODE_NOWAIT;
+	fd_install(fd, file);
+	return fd;
+err:
+	eventfd_free_ctx(ctx);
+	return fd;
 }
 
 SYSCALL_DEFINE2(eventfd2, unsigned int, count, int, flags)

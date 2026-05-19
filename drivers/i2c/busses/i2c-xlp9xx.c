@@ -452,7 +452,7 @@ static u32 xlp9xx_i2c_functionality(struct i2c_adapter *adapter)
 }
 
 static const struct i2c_algorithm xlp9xx_i2c_algo = {
-	.xfer = xlp9xx_i2c_xfer,
+	.master_xfer = xlp9xx_i2c_xfer,
 	.functionality = xlp9xx_i2c_functionality,
 };
 

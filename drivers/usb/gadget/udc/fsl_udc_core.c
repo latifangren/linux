@@ -22,7 +22,6 @@
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/string_choices.h>
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/interrupt.h>
@@ -678,7 +677,7 @@ fsl_alloc_request(struct usb_ep *_ep, gfp_t gfp_flags)
 {
 	struct fsl_req *req;
 
-	req = kzalloc_obj(*req, gfp_flags);
+	req = kzalloc(sizeof *req, gfp_flags);
 	if (!req)
 		return NULL;
 
@@ -1182,7 +1181,7 @@ static int fsl_vbus_session(struct usb_gadget *gadget, int is_active)
 
 	udc = container_of(gadget, struct fsl_udc, gadget);
 	spin_lock_irqsave(&udc->lock, flags);
-	dev_vdbg(&gadget->dev, "VBUS %s\n", str_on_off(is_active));
+	dev_vdbg(&gadget->dev, "VBUS %s\n", is_active ? "on" : "off");
 	udc->vbus_active = (is_active != 0);
 	if (can_pullup(udc))
 		fsl_writel((fsl_readl(&dr_regs->usbcmd) | USB_CMD_RUN_STOP),
@@ -2250,7 +2249,7 @@ static int struct_udc_setup(struct fsl_udc *udc,
 	pdata = dev_get_platdata(&pdev->dev);
 	udc->phy_mode = pdata->phy_mode;
 
-	udc->eps = kzalloc_objs(struct fsl_ep, udc->max_ep);
+	udc->eps = kcalloc(udc->max_ep, sizeof(struct fsl_ep), GFP_KERNEL);
 	if (!udc->eps) {
 		dev_err(&udc->gadget.dev, "kmalloc udc endpoint status failed\n");
 		goto eps_alloc_failed;
@@ -2369,7 +2368,7 @@ static int fsl_udc_probe(struct platform_device *pdev)
 	unsigned int i;
 	u32 dccparams;
 
-	udc_controller = kzalloc_obj(struct fsl_udc);
+	udc_controller = kzalloc(sizeof(struct fsl_udc), GFP_KERNEL);
 	if (udc_controller == NULL)
 		return -ENOMEM;
 

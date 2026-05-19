@@ -7,7 +7,7 @@ $schema: http://devicetree.org/meta-schemas/core.yaml#
 title: Novatek NT35510-based display panels
 
 maintainers:
-  - Linus Walleij <linusw@kernel.org>
+  - Linus Walleij <linus.walleij@linaro.org>
 
 allOf:
   - $ref: panel-common.yaml#
@@ -28,14 +28,13 @@ properties:
   reg:
     maxItems: 1
 
+  reset-gpios: true
   vdd-supply:
     description: regulator that supplies the vdd voltage
   vddi-supply:
     description: regulator that supplies the vddi voltage
-
   backlight: true
   port: true
-  reset-gpios: true
 
 required:
   - compatible

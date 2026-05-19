@@ -17,7 +17,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/kmemleak.h>
 #include <linux/minmax.h>
-#include <linux/property.h>
 #include <linux/sizes.h>
 
 #define PVR_SHIFT_FROM_SIZE(size_) (__builtin_ctzll(size_))
@@ -260,7 +259,6 @@ pvr_mmu_backing_page_init(struct pvr_mmu_backing_page *page,
 	struct device *dev = from_pvr_device(pvr_dev)->dev;
 
 	struct page *raw_page;
-	pgprot_t prot;
 	int err;
 
 	dma_addr_t dma_addr;
@@ -270,11 +268,7 @@ pvr_mmu_backing_page_init(struct pvr_mmu_backing_page *page,
 	if (!raw_page)
 		return -ENOMEM;
 
-	prot = PAGE_KERNEL;
-	if (device_get_dma_attr(dev) != DEV_DMA_COHERENT)
-		prot = pgprot_writecombine(prot);
-
-	host_ptr = vmap(&raw_page, 1, VM_MAP, prot);
+	host_ptr = vmap(&raw_page, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
 	if (!host_ptr) {
 		err = -ENOMEM;
 		goto err_free_page;
@@ -1828,7 +1822,7 @@ pvr_page_table_l0_get_or_insert(struct pvr_mmu_op_context *op_ctx,
  */
 struct pvr_mmu_context *pvr_mmu_context_create(struct pvr_device *pvr_dev)
 {
-	struct pvr_mmu_context *ctx = kzalloc_obj(*ctx);
+	struct pvr_mmu_context *ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	int err;
 
 	if (!ctx)
@@ -1877,7 +1871,8 @@ pvr_page_table_l1_alloc(struct pvr_mmu_context *ctx)
 {
 	int err;
 
-	struct pvr_page_table_l1 *table = kzalloc_obj(*table);
+	struct pvr_page_table_l1 *table =
+		kzalloc(sizeof(*table), GFP_KERNEL);
 
 	if (!table)
 		return ERR_PTR(-ENOMEM);
@@ -1905,7 +1900,8 @@ pvr_page_table_l0_alloc(struct pvr_mmu_context *ctx)
 {
 	int err;
 
-	struct pvr_page_table_l0 *table = kzalloc_obj(*table);
+	struct pvr_page_table_l0 *table =
+		kzalloc(sizeof(*table), GFP_KERNEL);
 
 	if (!table)
 		return ERR_PTR(-ENOMEM);
@@ -2350,7 +2346,8 @@ pvr_mmu_op_context_create(struct pvr_mmu_context *ctx, struct sg_table *sgt,
 {
 	int err;
 
-	struct pvr_mmu_op_context *op_ctx = kzalloc_obj(*op_ctx);
+	struct pvr_mmu_op_context *op_ctx =
+		kzalloc(sizeof(*op_ctx), GFP_KERNEL);
 
 	if (!op_ctx)
 		return ERR_PTR(-ENOMEM);

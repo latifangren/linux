@@ -172,7 +172,7 @@ static int usbtmc_open(struct inode *inode, struct file *filp)
 		return -ENODEV;
 	}
 
-	file_data = kzalloc_obj(*file_data);
+	file_data = kzalloc(sizeof(*file_data), GFP_KERNEL);
 	if (!file_data)
 		return -ENOMEM;
 
@@ -1939,8 +1939,10 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 	u8 *buffer = NULL;
 	int rv;
 	unsigned int is_in, pipe;
+	unsigned long res;
 
-	if (copy_from_user(&request, arg, sizeof(struct usbtmc_ctrlrequest)))
+	res = copy_from_user(&request, arg, sizeof(struct usbtmc_ctrlrequest));
+	if (res)
 		return -EFAULT;
 
 	if (request.req.wLength > USBTMC_BUFSIZE)
@@ -1957,8 +1959,9 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 
 		if (!is_in) {
 			/* Send control data to device */
-			if (copy_from_user(buffer, request.data,
-					   request.req.wLength)) {
+			res = copy_from_user(buffer, request.data,
+					     request.req.wLength);
+			if (res) {
 				rv = -EFAULT;
 				goto exit;
 			}
@@ -1984,7 +1987,8 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 
 	if (rv && is_in) {
 		/* Read control data from device */
-		if (copy_to_user(request.data, buffer, rv))
+		res = copy_to_user(request.data, buffer, rv);
+		if (res)
 			rv = -EFAULT;
 	}
 
@@ -2381,7 +2385,7 @@ static int usbtmc_probe(struct usb_interface *intf,
 
 	dev_dbg(&intf->dev, "%s called\n", __func__);
 
-	data = kzalloc_obj(*data);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 

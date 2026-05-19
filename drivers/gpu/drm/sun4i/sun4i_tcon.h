@@ -19,6 +19,7 @@
 
 #define SUN4I_TCON_GCTL_REG			0x0
 #define SUN4I_TCON_GCTL_TCON_ENABLE			BIT(31)
+#define SUN4I_TCON_GCTL_PAD_SEL				BIT(1)
 #define SUN4I_TCON_GCTL_IOMAP_MASK			BIT(0)
 #define SUN4I_TCON_GCTL_IOMAP_TCON1			(1 << 0)
 #define SUN4I_TCON_GCTL_IOMAP_TCON0			(0 << 0)
@@ -243,6 +244,7 @@ struct sun4i_tcon_quirks {
 	bool    needs_edp_reset; /* a80 edp reset needed for tcon0 access */
 	bool	supports_lvds;   /* Does the TCON support an LVDS output? */
 	bool	polarity_in_ch0; /* some tcon1 channels have polarity bits in tcon0 pol register */
+	bool	restores_rate;   /* restores the initial rate when rate changes */
 	u8	dclk_min_div;	/* minimum divider for TCON0 DCLK */
 
 	/* callback to handle tcon muxing options */
@@ -299,5 +301,16 @@ void sun4i_tcon_set_status(struct sun4i_tcon *crtc,
 			   const struct drm_encoder *encoder, bool enable);
 
 extern const struct of_device_id sun4i_tcon_of_table[];
+
+struct sun4i_rate_reset_nb {
+	struct notifier_block	clk_nb;
+	struct delayed_work	reset_rate_work;
+
+	struct clk		*target_clk;
+	unsigned long		saved_rate;
+	bool			is_registered;
+};
+
+#define to_sun4i_rate_reset_nb(_nb) container_of(_nb, struct sun4i_rate_reset_nb, clk_nb)
 
 #endif /* __SUN4I_TCON_H__ */

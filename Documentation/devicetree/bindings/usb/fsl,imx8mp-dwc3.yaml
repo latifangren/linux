@@ -10,15 +10,9 @@ title: NXP iMX8MP Soc USB Controller
 maintainers:
   - Li Jun <jun.li@nxp.com>
 
-deprecated: true
-
 properties:
   compatible:
-    oneOf:
-      - items:
-          - const: fsl,imx95-dwc3
-          - const: fsl,imx8mp-dwc3
-      - const: fsl,imx8mp-dwc3
+    const: fsl,imx8mp-dwc3
 
   reg:
     items:

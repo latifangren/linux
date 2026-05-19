@@ -715,11 +715,11 @@ static int __init init_pmc551(void)
 			msize = length;
 		}
 
-		mtd = kzalloc_obj(struct mtd_info);
+		mtd = kzalloc(sizeof(struct mtd_info), GFP_KERNEL);
 		if (!mtd)
 			break;
 
-		priv = kzalloc_obj(struct mypriv);
+		priv = kzalloc(sizeof(struct mypriv), GFP_KERNEL);
 		if (!priv) {
 			kfree(mtd);
 			break;

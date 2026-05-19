@@ -81,14 +81,13 @@ SEQCOUNT_LOCKNAME(mutex,        struct mutex,    true,     mutex)
  *    - Comments on top of seqcount_t
  *    - Documentation/locking/seqlock.rst
  */
-context_lock_struct(seqlock) {
+typedef struct {
 	/*
 	 * Make sure that readers don't starve writers on PREEMPT_RT: use
 	 * seqcount_spinlock_t instead of seqcount_t. Check __SEQ_LOCK().
 	 */
 	seqcount_spinlock_t seqcount;
 	spinlock_t lock;
-};
-typedef struct seqlock seqlock_t;
+} seqlock_t;
 
 #endif /* __LINUX_SEQLOCK_TYPES_H */

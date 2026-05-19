@@ -361,12 +361,7 @@ local tasks spawned by the process and the global task that handles USB bus #1:
 	 */
 	sleep(2);
 
-        /*
-         * The load to the coverage count should be an acquire to pair with
-         * pair with the corresponding write memory barrier (smp_wmb()) on
-         * the kernel-side in kcov_move_area().
-         */
-	n = __atomic_load_n(&cover[0], __ATOMIC_ACQUIRE);
+	n = __atomic_load_n(&cover[0], __ATOMIC_RELAXED);
 	for (i = 0; i < n; i++)
 		printf("0x%lx\n", cover[i + 1]);
 	if (ioctl(fd, KCOV_DISABLE, 0))

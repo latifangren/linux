@@ -26,10 +26,6 @@ properties:
               - renesas,usbhs-r9a07g043 # RZ/G2UL and RZ/Five
               - renesas,usbhs-r9a07g044 # RZ/G2{L,LC}
               - renesas,usbhs-r9a07g054 # RZ/V2L
-              - renesas,usbhs-r9a08g045 # RZ/G3S
-              - renesas,usbhs-r9a09g047 # RZ/G3E
-              - renesas,usbhs-r9a09g056 # RZ/V2N
-              - renesas,usbhs-r9a09g057 # RZ/V2H(P)
           - const: renesas,rzg2l-usbhs
 
       - items:
@@ -60,12 +56,6 @@ properties:
               - renesas,usbhs-r8a77995 # R-Car D3
           - const: renesas,rcar-gen3-usbhs
 
-      - const: renesas,usbhs-r9a09g077 # RZ/T2H
-
-      - items:
-          - const: renesas,usbhs-r9a09g087 # RZ/N2H
-          - const: renesas,usbhs-r9a09g077 # RZ/T2H
-
   reg:
     maxItems: 1
 
@@ -86,10 +76,6 @@ properties:
       Integer to use BUSWAIT register.
 
   renesas,enable-gpio:
-    deprecated: true
-    maxItems: 1
-
-  renesas,enable-gpios:
     maxItems: 1
     description: |
       gpio specifier to check GPIO determining if USB function should be
@@ -136,7 +122,10 @@ allOf:
       properties:
         compatible:
           contains:
-            const: renesas,rzg2l-usbhs
+            enum:
+              - renesas,usbhs-r9a07g043
+              - renesas,usbhs-r9a07g044
+              - renesas,usbhs-r9a07g054
     then:
       properties:
         interrupts:
@@ -148,25 +137,9 @@ allOf:
       required:
         - resets
     else:
-      if:
-        properties:
-          compatible:
-            contains:
-              const: renesas,usbhs-r9a09g077
-      then:
-        properties:
-          resets: false
-          clocks:
-            maxItems: 1
-          interrupts:
-            items:
-              - description: USB function interrupt USB_FI
-              - description: USB function DMA0 transmit completion interrupt USB_FDMA0
-              - description: USB function DMA1 transmit completion interrupt USB_FDMA1
-      else:
-        properties:
-          interrupts:
-            maxItems: 1
+      properties:
+        interrupts:
+          maxItems: 1
 
 additionalProperties: false
 

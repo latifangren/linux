@@ -619,7 +619,7 @@ int cx8802_register_driver(struct cx8802_driver *drv)
 			dev->core->boardnr);
 
 		/* Bring up a new struct for each driver instance */
-		driver = kzalloc_obj(*drv);
+		driver = kzalloc(sizeof(*drv), GFP_KERNEL);
 		if (!driver) {
 			err = -ENOMEM;
 			goto out;
@@ -715,7 +715,7 @@ static int cx8802_probe(struct pci_dev *pci_dev,
 		goto fail_core;
 
 	err = -ENOMEM;
-	dev = kzalloc_obj(*dev);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		goto fail_core;
 	dev->pci = pci_dev;

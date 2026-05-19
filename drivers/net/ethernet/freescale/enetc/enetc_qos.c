@@ -336,7 +336,7 @@ int enetc_setup_tc_cbs(struct net_device *ndev, void *type_data)
 	 *
 	 * (enetClockFrequency / portTransmitRate) * 100
 	 */
-	hi_credit_reg = (u32)div_u64((priv->sysclk_freq * 100ULL) * hi_credit_bit,
+	hi_credit_reg = (u32)div_u64((ENETC_CLK * 100ULL) * hi_credit_bit,
 				     port_transmit_rate * 1000000ULL);
 
 	enetc_port_wr(hw, ENETC_PTCCBSR1(tc), hi_credit_reg);
@@ -1153,7 +1153,7 @@ static int enetc_psfp_parse_clsflower(struct enetc_ndev_priv *priv,
 	if (!entryg)
 		return -EINVAL;
 
-	filter = kzalloc_obj(*filter);
+	filter = kzalloc(sizeof(*filter), GFP_KERNEL);
 	if (!filter)
 		return -ENOMEM;
 
@@ -1266,7 +1266,7 @@ static int enetc_psfp_parse_clsflower(struct enetc_ndev_priv *priv,
 
 	filter->sgi_index = sgi->index;
 
-	sfi = kzalloc_obj(*sfi);
+	sfi = kzalloc(sizeof(*sfi), GFP_KERNEL);
 	if (!sfi) {
 		err = -ENOMEM;
 		goto free_gate;
@@ -1283,7 +1283,7 @@ static int enetc_psfp_parse_clsflower(struct enetc_ndev_priv *priv,
 			goto free_sfi;
 
 		if (entryp->police.burst) {
-			fmi = kzalloc_obj(*fmi);
+			fmi = kzalloc(sizeof(*fmi), GFP_KERNEL);
 			if (!fmi) {
 				err = -ENOMEM;
 				goto free_sfi;

@@ -13,6 +13,7 @@
 #include <linux/mount.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
+#include "cifspdu.h"
 #include "cifsglob.h"
 #include "cifsproto.h"
 #include "cifs_debug.h"
@@ -71,6 +72,7 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 			unsigned long srcfd)
 {
 	int rc;
+	struct fd src_file;
 	struct inode *src_inode;
 
 	cifs_dbg(FYI, "ioctl copychunk range\n");
@@ -87,8 +89,8 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 		return rc;
 	}
 
-	CLASS(fd, src_file)(srcfd);
-	if (fd_empty(src_file)) {
+	src_file = fdget(srcfd);
+	if (!fd_file(src_file)) {
 		rc = -EBADF;
 		goto out_drop_write;
 	}
@@ -96,18 +98,20 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 	if (fd_file(src_file)->f_op->unlocked_ioctl != cifs_ioctl) {
 		rc = -EBADF;
 		cifs_dbg(VFS, "src file seems to be from a different filesystem type\n");
-		goto out_drop_write;
+		goto out_fput;
 	}
 
 	src_inode = file_inode(fd_file(src_file));
 	rc = -EINVAL;
 	if (S_ISDIR(src_inode->i_mode))
-		goto out_drop_write;
+		goto out_fput;
 
 	rc = cifs_file_copychunk_range(xid, fd_file(src_file), 0, dst_file, 0,
 					src_inode->i_size, 0);
 	if (rc > 0)
 		rc = 0;
+out_fput:
+	fdput(src_file);
 out_drop_write:
 	mnt_drop_write_file(dst_file);
 	return rc;
@@ -133,7 +137,7 @@ static long smb_mnt_get_fsinfo(unsigned int xid, struct cifs_tcon *tcon,
 	int rc = 0;
 	struct smb_mnt_fs_info *fsinf;
 
-	fsinf = kzalloc_obj(struct smb_mnt_fs_info);
+	fsinf = kzalloc(sizeof(struct smb_mnt_fs_info), GFP_KERNEL);
 	if (fsinf == NULL)
 		return -ENOMEM;
 
@@ -216,7 +220,7 @@ static int cifs_shutdown(struct super_block *sb, unsigned long arg)
 	 */
 	case CIFS_GOING_FLAGS_LOGFLUSH:
 	case CIFS_GOING_FLAGS_NOLOGFLUSH:
-		atomic_or(CIFS_MOUNT_SHUTDOWN, &sbi->mnt_cifs_flags);
+		sbi->mnt_cifs_flags |= CIFS_MOUNT_SHUTDOWN;
 		goto shutdown_good;
 	default:
 		rc = -EINVAL;
@@ -505,7 +509,7 @@ long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 				le16_to_cpu(tcon->ses->server->cipher_type);
 			pkey_inf.Suid = tcon->ses->Suid;
 			memcpy(pkey_inf.auth_key, tcon->ses->auth_key.response,
-				  SMB2_NTLMV2_SESSKEY_SIZE);
+					16 /* SMB2_NTLMV2_SESSKEY_SIZE */);
 			memcpy(pkey_inf.smb3decryptionkey,
 			      tcon->ses->smb3decryptionkey, SMB3_SIGN_KEY_SIZE);
 			memcpy(pkey_inf.smb3encryptionkey,
@@ -587,9 +591,6 @@ long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 			break;
 		default:
 			cifs_dbg(FYI, "unsupported ioctl\n");
-			trace_smb3_unsupported_ioctl(xid,
-				pSMBFile ? pSMBFile->fid.persistent_fid : 0,
-				command);
 			break;
 	}
 cifs_ioc_exit:

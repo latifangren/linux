@@ -12,7 +12,7 @@ description: STMicroelectronics Port Expander (STMPE) is a series of slow
   peripherals connected to SPI or I2C.
 
 maintainers:
-  - Linus Walleij <linusw@kernel.org>
+  - Linus Walleij <linus.walleij@linaro.org>
 
 allOf:
   - $ref: /schemas/spi/spi-peripheral-props.yaml#

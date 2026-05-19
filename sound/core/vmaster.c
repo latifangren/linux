@@ -58,7 +58,7 @@ static int follower_update(struct link_follower *follower)
 {
 	int err, ch;
 	struct snd_ctl_elem_value *uctl __free(kfree) =
-		kzalloc_obj(*uctl);
+		kzalloc(sizeof(*uctl), GFP_KERNEL);
 
 	if (!uctl)
 		return -ENOMEM;
@@ -84,7 +84,7 @@ static int follower_init(struct link_follower *follower)
 	}
 
 	struct snd_ctl_elem_info *uinfo __free(kfree) =
-		kmalloc_obj(*uinfo);
+		kmalloc(sizeof(*uinfo), GFP_KERNEL);
 	if (!uinfo)
 		return -ENOMEM;
 	uinfo->id = follower->follower.id;
@@ -256,7 +256,8 @@ int _snd_ctl_add_follower(struct snd_kcontrol *master,
 	struct link_master *master_link = snd_kcontrol_chip(master);
 	struct link_follower *srec;
 
-	srec = kzalloc_flex(*srec, follower.vd, follower->count);
+	srec = kzalloc(struct_size(srec, follower.vd, follower->count),
+		       GFP_KERNEL);
 	if (!srec)
 		return -ENOMEM;
 	srec->kctl = follower;
@@ -341,7 +342,7 @@ static int sync_followers(struct link_master *master, int old_val, int new_val)
 {
 	struct link_follower *follower;
 	struct snd_ctl_elem_value *uval __free(kfree) =
-		kmalloc_obj(*uval);
+		kmalloc(sizeof(*uval), GFP_KERNEL);
 
 	if (!uval)
 		return -ENOMEM;
@@ -429,7 +430,7 @@ struct snd_kcontrol *snd_ctl_make_virtual_master(char *name,
 	knew.name = name;
 	knew.info = master_info;
 
-	master = kzalloc_obj(*master);
+	master = kzalloc(sizeof(*master), GFP_KERNEL);
 	if (!master)
 		return NULL;
 	INIT_LIST_HEAD(&master->followers);

@@ -140,7 +140,7 @@ static ssize_t iter_get_bvecs_alloc(struct iov_iter *iter, size_t maxsize,
 	 * __iter_get_bvecs() may populate only part of the array -- zero it
 	 * out.
 	 */
-	bv = kvmalloc_objs(*bv, npages, GFP_KERNEL | __GFP_ZERO);
+	bv = kvmalloc_array(npages, sizeof(*bv), GFP_KERNEL | __GFP_ZERO);
 	if (!bv)
 		return -ENOMEM;
 
@@ -740,7 +740,7 @@ static int ceph_finish_async_create(struct inode *dir, struct inode *inode,
 		      vino.ino, ceph_ino(dir), dentry->d_name.name);
 		ceph_dir_clear_ordered(dir);
 		ceph_init_inode_acls(inode, as_ctx);
-		if (inode_state_read_once(inode) & I_NEW) {
+		if (inode->i_state & I_NEW) {
 			/*
 			 * If it's not I_NEW, then someone created this before
 			 * we got here. Assume the server is aware of it at
@@ -901,7 +901,7 @@ retry:
 				new_inode = NULL;
 				goto out_req;
 			}
-			WARN_ON_ONCE(!(inode_state_read_once(new_inode) & I_NEW));
+			WARN_ON_ONCE(!(new_inode->i_state & I_NEW));
 
 			spin_lock(&dentry->d_lock);
 			di->flags |= CEPH_DENTRY_ASYNC_CREATE;
@@ -1344,7 +1344,7 @@ static void ceph_aio_complete_req(struct ceph_osd_request *req)
 		struct ceph_aio_work *aio_work;
 		BUG_ON(!aio_req->write);
 
-		aio_work = kmalloc_obj(*aio_work, GFP_NOFS);
+		aio_work = kmalloc(sizeof(*aio_work), GFP_NOFS);
 		if (aio_work) {
 			INIT_WORK(&aio_work->work, ceph_aio_retry_work);
 			aio_work->req = req;
@@ -1572,7 +1572,7 @@ ceph_direct_read_write(struct kiocb *iocb, struct iov_iter *iter,
 		 */
 		if (pos == iocb->ki_pos && !is_sync_kiocb(iocb) &&
 		    (len == count || pos + count <= i_size_read(inode))) {
-			aio_req = kzalloc_obj(*aio_req);
+			aio_req = kzalloc(sizeof(*aio_req), GFP_KERNEL);
 			if (aio_req) {
 				aio_req->iocb = iocb;
 				aio_req->write = write;
@@ -1986,7 +1986,8 @@ ceph_sync_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos,
 
 		if (IS_ENCRYPTED(inode)) {
 			ret = ceph_fscrypt_encrypt_pages(inode, pages,
-							 write_pos, write_len);
+							 write_pos, write_len,
+							 GFP_KERNEL);
 			if (ret < 0) {
 				doutc(cl, "encryption failed with %d\n", ret);
 				ceph_release_page_vector(pages, num_pages);
@@ -2119,10 +2120,10 @@ again:
 	if (ceph_inode_is_shutdown(inode))
 		return -ESTALE;
 
-	ret = direct_lock ? ceph_start_io_direct(inode) :
-			    ceph_start_io_read(inode);
-	if (ret)
-		return ret;
+	if (direct_lock)
+		ceph_start_io_direct(inode);
+	else
+		ceph_start_io_read(inode);
 
 	if (!(fi->flags & CEPH_F_SYNC) && !direct_lock)
 		want |= CEPH_CAP_FILE_CACHE;
@@ -2275,9 +2276,7 @@ static ssize_t ceph_splice_read(struct file *in, loff_t *ppos,
 	    (fi->flags & CEPH_F_SYNC))
 		return copy_splice_read(in, ppos, pipe, len, flags);
 
-	ret = ceph_start_io_read(inode);
-	if (ret)
-		return ret;
+	ceph_start_io_read(inode);
 
 	want = CEPH_CAP_FILE_CACHE;
 	if (fi->fmode & CEPH_FILE_MODE_LAZY)
@@ -2356,10 +2355,10 @@ static ssize_t ceph_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		direct_lock = true;
 
 retry_snap:
-	err = direct_lock ? ceph_start_io_direct(inode) :
-			    ceph_start_io_write(inode);
-	if (err)
-		goto out_unlocked;
+	if (direct_lock)
+		ceph_start_io_direct(inode);
+	else
+		ceph_start_io_write(inode);
 
 	if (iocb->ki_flags & IOCB_APPEND) {
 		err = ceph_do_getattr(inode, CEPH_STAT_CAP_SIZE, false);
@@ -2525,19 +2524,19 @@ static loff_t ceph_llseek(struct file *file, loff_t offset, int whence)
 	return generic_file_llseek(file, offset, whence);
 }
 
-static inline void ceph_zero_partial_page(struct inode *inode,
-		loff_t offset, size_t size)
+static inline void ceph_zero_partial_page(
+	struct inode *inode, loff_t offset, unsigned size)
 {
-	struct folio *folio;
+	struct page *page;
+	pgoff_t index = offset >> PAGE_SHIFT;
 
-	folio = filemap_lock_folio(inode->i_mapping, offset >> PAGE_SHIFT);
-	if (IS_ERR(folio))
-		return;
-
-	folio_wait_writeback(folio);
-	folio_zero_range(folio, offset_in_folio(folio, offset), size);
-	folio_unlock(folio);
-	folio_put(folio);
+	page = find_lock_page(inode->i_mapping, index);
+	if (page) {
+		wait_on_page_writeback(page);
+		zero_user(page, offset & (PAGE_SIZE - 1), size);
+		unlock_page(page);
+		put_page(page);
+	}
 }
 
 static void ceph_zero_pagecache_range(struct inode *inode, loff_t offset,
@@ -2893,7 +2892,7 @@ static ssize_t ceph_do_objects_copy(struct ceph_inode_info *src_ci, u64 *src_off
 	struct ceph_object_id src_oid, dst_oid;
 	struct ceph_osd_client *osdc;
 	struct ceph_osd_request *req;
-	ssize_t bytes = 0;
+	size_t bytes = 0;
 	u64 src_objnum, src_objoff, dst_objnum, dst_objoff;
 	u32 src_objlen, dst_objlen;
 	u32 object_size = src_ci->i_layout.object_size;
@@ -2943,7 +2942,7 @@ static ssize_t ceph_do_objects_copy(struct ceph_inode_info *src_ci, u64 *src_off
 					"OSDs don't support copy-from2; disabling copy offload\n");
 			}
 			doutc(cl, "returned %d\n", ret);
-			if (bytes <= 0)
+			if (!bytes)
 				bytes = ret;
 			goto out;
 		}
@@ -3181,9 +3180,10 @@ const struct file_operations ceph_file_fops = {
 	.llseek = ceph_llseek,
 	.read_iter = ceph_read_iter,
 	.write_iter = ceph_write_iter,
-	.mmap_prepare = ceph_mmap_prepare,
+	.mmap = ceph_mmap,
 	.fsync = ceph_fsync,
 	.lock = ceph_lock,
+	.setlease = simple_nosetlease,
 	.flock = ceph_flock,
 	.splice_read = ceph_splice_read,
 	.splice_write = iter_file_splice_write,

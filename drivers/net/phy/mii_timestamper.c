@@ -28,7 +28,7 @@ int register_mii_tstamp_controller(struct device *device,
 {
 	struct mii_timestamping_desc *desc;
 
-	desc = kzalloc_obj(*desc);
+	desc = kzalloc(sizeof(*desc), GFP_KERNEL);
 	if (!desc)
 		return -ENOMEM;
 

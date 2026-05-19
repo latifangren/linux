@@ -986,7 +986,7 @@ mlxsw_env_mtwe_listener_func(const struct mlxsw_reg_info *reg, char *mtwe_pl,
 	struct mlxsw_env_module_temp_warn_event *event;
 	struct mlxsw_env *mlxsw_env = priv;
 
-	event = kmalloc_obj(*event, GFP_ATOMIC);
+	event = kmalloc(sizeof(*event), GFP_ATOMIC);
 	if (!event)
 		return;
 
@@ -1080,7 +1080,7 @@ mlxsw_env_pmpe_listener_func(const struct mlxsw_reg_info *reg, char *pmpe_pl,
 	if (module_status != MLXSW_REG_PMPE_MODULE_STATUS_PLUGGED_ENABLED)
 		return;
 
-	event = kmalloc_obj(*event, GFP_ATOMIC);
+	event = kmalloc(sizeof(*event), GFP_ATOMIC);
 	if (!event)
 		return;
 
@@ -1243,9 +1243,10 @@ static int mlxsw_env_line_cards_alloc(struct mlxsw_env *env)
 	int i, j;
 
 	for (i = 0; i < env->num_of_slots; i++) {
-		env->line_cards[i] = kzalloc_flex(*env->line_cards[i],
-						  module_info,
-						  env->max_module_count);
+		env->line_cards[i] = kzalloc(struct_size(env->line_cards[i],
+							 module_info,
+							 env->max_module_count),
+							 GFP_KERNEL);
 		if (!env->line_cards[i])
 			goto kzalloc_err;
 
@@ -1452,7 +1453,8 @@ int mlxsw_env_init(struct mlxsw_core *mlxsw_core,
 			   mlxsw_reg_mgpir_max_modules_per_slot_get(mgpir_pl) :
 			   module_count;
 
-	env = kzalloc_flex(*env, line_cards, num_of_slots + 1);
+	env = kzalloc(struct_size(env, line_cards, num_of_slots + 1),
+		      GFP_KERNEL);
 	if (!env)
 		return -ENOMEM;
 

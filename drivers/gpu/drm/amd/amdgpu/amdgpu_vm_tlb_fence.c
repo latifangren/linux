@@ -71,6 +71,7 @@ static void amdgpu_tlb_fence_work(struct work_struct *work)
 }
 
 static const struct dma_fence_ops amdgpu_tlb_fence_ops = {
+	.use_64bit_seqno = true,
 	.get_driver_name = amdgpu_tlb_fence_get_driver_name,
 	.get_timeline_name = amdgpu_tlb_fence_get_timeline_name
 };
@@ -80,7 +81,7 @@ void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev, struct amdgpu_vm *vm
 {
 	struct amdgpu_tlb_fence *f;
 
-	f = kmalloc_obj(*f);
+	f = kmalloc(sizeof(*f), GFP_KERNEL);
 	if (!f) {
 		/*
 		 * We can't fail since the PDEs and PTEs are already updated, so
@@ -100,8 +101,8 @@ void amdgpu_vm_tlb_fence_create(struct amdgpu_device *adev, struct amdgpu_vm *vm
 	INIT_WORK(&f->work, amdgpu_tlb_fence_work);
 	spin_lock_init(&f->lock);
 
-	dma_fence_init64(&f->base, &amdgpu_tlb_fence_ops, &f->lock,
-			 vm->tlb_fence_context, atomic64_read(&vm->tlb_seq));
+	dma_fence_init(&f->base, &amdgpu_tlb_fence_ops, &f->lock,
+		       vm->tlb_fence_context, atomic64_read(&vm->tlb_seq));
 
 	/* TODO: We probably need a separate wq here */
 	dma_fence_get(&f->base);

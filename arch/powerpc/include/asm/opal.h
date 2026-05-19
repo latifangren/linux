@@ -10,7 +10,7 @@
 
 #include <asm/opal-api.h>
 
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 #include <linux/notifier.h>
 
@@ -390,6 +390,6 @@ void opal_powercap_init(void);
 void opal_psr_init(void);
 void opal_sensor_groups_init(void);
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* _ASM_POWERPC_OPAL_H */

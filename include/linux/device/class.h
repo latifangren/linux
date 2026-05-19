@@ -49,9 +49,10 @@ struct fwnode_handle;
  */
 struct class {
 	const char		*name;
+	struct module		*owner;
 
-	const struct attribute_group	*const *class_groups;
-	const struct attribute_group	*const *dev_groups;
+	const struct attribute_group	**class_groups;
+	const struct attribute_group	**dev_groups;
 
 	int (*dev_uevent)(const struct device *dev, struct kobj_uevent_env *env);
 	char *(*devnode)(const struct device *dev, umode_t *mode);
@@ -62,7 +63,7 @@ struct class {
 	int (*shutdown_pre)(struct device *dev);
 
 	const struct kobj_ns_type_operations *ns_type;
-	const struct ns_common *(*namespace)(const struct device *dev);
+	const void *(*namespace)(const struct device *dev);
 
 	void (*get_ownership)(const struct device *dev, kuid_t *uid, kgid_t *gid);
 
@@ -82,16 +83,18 @@ bool class_is_registered(const struct class *class);
 struct class_compat;
 struct class_compat *class_compat_register(const char *name);
 void class_compat_unregister(struct class_compat *cls);
-int class_compat_create_link(struct class_compat *cls, struct device *dev);
-void class_compat_remove_link(struct class_compat *cls, struct device *dev);
+int class_compat_create_link(struct class_compat *cls, struct device *dev,
+			     struct device *device_link);
+void class_compat_remove_link(struct class_compat *cls, struct device *dev,
+			      struct device *device_link);
 
 void class_dev_iter_init(struct class_dev_iter *iter, const struct class *class,
 			 const struct device *start, const struct device_type *type);
 struct device *class_dev_iter_next(struct class_dev_iter *iter);
 void class_dev_iter_exit(struct class_dev_iter *iter);
 
-int class_for_each_device(const struct class *class, const struct device *start,
-			  void *data, device_iter_t fn);
+int class_for_each_device(const struct class *class, const struct device *start, void *data,
+			  int (*fn)(struct device *dev, void *data));
 struct device *class_find_device(const struct class *class, const struct device *start,
 				 const void *data, device_match_t match);
 
@@ -180,9 +183,9 @@ struct class_attribute {
 	struct class_attribute class_attr_##_name = __ATTR_WO(_name)
 
 int __must_check class_create_file_ns(const struct class *class, const struct class_attribute *attr,
-				      const struct ns_common *ns);
+				      const void *ns);
 void class_remove_file_ns(const struct class *class, const struct class_attribute *attr,
-			  const struct ns_common *ns);
+			  const void *ns);
 
 static inline int __must_check class_create_file(const struct class *class,
 						 const struct class_attribute *attr)
@@ -193,7 +196,7 @@ static inline int __must_check class_create_file(const struct class *class,
 static inline void class_remove_file(const struct class *class,
 				     const struct class_attribute *attr)
 {
-	class_remove_file_ns(class, attr, NULL);
+	return class_remove_file_ns(class, attr, NULL);
 }
 
 /* Simple class attribute that is just a static string */

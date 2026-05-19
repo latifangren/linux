@@ -16,6 +16,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
 
+#define RSTYPE_RG			0x0
 #define RSCTRL_RG			0x4
 #define RSCFG_RG			0x8
 #define RSISO_RG			0xc
@@ -27,6 +28,7 @@
 #define RSMUX_OMODE_MASK		0xe
 #define RSMUX_OMODE_RESET_ON		0xa
 #define RSMUX_OMODE_RESET_OFF		0x0
+#define RSMUX_LOCK_MASK			0x1
 #define RSMUX_LOCK_SET			0x1
 
 #define RSCFG_RSTYPE_SOFT		0x300f
@@ -48,7 +50,8 @@ static inline int rsctrl_enable_rspll_write(void)
 				  RSCTRL_KEY_MASK, RSCTRL_KEY);
 }
 
-static int rsctrl_restart_handler(struct sys_off_data *data)
+static int rsctrl_restart_handler(struct notifier_block *this,
+				  unsigned long mode, void *cmd)
 {
 	/* enable write access to RSTCTRL */
 	rsctrl_enable_rspll_write();
@@ -59,6 +62,11 @@ static int rsctrl_restart_handler(struct sys_off_data *data)
 
 	return NOTIFY_DONE;
 }
+
+static struct notifier_block rsctrl_restart_nb = {
+	.notifier_call = rsctrl_restart_handler,
+	.priority = 128,
+};
 
 static const struct of_device_id rsctrl_of_match[] = {
 	{.compatible = "ti,keystone-reset", },
@@ -81,15 +89,25 @@ static int rsctrl_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	/* get regmaps */
-	pllctrl_regs = syscon_regmap_lookup_by_phandle_args(np, "ti,syscon-pll",
-							    1, &rspll_offset);
+	pllctrl_regs = syscon_regmap_lookup_by_phandle(np, "ti,syscon-pll");
 	if (IS_ERR(pllctrl_regs))
 		return PTR_ERR(pllctrl_regs);
 
-	devctrl_regs = syscon_regmap_lookup_by_phandle_args(np, "ti,syscon-dev",
-							    1, &rsmux_offset);
+	devctrl_regs = syscon_regmap_lookup_by_phandle(np, "ti,syscon-dev");
 	if (IS_ERR(devctrl_regs))
 		return PTR_ERR(devctrl_regs);
+
+	ret = of_property_read_u32_index(np, "ti,syscon-pll", 1, &rspll_offset);
+	if (ret) {
+		dev_err(dev, "couldn't read the reset pll offset!\n");
+		return -EINVAL;
+	}
+
+	ret = of_property_read_u32_index(np, "ti,syscon-dev", 1, &rsmux_offset);
+	if (ret) {
+		dev_err(dev, "couldn't read the rsmux offset!\n");
+		return -EINVAL;
+	}
 
 	/* set soft/hard reset */
 	val = of_property_read_bool(np, "ti,soft-reset");
@@ -134,8 +152,7 @@ static int rsctrl_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	ret = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART, 128,
-					    rsctrl_restart_handler, NULL);
+	ret = register_restart_handler(&rsctrl_restart_nb);
 	if (ret)
 		dev_err(dev, "cannot register restart handler (err=%d)\n", ret);
 

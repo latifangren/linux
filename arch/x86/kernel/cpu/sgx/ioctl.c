@@ -3,7 +3,6 @@
 
 #include <asm/mman.h>
 #include <asm/sgx.h>
-#include <crypto/sha2.h>
 #include <linux/mman.h>
 #include <linux/delay.h>
 #include <linux/file.h>
@@ -27,7 +26,7 @@ struct sgx_va_page *sgx_encl_grow(struct sgx_encl *encl, bool reclaim)
 		(SGX_ENCL_PAGE_VA_OFFSET_MASK >> 3) + 1);
 
 	if (!(encl->page_cnt % SGX_VA_SLOT_COUNT)) {
-		va_page = kzalloc_obj(*va_page);
+		va_page = kzalloc(sizeof(*va_page), GFP_KERNEL);
 		if (!va_page)
 			return ERR_PTR(-ENOMEM);
 
@@ -83,7 +82,7 @@ static int sgx_encl_create(struct sgx_encl *encl, struct sgx_secs *secs)
 	encl_size = secs->size + PAGE_SIZE;
 
 	backing = shmem_file_setup("SGX backing", encl_size + (encl_size >> 5),
-				   mk_vma_flags(VMA_NORESERVE_BIT));
+				   VM_NORESERVE);
 	if (IS_ERR(backing)) {
 		ret = PTR_ERR(backing);
 		goto err_out_shrink;
@@ -242,7 +241,7 @@ static int __sgx_encl_add_page(struct sgx_encl *encl,
 /*
  * If the caller requires measurement of the page as a proof for the content,
  * use EEXTEND to add a measurement for 256 bytes of the page. Repeat this
- * operation until the entire page is measured.
+ * operation until the entire page is measured."
  */
 static int __sgx_encl_extend(struct sgx_encl *encl,
 			     struct sgx_epc_page *epc_page)
@@ -464,6 +463,31 @@ static long sgx_ioc_enclave_add_pages(struct sgx_encl *encl, void __user *arg)
 	return ret;
 }
 
+static int __sgx_get_key_hash(struct crypto_shash *tfm, const void *modulus,
+			      void *hash)
+{
+	SHASH_DESC_ON_STACK(shash, tfm);
+
+	shash->tfm = tfm;
+
+	return crypto_shash_digest(shash, modulus, SGX_MODULUS_SIZE, hash);
+}
+
+static int sgx_get_key_hash(const void *modulus, void *hash)
+{
+	struct crypto_shash *tfm;
+	int ret;
+
+	tfm = crypto_alloc_shash("sha256", 0, CRYPTO_ALG_ASYNC);
+	if (IS_ERR(tfm))
+		return PTR_ERR(tfm);
+
+	ret = __sgx_get_key_hash(tfm, modulus, hash);
+
+	crypto_free_shash(tfm);
+	return ret;
+}
+
 static int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 			 void *token)
 {
@@ -499,7 +523,9 @@ static int sgx_encl_init(struct sgx_encl *encl, struct sgx_sigstruct *sigstruct,
 	    sgx_xfrm_reserved_mask)
 		return -EINVAL;
 
-	sha256(sigstruct->modulus, SGX_MODULUS_SIZE, (u8 *)mrsigner);
+	ret = sgx_get_key_hash(sigstruct->modulus, mrsigner);
+	if (ret)
+		return ret;
 
 	mutex_lock(&encl->lock);
 

@@ -20,7 +20,6 @@
 /* Mali-display product IDs */
 #define MALIDP_D71_PRODUCT_ID	0x0071
 #define MALIDP_D32_PRODUCT_ID	0x0032
-#define LINLONDP_D6_PRODUCT_ID	0x0060
 
 union komeda_config_id {
 	struct {

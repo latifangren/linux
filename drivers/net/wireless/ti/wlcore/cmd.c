@@ -172,7 +172,7 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 
 	*timeout = false;
 
-	events_vector = kmalloc_obj(*events_vector, GFP_KERNEL | GFP_DMA);
+	events_vector = kmalloc(sizeof(*events_vector), GFP_KERNEL | GFP_DMA);
 	if (!events_vector)
 		return -ENOMEM;
 
@@ -213,6 +213,7 @@ int wlcore_cmd_wait_for_event_or_timeout(struct wl1271 *wl,
 	} while (!event);
 
 out:
+	pm_runtime_mark_last_busy(wl->dev);
 	pm_runtime_put_autosuspend(wl->dev);
 free_vector:
 	kfree(events_vector);
@@ -231,7 +232,7 @@ int wl12xx_cmd_role_enable(struct wl1271 *wl, u8 *addr, u8 role_type,
 	if (WARN_ON(*role_id != WL12XX_INVALID_ROLE_ID))
 		return -EBUSY;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -273,7 +274,7 @@ int wl12xx_cmd_role_disable(struct wl1271 *wl, u8 *role_id)
 	if (WARN_ON(*role_id == WL12XX_INVALID_ROLE_ID))
 		return -ENOENT;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -431,7 +432,7 @@ static int wl12xx_cmd_role_start_dev(struct wl1271 *wl,
 	struct wl12xx_cmd_role_start *cmd;
 	int ret;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -483,7 +484,7 @@ static int wl12xx_cmd_role_stop_dev(struct wl1271 *wl,
 	if (WARN_ON(wlvif->dev_hlid == WL12XX_INVALID_LINK_ID))
 		return -EINVAL;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -517,7 +518,7 @@ int wl12xx_cmd_role_start_sta(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 	u32 supported_rates;
 	int ret;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -594,7 +595,7 @@ int wl12xx_cmd_role_stop_sta(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 	if (WARN_ON(wlvif->sta.hlid == WL12XX_INVALID_LINK_ID))
 		return -EINVAL;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -641,7 +642,7 @@ int wl12xx_cmd_role_start_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 		}
 	}
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -736,7 +737,7 @@ int wl12xx_cmd_role_stop_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 	struct wl12xx_cmd_role_stop *cmd;
 	int ret;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -769,7 +770,7 @@ int wl12xx_cmd_role_start_ibss(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 	struct ieee80211_bss_conf *bss_conf = &vif->bss_conf;
 	int ret;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -942,7 +943,7 @@ int wl1271_cmd_data_path(struct wl1271 *wl, bool enable)
 
 	wl1271_debug(DEBUG_CMD, "cmd data path");
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -993,7 +994,7 @@ int wl1271_cmd_ps_mode(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 
 	wl1271_debug(DEBUG_CMD, "cmd set ps mode");
 
-	ps_params = kzalloc_obj(*ps_params);
+	ps_params = kzalloc(sizeof(*ps_params), GFP_KERNEL);
 	if (!ps_params) {
 		ret = -ENOMEM;
 		goto out;
@@ -1028,7 +1029,7 @@ int wl1271_cmd_template_set(struct wl1271 *wl, u8 role_id,
 	WARN_ON(buf_len > WL1271_CMD_TEMPL_MAX_SIZE);
 	buf_len = min_t(size_t, buf_len, WL1271_CMD_TEMPL_MAX_SIZE);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1340,7 +1341,7 @@ int wl12xx_cmd_set_default_wep_key(struct wl1271 *wl, u8 id, u8 hlid)
 
 	wl1271_debug(DEBUG_CMD, "cmd set_default_wep_key %d", id);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1376,7 +1377,7 @@ int wl1271_cmd_set_sta_key(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 	if (wlvif->sta.hlid == WL12XX_INVALID_LINK_ID)
 		return 0;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1442,7 +1443,7 @@ int wl1271_cmd_set_ap_key(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 	int ret = 0;
 	u8 lid_type;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
@@ -1505,7 +1506,7 @@ int wl12xx_cmd_set_peer_state(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 
 	wl1271_debug(DEBUG_CMD, "cmd set peer state (hlid=%d)", hlid);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1540,7 +1541,7 @@ int wl12xx_cmd_add_peer(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 
 	wl1271_debug(DEBUG_CMD, "cmd add peer %d", (int)hlid);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1599,7 +1600,7 @@ int wl12xx_cmd_remove_peer(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 
 	wl1271_debug(DEBUG_CMD, "cmd remove peer %d", (int)hlid);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1733,7 +1734,7 @@ int wlcore_cmd_regdomain_config_locked(struct wl1271 *wl)
 	if (!memcmp(tmp_ch_bitmap, wl->reg_ch_conf_last, sizeof(tmp_ch_bitmap)))
 		goto out;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1778,7 +1779,7 @@ int wl12xx_cmd_config_fwlog(struct wl1271 *wl)
 
 	wl1271_debug(DEBUG_CMD, "cmd config firmware logger");
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1803,6 +1804,32 @@ out:
 	return ret;
 }
 
+int wl12xx_cmd_start_fwlog(struct wl1271 *wl)
+{
+	struct wl12xx_cmd_start_fwlog *cmd;
+	int ret = 0;
+
+	wl1271_debug(DEBUG_CMD, "cmd start firmware logger");
+
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
+	if (!cmd) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = wl1271_cmd_send(wl, CMD_START_FWLOGGER, cmd, sizeof(*cmd), 0);
+	if (ret < 0) {
+		wl1271_error("failed to send start firmware logger command");
+		goto out_free;
+	}
+
+out_free:
+	kfree(cmd);
+
+out:
+	return ret;
+}
+
 int wl12xx_cmd_stop_fwlog(struct wl1271 *wl)
 {
 	struct wl12xx_cmd_stop_fwlog *cmd;
@@ -1810,7 +1837,7 @@ int wl12xx_cmd_stop_fwlog(struct wl1271 *wl)
 
 	wl1271_debug(DEBUG_CMD, "cmd stop firmware logger");
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1840,7 +1867,7 @@ static int wl12xx_cmd_roc(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 	if (WARN_ON(role_id == WL12XX_INVALID_ROLE_ID))
 		return -EINVAL;
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1882,7 +1909,7 @@ static int wl12xx_cmd_croc(struct wl1271 *wl, u8 role_id)
 
 	wl1271_debug(DEBUG_CMD, "cmd croc (%d)", role_id);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -1951,7 +1978,7 @@ int wl12xx_cmd_stop_channel_switch(struct wl1271 *wl, struct wl12xx_vif *wlvif)
 
 	wl1271_debug(DEBUG_ACX, "cmd stop channel switch");
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
 		goto out;
@@ -2055,7 +2082,7 @@ int wlcore_cmd_generic_cfg(struct wl1271 *wl, struct wl12xx_vif *wlvif,
 		     "cmd generic cfg (role %d feature %d enable %d value %d)",
 		     wlvif->role_id, feature, enable, value);
 
-	cmd = kzalloc_obj(*cmd);
+	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 

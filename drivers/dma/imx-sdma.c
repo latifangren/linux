@@ -256,7 +256,7 @@ struct sdma_script_start_addrs {
 	/* End of v3 array */
 	union { s32 v3_end; s32 mcu_2_zqspi_addr; };
 	/* End of v4 array */
-	s32 v4_end[];
+	s32 v4_end[0];
 };
 
 /*
@@ -1459,8 +1459,9 @@ static int sdma_alloc_chan_resources(struct dma_chan *chan)
 	 * dmatest, thus create 'struct imx_dma_data mem_data' for this case.
 	 * Please note in any other slave case, you have to setup chan->private
 	 * with 'struct imx_dma_data' in your own filter function if you want to
-	 * request DMA channel by dma_request_channel(), otherwise, 'MEMCPY in
-	 * case?' will appear to warn you to correct your filter function.
+	 * request dma channel by dma_request_channel() rather than
+	 * dma_request_slave_channel(). Othwise, 'MEMCPY in case?' will appear
+	 * to warn you to correct your filter function.
 	 */
 	if (!data) {
 		dev_dbg(sdmac->sdma->dev, "MEMCPY in case?\n");
@@ -1544,7 +1545,7 @@ static struct sdma_desc *sdma_transfer_init(struct sdma_channel *sdmac,
 		goto err_out;
 	}
 
-	desc = kzalloc_obj(*desc, GFP_NOWAIT);
+	desc = kzalloc((sizeof(*desc)), GFP_NOWAIT);
 	if (!desc)
 		goto err_out;
 
@@ -2265,24 +2266,34 @@ static int sdma_probe(struct platform_device *pdev)
 	if (IS_ERR(sdma->regs))
 		return PTR_ERR(sdma->regs);
 
-	sdma->clk_ipg = devm_clk_get_prepared(&pdev->dev, "ipg");
+	sdma->clk_ipg = devm_clk_get(&pdev->dev, "ipg");
 	if (IS_ERR(sdma->clk_ipg))
 		return PTR_ERR(sdma->clk_ipg);
 
-	sdma->clk_ahb = devm_clk_get_prepared(&pdev->dev, "ahb");
+	sdma->clk_ahb = devm_clk_get(&pdev->dev, "ahb");
 	if (IS_ERR(sdma->clk_ahb))
 		return PTR_ERR(sdma->clk_ahb);
+
+	ret = clk_prepare(sdma->clk_ipg);
+	if (ret)
+		return ret;
+
+	ret = clk_prepare(sdma->clk_ahb);
+	if (ret)
+		goto err_clk;
 
 	ret = devm_request_irq(&pdev->dev, irq, sdma_int_handler, 0,
 				dev_name(&pdev->dev), sdma);
 	if (ret)
-		return ret;
+		goto err_irq;
 
 	sdma->irq = irq;
 
-	sdma->script_addrs = kzalloc_obj(*sdma->script_addrs);
-	if (!sdma->script_addrs)
-		return -ENOMEM;
+	sdma->script_addrs = kzalloc(sizeof(*sdma->script_addrs), GFP_KERNEL);
+	if (!sdma->script_addrs) {
+		ret = -ENOMEM;
+		goto err_irq;
+	}
 
 	/* initially no scripts available */
 	saddr_arr = (s32 *)sdma->script_addrs;
@@ -2323,11 +2334,11 @@ static int sdma_probe(struct platform_device *pdev)
 
 	ret = sdma_init(sdma);
 	if (ret)
-		return ret;
+		goto err_init;
 
 	ret = sdma_event_remap(sdma);
 	if (ret)
-		return ret;
+		goto err_init;
 
 	if (sdma->drvdata->script_addrs)
 		sdma_add_scripts(sdma, sdma->drvdata->script_addrs);
@@ -2353,16 +2364,18 @@ static int sdma_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, sdma);
 
-	ret = dmaenginem_async_device_register(&sdma->dma_device);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "unable to register\n");
+	ret = dma_async_device_register(&sdma->dma_device);
+	if (ret) {
+		dev_err(&pdev->dev, "unable to register\n");
+		goto err_init;
+	}
 
 	if (np) {
-		ret = devm_of_dma_controller_register(&pdev->dev, np,
-						      sdma_xlate, sdma);
-		if (ret)
-			return dev_err_probe(&pdev->dev, ret,
-					     "failed to register controller\n");
+		ret = of_dma_controller_register(np, sdma_xlate, sdma);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to register controller\n");
+			goto err_register;
+		}
 
 		spba_bus = of_find_compatible_node(NULL, NULL, "fsl,spba-bus");
 		ret = of_address_to_resource(spba_bus, 0, &spba_res);
@@ -2389,6 +2402,16 @@ static int sdma_probe(struct platform_device *pdev)
 	}
 
 	return 0;
+
+err_register:
+	dma_async_device_unregister(&sdma->dma_device);
+err_init:
+	kfree(sdma->script_addrs);
+err_irq:
+	clk_unprepare(sdma->clk_ahb);
+err_clk:
+	clk_unprepare(sdma->clk_ipg);
+	return ret;
 }
 
 static void sdma_remove(struct platform_device *pdev)
@@ -2397,6 +2420,10 @@ static void sdma_remove(struct platform_device *pdev)
 	int i;
 
 	devm_free_irq(&pdev->dev, sdma->irq, sdma);
+	dma_async_device_unregister(&sdma->dma_device);
+	kfree(sdma->script_addrs);
+	clk_unprepare(sdma->clk_ahb);
+	clk_unprepare(sdma->clk_ipg);
 	/* Kill the tasklet */
 	for (i = 0; i < MAX_DMA_CHANNELS; i++) {
 		struct sdma_channel *sdmac = &sdma->channel[i];
@@ -2413,7 +2440,7 @@ static struct platform_driver sdma_driver = {
 		.name	= "imx-sdma",
 		.of_match_table = sdma_dt_ids,
 	},
-	.remove		= sdma_remove,
+	.remove_new	= sdma_remove,
 	.probe		= sdma_probe,
 };
 

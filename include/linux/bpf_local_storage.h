@@ -15,13 +15,15 @@
 #include <linux/types.h>
 #include <linux/bpf_mem_alloc.h>
 #include <uapi/linux/btf.h>
-#include <asm/rqspinlock.h>
 
 #define BPF_LOCAL_STORAGE_CACHE_SIZE	16
 
+#define bpf_rcu_lock_held()                                                    \
+	(rcu_read_lock_held() || rcu_read_lock_trace_held() ||                 \
+	 rcu_read_lock_bh_held())
 struct bpf_local_storage_map_bucket {
 	struct hlist_head list;
-	rqspinlock_t lock;
+	raw_spinlock_t lock;
 };
 
 /* Thp map is not the primary owner of a bpf_local_storage_elem.
@@ -54,6 +56,9 @@ struct bpf_local_storage_map {
 	u32 bucket_log;
 	u16 elem_size;
 	u16 cache_idx;
+	struct bpf_mem_alloc selem_ma;
+	struct bpf_mem_alloc storage_ma;
+	bool bpf_ma;
 };
 
 struct bpf_local_storage_data {
@@ -67,25 +72,13 @@ struct bpf_local_storage_data {
 	u8 data[] __aligned(8);
 };
 
-#define SELEM_MAP_UNLINKED	(1 << 0)
-#define SELEM_STORAGE_UNLINKED	(1 << 1)
-#define SELEM_UNLINKED		(SELEM_MAP_UNLINKED | SELEM_STORAGE_UNLINKED)
-#define SELEM_TOFREE		(1 << 2)
-
 /* Linked to bpf_local_storage and bpf_local_storage_map */
 struct bpf_local_storage_elem {
 	struct hlist_node map_node;	/* Linked to bpf_local_storage_map */
 	struct hlist_node snode;	/* Linked to bpf_local_storage */
 	struct bpf_local_storage __rcu *local_storage;
-	union {
-		struct rcu_head rcu;
-		struct hlist_node free_node;	/* used to postpone
-						 * bpf_selem_free
-						 * after raw_spin_unlock
-						 */
-	};
-	atomic_t state;
-	/* 4 bytes hole */
+	struct rcu_head rcu;
+	/* 8 bytes hole */
 	/* The data is stored in another cacheline to minimize
 	 * the number of cachelines access during a cache hit.
 	 */
@@ -94,14 +87,13 @@ struct bpf_local_storage_elem {
 
 struct bpf_local_storage {
 	struct bpf_local_storage_data __rcu *cache[BPF_LOCAL_STORAGE_CACHE_SIZE];
+	struct bpf_local_storage_map __rcu *smap;
 	struct hlist_head list; /* List of bpf_local_storage_elem */
 	void *owner;		/* The object that owns the above "list" of
 				 * bpf_local_storage_elem.
 				 */
 	struct rcu_head rcu;
-	rqspinlock_t lock;	/* Protect adding/removing from the "list" */
-	u64 mem_charge;		/* Copy of mem charged to owner. Protected by "lock" */
-	refcount_t owner_refcnt;/* Used to pin owner when map_free is uncharging */
+	raw_spinlock_t lock;	/* Protect adding/removing from the "list" */
 };
 
 /* U16_MAX is much more than enough for sk local storage
@@ -134,7 +126,8 @@ int bpf_local_storage_map_alloc_check(union bpf_attr *attr);
 
 struct bpf_map *
 bpf_local_storage_map_alloc(union bpf_attr *attr,
-			    struct bpf_local_storage_cache *cache);
+			    struct bpf_local_storage_cache *cache,
+			    bool bpf_ma);
 
 void __bpf_local_storage_insert_cache(struct bpf_local_storage *local_storage,
 				      struct bpf_local_storage_map *smap,
@@ -167,12 +160,13 @@ bpf_local_storage_lookup(struct bpf_local_storage *local_storage,
 	return SDATA(selem);
 }
 
-u32 bpf_local_storage_destroy(struct bpf_local_storage *local_storage);
+void bpf_local_storage_destroy(struct bpf_local_storage *local_storage);
 
 void bpf_local_storage_map_free(struct bpf_map *map,
-				struct bpf_local_storage_cache *cache);
+				struct bpf_local_storage_cache *cache,
+				int __percpu *busy_counter);
 
-int bpf_local_storage_map_check_btf(struct bpf_map *map,
+int bpf_local_storage_map_check_btf(const struct bpf_map *map,
 				    const struct btf *btf,
 				    const struct btf_type *key_type,
 				    const struct btf_type *value_type);
@@ -180,27 +174,28 @@ int bpf_local_storage_map_check_btf(struct bpf_map *map,
 void bpf_selem_link_storage_nolock(struct bpf_local_storage *local_storage,
 				   struct bpf_local_storage_elem *selem);
 
-int bpf_selem_unlink(struct bpf_local_storage_elem *selem);
+void bpf_selem_unlink(struct bpf_local_storage_elem *selem, bool reuse_now);
 
-int bpf_selem_link_map(struct bpf_local_storage_map *smap,
-		       struct bpf_local_storage *local_storage,
-		       struct bpf_local_storage_elem *selem);
+void bpf_selem_link_map(struct bpf_local_storage_map *smap,
+			struct bpf_local_storage_elem *selem);
 
 struct bpf_local_storage_elem *
 bpf_selem_alloc(struct bpf_local_storage_map *smap, void *owner, void *value,
-		bool swap_uptrs);
+		bool charge_mem, gfp_t gfp_flags);
 
 void bpf_selem_free(struct bpf_local_storage_elem *selem,
+		    struct bpf_local_storage_map *smap,
 		    bool reuse_now);
 
 int
 bpf_local_storage_alloc(void *owner,
 			struct bpf_local_storage_map *smap,
-			struct bpf_local_storage_elem *first_selem);
+			struct bpf_local_storage_elem *first_selem,
+			gfp_t gfp_flags);
 
 struct bpf_local_storage_data *
 bpf_local_storage_update(void *owner, struct bpf_local_storage_map *smap,
-			 void *value, u64 map_flags, bool swap_uptrs);
+			 void *value, u64 map_flags, gfp_t gfp_flags);
 
 u64 bpf_local_storage_map_mem_usage(const struct bpf_map *map);
 

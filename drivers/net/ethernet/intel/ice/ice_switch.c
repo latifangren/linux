@@ -1511,11 +1511,11 @@ ice_aq_get_sw_cfg(struct ice_hw *hw, struct ice_aqc_get_sw_cfg_resp_elem *buf,
 		  struct ice_sq_cd *cd)
 {
 	struct ice_aqc_get_sw_cfg *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_sw_cfg);
-	cmd = libie_aq_raw(&desc);
+	cmd = &desc.params.get_sw_conf;
 	cmd->element = cpu_to_le16(*req_desc);
 
 	status = ice_aq_send_cmd(hw, &desc, buf, buf_size, cd);
@@ -1541,11 +1541,11 @@ ice_aq_add_vsi(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 {
 	struct ice_aqc_add_update_free_vsi_resp *res;
 	struct ice_aqc_add_get_update_free_vsi *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
-	cmd = libie_aq_raw(&desc);
-	res = libie_aq_raw(&desc);
+	cmd = &desc.params.vsi_cmd;
+	res = &desc.params.add_update_free_vsi_res;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_add_vsi);
 
@@ -1556,7 +1556,7 @@ ice_aq_add_vsi(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 
 	cmd->vsi_flags = cpu_to_le16(vsi_ctx->flags);
 
-	desc.flags |= cpu_to_le16(LIBIE_AQ_FLAG_RD);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
 	status = ice_aq_send_cmd(hw, &desc, &vsi_ctx->info,
 				 sizeof(vsi_ctx->info), cd);
@@ -1585,11 +1585,11 @@ ice_aq_free_vsi(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 {
 	struct ice_aqc_add_update_free_vsi_resp *resp;
 	struct ice_aqc_add_get_update_free_vsi *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
-	cmd = libie_aq_raw(&desc);
-	resp = libie_aq_raw(&desc);
+	cmd = &desc.params.vsi_cmd;
+	resp = &desc.params.add_update_free_vsi_res;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_free_vsi);
 
@@ -1620,17 +1620,17 @@ ice_aq_update_vsi(struct ice_hw *hw, struct ice_vsi_ctx *vsi_ctx,
 {
 	struct ice_aqc_add_update_free_vsi_resp *resp;
 	struct ice_aqc_add_get_update_free_vsi *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
-	cmd = libie_aq_raw(&desc);
-	resp = libie_aq_raw(&desc);
+	cmd = &desc.params.vsi_cmd;
+	resp = &desc.params.add_update_free_vsi_res;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_update_vsi);
 
 	cmd->vsi_num = cpu_to_le16(vsi_ctx->vsi_num | ICE_AQ_VSI_IS_VALID);
 
-	desc.flags |= cpu_to_le16(LIBIE_AQ_FLAG_RD);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
 	status = ice_aq_send_cmd(hw, &desc, &vsi_ctx->info,
 				 sizeof(vsi_ctx->info), cd);
@@ -1847,7 +1847,7 @@ ice_cfg_rdma_fltr(struct ice_hw *hw, u16 vsi_handle, bool enable)
 	if (!cached_ctx)
 		return -ENOENT;
 
-	ctx = kzalloc_obj(*ctx);
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -1944,8 +1944,7 @@ int
 ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,
 		u8 num_rules, enum ice_adminq_opc opc, struct ice_sq_cd *cd)
 {
-	struct ice_aqc_sw_rules *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
 	if (opc != ice_aqc_opc_add_sw_rules &&
@@ -1954,13 +1953,13 @@ ice_aq_sw_rules(struct ice_hw *hw, void *rule_list, u16 rule_list_sz,
 		return -EINVAL;
 
 	ice_fill_dflt_direct_cmd_desc(&desc, opc);
-	cmd = libie_aq_raw(&desc);
 
-	desc.flags |= cpu_to_le16(LIBIE_AQ_FLAG_RD);
-	cmd->num_rules_fltr_entry_index = cpu_to_le16(num_rules);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
+	desc.params.sw_rules.num_rules_fltr_entry_index =
+		cpu_to_le16(num_rules);
 	status = ice_aq_send_cmd(hw, &desc, rule_list, rule_list_sz, cd);
 	if (opc != ice_aqc_opc_add_sw_rules &&
-	    hw->adminq.sq_last_status == LIBIE_AQ_RC_ENOENT)
+	    hw->adminq.sq_last_status == ICE_AQ_RC_ENOENT)
 		status = -ENOENT;
 
 	if (!status) {
@@ -1990,14 +1989,14 @@ ice_aq_add_recipe(struct ice_hw *hw,
 		  u16 num_recipes, struct ice_sq_cd *cd)
 {
 	struct ice_aqc_add_get_recipe *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	u16 buf_size;
 
-	cmd = libie_aq_raw(&desc);
+	cmd = &desc.params.add_get_recipe;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_add_recipe);
 
 	cmd->num_sub_recipes = cpu_to_le16(num_recipes);
-	desc.flags |= cpu_to_le16(LIBIE_AQ_FLAG_RD);
+	desc.flags |= cpu_to_le16(ICE_AQ_FLAG_RD);
 
 	buf_size = num_recipes * sizeof(*s_recipe_list);
 
@@ -2027,14 +2026,14 @@ ice_aq_get_recipe(struct ice_hw *hw,
 		  u16 *num_recipes, u16 recipe_root, struct ice_sq_cd *cd)
 {
 	struct ice_aqc_add_get_recipe *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	u16 buf_size;
 	int status;
 
 	if (*num_recipes != ICE_MAX_NUM_RECIPES)
 		return -EINVAL;
 
-	cmd = libie_aq_raw(&desc);
+	cmd = &desc.params.add_get_recipe;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_recipe);
 
 	cmd->return_index = cpu_to_le16(recipe_root);
@@ -2069,7 +2068,7 @@ ice_update_recipe_lkup_idx(struct ice_hw *hw,
 	u16 num_recps = ICE_MAX_NUM_RECIPES;
 	int status;
 
-	rcp_list = kzalloc_objs(*rcp_list, num_recps);
+	rcp_list = kcalloc(num_recps, sizeof(*rcp_list), GFP_KERNEL);
 	if (!rcp_list)
 		return -ENOMEM;
 
@@ -2119,9 +2118,9 @@ ice_aq_map_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u64 r_assoc,
 			     struct ice_sq_cd *cd)
 {
 	struct ice_aqc_recipe_to_profile *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 
-	cmd = libie_aq_raw(&desc);
+	cmd = &desc.params.recipe_to_profile;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_recipe_to_profile);
 	cmd->profile_id = cpu_to_le16(profile_id);
 	/* Set the recipe ID bit in the bitmask to let the device know which
@@ -2145,10 +2144,10 @@ ice_aq_get_recipe_to_profile(struct ice_hw *hw, u32 profile_id, u64 *r_assoc,
 			     struct ice_sq_cd *cd)
 {
 	struct ice_aqc_recipe_to_profile *cmd;
-	struct libie_aq_desc desc;
+	struct ice_aq_desc desc;
 	int status;
 
-	cmd = libie_aq_raw(&desc);
+	cmd = &desc.params.recipe_to_profile;
 	ice_fill_dflt_direct_cmd_desc(&desc, ice_aqc_opc_get_recipe_to_profile);
 	cmd->profile_id = cpu_to_le16(profile_id);
 
@@ -2326,7 +2325,7 @@ ice_get_recp_frm_fw(struct ice_hw *hw, struct ice_sw_recipe *recps, u8 rid,
 	bitmap_zero(result_bm, ICE_MAX_FV_WORDS);
 
 	/* we need a buffer big enough to accommodate all the recipes */
-	tmp = kzalloc_objs(*tmp, ICE_MAX_NUM_RECIPES);
+	tmp = kcalloc(ICE_MAX_NUM_RECIPES, sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return -ENOMEM;
 
@@ -4785,8 +4784,7 @@ ice_find_recp(struct ice_hw *hw, struct ice_prot_lkup_ext *lkup_exts,
 			 */
 			if (found && recp[i].tun_type == rinfo->tun_type &&
 			    recp[i].need_pass_l2 == rinfo->need_pass_l2 &&
-			    recp[i].allow_pass_l2 == rinfo->allow_pass_l2 &&
-			    recp[i].priority == rinfo->priority)
+			    recp[i].allow_pass_l2 == rinfo->allow_pass_l2)
 				return i; /* Return the recipe ID */
 		}
 	}
@@ -4984,8 +4982,10 @@ ice_find_free_recp_res_idx(struct ice_hw *hw, const unsigned long *profiles,
 			  hw->switch_info->recp_list[bit].res_idxs,
 			  ICE_MAX_FV_WORDS);
 
+	bitmap_xor(free_idx, used_idx, possible_idx, ICE_MAX_FV_WORDS);
+
 	/* return number of free indexes */
-	return (u16)bitmap_weighted_xor(free_idx, used_idx, possible_idx, ICE_MAX_FV_WORDS);
+	return (u16)bitmap_weight(free_idx, ICE_MAX_FV_WORDS);
 }
 
 /**
@@ -5094,7 +5094,7 @@ ice_add_sw_recipe(struct ice_hw *hw, struct ice_sw_recipe *rm,
 	if (recp_cnt > ICE_MAX_CHAIN_RECIPE_RES)
 		return -E2BIG;
 
-	buf = kzalloc_objs(*buf, recp_cnt);
+	buf = kcalloc(recp_cnt, sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -5322,7 +5322,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 	if (!lkups_cnt)
 		return -EINVAL;
 
-	lkup_exts = kzalloc_obj(*lkup_exts);
+	lkup_exts = kzalloc(sizeof(*lkup_exts), GFP_KERNEL);
 	if (!lkup_exts)
 		return -ENOMEM;
 
@@ -5344,7 +5344,7 @@ ice_add_adv_recipe(struct ice_hw *hw, struct ice_adv_lkup_elem *lkups,
 		}
 	}
 
-	rm = kzalloc_obj(*rm);
+	rm = kzalloc(sizeof(*rm), GFP_KERNEL);
 	if (!rm) {
 		status = -ENOMEM;
 		goto err_free_lkup_exts;
@@ -5528,7 +5528,7 @@ ice_dummy_packet_add_vlan(const struct ice_dummy_pkt_profile *dummy_pkt,
 	memcpy(pkt + etype_off + off, dummy_pkt->pkt + etype_off,
 	       dummy_pkt->pkt_len - etype_off);
 
-	profile = kzalloc_obj(*profile);
+	profile = kzalloc(sizeof(*profile), GFP_KERNEL);
 	if (!profile) {
 		kfree(offsets);
 		kfree(pkt);

@@ -9,7 +9,6 @@
 extern unsigned int kmsg_bytes;
 
 #ifdef CONFIG_PSTORE_FTRACE
-extern unsigned long decode_ip(unsigned long ip);
 extern void pstore_register_ftrace(void);
 extern void pstore_unregister_ftrace(void);
 ssize_t pstore_ftrace_combine_log(char **dest_log, size_t *dest_log_size,
@@ -17,7 +16,6 @@ ssize_t pstore_ftrace_combine_log(char **dest_log, size_t *dest_log_size,
 #else
 static inline void pstore_register_ftrace(void) {}
 static inline void pstore_unregister_ftrace(void) {}
-static inline unsigned long decode_ip(unsigned long ip) { return ip; }
 static inline ssize_t
 pstore_ftrace_combine_log(char **dest_log, size_t *dest_log_size,
 			  const char *src_log, size_t src_log_size)

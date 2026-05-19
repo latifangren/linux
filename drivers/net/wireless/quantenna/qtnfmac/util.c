@@ -59,7 +59,7 @@ struct qtnf_sta_node *qtnf_sta_list_add(struct qtnf_vif *vif,
 	if (node)
 		goto done;
 
-	node = kzalloc_obj(*node);
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
 	if (unlikely(!node))
 		goto done;
 

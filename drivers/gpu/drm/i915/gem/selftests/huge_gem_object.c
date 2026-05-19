@@ -38,7 +38,7 @@ static int huge_get_pages(struct drm_i915_gem_object *obj)
 		return -E2BIG;
 
 	npages = obj->base.size / PAGE_SIZE;
-	pages = kmalloc_obj(*pages, GFP);
+	pages = kmalloc(sizeof(*pages), GFP);
 	if (!pages)
 		return -ENOMEM;
 

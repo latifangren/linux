@@ -649,7 +649,7 @@ static int timb_probe(struct pci_dev *dev,
 	struct msix_entry *msix_entries = NULL;
 	u8 ip_setup;
 
-	priv = kzalloc_obj(*priv);
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
@@ -698,7 +698,8 @@ static int timb_probe(struct pci_dev *dev,
 		goto err_config;
 	}
 
-	msix_entries = kzalloc_objs(*msix_entries, TIMBERDALE_NR_IRQS);
+	msix_entries = kcalloc(TIMBERDALE_NR_IRQS, sizeof(*msix_entries),
+			       GFP_KERNEL);
 	if (!msix_entries)
 		goto err_config;
 

@@ -17,9 +17,9 @@
 #include <processor.h>
 
 /*
- * s390 needs at least 1MB alignment, and the x86 MOVE/DELETE tests need a 2MB
- * sized and aligned region so that the initial region corresponds to exactly
- * one large page.
+ * s390x needs at least 1MB alignment, and the x86_64 MOVE/DELETE tests need a
+ * 2MB sized and aligned region so that the initial region corresponds to
+ * exactly one large page.
  */
 #define MEM_REGION_SIZE		0x200000
 
@@ -235,7 +235,7 @@ static void guest_code_delete_memory_region(void)
 	 * in the guest will never succeed, and so isn't an option.
 	 */
 	memset(&idt, 0, sizeof(idt));
-	set_idt(&idt);
+	__asm__ __volatile__("lidt %0" :: "m"(idt));
 
 	GUEST_SYNC(0);
 
@@ -350,7 +350,7 @@ static void test_invalid_memory_region_flags(void)
 	struct kvm_vm *vm;
 	int r, i;
 
-#if defined __aarch64__ || defined __riscv || defined __x86_64__ || defined __loongarch__
+#if defined __aarch64__ || defined __riscv || defined __x86_64__
 	supported_flags |= KVM_MEM_READONLY;
 #endif
 
@@ -413,7 +413,14 @@ static void test_add_max_memory_regions(void)
 	uint32_t max_mem_slots;
 	uint32_t slot;
 	void *mem, *mem_aligned, *mem_extra;
-	size_t alignment = 1;
+	size_t alignment;
+
+#ifdef __s390x__
+	/* On s390x, the host address must be aligned to 1M (due to PGSTEs) */
+	alignment = 0x100000;
+#else
+	alignment = 1;
+#endif
 
 	max_mem_slots = kvm_check_cap(KVM_CAP_NR_MEMSLOTS);
 	TEST_ASSERT(max_mem_slots > 0,
@@ -426,10 +433,10 @@ static void test_add_max_memory_regions(void)
 	pr_info("Adding slots 0..%i, each memory region with %dK size\n",
 		(max_mem_slots - 1), MEM_REGION_SIZE >> 10);
 
-
-	mem = kvm_mmap((size_t)max_mem_slots * MEM_REGION_SIZE + alignment,
-		       PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1);
+	mem = mmap(NULL, (size_t)max_mem_slots * MEM_REGION_SIZE + alignment,
+		   PROT_READ | PROT_WRITE,
+		   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+	TEST_ASSERT(mem != MAP_FAILED, "Failed to mmap() host");
 	mem_aligned = (void *)(((size_t) mem + alignment - 1) & ~(alignment - 1));
 
 	for (slot = 0; slot < max_mem_slots; slot++)
@@ -439,8 +446,9 @@ static void test_add_max_memory_regions(void)
 					  mem_aligned + (uint64_t)slot * MEM_REGION_SIZE);
 
 	/* Check it cannot be added memory slots beyond the limit */
-	mem_extra = kvm_mmap(MEM_REGION_SIZE, PROT_READ | PROT_WRITE,
-			     MAP_PRIVATE | MAP_ANONYMOUS, -1);
+	mem_extra = mmap(NULL, MEM_REGION_SIZE, PROT_READ | PROT_WRITE,
+			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	TEST_ASSERT(mem_extra != MAP_FAILED, "Failed to mmap() host");
 
 	ret = __vm_set_user_memory_region(vm, max_mem_slots, 0,
 					  (uint64_t)max_mem_slots * MEM_REGION_SIZE,
@@ -448,8 +456,8 @@ static void test_add_max_memory_regions(void)
 	TEST_ASSERT(ret == -1 && errno == EINVAL,
 		    "Adding one more memory slot should fail with EINVAL");
 
-	kvm_munmap(mem, (size_t)max_mem_slots * MEM_REGION_SIZE + alignment);
-	kvm_munmap(mem_extra, MEM_REGION_SIZE);
+	munmap(mem, (size_t)max_mem_slots * MEM_REGION_SIZE + alignment);
+	munmap(mem_extra, MEM_REGION_SIZE);
 	kvm_vm_free(vm);
 }
 
@@ -545,56 +553,6 @@ static void test_add_overlapping_private_memory_regions(void)
 	close(memfd);
 	kvm_vm_free(vm);
 }
-
-static void guest_code_mmio_during_vectoring(void)
-{
-	const struct desc_ptr idt_desc = {
-		.address = MEM_REGION_GPA,
-		.size = 0xFFF,
-	};
-
-	set_idt(&idt_desc);
-
-	/* Generate a #GP by dereferencing a non-canonical address */
-	*((uint8_t *)NONCANONICAL) = 0x1;
-
-	GUEST_ASSERT(0);
-}
-
-/*
- * This test points the IDT descriptor base to an MMIO address. It should cause
- * a KVM internal error when an event occurs in the guest.
- */
-static void test_mmio_during_vectoring(void)
-{
-	struct kvm_vcpu *vcpu;
-	struct kvm_run *run;
-	struct kvm_vm *vm;
-	u64 expected_gpa;
-
-	pr_info("Testing MMIO during vectoring error handling\n");
-
-	vm = vm_create_with_one_vcpu(&vcpu, guest_code_mmio_during_vectoring);
-	virt_map(vm, MEM_REGION_GPA, MEM_REGION_GPA, 1);
-
-	run = vcpu->run;
-
-	vcpu_run(vcpu);
-	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_INTERNAL_ERROR);
-	TEST_ASSERT(run->internal.suberror == KVM_INTERNAL_ERROR_DELIVERY_EV,
-		    "Unexpected suberror = %d", vcpu->run->internal.suberror);
-	TEST_ASSERT(run->internal.ndata != 4, "Unexpected internal error data array size = %d",
-		    run->internal.ndata);
-
-	/* The reported GPA should be IDT base + offset of the GP vector */
-	expected_gpa = MEM_REGION_GPA + GP_VECTOR * sizeof(struct idt_entry);
-
-	TEST_ASSERT(run->internal.data[3] == expected_gpa,
-		    "Unexpected GPA = %llx (expected %lx)",
-		    vcpu->run->internal.data[3], expected_gpa);
-
-	kvm_vm_free(vm);
-}
 #endif
 
 int main(int argc, char *argv[])
@@ -610,7 +568,6 @@ int main(int argc, char *argv[])
 	 * KVM_RUN fails with ENOEXEC or EFAULT.
 	 */
 	test_zero_memory_regions();
-	test_mmio_during_vectoring();
 #endif
 
 	test_invalid_memory_region_flags();

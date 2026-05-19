@@ -465,7 +465,7 @@ looped_back:
 		return -1;
 	}
 
-	if (skb_dst_dev(skb)->flags & IFF_LOOPBACK) {
+	if (skb_dst(skb)->dev->flags & IFF_LOOPBACK) {
 		if (ipv6_hdr(skb)->hop_limit <= 1) {
 			__IP6_INC_STATS(net, idev, IPSTATS_MIB_INHDRERRORS);
 			icmpv6_send(skb, ICMPV6_TIME_EXCEED,
@@ -499,8 +499,10 @@ static int ipv6_rpl_srh_rcv(struct sk_buff *skb)
 
 	idev = __in6_dev_get(skb->dev);
 
-	accept_rpl_seg = min(READ_ONCE(net->ipv6.devconf_all->rpl_seg_enabled),
-			     READ_ONCE(idev->cnf.rpl_seg_enabled));
+	accept_rpl_seg = net->ipv6.devconf_all->rpl_seg_enabled;
+	if (accept_rpl_seg > idev->cnf.rpl_seg_enabled)
+		accept_rpl_seg = idev->cnf.rpl_seg_enabled;
+
 	if (!accept_rpl_seg) {
 		kfree_skb(skb);
 		return -1;
@@ -624,7 +626,7 @@ looped_back:
 		return -1;
 	}
 
-	if (skb_dst_dev(skb)->flags & IFF_LOOPBACK) {
+	if (skb_dst(skb)->dev->flags & IFF_LOOPBACK) {
 		if (ipv6_hdr(skb)->hop_limit <= 1) {
 			__IP6_INC_STATS(net, idev, IPSTATS_MIB_INHDRERRORS);
 			icmpv6_send(skb, ICMPV6_TIME_EXCEED,
@@ -786,7 +788,7 @@ looped_back:
 			kfree_skb(skb);
 			return -1;
 		}
-		if (!ipv6_chk_home_addr(skb_dst_dev_net(skb), addr)) {
+		if (!ipv6_chk_home_addr(dev_net(skb_dst(skb)->dev), addr)) {
 			__IP6_INC_STATS(net, idev, IPSTATS_MIB_INADDRERRORS);
 			kfree_skb(skb);
 			return -1;
@@ -812,7 +814,7 @@ looped_back:
 		return -1;
 	}
 
-	if (skb_dst_dev(skb)->flags & IFF_LOOPBACK) {
+	if (skb_dst(skb)->dev->flags&IFF_LOOPBACK) {
 		if (ipv6_hdr(skb)->hop_limit <= 1) {
 			__IP6_INC_STATS(net, idev, IPSTATS_MIB_INHDRERRORS);
 			icmpv6_send(skb, ICMPV6_TIME_EXCEED, ICMPV6_EXC_HOPLIMIT,
@@ -1083,9 +1085,9 @@ fail_and_free:
  *	for headers.
  */
 
-static u8 ipv6_push_rthdr0(struct sk_buff *skb, u8 proto,
-			   struct ipv6_rt_hdr *opt,
-			   struct in6_addr **addr_p, struct in6_addr *saddr)
+static void ipv6_push_rthdr0(struct sk_buff *skb, u8 *proto,
+			     struct ipv6_rt_hdr *opt,
+			     struct in6_addr **addr_p, struct in6_addr *saddr)
 {
 	struct rt0_hdr *phdr, *ihdr;
 	int hops;
@@ -1104,13 +1106,13 @@ static u8 ipv6_push_rthdr0(struct sk_buff *skb, u8 proto,
 	phdr->addr[hops - 1] = **addr_p;
 	*addr_p = ihdr->addr;
 
-	phdr->rt_hdr.nexthdr = proto;
-	return NEXTHDR_ROUTING;
+	phdr->rt_hdr.nexthdr = *proto;
+	*proto = NEXTHDR_ROUTING;
 }
 
-static u8 ipv6_push_rthdr4(struct sk_buff *skb, u8 proto,
-			   struct ipv6_rt_hdr *opt,
-			   struct in6_addr **addr_p, struct in6_addr *saddr)
+static void ipv6_push_rthdr4(struct sk_buff *skb, u8 *proto,
+			     struct ipv6_rt_hdr *opt,
+			     struct in6_addr **addr_p, struct in6_addr *saddr)
 {
 	struct ipv6_sr_hdr *sr_phdr, *sr_ihdr;
 	int plen, hops;
@@ -1153,61 +1155,58 @@ static u8 ipv6_push_rthdr4(struct sk_buff *skb, u8 proto,
 	}
 #endif
 
-	sr_phdr->nexthdr = proto;
-	return NEXTHDR_ROUTING;
+	sr_phdr->nexthdr = *proto;
+	*proto = NEXTHDR_ROUTING;
 }
 
-static u8 ipv6_push_rthdr(struct sk_buff *skb, u8 proto,
-			  struct ipv6_rt_hdr *opt,
-			  struct in6_addr **addr_p, struct in6_addr *saddr)
+static void ipv6_push_rthdr(struct sk_buff *skb, u8 *proto,
+			    struct ipv6_rt_hdr *opt,
+			    struct in6_addr **addr_p, struct in6_addr *saddr)
 {
 	switch (opt->type) {
 	case IPV6_SRCRT_TYPE_0:
 	case IPV6_SRCRT_STRICT:
 	case IPV6_SRCRT_TYPE_2:
-		proto = ipv6_push_rthdr0(skb, proto, opt, addr_p, saddr);
+		ipv6_push_rthdr0(skb, proto, opt, addr_p, saddr);
 		break;
 	case IPV6_SRCRT_TYPE_4:
-		proto = ipv6_push_rthdr4(skb, proto, opt, addr_p, saddr);
+		ipv6_push_rthdr4(skb, proto, opt, addr_p, saddr);
 		break;
 	default:
 		break;
 	}
-	return proto;
 }
 
-static u8 ipv6_push_exthdr(struct sk_buff *skb, u8 proto, u8 type, struct ipv6_opt_hdr *opt)
+static void ipv6_push_exthdr(struct sk_buff *skb, u8 *proto, u8 type, struct ipv6_opt_hdr *opt)
 {
 	struct ipv6_opt_hdr *h = skb_push(skb, ipv6_optlen(opt));
 
 	memcpy(h, opt, ipv6_optlen(opt));
-	h->nexthdr = proto;
-	return type;
+	h->nexthdr = *proto;
+	*proto = type;
 }
 
-u8 ipv6_push_nfrag_opts(struct sk_buff *skb, struct ipv6_txoptions *opt,
-			u8 proto,
-			struct in6_addr **daddr, struct in6_addr *saddr)
+void ipv6_push_nfrag_opts(struct sk_buff *skb, struct ipv6_txoptions *opt,
+			  u8 *proto,
+			  struct in6_addr **daddr, struct in6_addr *saddr)
 {
 	if (opt->srcrt) {
-		proto = ipv6_push_rthdr(skb, proto, opt->srcrt, daddr, saddr);
+		ipv6_push_rthdr(skb, proto, opt->srcrt, daddr, saddr);
 		/*
 		 * IPV6_RTHDRDSTOPTS is ignored
 		 * unless IPV6_RTHDR is set (RFC3542).
 		 */
 		if (opt->dst0opt)
-			proto = ipv6_push_exthdr(skb, proto, NEXTHDR_DEST, opt->dst0opt);
+			ipv6_push_exthdr(skb, proto, NEXTHDR_DEST, opt->dst0opt);
 	}
 	if (opt->hopopt)
-		proto = ipv6_push_exthdr(skb, proto, NEXTHDR_HOP, opt->hopopt);
-	return proto;
+		ipv6_push_exthdr(skb, proto, NEXTHDR_HOP, opt->hopopt);
 }
 
-u8 ipv6_push_frag_opts(struct sk_buff *skb, struct ipv6_txoptions *opt, u8 proto)
+void ipv6_push_frag_opts(struct sk_buff *skb, struct ipv6_txoptions *opt, u8 *proto)
 {
 	if (opt->dst1opt)
-		proto = ipv6_push_exthdr(skb, proto, NEXTHDR_DEST, opt->dst1opt);
-	return proto;
+		ipv6_push_exthdr(skb, proto, NEXTHDR_DEST, opt->dst1opt);
 }
 EXPORT_SYMBOL(ipv6_push_frag_opts);
 
@@ -1216,9 +1215,10 @@ ipv6_dup_options(struct sock *sk, struct ipv6_txoptions *opt)
 {
 	struct ipv6_txoptions *opt2;
 
-	opt2 = sock_kmemdup(sk, opt, opt->tot_len, GFP_ATOMIC);
+	opt2 = sock_kmalloc(sk, opt->tot_len, GFP_ATOMIC);
 	if (opt2) {
 		long dif = (char *)opt2 - (char *)opt;
+		memcpy(opt2, opt, opt->tot_len);
 		if (opt2->hopopt)
 			*((char **)&opt2->hopopt) += dif;
 		if (opt2->dst0opt)
@@ -1348,21 +1348,21 @@ struct ipv6_txoptions *__ipv6_fixup_options(struct ipv6_txoptions *opt_space,
 EXPORT_SYMBOL_GPL(__ipv6_fixup_options);
 
 /**
- * __fl6_update_dst - update flowi destination address with info given
+ * fl6_update_dst - update flowi destination address with info given
  *                  by srcrt option, if any.
  *
  * @fl6: flowi6 for which daddr is to be updated
  * @opt: struct ipv6_txoptions in which to look for srcrt opt
  * @orig: copy of original daddr address if modified
  *
- * Return: NULL if no srcrt or invalid srcrt type, otherwise returns orig
+ * Returns NULL if no txoptions or no srcrt, otherwise returns orig
  * and initial value of fl6->daddr set in orig
  */
-struct in6_addr *__fl6_update_dst(struct flowi6 *fl6,
-				  const struct ipv6_txoptions *opt,
-				  struct in6_addr *orig)
+struct in6_addr *fl6_update_dst(struct flowi6 *fl6,
+				const struct ipv6_txoptions *opt,
+				struct in6_addr *orig)
 {
-	if (!opt->srcrt)
+	if (!opt || !opt->srcrt)
 		return NULL;
 
 	*orig = fl6->daddr;
@@ -1386,4 +1386,4 @@ struct in6_addr *__fl6_update_dst(struct flowi6 *fl6,
 
 	return orig;
 }
-EXPORT_SYMBOL_GPL(__fl6_update_dst);
+EXPORT_SYMBOL_GPL(fl6_update_dst);

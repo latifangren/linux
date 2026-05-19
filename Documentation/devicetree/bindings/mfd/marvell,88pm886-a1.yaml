@@ -35,9 +35,6 @@ properties:
         description: LDO or buck regulator.
         unevaluatedProperties: false
 
-  '#io-channel-cells':
-    const: 1
-
 required:
   - compatible
   - reg
@@ -56,7 +53,6 @@ examples:
         reg = <0x30>;
         interrupts = <0 4 IRQ_TYPE_LEVEL_HIGH>;
         interrupt-parent = <&gic>;
-        #io-channel-cells = <1>;
         wakeup-source;
 
         regulators {

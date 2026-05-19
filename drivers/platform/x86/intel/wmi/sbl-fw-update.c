@@ -14,6 +14,7 @@
  * https://slimbootloader.github.io/security/firmware-update.html
  */
 
+#include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -24,30 +25,41 @@
 
 static int get_fwu_request(struct device *dev, u32 *out)
 {
-	struct wmi_buffer buffer;
-	__le32 *result;
-	int ret;
+	union acpi_object *obj;
 
-	ret = wmidev_query_block(to_wmi_device(dev), 0, &buffer, sizeof(*result));
-	if (ret < 0)
-		return ret;
+	obj = wmidev_block_query(to_wmi_device(dev), 0);
+	if (!obj)
+		return -ENODEV;
 
-	result = buffer.data;
-	*out = le32_to_cpu(*result);
-	kfree(result);
+	if (obj->type != ACPI_TYPE_INTEGER) {
+		dev_warn(dev, "wmidev_block_query returned invalid value\n");
+		kfree(obj);
+		return -EINVAL;
+	}
+
+	*out = obj->integer.value;
+	kfree(obj);
 
 	return 0;
 }
 
 static int set_fwu_request(struct device *dev, u32 in)
 {
-	__le32 value = cpu_to_le32(in);
-	struct wmi_buffer buffer = {
-		.length = sizeof(value),
-		.data = &value,
-	};
+	struct acpi_buffer input;
+	acpi_status status;
+	u32 value;
 
-	return wmidev_set_block(to_wmi_device(dev), 0, &buffer);
+	value = in;
+	input.length = sizeof(u32);
+	input.pointer = &value;
+
+	status = wmidev_block_set(to_wmi_device(dev), 0, &input);
+	if (ACPI_FAILURE(status)) {
+		dev_err(dev, "wmidev_block_set failed\n");
+		return -ENODEV;
+	}
+
+	return 0;
 }
 
 static ssize_t firmware_update_request_show(struct device *dev,

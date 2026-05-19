@@ -149,7 +149,7 @@ mwifiex_update_uap_custom_ie(struct mwifiex_private *priv,
 	u16 len;
 	int ret;
 
-	ap_custom_ie = kzalloc_obj(*ap_custom_ie);
+	ap_custom_ie = kzalloc(sizeof(*ap_custom_ie), GFP_KERNEL);
 	if (!ap_custom_ie)
 		return -ENOMEM;
 
@@ -221,7 +221,8 @@ static int mwifiex_update_vs_ie(const u8 *ies, int ies_len,
 	vendor_ie = cfg80211_find_vendor_ie(oui, oui_type, ies, ies_len);
 	if (vendor_ie) {
 		if (!*ie_ptr) {
-			*ie_ptr = kzalloc_obj(struct mwifiex_ie);
+			*ie_ptr = kzalloc(sizeof(struct mwifiex_ie),
+					  GFP_KERNEL);
 			if (!*ie_ptr)
 				return -ENOMEM;
 			ie = *ie_ptr;
@@ -325,7 +326,7 @@ static int mwifiex_uap_parse_tail_ies(struct mwifiex_private *priv,
 	if (!info->tail || !info->tail_len)
 		return 0;
 
-	gen_ie = kzalloc_obj(*gen_ie);
+	gen_ie = kzalloc(sizeof(*gen_ie), GFP_KERNEL);
 	if (!gen_ie)
 		return -ENOMEM;
 
@@ -438,7 +439,7 @@ int mwifiex_del_mgmt_ies(struct mwifiex_private *priv)
 	int ret = 0;
 
 	if (priv->gen_idx != MWIFIEX_AUTO_IDX_MASK) {
-		gen_ie = kmalloc_obj(*gen_ie);
+		gen_ie = kmalloc(sizeof(*gen_ie), GFP_KERNEL);
 		if (!gen_ie)
 			return -ENOMEM;
 
@@ -456,7 +457,7 @@ int mwifiex_del_mgmt_ies(struct mwifiex_private *priv)
 	}
 
 	if (priv->beacon_idx != MWIFIEX_AUTO_IDX_MASK) {
-		beacon_ie = kmalloc_obj(struct mwifiex_ie);
+		beacon_ie = kmalloc(sizeof(struct mwifiex_ie), GFP_KERNEL);
 		if (!beacon_ie) {
 			ret = -ENOMEM;
 			goto done;
@@ -466,7 +467,7 @@ int mwifiex_del_mgmt_ies(struct mwifiex_private *priv)
 		beacon_ie->ie_length = 0;
 	}
 	if (priv->proberesp_idx != MWIFIEX_AUTO_IDX_MASK) {
-		pr_ie = kmalloc_obj(struct mwifiex_ie);
+		pr_ie = kmalloc(sizeof(struct mwifiex_ie), GFP_KERNEL);
 		if (!pr_ie) {
 			ret = -ENOMEM;
 			goto done;
@@ -476,7 +477,7 @@ int mwifiex_del_mgmt_ies(struct mwifiex_private *priv)
 		pr_ie->ie_length = 0;
 	}
 	if (priv->assocresp_idx != MWIFIEX_AUTO_IDX_MASK) {
-		ar_ie = kmalloc_obj(struct mwifiex_ie);
+		ar_ie = kmalloc(sizeof(struct mwifiex_ie), GFP_KERNEL);
 		if (!ar_ie) {
 			ret = -ENOMEM;
 			goto done;

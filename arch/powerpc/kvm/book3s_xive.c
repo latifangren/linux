@@ -916,7 +916,8 @@ int kvmppc_xive_attach_escalation(struct kvm_vcpu *vcpu, u8 prio,
 	 * it fires once.
 	 */
 	if (single_escalation) {
-		struct xive_irq_data *xd = irq_get_chip_data(xc->esc_virq[prio]);
+		struct irq_data *d = irq_get_irq_data(xc->esc_virq[prio]);
+		struct xive_irq_data *xd = irq_data_get_irq_handler_data(d);
 
 		xive_vm_esb_load(xd, XIVE_ESB_SET_PQ_01);
 		vcpu->arch.xive_esc_raddr = xd->eoi_page;
@@ -1554,7 +1555,7 @@ int kvmppc_xive_set_mapped(struct kvm *kvm, unsigned long guest_irq,
 	struct kvmppc_xive_src_block *sb;
 	struct kvmppc_xive_irq_state *state;
 	struct irq_data *host_data =
-		irq_domain_get_irq_data(irq_get_default_domain(), host_irq);
+		irq_domain_get_irq_data(irq_get_default_host(), host_irq);
 	unsigned int hw_irq = (unsigned int)irqd_to_hwirq(host_data);
 	u16 idx;
 	u8 prio;
@@ -1611,7 +1612,7 @@ int kvmppc_xive_set_mapped(struct kvm *kvm, unsigned long guest_irq,
 
 	/* Grab info about irq */
 	state->pt_number = hw_irq;
-	state->pt_data = irq_data_get_irq_chip_data(host_data);
+	state->pt_data = irq_data_get_irq_handler_data(host_data);
 
 	/*
 	 * Configure the IRQ to match the existing configuration of
@@ -1786,7 +1787,8 @@ void kvmppc_xive_disable_vcpu_interrupts(struct kvm_vcpu *vcpu)
  */
 void xive_cleanup_single_escalation(struct kvm_vcpu *vcpu, int irq)
 {
-	struct xive_irq_data *xd = irq_get_chip_data(irq);
+	struct irq_data *d = irq_get_irq_data(irq);
+	struct xive_irq_data *xd = irq_data_get_irq_handler_data(d);
 
 	/*
 	 * This slightly odd sequence gives the right result
@@ -1924,7 +1926,7 @@ int kvmppc_xive_connect_vcpu(struct kvm_device *dev,
 	if (r)
 		goto bail;
 
-	xc = kzalloc_obj(*xc);
+	xc = kzalloc(sizeof(*xc), GFP_KERNEL);
 	if (!xc) {
 		r = -ENOMEM;
 		goto bail;
@@ -2276,7 +2278,7 @@ struct kvmppc_xive_src_block *kvmppc_xive_create_src_block(
 		goto out;
 
 	/* Create the ICS */
-	sb = kzalloc_obj(*sb);
+	sb = kzalloc(sizeof(*sb), GFP_KERNEL);
 	if (!sb)
 		goto out;
 
@@ -2719,7 +2721,7 @@ struct kvmppc_xive *kvmppc_xive_get_device(struct kvm *kvm, u32 type)
 	struct kvmppc_xive *xive = *kvm_xive_device;
 
 	if (!xive) {
-		xive = kzalloc_obj(*xive);
+		xive = kzalloc(sizeof(*xive), GFP_KERNEL);
 		*kvm_xive_device = xive;
 	} else {
 		memset(xive, 0, sizeof(*xive));
@@ -2825,7 +2827,9 @@ int kvmppc_xive_debug_show_queues(struct seq_file *m, struct kvm_vcpu *vcpu)
 				   i0, i1);
 		}
 		if (xc->esc_virq[i]) {
-			struct xive_irq_data *xd = irq_get_chip_data(xc->esc_virq[i]);
+			struct irq_data *d = irq_get_irq_data(xc->esc_virq[i]);
+			struct xive_irq_data *xd =
+				irq_data_get_irq_handler_data(d);
 			u64 pq = xive_vm_esb_load(xd, XIVE_ESB_GET);
 
 			seq_printf(m, "    ESC %d %c%c EOI @%llx",

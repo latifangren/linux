@@ -11,7 +11,6 @@
 #include <linux/uidgid.h>
 #include "fs_context.h"
 #include "cifsglob.h"
-#include "../common/smbfsctl.h"
 
 #define REPARSE_SYM_PATH_MAX 4060
 
@@ -33,7 +32,7 @@ static inline kuid_t wsl_make_kuid(struct cifs_sb_info *cifs_sb,
 {
 	u32 uid = le32_to_cpu(*(__le32 *)ptr);
 
-	if (cifs_sb_flags(cifs_sb) & CIFS_MOUNT_OVERR_UID)
+	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_OVERR_UID)
 		return cifs_sb->ctx->linux_uid;
 	return make_kuid(current_user_ns(), uid);
 }
@@ -43,7 +42,7 @@ static inline kgid_t wsl_make_kgid(struct cifs_sb_info *cifs_sb,
 {
 	u32 gid = le32_to_cpu(*(__le32 *)ptr);
 
-	if (cifs_sb_flags(cifs_sb) & CIFS_MOUNT_OVERR_GID)
+	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_OVERR_GID)
 		return cifs_sb->ctx->linux_gid;
 	return make_kgid(current_user_ns(), gid);
 }
@@ -51,7 +50,6 @@ static inline kgid_t wsl_make_kgid(struct cifs_sb_info *cifs_sb,
 static inline u64 reparse_mode_nfs_type(mode_t mode)
 {
 	switch (mode & S_IFMT) {
-	case S_IFLNK: return NFS_SPECFILE_LNK;
 	case S_IFBLK: return NFS_SPECFILE_BLK;
 	case S_IFCHR: return NFS_SPECFILE_CHR;
 	case S_IFIFO: return NFS_SPECFILE_FIFO;
@@ -63,7 +61,6 @@ static inline u64 reparse_mode_nfs_type(mode_t mode)
 static inline u32 reparse_mode_wsl_tag(mode_t mode)
 {
 	switch (mode & S_IFMT) {
-	case S_IFLNK: return IO_REPARSE_TAG_LX_SYMLINK;
 	case S_IFBLK: return IO_REPARSE_TAG_LX_BLK;
 	case S_IFCHR: return IO_REPARSE_TAG_LX_CHR;
 	case S_IFIFO: return IO_REPARSE_TAG_LX_FIFO;
@@ -94,7 +91,7 @@ static inline bool reparse_inode_match(struct inode *inode,
 	if (cinode->reparse_tag != IO_REPARSE_TAG_INTERNAL &&
 	    cinode->reparse_tag != fattr->cf_cifstag)
 		return false;
-	return (cinode->cifsAttrs & ATTR_REPARSE_POINT) &&
+	return (cinode->cifsAttrs & ATTR_REPARSE) &&
 		timespec64_equal(&ctime, &fattr->cf_ctime);
 }
 
@@ -108,7 +105,7 @@ static inline bool cifs_open_data_reparse(struct cifs_open_info_data *data)
 
 		attrs = le32_to_cpu(fi->DosAttributes);
 		if (data->reparse_point) {
-			attrs |= ATTR_REPARSE_POINT;
+			attrs |= ATTR_REPARSE;
 			fi->DosAttributes = cpu_to_le32(attrs);
 		}
 
@@ -117,12 +114,12 @@ static inline bool cifs_open_data_reparse(struct cifs_open_info_data *data)
 
 		attrs = le32_to_cpu(fi->Attributes);
 		if (data->reparse_point) {
-			attrs |= ATTR_REPARSE_POINT;
+			attrs |= ATTR_REPARSE;
 			fi->Attributes = cpu_to_le32(attrs);
 		}
 	}
 
-	ret = attrs & ATTR_REPARSE_POINT;
+	ret = attrs & ATTR_REPARSE;
 
 	return ret;
 }
@@ -130,13 +127,15 @@ static inline bool cifs_open_data_reparse(struct cifs_open_info_data *data)
 bool cifs_reparse_point_to_fattr(struct cifs_sb_info *cifs_sb,
 				 struct cifs_fattr *fattr,
 				 struct cifs_open_info_data *data);
-int create_reparse_symlink(const unsigned int xid, struct inode *inode,
-			   struct dentry *dentry, struct cifs_tcon *tcon,
-			   const char *full_path, const char *symname);
-int mknod_reparse(unsigned int xid, struct inode *inode, struct dentry *dentry,
-		  struct cifs_tcon *tcon, const char *full_path, umode_t mode,
-		  dev_t dev);
-struct reparse_data_buffer *smb2_get_reparse_point_buffer(const struct kvec *rsp_iov,
-							  u32 *plen);
+int smb2_create_reparse_symlink(const unsigned int xid, struct inode *inode,
+				struct dentry *dentry, struct cifs_tcon *tcon,
+				const char *full_path, const char *symname);
+int smb2_mknod_reparse(unsigned int xid, struct inode *inode,
+		       struct dentry *dentry, struct cifs_tcon *tcon,
+		       const char *full_path, umode_t mode, dev_t dev);
+int smb2_parse_reparse_point(struct cifs_sb_info *cifs_sb,
+			     const char *full_path,
+			     struct kvec *rsp_iov,
+			     struct cifs_open_info_data *data);
 
 #endif /* _CIFS_REPARSE_H */

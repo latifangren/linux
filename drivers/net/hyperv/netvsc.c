@@ -129,7 +129,7 @@ static struct netvsc_device *alloc_net_device(void)
 {
 	struct netvsc_device *net_device;
 
-	net_device = kzalloc_obj(struct netvsc_device);
+	net_device = kzalloc(sizeof(struct netvsc_device), GFP_KERNEL);
 	if (!net_device)
 		return NULL;
 
@@ -866,8 +866,7 @@ static void netvsc_send_completion(struct net_device *ndev,
 
 	case NVSP_MSG1_TYPE_SEND_RECV_BUF_COMPLETE:
 		if (msglen < sizeof(struct nvsp_message_header) +
-				struct_size_t(struct nvsp_1_message_send_receive_buffer_complete,
-					      sections, 1)) {
+				sizeof(struct nvsp_1_message_send_receive_buffer_complete)) {
 			netdev_err(ndev, "nvsp_msg1 length too small: %u\n",
 				   msglen);
 			return;
@@ -1025,8 +1024,9 @@ static int netvsc_dma_map(struct hv_device *hv_dev,
 	if (!hv_is_isolation_supported())
 		return 0;
 
-	packet->dma_range = kzalloc_objs(*packet->dma_range, page_count,
-					 GFP_ATOMIC);
+	packet->dma_range = kcalloc(page_count,
+				    sizeof(*packet->dma_range),
+				    GFP_ATOMIC);
 	if (!packet->dma_range)
 		return -ENOMEM;
 

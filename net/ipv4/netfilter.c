@@ -1,8 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * IPv4 specific functions of netfilter core
  *
- * Rusty Russell (C) 2000
+ * Rusty Russell (C) 2000 -- This code is GPL.
  * Patrick McHardy (C) 2006-2012
  */
 #include <linux/kernel.h>
@@ -12,10 +11,10 @@
 #include <linux/skbuff.h>
 #include <linux/gfp.h>
 #include <linux/export.h>
-#include <net/flow.h>
 #include <net/route.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
+#include <net/inet_dscp.h>
 #include <net/netfilter/nf_queue.h>
 
 /* route_me_harder function, used by iptable_nat, iptable_mangle + ip_queue */
@@ -45,7 +44,7 @@ int ip_route_me_harder(struct net *net, struct sock *sk, struct sk_buff *skb, un
 	 */
 	fl4.daddr = iph->daddr;
 	fl4.saddr = saddr;
-	fl4.flowi4_dscp = ip4h_dscp(iph);
+	fl4.flowi4_tos = iph->tos & INET_DSCP_MASK;
 	fl4.flowi4_oif = sk ? sk->sk_bound_dev_if : 0;
 	fl4.flowi4_l3mdev = l3mdev_master_ifindex(dev);
 	fl4.flowi4_mark = skb->mark;
@@ -66,10 +65,7 @@ int ip_route_me_harder(struct net *net, struct sock *sk, struct sk_buff *skb, un
 	if (!(IPCB(skb)->flags & IPSKB_XFRM_TRANSFORMED) &&
 	    xfrm_decode_session(net, skb, flowi4_to_flowi(&fl4), AF_INET) == 0) {
 		struct dst_entry *dst = skb_dst(skb);
-		/* ignore return value from skb_dstref_steal, xfrm_lookup takes
-		 * care of dropping the refcnt if needed.
-		 */
-		skb_dstref_steal(skb);
+		skb_dst_set(skb, NULL);
 		dst = xfrm_lookup(net, dst, flowi4_to_flowi(&fl4), sk, 0);
 		if (IS_ERR(dst))
 			return PTR_ERR(dst);

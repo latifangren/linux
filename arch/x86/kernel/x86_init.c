@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Linutronix GmbH, Thomas Gleixner <tglx@kernel.org>
+ * Copyright (C) 2009 Thomas Gleixner <tglx@linutronix.de>
  *
  *  For licencing details see kernel-base/COPYING
  */

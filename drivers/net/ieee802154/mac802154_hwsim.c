@@ -98,7 +98,7 @@ static int hwsim_update_pib(struct ieee802154_hw *hw, u8 page, u8 channel,
 	struct hwsim_phy *phy = hw->priv;
 	struct hwsim_pib *pib, *pib_old;
 
-	pib = kzalloc_obj(*pib, GFP_ATOMIC);
+	pib = kzalloc(sizeof(*pib), GFP_ATOMIC);
 	if (!pib)
 		return -ENOMEM;
 
@@ -545,11 +545,11 @@ static struct hwsim_edge *hwsim_alloc_edge(struct hwsim_phy *endpoint, u8 lqi)
 	struct hwsim_edge_info *einfo;
 	struct hwsim_edge *e;
 
-	e = kzalloc_obj(*e);
+	e = kzalloc(sizeof(*e), GFP_KERNEL);
 	if (!e)
 		return NULL;
 
-	einfo = kzalloc_obj(*einfo);
+	einfo = kzalloc(sizeof(*einfo), GFP_KERNEL);
 	if (!einfo) {
 		kfree(e);
 		return NULL;
@@ -713,7 +713,7 @@ static int hwsim_set_edge_lqi(struct sk_buff *msg, struct genl_info *info)
 		return -ENOENT;
 	}
 
-	einfo = kzalloc_obj(*einfo);
+	einfo = kzalloc(sizeof(*einfo), GFP_KERNEL);
 	if (!einfo) {
 		mutex_unlock(&hwsim_phys_lock);
 		return -ENOMEM;
@@ -946,7 +946,7 @@ static int hwsim_add_one(struct genl_info *info, struct device *dev,
 
 	/* hwsim phy channel 13 as default */
 	hw->phy->current_channel = 13;
-	pib = kzalloc_obj(*pib);
+	pib = kzalloc(sizeof(*pib), GFP_KERNEL);
 	if (!pib) {
 		err = -ENOMEM;
 		goto err_pib;
@@ -1047,7 +1047,7 @@ static void hwsim_remove(struct platform_device *pdev)
 
 static struct platform_driver mac802154hwsim_driver = {
 	.probe = hwsim_probe,
-	.remove = hwsim_remove,
+	.remove_new = hwsim_remove,
 	.driver = {
 			.name = "mac802154_hwsim",
 	},

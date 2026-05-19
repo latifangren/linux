@@ -215,9 +215,7 @@ static int unimac_mdio_clk_set(struct unimac_mdio_priv *priv)
 
 	div = (rate / (2 * priv->clk_freq)) - 1;
 	if (div & ~MDIO_CLK_DIV_MASK) {
-		dev_warn(priv->mii_bus->parent,
-			 "Ignoring MDIO clock frequency request: %d vs. rate: %ld\n",
-			 priv->clk_freq, rate);
+		pr_warn("Incorrect MDIO clock frequency, ignoring\n");
 		ret = 0;
 		goto out;
 	}
@@ -335,9 +333,9 @@ static SIMPLE_DEV_PM_OPS(unimac_mdio_pm_ops,
 			 NULL, unimac_mdio_resume);
 
 static const struct of_device_id unimac_mdio_ids[] = {
-	{ .compatible = "brcm,asp-v3.0-mdio", },
 	{ .compatible = "brcm,asp-v2.2-mdio", },
 	{ .compatible = "brcm,asp-v2.1-mdio", },
+	{ .compatible = "brcm,asp-v2.0-mdio", },
 	{ .compatible = "brcm,bcm6846-mdio", },
 	{ .compatible = "brcm,genet-mdio-v5", },
 	{ .compatible = "brcm,genet-mdio-v4", },

@@ -5,7 +5,6 @@
  * Copyright (C) 2005, Intec Automation Inc.
  * Copyright (C) 2014, Freescale Semiconductor, Inc.
  */
-#include <linux/math64.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/spi-nor.h>
 
@@ -28,10 +27,8 @@ static u8 spi_nor_get_sr_tb_mask(struct spi_nor *nor)
 {
 	if (nor->flags & SNOR_F_HAS_SR_TB_BIT6)
 		return SR_TB_BIT6;
-	else if (nor->flags & SNOR_F_HAS_SR_TB)
-		return SR_TB_BIT5;
 	else
-		return 0;
+		return SR_TB_BIT5;
 }
 
 static u64 spi_nor_get_min_prot_length_sr(struct spi_nor *nor)

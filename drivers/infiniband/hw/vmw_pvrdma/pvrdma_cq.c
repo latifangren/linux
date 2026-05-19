@@ -134,9 +134,10 @@ int pvrdma_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	cq->is_kernel = !udata;
 
 	if (!cq->is_kernel) {
-		ret = ib_copy_validate_udata_in(udata, ucmd, reserved);
-		if (ret)
+		if (ib_copy_from_udata(&ucmd, udata, sizeof(ucmd))) {
+			ret = -EFAULT;
 			goto err_cq;
+		}
 
 		cq->umem = ib_umem_get(ibdev, ucmd.buf_addr, ucmd.buf_size,
 				       IB_ACCESS_LOCAL_WRITE);

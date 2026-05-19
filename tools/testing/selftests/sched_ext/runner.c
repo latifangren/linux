@@ -18,16 +18,15 @@ const char help_fmt[] =
 "It's required for the testcases to be serial, as only a single host-wide sched_ext\n"
 "scheduler may be loaded at any given time."
 "\n"
-"Usage: %s [-t TEST] [-s] [-l] [-q]\n"
+"Usage: %s [-t TEST] [-h]\n"
 "\n"
 "  -t TEST       Only run tests whose name includes this string\n"
 "  -s            Include print output for skipped tests\n"
-"  -l            List all available tests\n"
 "  -q            Don't print the test descriptions during run\n"
 "  -h            Display this help and exit\n";
 
 static volatile int exit_req;
-static bool quiet, print_skipped, list;
+static bool quiet, print_skipped;
 
 #define MAX_SCX_TESTS 2048
 
@@ -46,14 +45,6 @@ static void print_test_preamble(const struct scx_test *test, bool quiet)
 	if (!quiet)
 		printf("DESCRIPTION: %s\n", test->description);
 	printf("OUTPUT:\n");
-
-	/*
-	 * The tests may fork with the preamble buffered
-	 * in the children's stdout. Flush before the test
-	 * to avoid printing the message multiple times.
-	 */
-	fflush(stdout);
-	fflush(stderr);
 }
 
 static const char *status_to_result(enum scx_test_status status)
@@ -133,8 +124,6 @@ static bool test_valid(const struct scx_test *test)
 int main(int argc, char **argv)
 {
 	const char *filter = NULL;
-	const char *failed_tests[MAX_SCX_TESTS];
-	const char *skipped_tests[MAX_SCX_TESTS];
 	unsigned testnum = 0, i;
 	unsigned passed = 0, skipped = 0, failed = 0;
 	int opt;
@@ -144,16 +133,13 @@ int main(int argc, char **argv)
 
 	libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
 
-	while ((opt = getopt(argc, argv, "qslt:h")) != -1) {
+	while ((opt = getopt(argc, argv, "qst:h")) != -1) {
 		switch (opt) {
 		case 'q':
 			quiet = true;
 			break;
 		case 's':
 			print_skipped = true;
-			break;
-		case 'l':
-			list = true;
 			break;
 		case 't':
 			filter = optarg;
@@ -164,39 +150,9 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (optind < argc) {
-		fprintf(stderr, "Unexpected argument '%s'. Use -t to filter tests.\n",
-			argv[optind]);
-		return 1;
-	}
-
-	if (filter) {
-		for (i = 0; i < __scx_num_tests; i++) {
-			if (!should_skip_test(&__scx_tests[i], filter))
-				break;
-		}
-		if (i == __scx_num_tests) {
-			fprintf(stderr, "No tests matched filter '%s'\n", filter);
-			fprintf(stderr, "Available tests (use -l to list):\n");
-			for (i = 0; i < __scx_num_tests; i++)
-				fprintf(stderr, "  %s\n", __scx_tests[i].name);
-			return 1;
-		}
-	}
-
 	for (i = 0; i < __scx_num_tests; i++) {
 		enum scx_test_status status;
 		struct scx_test *test = &__scx_tests[i];
-
-		if (exit_req)
-			break;
-
-		if (list) {
-			printf("%s\n", test->name);
-			if (i == (__scx_num_tests - 1))
-				return 0;
-			continue;
-		}
 
 		if (filter && should_skip_test(test, filter)) {
 			/*
@@ -220,10 +176,10 @@ int main(int argc, char **argv)
 			passed++;
 			break;
 		case SCX_TEST_SKIP:
-			skipped_tests[skipped++] = test->name;
+			skipped++;
 			break;
 		case SCX_TEST_FAIL:
-			failed_tests[failed++] = test->name;
+			failed++;
 			break;
 		}
 	}
@@ -232,18 +188,8 @@ int main(int argc, char **argv)
 	printf("PASSED:  %u\n", passed);
 	printf("SKIPPED: %u\n", skipped);
 	printf("FAILED:  %u\n", failed);
-	if (skipped > 0) {
-		printf("\nSkipped tests:\n");
-		for (i = 0; i < skipped; i++)
-			printf("  - %s\n", skipped_tests[i]);
-	}
-	if (failed > 0) {
-		printf("\nFailed tests:\n");
-		for (i = 0; i < failed; i++)
-			printf("  - %s\n", failed_tests[i]);
-	}
 
-	return failed > 0 ? 1 : 0;
+	return 0;
 }
 
 void scx_test_register(struct scx_test *test)

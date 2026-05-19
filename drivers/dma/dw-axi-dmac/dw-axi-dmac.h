@@ -34,7 +34,6 @@ struct dw_axi_dma_hcfg {
 	bool	reg_map_8_channels;
 	bool	restrict_axi_burst_len;
 	bool	use_cfg2;
-	bool	use_handshake_as_channel_number;
 };
 
 struct axi_dma_chan {

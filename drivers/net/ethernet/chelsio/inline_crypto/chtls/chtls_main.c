@@ -95,7 +95,7 @@ static int chtls_start_listen(struct chtls_dev *cdev, struct sock *sk)
 		return -EADDRNOTAVAIL;
 
 	sk->sk_backlog_rcv = listen_backlog_rcv;
-	clisten = kmalloc_obj(*clisten);
+	clisten = kmalloc(sizeof(*clisten), GFP_KERNEL);
 	if (!clisten)
 		return -ENOMEM;
 	clisten->cdev = cdev;
@@ -114,7 +114,7 @@ static void chtls_stop_listen(struct chtls_dev *cdev, struct sock *sk)
 	if (sk->sk_protocol != IPPROTO_TCP)
 		return;
 
-	clisten = kmalloc_obj(*clisten);
+	clisten = kmalloc(sizeof(*clisten), GFP_KERNEL);
 	if (!clisten)
 		return;
 	clisten->cdev = cdev;
@@ -238,11 +238,11 @@ static void *chtls_uld_add(const struct cxgb4_lld_info *info)
 	struct chtls_dev *cdev;
 	int i, j;
 
-	cdev = kzalloc_obj(*cdev);
+	cdev = kzalloc(sizeof(*cdev), GFP_KERNEL);
 	if (!cdev)
 		goto out;
 
-	lldi = kzalloc_obj(*lldi);
+	lldi = kzalloc(sizeof(*lldi), GFP_KERNEL);
 	if (!lldi)
 		goto out_lldi;
 
@@ -342,8 +342,8 @@ static struct sk_buff *copy_gl_to_skb_pkt(const struct pkt_gl *gl,
 {
 	struct sk_buff *skb;
 
-	/* Allocate space for cpl_pass_accept_req which will be synthesized by
-	 * driver. Once driver synthesizes cpl_pass_accept_req the skb will go
+	/* Allocate space for cpl_pass_accpet_req which will be synthesized by
+	 * driver. Once driver synthesizes cpl_pass_accpet_req the skb will go
 	 * through the regular cpl_pass_accept_req processing in TOM.
 	 */
 	skb = alloc_skb(size_add(gl->tot_len,

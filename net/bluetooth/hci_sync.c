@@ -393,7 +393,7 @@ static void le_scan_disable(struct work_struct *work)
 	if (hdev->discovery.type != DISCOV_TYPE_INTERLEAVED)
 		goto _return;
 
-	if (hci_test_quirk(hdev, HCI_QUIRK_SIMULTANEOUS_DISCOVERY)) {
+	if (test_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY, &hdev->quirks)) {
 		if (!test_bit(HCI_INQUIRY, &hdev->flags) &&
 		    hdev->discovery.state != DISCOVERY_RESOLVING)
 			goto discov_stopped;
@@ -711,7 +711,7 @@ int hci_cmd_sync_submit(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
 		goto unlock;
 	}
 
-	entry = kmalloc_obj(*entry);
+	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry) {
 		err = -ENOMEM;
 		goto unlock;
@@ -780,7 +780,7 @@ int hci_cmd_sync_queue_once(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
 			    void *data, hci_cmd_sync_work_destroy_t destroy)
 {
 	if (hci_cmd_sync_lookup_entry(hdev, func, data, destroy))
-		return -EEXIST;
+		return 0;
 
 	return hci_cmd_sync_queue(hdev, func, data, destroy);
 }
@@ -825,7 +825,7 @@ int hci_cmd_sync_run_once(struct hci_dev *hdev, hci_cmd_sync_work_func_t func,
 			  void *data, hci_cmd_sync_work_destroy_t destroy)
 {
 	if (hci_cmd_sync_lookup_entry(hdev, func, data, destroy))
-		return -EEXIST;
+		return 0;
 
 	return hci_cmd_sync_run(hdev, func, data, destroy);
 }
@@ -1393,12 +1393,10 @@ int hci_setup_ext_adv_instance_sync(struct hci_dev *hdev, u8 instance)
 		hci_cpu_to_le24(adv->min_interval, cp.min_interval);
 		hci_cpu_to_le24(adv->max_interval, cp.max_interval);
 		cp.tx_power = adv->tx_power;
-		cp.sid = adv->sid;
 	} else {
 		hci_cpu_to_le24(hdev->le_adv_min_interval, cp.min_interval);
 		hci_cpu_to_le24(hdev->le_adv_max_interval, cp.max_interval);
 		cp.tx_power = HCI_ADV_TX_POWER_NO_PREFERENCE;
-		cp.sid = 0x00;
 	}
 
 	secondary_adv = (flags & MGMT_ADV_FLAG_SEC_MASK);
@@ -1732,8 +1730,8 @@ static int hci_adv_bcast_annoucement(struct hci_dev *hdev, struct adv_info *adv)
 	return hci_update_adv_data_sync(hdev, adv->instance);
 }
 
-int hci_start_per_adv_sync(struct hci_dev *hdev, u8 instance, u8 sid,
-			   u8 data_len, u8 *data, u32 flags, u16 min_interval,
+int hci_start_per_adv_sync(struct hci_dev *hdev, u8 instance, u8 data_len,
+			   u8 *data, u32 flags, u16 min_interval,
 			   u16 max_interval, u16 sync_interval)
 {
 	struct adv_info *adv = NULL;
@@ -1745,18 +1743,6 @@ int hci_start_per_adv_sync(struct hci_dev *hdev, u8 instance, u8 sid,
 	if (instance) {
 		adv = hci_find_adv_instance(hdev, instance);
 		if (adv) {
-			if (sid != HCI_SID_INVALID && adv->sid != sid) {
-				/* If the SID don't match attempt to find by
-				 * SID.
-				 */
-				adv = hci_find_adv_sid(hdev, sid);
-				if (!adv) {
-					bt_dev_err(hdev,
-						   "Unable to find adv_info");
-					return -EINVAL;
-				}
-			}
-
 			/* Turn it into periodic advertising */
 			adv->periodic = true;
 			adv->per_adv_data_len = data_len;
@@ -1765,7 +1751,7 @@ int hci_start_per_adv_sync(struct hci_dev *hdev, u8 instance, u8 sid,
 			adv->flags = flags;
 		} else if (!adv) {
 			/* Create an instance if that could not be found */
-			adv = hci_add_per_instance(hdev, instance, sid, flags,
+			adv = hci_add_per_instance(hdev, instance, flags,
 						   data_len, data,
 						   sync_interval,
 						   sync_interval);
@@ -1998,7 +1984,7 @@ int hci_schedule_adv_instance_sync(struct hci_dev *hdev, u8 instance,
 		hdev->adv_instance_timeout = timeout;
 		queue_delayed_work(hdev->req_workqueue,
 				   &hdev->adv_instance_expire,
-				   secs_to_jiffies(timeout));
+				   msecs_to_jiffies(timeout * 1000));
 	}
 
 	/* If we're just re-scheduling the same instance again then do not
@@ -2692,7 +2678,7 @@ static struct conn_params *conn_params_copy(struct list_head *list, size_t *n)
 
 	rcu_read_unlock();
 
-	p = kvzalloc_objs(struct conn_params, *n);
+	p = kvcalloc(*n, sizeof(struct conn_params), GFP_KERNEL);
 	if (!p)
 		return NULL;
 
@@ -2950,13 +2936,13 @@ static int hci_le_set_ext_scan_param_sync(struct hci_dev *hdev, u8 type,
 		if (sent) {
 			struct hci_conn *conn;
 
-			conn = hci_conn_hash_lookup_ba(hdev, PA_LINK,
+			conn = hci_conn_hash_lookup_ba(hdev, ISO_LINK,
 						       &sent->bdaddr);
 			if (conn) {
 				struct bt_iso_qos *qos = &conn->iso_qos;
 
-				if (qos->bcast.in.phys & BT_ISO_PHY_1M ||
-				    qos->bcast.in.phys & BT_ISO_PHY_2M) {
+				if (qos->bcast.in.phy & BT_ISO_PHY_1M ||
+				    qos->bcast.in.phy & BT_ISO_PHY_2M) {
 					cp->scanning_phys |= LE_SCAN_PHY_1M;
 					hci_le_scan_phy_params(phy, type,
 							       interval,
@@ -2965,7 +2951,7 @@ static int hci_le_set_ext_scan_param_sync(struct hci_dev *hdev, u8 type,
 					phy++;
 				}
 
-				if (qos->bcast.in.phys & BT_ISO_PHY_CODED) {
+				if (qos->bcast.in.phy & BT_ISO_PHY_CODED) {
 					cp->scanning_phys |= LE_SCAN_PHY_CODED;
 					hci_le_scan_phy_params(phy, type,
 							       interval * 3,
@@ -3262,8 +3248,6 @@ static int update_passive_scan_sync(struct hci_dev *hdev, void *data)
 
 int hci_update_passive_scan(struct hci_dev *hdev)
 {
-	int err;
-
 	/* Only queue if it would have any effect */
 	if (!test_bit(HCI_UP, &hdev->flags) ||
 	    test_bit(HCI_INIT, &hdev->flags) ||
@@ -3273,9 +3257,8 @@ int hci_update_passive_scan(struct hci_dev *hdev)
 	    hci_dev_test_flag(hdev, HCI_UNREGISTER))
 		return 0;
 
-	err = hci_cmd_sync_queue_once(hdev, update_passive_scan_sync, NULL,
-				      NULL);
-	return (err == -EEXIST) ? 0 : err;
+	return hci_cmd_sync_queue_once(hdev, update_passive_scan_sync, NULL,
+				       NULL);
 }
 
 int hci_write_sc_support_sync(struct hci_dev *hdev, u8 val)
@@ -3611,7 +3594,7 @@ static void hci_dev_get_bd_addr_from_property(struct hci_dev *hdev)
 	if (ret < 0 || !bacmp(&ba, BDADDR_ANY))
 		return;
 
-	if (hci_test_quirk(hdev, HCI_QUIRK_BDADDR_PROPERTY_BROKEN))
+	if (test_bit(HCI_QUIRK_BDADDR_PROPERTY_BROKEN, &hdev->quirks))
 		baswap(&hdev->public_addr, &ba);
 	else
 		bacpy(&hdev->public_addr, &ba);
@@ -3686,7 +3669,7 @@ static int hci_init0_sync(struct hci_dev *hdev)
 	bt_dev_dbg(hdev, "");
 
 	/* Reset */
-	if (!hci_test_quirk(hdev, HCI_QUIRK_RESET_ON_CLOSE)) {
+	if (!test_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks)) {
 		err = hci_reset_sync(hdev);
 		if (err)
 			return err;
@@ -3699,7 +3682,7 @@ static int hci_unconf_init_sync(struct hci_dev *hdev)
 {
 	int err;
 
-	if (hci_test_quirk(hdev, HCI_QUIRK_RAW_DEVICE))
+	if (test_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks))
 		return 0;
 
 	err = hci_init0_sync(hdev);
@@ -3742,7 +3725,7 @@ static int hci_read_local_cmds_sync(struct hci_dev *hdev)
 	 * supported commands.
 	 */
 	if (hdev->hci_ver > BLUETOOTH_VER_1_1 &&
-	    !hci_test_quirk(hdev, HCI_QUIRK_BROKEN_LOCAL_COMMANDS))
+	    !test_bit(HCI_QUIRK_BROKEN_LOCAL_COMMANDS, &hdev->quirks))
 		return __hci_cmd_sync_status(hdev, HCI_OP_READ_LOCAL_COMMANDS,
 					     0, NULL, HCI_CMD_TIMEOUT);
 
@@ -3756,7 +3739,7 @@ static int hci_init1_sync(struct hci_dev *hdev)
 	bt_dev_dbg(hdev, "");
 
 	/* Reset */
-	if (!hci_test_quirk(hdev, HCI_QUIRK_RESET_ON_CLOSE)) {
+	if (!test_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks)) {
 		err = hci_reset_sync(hdev);
 		if (err)
 			return err;
@@ -3819,7 +3802,7 @@ static int hci_set_event_filter_sync(struct hci_dev *hdev, u8 flt_type,
 	if (!hci_dev_test_flag(hdev, HCI_BREDR_ENABLED))
 		return 0;
 
-	if (hci_test_quirk(hdev, HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL))
+	if (test_bit(HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL, &hdev->quirks))
 		return 0;
 
 	memset(&cp, 0, sizeof(cp));
@@ -3846,7 +3829,7 @@ static int hci_clear_event_filter_sync(struct hci_dev *hdev)
 	 * a hci_set_event_filter_sync() call succeeds, but we do
 	 * the check both for parity and as a future reminder.
 	 */
-	if (hci_test_quirk(hdev, HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL))
+	if (test_bit(HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL, &hdev->quirks))
 		return 0;
 
 	return hci_set_event_filter_sync(hdev, HCI_FLT_CLEAR_ALL, 0x00,
@@ -3860,28 +3843,6 @@ static int hci_write_ca_timeout_sync(struct hci_dev *hdev)
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_WRITE_CA_TIMEOUT,
 				     sizeof(param), &param, HCI_CMD_TIMEOUT);
-}
-
-/* Enable SCO flow control if supported */
-static int hci_write_sync_flowctl_sync(struct hci_dev *hdev)
-{
-	struct hci_cp_write_sync_flowctl cp;
-	int err;
-
-	/* Check if the controller supports SCO and HCI_OP_WRITE_SYNC_FLOWCTL */
-	if (!lmp_sco_capable(hdev) || !(hdev->commands[10] & BIT(4)) ||
-	    !hci_test_quirk(hdev, HCI_QUIRK_SYNC_FLOWCTL_SUPPORTED))
-		return 0;
-
-	memset(&cp, 0, sizeof(cp));
-	cp.enable = 0x01;
-
-	err = __hci_cmd_sync_status(hdev, HCI_OP_WRITE_SYNC_FLOWCTL,
-				    sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-	if (!err)
-		hci_dev_set_flag(hdev, HCI_SCO_FLOWCTL);
-
-	return err;
 }
 
 /* BR Controller init stage 2 command sequence */
@@ -3902,8 +3863,6 @@ static const struct hci_init_stage br_init2[] = {
 	HCI_INIT(hci_clear_event_filter_sync),
 	/* HCI_OP_WRITE_CA_TIMEOUT */
 	HCI_INIT(hci_write_ca_timeout_sync),
-	/* HCI_OP_WRITE_SYNC_FLOWCTL */
-	HCI_INIT(hci_write_sync_flowctl_sync),
 	{}
 };
 
@@ -3945,7 +3904,7 @@ static int hci_write_inquiry_mode_sync(struct hci_dev *hdev)
 	u8 mode;
 
 	if (!lmp_inq_rssi_capable(hdev) &&
-	    !hci_test_quirk(hdev, HCI_QUIRK_FIXUP_INQUIRY_MODE))
+	    !test_bit(HCI_QUIRK_FIXUP_INQUIRY_MODE, &hdev->quirks))
 		return 0;
 
 	/* If Extended Inquiry Result events are supported, then
@@ -4021,19 +3980,8 @@ static int hci_le_read_buffer_size_sync(struct hci_dev *hdev)
 /* Read LE Local Supported Features */
 static int hci_le_read_local_features_sync(struct hci_dev *hdev)
 {
-	int err;
-
-	err = __hci_cmd_sync_status(hdev, HCI_OP_LE_READ_LOCAL_FEATURES,
-				    0, NULL, HCI_CMD_TIMEOUT);
-	if (err)
-		return err;
-
-	if (ll_ext_feature_capable(hdev) && hdev->commands[47] & BIT(2))
-		return __hci_cmd_sync_status(hdev,
-					     HCI_OP_LE_READ_ALL_LOCAL_FEATURES,
-					     0, NULL, HCI_CMD_TIMEOUT);
-
-	return err;
+	return __hci_cmd_sync_status(hdev, HCI_OP_LE_READ_LOCAL_FEATURES,
+				     0, NULL, HCI_CMD_TIMEOUT);
 }
 
 /* Read LE Supported States */
@@ -4146,7 +4094,7 @@ static int hci_set_event_mask_sync(struct hci_dev *hdev)
 	}
 
 	if (lmp_inq_rssi_capable(hdev) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_FIXUP_INQUIRY_MODE))
+	    test_bit(HCI_QUIRK_FIXUP_INQUIRY_MODE, &hdev->quirks))
 		events[4] |= 0x02; /* Inquiry Result with RSSI */
 
 	if (lmp_ext_feat_capable(hdev))
@@ -4198,7 +4146,7 @@ static int hci_read_stored_link_key_sync(struct hci_dev *hdev)
 	struct hci_cp_read_stored_link_key cp;
 
 	if (!(hdev->commands[6] & 0x20) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_STORED_LINK_KEY))
+	    test_bit(HCI_QUIRK_BROKEN_STORED_LINK_KEY, &hdev->quirks))
 		return 0;
 
 	memset(&cp, 0, sizeof(cp));
@@ -4247,7 +4195,7 @@ static int hci_read_def_err_data_reporting_sync(struct hci_dev *hdev)
 {
 	if (!(hdev->commands[18] & 0x04) ||
 	    !(hdev->features[0][6] & LMP_ERR_DATA_REPORTING) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_ERR_DATA_REPORTING))
+	    test_bit(HCI_QUIRK_BROKEN_ERR_DATA_REPORTING, &hdev->quirks))
 		return 0;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_READ_DEF_ERR_DATA_REPORTING,
@@ -4261,7 +4209,7 @@ static int hci_read_page_scan_type_sync(struct hci_dev *hdev)
 	 * this command in the bit mask of supported commands.
 	 */
 	if (!(hdev->commands[13] & 0x01) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_READ_PAGE_SCAN_TYPE))
+	    test_bit(HCI_QUIRK_BROKEN_READ_PAGE_SCAN_TYPE, &hdev->quirks))
 		return 0;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_READ_PAGE_SCAN_TYPE,
@@ -4345,10 +4293,6 @@ static int hci_le_set_event_mask_sync(struct hci_dev *hdev)
 	if (ll_privacy_capable(hdev))
 		hdev->conn_flags |= HCI_CONN_FLAG_ADDRESS_RESOLUTION;
 
-	/* Mark PAST if supported */
-	if (past_capable(hdev))
-		hdev->conn_flags |= HCI_CONN_FLAG_PAST;
-
 	/* If the controller supports Extended Scanner Filter
 	 * Policies, enable the corresponding event.
 	 */
@@ -4418,9 +4362,6 @@ static int hci_le_set_event_mask_sync(struct hci_dev *hdev)
 	if (ext_adv_capable(hdev))
 		events[2] |= 0x02;	/* LE Advertising Set Terminated */
 
-	if (past_receiver_capable(hdev))
-		events[2] |= 0x80;	/* LE PAST Received */
-
 	if (cis_capable(hdev)) {
 		events[3] |= 0x01;	/* LE CIS Established */
 		if (cis_peripheral_capable(hdev))
@@ -4430,7 +4371,6 @@ static int hci_le_set_event_mask_sync(struct hci_dev *hdev)
 	if (bis_capable(hdev)) {
 		events[1] |= 0x20;	/* LE PA Report */
 		events[1] |= 0x40;	/* LE PA Sync Established */
-		events[1] |= 0x80;	/* LE PA Sync Lost */
 		events[3] |= 0x04;	/* LE Create BIG Complete */
 		events[3] |= 0x08;	/* LE Terminate BIG Complete */
 		events[3] |= 0x10;	/* LE BIG Sync Established */
@@ -4438,17 +4378,6 @@ static int hci_le_set_event_mask_sync(struct hci_dev *hdev)
 		events[4] |= 0x02;	/* LE BIG Info Advertising Report */
 	}
 
-	if (le_cs_capable(hdev)) {
-		/* Channel Sounding events */
-		events[5] |= 0x08;	/* LE CS Read Remote Supported Cap Complete event */
-		events[5] |= 0x10;	/* LE CS Read Remote FAE Table Complete event */
-		events[5] |= 0x20;	/* LE CS Security Enable Complete event */
-		events[5] |= 0x40;	/* LE CS Config Complete event */
-		events[5] |= 0x80;	/* LE CS Procedure Enable Complete event */
-		events[6] |= 0x01;	/* LE CS Subevent Result event */
-		events[6] |= 0x02;	/* LE CS Subevent Result Continue event */
-		events[6] |= 0x04;	/* LE CS Test End Complete event */
-	}
 	return __hci_cmd_sync_status(hdev, HCI_OP_LE_SET_EVENT_MASK,
 				     sizeof(events), events, HCI_CMD_TIMEOUT);
 }
@@ -4475,7 +4404,7 @@ static int hci_le_read_adv_tx_power_sync(struct hci_dev *hdev)
 static int hci_le_read_tx_power_sync(struct hci_dev *hdev)
 {
 	if (!(hdev->commands[38] & 0x80) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER))
+	    test_bit(HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER, &hdev->quirks))
 		return 0;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_LE_READ_TRANSMIT_POWER,
@@ -4518,7 +4447,7 @@ static int hci_le_set_rpa_timeout_sync(struct hci_dev *hdev)
 	__le16 timeout = cpu_to_le16(hdev->rpa_timeout);
 
 	if (!(hdev->commands[35] & 0x04) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_SET_RPA_TIMEOUT))
+	    test_bit(HCI_QUIRK_BROKEN_SET_RPA_TIMEOUT, &hdev->quirks))
 		return 0;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_LE_SET_RPA_TIMEOUT,
@@ -4581,41 +4510,21 @@ static int hci_set_le_support_sync(struct hci_dev *hdev)
 }
 
 /* LE Set Host Feature */
-static int hci_le_set_host_feature_sync(struct hci_dev *hdev, u8 bit, u8 value)
+static int hci_le_set_host_feature_sync(struct hci_dev *hdev)
 {
 	struct hci_cp_le_set_host_feature cp;
+
+	if (!cis_capable(hdev))
+		return 0;
 
 	memset(&cp, 0, sizeof(cp));
 
 	/* Connected Isochronous Channels (Host Support) */
-	cp.bit_number = bit;
-	cp.bit_value = value;
+	cp.bit_number = 32;
+	cp.bit_value = 1;
 
 	return __hci_cmd_sync_status(hdev, HCI_OP_LE_SET_HOST_FEATURE,
 				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-}
-
-/* Set Host Features, each feature needs to be sent separately since
- * HCI_OP_LE_SET_HOST_FEATURE doesn't support setting all of them at once.
- */
-static int hci_le_set_host_features_sync(struct hci_dev *hdev)
-{
-	int err;
-
-	if (cis_capable(hdev)) {
-		/* Connected Isochronous Channels (Host Support) */
-		err = hci_le_set_host_feature_sync(hdev, 32,
-						   (iso_enabled(hdev) ? 0x01 :
-						    0x00));
-		if (err)
-			return err;
-	}
-
-	if (le_cs_capable(hdev))
-		/* Channel Sounding (Host Support) */
-		err = hci_le_set_host_feature_sync(hdev, 47, 0x01);
-
-	return err;
 }
 
 /* LE Controller init stage 3 command sequence */
@@ -4645,7 +4554,7 @@ static const struct hci_init_stage le_init3[] = {
 	/* HCI_OP_WRITE_LE_HOST_SUPPORTED */
 	HCI_INIT(hci_set_le_support_sync),
 	/* HCI_OP_LE_SET_HOST_FEATURE */
-	HCI_INIT(hci_le_set_host_features_sync),
+	HCI_INIT(hci_le_set_host_feature_sync),
 	{}
 };
 
@@ -4683,7 +4592,7 @@ static int hci_delete_stored_link_key_sync(struct hci_dev *hdev)
 	 * just disable this command.
 	 */
 	if (!(hdev->commands[6] & 0x80) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_STORED_LINK_KEY))
+	    test_bit(HCI_QUIRK_BROKEN_STORED_LINK_KEY, &hdev->quirks))
 		return 0;
 
 	memset(&cp, 0, sizeof(cp));
@@ -4809,7 +4718,7 @@ static int hci_set_err_data_report_sync(struct hci_dev *hdev)
 
 	if (!(hdev->commands[18] & 0x08) ||
 	    !(hdev->features[0][6] & LMP_ERR_DATA_REPORTING) ||
-	    hci_test_quirk(hdev, HCI_QUIRK_BROKEN_ERR_DATA_REPORTING))
+	    test_bit(HCI_QUIRK_BROKEN_ERR_DATA_REPORTING, &hdev->quirks))
 		return 0;
 
 	if (enabled == hdev->err_data_reporting)
@@ -5022,7 +4931,7 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
 	size_t i;
 
 	if (!hci_dev_test_flag(hdev, HCI_SETUP) &&
-	    !hci_test_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_SETUP))
+	    !test_bit(HCI_QUIRK_NON_PERSISTENT_SETUP, &hdev->quirks))
 		return 0;
 
 	bt_dev_dbg(hdev, "");
@@ -5033,7 +4942,7 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
 		ret = hdev->setup(hdev);
 
 	for (i = 0; i < ARRAY_SIZE(hci_broken_table); i++) {
-		if (hci_test_quirk(hdev, hci_broken_table[i].quirk))
+		if (test_bit(hci_broken_table[i].quirk, &hdev->quirks))
 			bt_dev_warn(hdev, "%s", hci_broken_table[i].desc);
 	}
 
@@ -5041,10 +4950,10 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
 	 * BD_ADDR invalid before creating the HCI device or in
 	 * its setup callback.
 	 */
-	invalid_bdaddr = hci_test_quirk(hdev, HCI_QUIRK_INVALID_BDADDR) ||
-			 hci_test_quirk(hdev, HCI_QUIRK_USE_BDADDR_PROPERTY);
+	invalid_bdaddr = test_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks) ||
+			 test_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hdev->quirks);
 	if (!ret) {
-		if (hci_test_quirk(hdev, HCI_QUIRK_USE_BDADDR_PROPERTY) &&
+		if (test_bit(HCI_QUIRK_USE_BDADDR_PROPERTY, &hdev->quirks) &&
 		    !bacmp(&hdev->public_addr, BDADDR_ANY))
 			hci_dev_get_bd_addr_from_property(hdev);
 
@@ -5066,7 +4975,7 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
 	 * In case any of them is set, the controller has to
 	 * start up as unconfigured.
 	 */
-	if (hci_test_quirk(hdev, HCI_QUIRK_EXTERNAL_CONFIG) ||
+	if (test_bit(HCI_QUIRK_EXTERNAL_CONFIG, &hdev->quirks) ||
 	    invalid_bdaddr)
 		hci_dev_set_flag(hdev, HCI_UNCONFIGURED);
 
@@ -5126,7 +5035,7 @@ static int hci_dev_init_sync(struct hci_dev *hdev)
 	 * then they need to be reprogrammed after the init procedure
 	 * completed.
 	 */
-	if (hci_test_quirk(hdev, HCI_QUIRK_NON_PERSISTENT_DIAG) &&
+	if (test_bit(HCI_QUIRK_NON_PERSISTENT_DIAG, &hdev->quirks) &&
 	    !hci_dev_test_flag(hdev, HCI_USER_CHANNEL) &&
 	    hci_dev_test_flag(hdev, HCI_VENDOR_DIAG) && hdev->set_diag)
 		ret = hdev->set_diag(hdev, true);
@@ -5383,7 +5292,7 @@ int hci_dev_close_sync(struct hci_dev *hdev)
 	/* Reset device */
 	skb_queue_purge(&hdev->cmd_q);
 	atomic_set(&hdev->cmd_cnt, 1);
-	if (hci_test_quirk(hdev, HCI_QUIRK_RESET_ON_CLOSE) &&
+	if (test_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks) &&
 	    !auto_off && !hci_dev_test_flag(hdev, HCI_UNCONFIGURED)) {
 		set_bit(HCI_INIT, &hdev->flags);
 		hci_reset_sync(hdev);
@@ -5567,7 +5476,7 @@ static int hci_disconnect_sync(struct hci_dev *hdev, struct hci_conn *conn,
 {
 	struct hci_cp_disconnect cp;
 
-	if (conn->type == BIS_LINK || conn->type == PA_LINK) {
+	if (test_bit(HCI_CONN_BIG_CREATED, &conn->flags)) {
 		/* This is a BIS connection, hci_conn_del will
 		 * do the necessary cleanup.
 		 */
@@ -5620,7 +5529,7 @@ static int hci_connect_cancel_sync(struct hci_dev *hdev, struct hci_conn *conn,
 	if (conn->type == LE_LINK)
 		return hci_le_connect_cancel_sync(hdev, conn, reason);
 
-	if (conn->type == CIS_LINK) {
+	if (conn->type == ISO_LINK) {
 		/* BLUETOOTH CORE SPECIFICATION Version 5.3 | Vol 4, Part E
 		 * page 1857:
 		 *
@@ -5633,10 +5542,9 @@ static int hci_connect_cancel_sync(struct hci_dev *hdev, struct hci_conn *conn,
 			return hci_disconnect_sync(hdev, conn, reason);
 
 		/* CIS with no Create CIS sent have nothing to cancel */
-		return HCI_ERROR_LOCAL_HOST_TERM;
-	}
+		if (bacmp(&conn->dst, BDADDR_ANY))
+			return HCI_ERROR_LOCAL_HOST_TERM;
 
-	if (conn->type == BIS_LINK || conn->type == PA_LINK) {
 		/* There is no way to cancel a BIS without terminating the BIG
 		 * which is done later on connection cleanup.
 		 */
@@ -5698,11 +5606,8 @@ static int hci_reject_conn_sync(struct hci_dev *hdev, struct hci_conn *conn,
 {
 	struct hci_cp_reject_conn_req cp;
 
-	if (conn->type == CIS_LINK)
+	if (conn->type == ISO_LINK)
 		return hci_le_reject_cis_sync(hdev, conn, reason);
-
-	if (conn->type == BIS_LINK || conn->type == PA_LINK)
-		return -EINVAL;
 
 	if (conn->type == SCO_LINK || conn->type == ESCO_LINK)
 		return hci_reject_sco_sync(hdev, conn, reason);
@@ -5751,7 +5656,7 @@ int hci_abort_conn_sync(struct hci_dev *hdev, struct hci_conn *conn, u8 reason)
 	}
 
 	/* Cleanup hci_conn object if it cannot be cancelled as it
-	 * likely means the controller and host stack are out of sync
+	 * likelly means the controller and host stack are out of sync
 	 * or in case of LE it was still scanning so it can be cleanup
 	 * safely.
 	 */
@@ -6033,7 +5938,7 @@ static int hci_active_scan_sync(struct hci_dev *hdev, uint16_t interval)
 		own_addr_type = ADDR_LE_DEV_PUBLIC;
 
 	if (hci_is_adv_monitoring(hdev) ||
-	    (hci_test_quirk(hdev, HCI_QUIRK_STRICT_DUPLICATE_FILTER) &&
+	    (test_bit(HCI_QUIRK_STRICT_DUPLICATE_FILTER, &hdev->quirks) &&
 	    hdev->discovery.result_filtering)) {
 		/* Duplicate filter should be disabled when some advertisement
 		 * monitor is activated, otherwise AdvMon can only receive one
@@ -6096,7 +6001,8 @@ int hci_start_discovery_sync(struct hci_dev *hdev)
 		 * and LE scanning are done sequentially with separate
 		 * timeouts.
 		 */
-		if (hci_test_quirk(hdev, HCI_QUIRK_SIMULTANEOUS_DISCOVERY)) {
+		if (test_bit(HCI_QUIRK_SIMULTANEOUS_DISCOVERY,
+			     &hdev->quirks)) {
 			timeout = msecs_to_jiffies(DISCOV_LE_TIMEOUT);
 			/* During simultaneous discovery, we double LE scan
 			 * interval. We must leave some time for the controller
@@ -6173,7 +6079,7 @@ static int hci_update_event_filter_sync(struct hci_dev *hdev)
 	/* Some fake CSR controllers lock up after setting this type of
 	 * filter, so avoid sending the request altogether.
 	 */
-	if (hci_test_quirk(hdev, HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL))
+	if (test_bit(HCI_QUIRK_BROKEN_FILTER_CLEAR_ALL, &hdev->quirks))
 		return 0;
 
 	/* Always clear event filter when starting */
@@ -6190,7 +6096,7 @@ static int hci_update_event_filter_sync(struct hci_dev *hdev)
 						 &b->bdaddr,
 						 HCI_CONN_SETUP_AUTO_ON);
 		if (err)
-			bt_dev_err(hdev, "Failed to set event filter for %pMR",
+			bt_dev_dbg(hdev, "Failed to set event filter for %pMR",
 				   &b->bdaddr);
 		else
 			scan = SCAN_PAGE;
@@ -6968,11 +6874,8 @@ static int hci_acl_create_conn_sync(struct hci_dev *hdev, void *data)
 
 int hci_connect_acl_sync(struct hci_dev *hdev, struct hci_conn *conn)
 {
-	int err;
-
-	err = hci_cmd_sync_queue_once(hdev, hci_acl_create_conn_sync, conn,
-				      NULL);
-	return (err == -EEXIST) ? 0 : err;
+	return hci_cmd_sync_queue_once(hdev, hci_acl_create_conn_sync, conn,
+				       NULL);
 }
 
 static void create_le_conn_complete(struct hci_dev *hdev, void *data, int err)
@@ -7008,11 +6911,8 @@ done:
 
 int hci_connect_le_sync(struct hci_dev *hdev, struct hci_conn *conn)
 {
-	int err;
-
-	err = hci_cmd_sync_queue_once(hdev, hci_le_create_conn_sync, conn,
-				      create_le_conn_complete);
-	return (err == -EEXIST) ? 0 : err;
+	return hci_cmd_sync_queue_once(hdev, hci_le_create_conn_sync, conn,
+				       create_le_conn_complete);
 }
 
 int hci_cancel_connect_sync(struct hci_dev *hdev, struct hci_conn *conn)
@@ -7063,14 +6963,14 @@ static void create_pa_complete(struct hci_dev *hdev, void *data, int err)
 
 	hci_dev_lock(hdev);
 
-	if (hci_conn_valid(hdev, conn))
+	if (!hci_conn_valid(hdev, conn))
 		clear_bit(HCI_CONN_CREATE_PA_SYNC, &conn->flags);
 
 	if (!err)
 		goto unlock;
 
 	/* Add connection to indicate PA sync error */
-	pa_sync = hci_conn_add_unset(hdev, PA_LINK, BDADDR_ANY, 0,
+	pa_sync = hci_conn_add_unset(hdev, ISO_LINK, BDADDR_ANY,
 				     HCI_ROLE_SLAVE);
 
 	if (IS_ERR(pa_sync))
@@ -7085,41 +6985,10 @@ unlock:
 	hci_dev_unlock(hdev);
 }
 
-static int hci_le_past_params_sync(struct hci_dev *hdev, struct hci_conn *conn,
-				   struct hci_conn *acl, struct bt_iso_qos *qos)
-{
-	struct hci_cp_le_past_params cp;
-	int err;
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = cpu_to_le16(acl->handle);
-	/* An HCI_LE_Periodic_Advertising_Sync_Transfer_Received event is sent
-	 * to the Host. HCI_LE_Periodic_Advertising_Report events will be
-	 * enabled with duplicate filtering enabled.
-	 */
-	cp.mode = 0x03;
-	cp.skip = cpu_to_le16(qos->bcast.skip);
-	cp.sync_timeout = cpu_to_le16(qos->bcast.sync_timeout);
-	cp.cte_type = qos->bcast.sync_cte_type;
-
-	/* HCI_LE_PAST_PARAMS command returns a command complete event so it
-	 * cannot wait for HCI_EV_LE_PAST_RECEIVED.
-	 */
-	err = __hci_cmd_sync_status(hdev, HCI_OP_LE_PAST_PARAMS,
-				    sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-	if (err)
-		return err;
-
-	/* Wait for HCI_EV_LE_PAST_RECEIVED event */
-	return __hci_cmd_sync_status_sk(hdev, HCI_OP_NOP, 0, NULL,
-					HCI_EV_LE_PAST_RECEIVED,
-					conn->conn_timeout, NULL);
-}
-
 static int hci_le_pa_create_sync(struct hci_dev *hdev, void *data)
 {
 	struct hci_cp_le_pa_create_sync cp;
-	struct hci_conn *conn = data, *le;
+	struct hci_conn *conn = data;
 	struct bt_iso_qos *qos = &conn->iso_qos;
 	int err;
 
@@ -7150,24 +7019,6 @@ static int hci_le_pa_create_sync(struct hci_dev *hdev, void *data)
 	set_bit(HCI_CONN_CREATE_PA_SYNC, &conn->flags);
 
 	hci_update_passive_scan_sync(hdev);
-
-	/* Check if PAST is possible:
-	 *
-	 * 1. Check if an ACL connection with the destination address exists
-	 * 2. Check if that HCI_CONN_FLAG_PAST has been set which indicates that
-	 *    user really intended to use PAST.
-	 */
-	le = hci_conn_hash_lookup_le(hdev, &conn->dst, conn->dst_type);
-	if (le) {
-		struct hci_conn_params *params;
-
-		params = hci_conn_params_lookup(hdev, &le->dst, le->dst_type);
-		if (params && params->flags & HCI_CONN_FLAG_PAST) {
-			err = hci_le_past_params_sync(hdev, conn, le, qos);
-			if (!err)
-				goto done;
-		}
-	}
 
 	/* SID has not been set listen for HCI_EV_LE_EXT_ADV_REPORT to update
 	 * it.
@@ -7219,11 +7070,8 @@ done:
 
 int hci_connect_pa_sync(struct hci_dev *hdev, struct hci_conn *conn)
 {
-	int err;
-
-	err = hci_cmd_sync_queue_once(hdev, hci_le_pa_create_sync, conn,
-				      create_pa_complete);
-	return (err == -EEXIST) ? 0 : err;
+	return hci_cmd_sync_queue_once(hdev, hci_le_pa_create_sync, conn,
+				       create_pa_complete);
 }
 
 static void create_big_complete(struct hci_dev *hdev, void *data, int err)
@@ -7286,273 +7134,6 @@ static int hci_le_big_create_sync(struct hci_dev *hdev, void *data)
 
 int hci_connect_big_sync(struct hci_dev *hdev, struct hci_conn *conn)
 {
-	int err;
-
-	err = hci_cmd_sync_queue_once(hdev, hci_le_big_create_sync, conn,
-				      create_big_complete);
-	return (err == -EEXIST) ? 0 : err;
-}
-
-struct past_data {
-	struct hci_conn *conn;
-	struct hci_conn *le;
-};
-
-static void past_complete(struct hci_dev *hdev, void *data, int err)
-{
-	struct past_data *past = data;
-
-	bt_dev_dbg(hdev, "err %d", err);
-
-	kfree(past);
-}
-
-static int hci_le_past_set_info_sync(struct hci_dev *hdev, void *data)
-{
-	struct past_data *past = data;
-	struct hci_cp_le_past_set_info cp;
-
-	hci_dev_lock(hdev);
-
-	if (!hci_conn_valid(hdev, past->conn) ||
-	    !hci_conn_valid(hdev, past->le)) {
-		hci_dev_unlock(hdev);
-		return -ECANCELED;
-	}
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = cpu_to_le16(past->le->handle);
-	cp.adv_handle = past->conn->iso_qos.bcast.bis;
-
-	hci_dev_unlock(hdev);
-
-	return __hci_cmd_sync_status(hdev, HCI_OP_LE_PAST_SET_INFO,
-				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-}
-
-static int hci_le_past_sync(struct hci_dev *hdev, void *data)
-{
-	struct past_data *past = data;
-	struct hci_cp_le_past cp;
-
-	hci_dev_lock(hdev);
-
-	if (!hci_conn_valid(hdev, past->conn) ||
-	    !hci_conn_valid(hdev, past->le)) {
-		hci_dev_unlock(hdev);
-		return -ECANCELED;
-	}
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = cpu_to_le16(past->le->handle);
-	cp.sync_handle = cpu_to_le16(past->conn->sync_handle);
-
-	hci_dev_unlock(hdev);
-
-	return __hci_cmd_sync_status(hdev, HCI_OP_LE_PAST,
-				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-}
-
-int hci_past_sync(struct hci_conn *conn, struct hci_conn *le)
-{
-	struct past_data *data;
-	int err;
-
-	if (conn->type != BIS_LINK && conn->type != PA_LINK)
-		return -EINVAL;
-
-	if (!past_sender_capable(conn->hdev))
-		return -EOPNOTSUPP;
-
-	data = kmalloc_obj(*data);
-	if (!data)
-		return -ENOMEM;
-
-	data->conn = conn;
-	data->le = le;
-
-	if (conn->role == HCI_ROLE_MASTER)
-		err = hci_cmd_sync_queue_once(conn->hdev,
-					      hci_le_past_set_info_sync, data,
-					      past_complete);
-	else
-		err = hci_cmd_sync_queue_once(conn->hdev, hci_le_past_sync,
-					      data, past_complete);
-
-	if (err)
-		kfree(data);
-
-	return (err == -EEXIST) ? 0 : err;
-}
-
-static void le_read_features_complete(struct hci_dev *hdev, void *data, int err)
-{
-	struct hci_conn *conn = data;
-
-	bt_dev_dbg(hdev, "err %d", err);
-
-	hci_conn_drop(conn);
-	hci_conn_put(conn);
-}
-
-static int hci_le_read_all_remote_features_sync(struct hci_dev *hdev,
-						void *data)
-{
-	struct hci_conn *conn = data;
-	struct hci_cp_le_read_all_remote_features cp;
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = cpu_to_le16(conn->handle);
-	cp.pages = 10; /* Attempt to read all pages */
-
-	/* Wait for HCI_EVT_LE_ALL_REMOTE_FEATURES_COMPLETE event otherwise
-	 * hci_conn_drop may run prematurely causing a disconnection.
-	 */
-	return __hci_cmd_sync_status_sk(hdev,
-					HCI_OP_LE_READ_ALL_REMOTE_FEATURES,
-					sizeof(cp), &cp,
-					HCI_EVT_LE_ALL_REMOTE_FEATURES_COMPLETE,
-					HCI_CMD_TIMEOUT, NULL);
-
-	return __hci_cmd_sync_status(hdev, HCI_OP_LE_READ_ALL_REMOTE_FEATURES,
-				     sizeof(cp), &cp, HCI_CMD_TIMEOUT);
-}
-
-static int hci_le_read_remote_features_sync(struct hci_dev *hdev, void *data)
-{
-	struct hci_conn *conn = data;
-	struct hci_cp_le_read_remote_features cp;
-
-	if (!hci_conn_valid(hdev, conn))
-		return -ECANCELED;
-
-	/* Check if LL Extended Feature Set is supported and
-	 * HCI_OP_LE_READ_ALL_REMOTE_FEATURES is supported then use that to read
-	 * all features.
-	 */
-	if (ll_ext_feature_capable(hdev) && hdev->commands[47] & BIT(3))
-		return hci_le_read_all_remote_features_sync(hdev, data);
-
-	memset(&cp, 0, sizeof(cp));
-	cp.handle = cpu_to_le16(conn->handle);
-
-	/* Wait for HCI_EV_LE_REMOTE_FEAT_COMPLETE event otherwise
-	 * hci_conn_drop may run prematurely causing a disconnection.
-	 */
-	return __hci_cmd_sync_status_sk(hdev, HCI_OP_LE_READ_REMOTE_FEATURES,
-					sizeof(cp), &cp,
-					HCI_EV_LE_REMOTE_FEAT_COMPLETE,
-					HCI_CMD_TIMEOUT, NULL);
-}
-
-int hci_le_read_remote_features(struct hci_conn *conn)
-{
-	struct hci_dev *hdev = conn->hdev;
-	int err;
-
-	/* The remote features procedure is defined for central
-	 * role only. So only in case of an initiated connection
-	 * request the remote features.
-	 *
-	 * If the local controller supports peripheral-initiated features
-	 * exchange, then requesting the remote features in peripheral
-	 * role is possible. Otherwise just transition into the
-	 * connected state without requesting the remote features.
-	 */
-	if (conn->out || (hdev->le_features[0] & HCI_LE_PERIPHERAL_FEATURES)) {
-		err = hci_cmd_sync_queue_once(hdev,
-					      hci_le_read_remote_features_sync,
-					      hci_conn_hold(hci_conn_get(conn)),
-					      le_read_features_complete);
-		if (err) {
-			hci_conn_drop(conn);
-			hci_conn_put(conn);
-		}
-	} else {
-		err = -EOPNOTSUPP;
-	}
-
-	return (err == -EEXIST) ? 0 : err;
-}
-
-static void pkt_type_changed(struct hci_dev *hdev, void *data, int err)
-{
-	struct hci_cp_change_conn_ptype *cp = data;
-
-	bt_dev_dbg(hdev, "err %d", err);
-
-	kfree(cp);
-}
-
-static int hci_change_conn_ptype_sync(struct hci_dev *hdev, void *data)
-{
-	struct hci_cp_change_conn_ptype *cp = data;
-
-	return __hci_cmd_sync_status_sk(hdev, HCI_OP_CHANGE_CONN_PTYPE,
-					sizeof(*cp), cp,
-					HCI_EV_PKT_TYPE_CHANGE,
-					HCI_CMD_TIMEOUT, NULL);
-}
-
-int hci_acl_change_pkt_type(struct hci_conn *conn, u16 pkt_type)
-{
-	struct hci_dev *hdev = conn->hdev;
-	struct hci_cp_change_conn_ptype *cp;
-	int err;
-
-	cp = kmalloc_obj(*cp);
-	if (!cp)
-		return -ENOMEM;
-
-	cp->handle = cpu_to_le16(conn->handle);
-	cp->pkt_type = cpu_to_le16(pkt_type);
-
-	err = hci_cmd_sync_queue_once(hdev, hci_change_conn_ptype_sync, cp,
-				      pkt_type_changed);
-	if (err)
-		kfree(cp);
-
-	return (err == -EEXIST) ? 0 : err;
-}
-
-static void le_phy_update_complete(struct hci_dev *hdev, void *data, int err)
-{
-	struct hci_cp_le_set_phy *cp = data;
-
-	bt_dev_dbg(hdev, "err %d", err);
-
-	kfree(cp);
-}
-
-static int hci_le_set_phy_sync(struct hci_dev *hdev, void *data)
-{
-	struct hci_cp_le_set_phy *cp = data;
-
-	return __hci_cmd_sync_status_sk(hdev, HCI_OP_LE_SET_PHY,
-					sizeof(*cp), cp,
-					HCI_EV_LE_PHY_UPDATE_COMPLETE,
-					HCI_CMD_TIMEOUT, NULL);
-}
-
-int hci_le_set_phy(struct hci_conn *conn, u8 tx_phys, u8 rx_phys)
-{
-	struct hci_dev *hdev = conn->hdev;
-	struct hci_cp_le_set_phy *cp;
-	int err;
-
-	cp = kmalloc_obj(*cp);
-	if (!cp)
-		return -ENOMEM;
-
-	memset(cp, 0, sizeof(*cp));
-	cp->handle = cpu_to_le16(conn->handle);
-	cp->tx_phys = tx_phys;
-	cp->rx_phys = rx_phys;
-
-	err = hci_cmd_sync_queue_once(hdev, hci_le_set_phy_sync, cp,
-				      le_phy_update_complete);
-	if (err)
-		kfree(cp);
-
-	return (err == -EEXIST) ? 0 : err;
+	return hci_cmd_sync_queue_once(hdev, hci_le_big_create_sync, conn,
+				       create_big_complete);
 }

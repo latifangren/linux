@@ -8,13 +8,13 @@
  * Michal Simek <michal.simek@amd.com>
  */
 
-#include "xlnx-zynqmp-clk.h"
+#include <dt-bindings/clock/xlnx-zynqmp-clk.h>
 / {
 	pss_ref_clk: pss-ref-clk {
 		bootph-all;
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
-		clock-frequency = <33333000>;
+		clock-frequency = <33333333>;
 		clock-output-names = "pss_ref_clk";
 	};
 

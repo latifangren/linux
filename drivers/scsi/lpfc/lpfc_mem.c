@@ -118,7 +118,9 @@ lpfc_mem_alloc(struct lpfc_hba *phba, int align)
 	if (!phba->lpfc_mbuf_pool)
 		goto fail;
 
-	pool->elements = kmalloc_objs(struct lpfc_dmabuf, LPFC_MBUF_POOL_SIZE);
+	pool->elements = kmalloc_array(LPFC_MBUF_POOL_SIZE,
+				       sizeof(struct lpfc_dmabuf),
+				       GFP_KERNEL);
 	if (!pool->elements)
 		goto fail_free_lpfc_mbuf_pool;
 
@@ -509,7 +511,7 @@ lpfc_els_hbq_alloc(struct lpfc_hba *phba)
 {
 	struct hbq_dmabuf *hbqbp;
 
-	hbqbp = kzalloc_obj(struct hbq_dmabuf);
+	hbqbp = kzalloc(sizeof(struct hbq_dmabuf), GFP_KERNEL);
 	if (!hbqbp)
 		return NULL;
 
@@ -561,7 +563,7 @@ lpfc_sli4_rb_alloc(struct lpfc_hba *phba)
 {
 	struct hbq_dmabuf *dma_buf;
 
-	dma_buf = kzalloc_obj(struct hbq_dmabuf);
+	dma_buf = kzalloc(sizeof(struct hbq_dmabuf), GFP_KERNEL);
 	if (!dma_buf)
 		return NULL;
 
@@ -619,7 +621,7 @@ lpfc_sli4_nvmet_alloc(struct lpfc_hba *phba)
 {
 	struct rqb_dmabuf *dma_buf;
 
-	dma_buf = kzalloc_obj(*dma_buf);
+	dma_buf = kzalloc(sizeof(*dma_buf), GFP_KERNEL);
 	if (!dma_buf)
 		return NULL;
 

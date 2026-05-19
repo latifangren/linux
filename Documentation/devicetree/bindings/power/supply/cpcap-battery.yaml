@@ -55,7 +55,6 @@ properties:
       - const: chg_isense
       - const: batti
 
-  monitored-battery: true
   power-supplies: true
 
 required:

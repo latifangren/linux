@@ -229,7 +229,8 @@ static int starfive_hash_one_request(struct crypto_engine *engine, void *areq)
 	for_each_sg(rctx->in_sg, tsg, rctx->in_sg_len, i) {
 		src_nents = dma_map_sg(cryp->dev, tsg, 1, DMA_TO_DEVICE);
 		if (src_nents == 0)
-			return -ENOMEM;
+			return dev_err_probe(cryp->dev, -ENOMEM,
+					     "dma_map_sg error\n");
 
 		ret = starfive_hash_dma_xfer(cryp, tsg);
 		dma_unmap_sg(cryp->dev, tsg, 1, DMA_TO_DEVICE);
@@ -496,61 +497,61 @@ static int starfive_hash_setkey(struct crypto_ahash *hash,
 
 static int starfive_sha224_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "sha224-lib",
+	return starfive_hash_init_tfm(hash, "sha224-generic",
 				      STARFIVE_HASH_SHA224, 0);
 }
 
 static int starfive_sha256_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "sha256-lib",
+	return starfive_hash_init_tfm(hash, "sha256-generic",
 				      STARFIVE_HASH_SHA256, 0);
 }
 
 static int starfive_sha384_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "sha384-lib",
+	return starfive_hash_init_tfm(hash, "sha384-generic",
 				      STARFIVE_HASH_SHA384, 0);
 }
 
 static int starfive_sha512_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "sha512-lib",
+	return starfive_hash_init_tfm(hash, "sha512-generic",
 				      STARFIVE_HASH_SHA512, 0);
 }
 
 static int starfive_sm3_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "sm3-lib",
+	return starfive_hash_init_tfm(hash, "sm3-generic",
 				      STARFIVE_HASH_SM3, 0);
 }
 
 static int starfive_hmac_sha224_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "hmac-sha224-lib",
+	return starfive_hash_init_tfm(hash, "hmac(sha224-generic)",
 				      STARFIVE_HASH_SHA224, 1);
 }
 
 static int starfive_hmac_sha256_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "hmac-sha256-lib",
+	return starfive_hash_init_tfm(hash, "hmac(sha256-generic)",
 				      STARFIVE_HASH_SHA256, 1);
 }
 
 static int starfive_hmac_sha384_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "hmac-sha384-lib",
+	return starfive_hash_init_tfm(hash, "hmac(sha384-generic)",
 				      STARFIVE_HASH_SHA384, 1);
 }
 
 static int starfive_hmac_sha512_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "hmac-sha512-lib",
+	return starfive_hash_init_tfm(hash, "hmac(sha512-generic)",
 				      STARFIVE_HASH_SHA512, 1);
 }
 
 static int starfive_hmac_sm3_init_tfm(struct crypto_ahash *hash)
 {
-	return starfive_hash_init_tfm(hash, "hmac(sm3-lib)",
+	return starfive_hash_init_tfm(hash, "hmac(sm3-generic)",
 				      STARFIVE_HASH_SM3, 1);
 }
 
@@ -795,7 +796,7 @@ static struct ahash_engine_alg algs_sha2_sm3[] = {
 	.base.exit_tfm = starfive_hash_exit_tfm,
 	.base.halg = {
 		.digestsize = SM3_DIGEST_SIZE,
-		.statesize  = sizeof(struct sm3_ctx),
+		.statesize  = sizeof(struct sm3_state),
 		.base = {
 			.cra_name		= "sm3",
 			.cra_driver_name	= "sm3-starfive",
@@ -824,7 +825,7 @@ static struct ahash_engine_alg algs_sha2_sm3[] = {
 	.base.setkey	  = starfive_hash_setkey,
 	.base.halg = {
 		.digestsize = SM3_DIGEST_SIZE,
-		.statesize  = sizeof(struct sm3_ctx),
+		.statesize  = sizeof(struct sm3_state),
 		.base = {
 			.cra_name		= "hmac(sm3)",
 			.cra_driver_name	= "sm3-hmac-starfive",

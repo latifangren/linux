@@ -53,6 +53,5 @@
 #define ASPEED_RESET_AHB		8
 #define ASPEED_RESET_CRT1		9
 #define ASPEED_RESET_HACE		10
-#define ASPEED_RESET_VIDEO		11
 
 #endif

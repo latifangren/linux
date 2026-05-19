@@ -922,7 +922,7 @@ static struct rpmsg_endpoint *qcom_smd_create_ept(struct rpmsg_device *rpdev,
 		return NULL;
 	}
 
-	qsept = kzalloc_obj(*qsept);
+	qsept = kzalloc(sizeof(*qsept), GFP_KERNEL);
 	if (!qsept)
 		return NULL;
 
@@ -960,30 +960,28 @@ static void qcom_smd_destroy_ept(struct rpmsg_endpoint *ept)
 	kref_put(&ept->refcount, __ept_release);
 }
 
-static int qcom_smd_send(struct rpmsg_endpoint *ept, const void *data, int len)
+static int qcom_smd_send(struct rpmsg_endpoint *ept, void *data, int len)
 {
 	struct qcom_smd_endpoint *qsept = to_smd_endpoint(ept);
 
 	return __qcom_smd_send(qsept->qsch, data, len, true);
 }
 
-static int qcom_smd_trysend(struct rpmsg_endpoint *ept, const void *data, int len)
+static int qcom_smd_trysend(struct rpmsg_endpoint *ept, void *data, int len)
 {
 	struct qcom_smd_endpoint *qsept = to_smd_endpoint(ept);
 
 	return __qcom_smd_send(qsept->qsch, data, len, false);
 }
 
-static int qcom_smd_sendto(struct rpmsg_endpoint *ept, const void *data, int len,
-			   u32 dst)
+static int qcom_smd_sendto(struct rpmsg_endpoint *ept, void *data, int len, u32 dst)
 {
 	struct qcom_smd_endpoint *qsept = to_smd_endpoint(ept);
 
 	return __qcom_smd_send(qsept->qsch, data, len, true);
 }
 
-static int qcom_smd_trysendto(struct rpmsg_endpoint *ept, const void *data,
-			      int len, u32 dst)
+static int qcom_smd_trysendto(struct rpmsg_endpoint *ept, void *data, int len, u32 dst)
 {
 	struct qcom_smd_endpoint *qsept = to_smd_endpoint(ept);
 
@@ -1079,7 +1077,7 @@ static int qcom_smd_create_device(struct qcom_smd_channel *channel)
 
 	dev_dbg(&edge->dev, "registering '%s'\n", channel->name);
 
-	qsdev = kzalloc_obj(*qsdev);
+	qsdev = kzalloc(sizeof(*qsdev), GFP_KERNEL);
 	if (!qsdev)
 		return -ENOMEM;
 
@@ -1091,7 +1089,7 @@ static int qcom_smd_create_device(struct qcom_smd_channel *channel)
 
 	/* Assign public information to the rpmsg_device */
 	rpdev = &qsdev->rpdev;
-	strscpy(rpdev->id.name, channel->name);
+	strscpy_pad(rpdev->id.name, channel->name, RPMSG_NAME_SIZE);
 	rpdev->src = RPMSG_ADDR_ANY;
 	rpdev->dst = RPMSG_ADDR_ANY;
 
@@ -1106,7 +1104,7 @@ static int qcom_smd_create_chrdev(struct qcom_smd_edge *edge)
 {
 	struct qcom_smd_device *qsdev;
 
-	qsdev = kzalloc_obj(*qsdev);
+	qsdev = kzalloc(sizeof(*qsdev), GFP_KERNEL);
 	if (!qsdev)
 		return -ENOMEM;
 
@@ -1134,7 +1132,7 @@ static struct qcom_smd_channel *qcom_smd_create_channel(struct qcom_smd_edge *ed
 	void *info;
 	int ret;
 
-	channel = kzalloc_obj(*channel);
+	channel = kzalloc(sizeof(*channel), GFP_KERNEL);
 	if (!channel)
 		return ERR_PTR(-ENOMEM);
 
@@ -1370,9 +1368,8 @@ static int qcom_smd_parse_edge(struct device *dev,
 	edge->mbox_client.knows_txdone = true;
 	edge->mbox_chan = mbox_request_channel(&edge->mbox_client, 0);
 	if (IS_ERR(edge->mbox_chan)) {
-		if (PTR_ERR(edge->mbox_chan) != -ENOENT) {
-			ret = dev_err_probe(dev, PTR_ERR(edge->mbox_chan),
-					    "failed to acquire IPC mailbox\n");
+		if (PTR_ERR(edge->mbox_chan) != -ENODEV) {
+			ret = PTR_ERR(edge->mbox_chan);
 			goto put_node;
 		}
 
@@ -1389,7 +1386,6 @@ static int qcom_smd_parse_edge(struct device *dev,
 		of_node_put(syscon_np);
 		if (IS_ERR(edge->ipc_regmap)) {
 			ret = PTR_ERR(edge->ipc_regmap);
-			dev_err(dev, "failed to get regmap from syscon: %d\n", ret);
 			goto put_node;
 		}
 
@@ -1486,7 +1482,7 @@ struct qcom_smd_edge *qcom_smd_register_edge(struct device *parent,
 	if (!qcom_smem_is_available())
 		return ERR_PTR(-EPROBE_DEFER);
 
-	edge = kzalloc_obj(*edge);
+	edge = kzalloc(sizeof(*edge), GFP_KERNEL);
 	if (!edge)
 		return ERR_PTR(-ENOMEM);
 
@@ -1505,8 +1501,10 @@ struct qcom_smd_edge *qcom_smd_register_edge(struct device *parent,
 	}
 
 	ret = qcom_smd_parse_edge(&edge->dev, node, edge);
-	if (ret)
+	if (ret) {
+		dev_err(&edge->dev, "failed to parse smd edge\n");
 		goto unregister_dev;
+	}
 
 	ret = qcom_smd_create_chrdev(edge);
 	if (ret) {
@@ -1598,7 +1596,7 @@ MODULE_DEVICE_TABLE(of, qcom_smd_of_match);
 
 static struct platform_driver qcom_smd_driver = {
 	.probe = qcom_smd_probe,
-	.remove = qcom_smd_remove,
+	.remove_new = qcom_smd_remove,
 	.driver = {
 		.name = "qcom-smd",
 		.of_match_table = qcom_smd_of_match,

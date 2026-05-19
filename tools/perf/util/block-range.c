@@ -4,7 +4,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-static struct {
+struct {
 	struct rb_root root;
 	u64 blocks;
 } block_ranges;

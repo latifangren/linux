@@ -39,6 +39,7 @@ static unsigned char led_type;		/* bitmask of LED_HAS_XXX */
 static unsigned char lastleds;		/* LED state from most recent update */
 static unsigned char lcd_new_text;
 static unsigned char lcd_text[20];
+static unsigned char lcd_text_default[20];
 static unsigned char lcd_no_led_support; /* KittyHawk doesn't support LED on its LCD */
 
 struct lcd_block {
@@ -368,7 +369,7 @@ MODULE_ALIAS("platform:platform-leds");
 
 static struct platform_driver hppa_mainboard_led_driver = {
 	.probe		= platform_led_probe,
-	.remove		= platform_led_remove,
+	.remove_new	= platform_led_remove,
 	.driver		= {
 		.name	= "platform-leds",
 	},
@@ -455,8 +456,9 @@ static int __init early_led_init(void)
 	struct pdc_chassis_info chassis_info;
 	int ret;
 
-	scnprintf(lcd_text, sizeof(lcd_text),
+	snprintf(lcd_text_default, sizeof(lcd_text_default),
 		"Linux %s", init_utsname()->release);
+	strcpy(lcd_text, lcd_text_default);
 	lcd_new_text = 1;
 
 	/* Work around the buggy PDC of KittyHawk-machines */
@@ -543,10 +545,8 @@ static void __init register_led_regions(void)
 
 static int __init startup_leds(void)
 {
-	if (platform_device_register(&platform_leds)) {
-		pr_info("LED: failed to register LEDs\n");
-		platform_device_put(&platform_leds);
-	}
+	if (platform_device_register(&platform_leds))
+                printk(KERN_INFO "LED: failed to register LEDs\n");
 	register_led_regions();
 	return 0;
 }

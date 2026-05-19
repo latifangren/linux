@@ -23,7 +23,7 @@ MODULE_DEVICE_TABLE(pci, pdsc_id_table);
 
 static void pdsc_wdtimer_cb(struct timer_list *t)
 {
-	struct pdsc *pdsc = timer_container_of(pdsc, t, wdtimer);
+	struct pdsc *pdsc = from_timer(pdsc, t, wdtimer);
 
 	dev_dbg(pdsc->dev, "%s: jiffies %ld\n", __func__, jiffies);
 	mod_timer(&pdsc->wdtimer,
@@ -146,7 +146,8 @@ static int pdsc_sriov_configure(struct pci_dev *pdev, int num_vfs)
 	int ret = 0;
 
 	if (num_vfs > 0) {
-		pdsc->vfs = kzalloc_objs(struct pdsc_vf, num_vfs);
+		pdsc->vfs = kcalloc(num_vfs, sizeof(struct pdsc_vf),
+				    GFP_KERNEL);
 		if (!pdsc->vfs)
 			return -ENOMEM;
 		pdsc->num_vfs = num_vfs;
@@ -264,10 +265,6 @@ static int pdsc_init_pf(struct pdsc *pdsc)
 
 	mutex_unlock(&pdsc->config_lock);
 
-	err = pdsc_auxbus_dev_add(pdsc, pdsc, PDS_DEV_TYPE_FWCTL, &pdsc->padev);
-	if (err)
-		goto err_out_stop;
-
 	dl = priv_to_devlink(pdsc);
 	devl_lock(dl);
 	err = devl_params_register(dl, pdsc_dl_params,
@@ -276,10 +273,10 @@ static int pdsc_init_pf(struct pdsc *pdsc)
 		devl_unlock(dl);
 		dev_warn(pdsc->dev, "Failed to register devlink params: %pe\n",
 			 ERR_PTR(err));
-		goto err_out_del_dev;
+		goto err_out_stop;
 	}
 
-	hr = devl_health_reporter_create(dl, &pdsc_fw_reporter_ops, pdsc);
+	hr = devl_health_reporter_create(dl, &pdsc_fw_reporter_ops, 0, pdsc);
 	if (IS_ERR(hr)) {
 		devl_unlock(dl);
 		dev_warn(pdsc->dev, "Failed to create fw reporter: %pe\n", hr);
@@ -299,8 +296,6 @@ static int pdsc_init_pf(struct pdsc *pdsc)
 err_out_unreg_params:
 	devlink_params_unregister(dl, pdsc_dl_params,
 				  ARRAY_SIZE(pdsc_dl_params));
-err_out_del_dev:
-	pdsc_auxbus_dev_del(pdsc, pdsc, &pdsc->padev);
 err_out_stop:
 	pdsc_stop(pdsc);
 err_out_teardown:
@@ -432,7 +427,6 @@ static void pdsc_remove(struct pci_dev *pdev)
 		 * shut themselves down.
 		 */
 		pdsc_sriov_configure(pdev, 0);
-		pdsc_auxbus_dev_del(pdsc, pdsc, &pdsc->padev);
 
 		timer_shutdown_sync(&pdsc->wdtimer);
 		if (pdsc->wq)
@@ -491,8 +485,6 @@ static void pdsc_reset_prepare(struct pci_dev *pdev)
 		if (!IS_ERR(pf))
 			pdsc_auxbus_dev_del(pdsc, pf,
 					    &pf->vfs[pdsc->vf_id].padev);
-	} else {
-		pdsc_auxbus_dev_del(pdsc, pdsc, &pdsc->padev);
 	}
 
 	pdsc_unmap_bars(pdsc);
@@ -539,9 +531,6 @@ static void pdsc_reset_done(struct pci_dev *pdev)
 		if (!IS_ERR(pf))
 			pdsc_auxbus_dev_add(pdsc, pf, PDS_DEV_TYPE_VDPA,
 					    &pf->vfs[pdsc->vf_id].padev);
-	} else {
-		pdsc_auxbus_dev_add(pdsc, pdsc, PDS_DEV_TYPE_FWCTL,
-				    &pdsc->padev);
 	}
 }
 

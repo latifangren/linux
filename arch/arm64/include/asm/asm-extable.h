@@ -9,8 +9,7 @@
 #define EX_TYPE_BPF			1
 #define EX_TYPE_UACCESS_ERR_ZERO	2
 #define EX_TYPE_KACCESS_ERR_ZERO	3
-#define EX_TYPE_UACCESS_CPY		4
-#define EX_TYPE_LOAD_UNALIGNED_ZEROPAD	5
+#define EX_TYPE_LOAD_UNALIGNED_ZEROPAD	4
 
 /* Data fields for EX_TYPE_UACCESS_ERR_ZERO */
 #define EX_DATA_REG_ERR_SHIFT	0
@@ -24,10 +23,7 @@
 #define EX_DATA_REG_ADDR_SHIFT	5
 #define EX_DATA_REG_ADDR	GENMASK(9, 5)
 
-/* Data fields for EX_TYPE_UACCESS_CPY */
-#define EX_DATA_UACCESS_WRITE	BIT(0)
-
-#ifdef __ASSEMBLER__
+#ifdef __ASSEMBLY__
 
 #define __ASM_EXTABLE_RAW(insn, fixup, type, data)	\
 	.pushsection	__ex_table, "a";		\
@@ -73,11 +69,7 @@
 	.endif
 	.endm
 
-	.macro		_asm_extable_uaccess_cpy, insn, fixup, uaccess_is_write
-	__ASM_EXTABLE_RAW(\insn, \fixup, EX_TYPE_UACCESS_CPY, \uaccess_is_write)
-	.endm
-
-#else /* __ASSEMBLER__ */
+#else /* __ASSEMBLY__ */
 
 #include <linux/stringify.h>
 
@@ -132,6 +124,6 @@
 			    EX_DATA_REG(ADDR, addr)				\
 			  ")")
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 
 #endif /* __ASM_ASM_EXTABLE_H */

@@ -511,8 +511,10 @@ static int iproc_adc_probe(struct platform_device *pdev)
 
 	indio_dev = devm_iio_device_alloc(&pdev->dev,
 					sizeof(*adc_priv));
-	if (!indio_dev)
+	if (!indio_dev) {
+		dev_err(&pdev->dev, "failed to allocate iio device\n");
 		return -ENOMEM;
+	}
 
 	adc_priv = iio_priv(indio_dev);
 	platform_set_drvdata(pdev, indio_dev);

@@ -4,7 +4,6 @@
  * Copyright (c) 2011 Unixphere
  */
 
-#include <linux/export.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/irq.h>
@@ -78,7 +77,7 @@ int rmi_register_transport_device(struct rmi_transport_dev *xport)
 	struct rmi_device *rmi_dev;
 	int error;
 
-	rmi_dev = kzalloc_obj(struct rmi_device);
+	rmi_dev = kzalloc(sizeof(struct rmi_device), GFP_KERNEL);
 	if (!rmi_dev)
 		return -ENOMEM;
 
@@ -360,12 +359,6 @@ static struct rmi_function_handler *fn_handlers[] = {
 #endif
 #ifdef CONFIG_RMI4_F12
 	&rmi_f12_handler,
-#endif
-#ifdef CONFIG_RMI4_F1A
-	&rmi_f1a_handler,
-#endif
-#ifdef CONFIG_RMI4_F21
-	&rmi_f21_handler,
 #endif
 #ifdef CONFIG_RMI4_F30
 	&rmi_f30_handler,

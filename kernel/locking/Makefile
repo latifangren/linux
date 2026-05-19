@@ -3,15 +3,9 @@
 # and is generally not a function of system call inputs.
 KCOV_INSTRUMENT		:= n
 
-CONTEXT_ANALYSIS_mutex.o := y
-CONTEXT_ANALYSIS_rtmutex_api.o := y
-CONTEXT_ANALYSIS_ww_rt_mutex.o := y
-CONTEXT_ANALYSIS_rwsem.o := y
-
 obj-y += mutex.o semaphore.o rwsem.o percpu-rwsem.o
 
-# Avoid recursion lockdep -> sanitizer -> ... -> lockdep & improve performance.
-KASAN_SANITIZE_lockdep.o := n
+# Avoid recursion lockdep -> sanitizer -> ... -> lockdep.
 KCSAN_SANITIZE_lockdep.o := n
 
 ifdef CONFIG_FUNCTION_TRACER

@@ -53,7 +53,7 @@ int karma_partition(struct parsed_partitions *state)
 		}
 		slot++;
 	}
-	seq_buf_puts(&state->pp_buf, "\n");
+	strlcat(state->pp_buf, "\n", PAGE_SIZE);
 	put_dev_sector(sect);
 	return 1;
 }

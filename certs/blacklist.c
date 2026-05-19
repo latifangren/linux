@@ -13,7 +13,6 @@
 #include <linux/sched.h>
 #include <linux/ctype.h>
 #include <linux/err.h>
-#include <linux/hex.h>
 #include <linux/seq_file.h>
 #include <linux/uidgid.h>
 #include <keys/asymmetric-type.h>
@@ -328,7 +327,7 @@ static int __init blacklist_init(void)
 	if (register_key_type(&key_type_blacklist) < 0)
 		panic("Can't allocate system blacklist key type\n");
 
-	restriction = kzalloc_obj(*restriction);
+	restriction = kzalloc(sizeof(*restriction), GFP_KERNEL);
 	if (!restriction)
 		panic("Can't allocate blacklist keyring restriction\n");
 	restriction->check = restrict_link_for_blacklist;

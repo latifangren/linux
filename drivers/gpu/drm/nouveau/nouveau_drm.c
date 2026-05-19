@@ -22,7 +22,6 @@
  * Authors: Ben Skeggs
  */
 
-#include <linux/aperture.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -30,9 +29,9 @@
 #include <linux/vga_switcheroo.h>
 #include <linux/mmu_notifier.h>
 #include <linux/dynamic_debug.h>
-#include <linux/debugfs.h>
 
-#include <drm/clients/drm_client_setup.h>
+#include <drm/drm_aperture.h>
+#include <drm/drm_client_setup.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fbdev_ttm.h>
 #include <drm/drm_gem_ttm_helper.h>
@@ -48,7 +47,6 @@
 #include <nvif/fifo.h>
 #include <nvif/push006c.h>
 #include <nvif/user.h>
-#include <nvif/log.h>
 
 #include <nvif/class.h>
 #include <nvif/cl0002.h>
@@ -115,20 +113,6 @@ static struct drm_driver driver_stub;
 static struct drm_driver driver_pci;
 static struct drm_driver driver_platform;
 
-#ifdef CONFIG_DEBUG_FS
-struct dentry *nouveau_debugfs_root;
-
-/*
- * gsp_logs - list of nvif_log GSP-RM logging buffers
- *
- * Head pointer to a a list of nvif_log buffers that is created for each GPU
- * upon GSP shutdown if the "keep_gsp_logging" command-line parameter is
- * specified. This is used to track the alternative debugfs entries for the
- * GSP-RM logs.
- */
-NVIF_LOGS_DECLARE(gsp_logs);
-#endif
-
 static u64
 nouveau_pci_name(struct pci_dev *pdev)
 {
@@ -156,13 +140,12 @@ nouveau_name(struct drm_device *dev)
 static inline bool
 nouveau_cli_work_ready(struct dma_fence *fence)
 {
-	unsigned long flags;
 	bool ret = true;
 
-	dma_fence_lock_irqsave(fence, flags);
+	spin_lock_irq(fence->lock);
 	if (!dma_fence_is_signaled_locked(fence))
 		ret = false;
-	dma_fence_unlock_irqrestore(fence, flags);
+	spin_unlock_irq(fence->lock);
 
 	if (ret == true)
 		dma_fence_put(fence);
@@ -504,16 +487,11 @@ nouveau_accel_init(struct nouveau_drm *drm)
 		case KEPLER_CHANNEL_GPFIFO_B:
 		case MAXWELL_CHANNEL_GPFIFO_A:
 		case PASCAL_CHANNEL_GPFIFO_A:
-			ret = nvc0_fence_create(drm);
-			break;
 		case VOLTA_CHANNEL_GPFIFO_A:
 		case TURING_CHANNEL_GPFIFO_A:
 		case AMPERE_CHANNEL_GPFIFO_A:
 		case AMPERE_CHANNEL_GPFIFO_B:
-		case HOPPER_CHANNEL_GPFIFO_A:
-		case BLACKWELL_CHANNEL_GPFIFO_A:
-		case BLACKWELL_CHANNEL_GPFIFO_B:
-			ret = gv100_fence_create(drm);
+			ret = nvc0_fence_create(drm);
 			break;
 		default:
 			break;
@@ -740,7 +718,7 @@ nouveau_drm_device_new(const struct drm_driver *drm_driver, struct device *paren
 	struct nouveau_drm *drm;
 	int ret;
 
-	drm = kzalloc_obj(*drm);
+	drm = kzalloc(sizeof(*drm), GFP_KERNEL);
 	if (!drm)
 		return ERR_PTR(-ENOMEM);
 
@@ -873,7 +851,7 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 		return ret;
 
 	/* Remove conflicting drivers (vesafb, efifb etc). */
-	ret = aperture_remove_conflicting_pci_devices(pdev, driver_pci.name);
+	ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, &driver_pci);
 	if (ret)
 		return ret;
 
@@ -984,7 +962,7 @@ nouveau_do_suspend(struct nouveau_drm *drm, bool runtime)
 	}
 
 	NV_DEBUG(drm, "suspending object tree...\n");
-	ret = nvif_client_suspend(&drm->_client, runtime);
+	ret = nvif_client_suspend(&drm->_client);
 	if (ret)
 		goto fail_client;
 
@@ -1080,45 +1058,10 @@ nouveau_pmops_resume(struct device *dev)
 	return ret;
 }
 
-static void
-nouveau_drm_shutdown(struct pci_dev *pdev)
-{
-	struct nouveau_drm *drm = pci_get_drvdata(pdev);
-	int ret;
-
-	if (!drm)
-		return;
-
-	if (drm->dev->switch_power_state == DRM_SWITCH_POWER_OFF ||
-	    drm->dev->switch_power_state == DRM_SWITCH_POWER_DYNAMIC_OFF)
-		return;
-
-	ret = nouveau_do_suspend(drm, false);
-	if (ret)
-		NV_ERROR(drm, "shutdown suspend failed with: %d\n", ret);
-
-	pci_save_state(pdev);
-	pci_disable_device(pdev);
-	pci_set_power_state(pdev, PCI_D3hot);
-	/*
-	 *  This is just to give the pci power transition time to settle
-	 *  before an immediate kexec jump. it’s mirroring the existing
-	 *  nouveau_pmops_suspend() behavior, which already does
-	 *  udelay(200) right after pci_set_power_state(..., pci_d3hot). In
-	 *  ->shutdown() we’re allowed to sleep, so I used usleep_range()
-	 *  instead of a busy-wait udelay().
-	 */
-	usleep_range(200, 400);
-}
-
 static int
 nouveau_pmops_freeze(struct device *dev)
 {
 	struct nouveau_drm *drm = dev_get_drvdata(dev);
-
-	if (drm->dev->switch_power_state == DRM_SWITCH_POWER_OFF ||
-	    drm->dev->switch_power_state == DRM_SWITCH_POWER_DYNAMIC_OFF)
-		return 0;
 
 	return nouveau_do_suspend(drm, false);
 }
@@ -1127,10 +1070,6 @@ static int
 nouveau_pmops_thaw(struct device *dev)
 {
 	struct nouveau_drm *drm = dev_get_drvdata(dev);
-
-	if (drm->dev->switch_power_state == DRM_SWITCH_POWER_OFF ||
-	    drm->dev->switch_power_state == DRM_SWITCH_POWER_DYNAMIC_OFF)
-		return 0;
 
 	return nouveau_do_resume(drm, false);
 }
@@ -1220,7 +1159,7 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
 {
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_cli *cli;
-	char name[32];
+	char name[32], tmpname[TASK_COMM_LEN];
 	int ret;
 
 	/* need to bring up power immediately if opening device */
@@ -1230,12 +1169,13 @@ nouveau_drm_open(struct drm_device *dev, struct drm_file *fpriv)
 		return ret;
 	}
 
+	get_task_comm(tmpname, current);
 	rcu_read_lock();
 	snprintf(name, sizeof(name), "%s[%d]",
-		 current->comm, pid_nr(rcu_dereference(fpriv->pid)));
+		 tmpname, pid_nr(rcu_dereference(fpriv->pid)));
 	rcu_read_unlock();
 
-	if (!(cli = kzalloc_obj(*cli))) {
+	if (!(cli = kzalloc(sizeof(*cli), GFP_KERNEL))) {
 		ret = -ENOMEM;
 		goto done;
 	}
@@ -1304,7 +1244,6 @@ nouveau_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(NOUVEAU_GROBJ_ALLOC, nouveau_abi16_ioctl_grobj_alloc, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(NOUVEAU_NOTIFIEROBJ_ALLOC, nouveau_abi16_ioctl_notifierobj_alloc, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(NOUVEAU_GPUOBJ_FREE, nouveau_abi16_ioctl_gpuobj_free, DRM_RENDER_ALLOW),
-	DRM_IOCTL_DEF_DRV(NOUVEAU_GET_ZCULL_INFO, nouveau_abi16_ioctl_get_zcull_info, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(NOUVEAU_SVM_INIT, nouveau_svmm_init, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(NOUVEAU_SVM_BIND, nouveau_svmm_bind, DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(NOUVEAU_GEM_NEW, nouveau_gem_ioctl_new, DRM_RENDER_ALLOW),
@@ -1387,6 +1326,11 @@ driver_stub = {
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
+#ifdef GIT_REVISION
+	.date = GIT_REVISION,
+#else
+	.date = DRIVER_DATE,
+#endif
 	.major = DRIVER_MAJOR,
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
@@ -1441,7 +1385,6 @@ nouveau_drm_pci_driver = {
 	.id_table = nouveau_drm_pci_table,
 	.probe = nouveau_drm_probe,
 	.remove = nouveau_drm_remove,
-	.shutdown = nouveau_drm_shutdown,
 	.driver.pm = &nouveau_pm_ops,
 };
 
@@ -1480,8 +1423,6 @@ err_free:
 static int __init
 nouveau_drm_init(void)
 {
-	int ret;
-
 	driver_pci = driver_stub;
 	driver_platform = driver_stub;
 
@@ -1495,8 +1436,6 @@ nouveau_drm_init(void)
 	if (!nouveau_modeset)
 		return 0;
 
-	nouveau_module_debugfs_init();
-
 #ifdef CONFIG_NOUVEAU_PLATFORM_DRIVER
 	platform_driver_register(&nouveau_platform_driver);
 #endif
@@ -1505,14 +1444,10 @@ nouveau_drm_init(void)
 	nouveau_backlight_ctor();
 
 #ifdef CONFIG_PCI
-	ret = pci_register_driver(&nouveau_drm_pci_driver);
-	if (ret) {
-		nouveau_module_debugfs_fini();
-		return ret;
-	}
-#endif
-
+	return pci_register_driver(&nouveau_drm_pci_driver);
+#else
 	return 0;
+#endif
 }
 
 static void __exit
@@ -1532,12 +1467,6 @@ nouveau_drm_exit(void)
 #endif
 	if (IS_ENABLED(CONFIG_DRM_NOUVEAU_SVM))
 		mmu_notifier_synchronize();
-
-#ifdef CONFIG_DEBUG_FS
-	nvif_log_shutdown(&gsp_logs);
-#endif
-
-	nouveau_module_debugfs_fini();
 }
 
 module_init(nouveau_drm_init);

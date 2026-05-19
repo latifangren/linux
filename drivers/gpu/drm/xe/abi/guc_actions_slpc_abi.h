@@ -174,9 +174,6 @@ struct slpc_task_state_data {
 	};
 } __packed;
 
-#define SLPC_CTX_FREQ_REQ_IS_COMPUTE		REG_BIT(28)
-#define SLPC_OPTIMIZED_STRATEGY_COMPUTE		REG_BIT(0)
-
 struct slpc_shared_data_header {
 	/* Total size in bytes of this shared buffer. */
 	u32 size;
@@ -209,11 +206,6 @@ struct slpc_shared_data {
 	/* PAGE 2 (4096 bytes), mode based parameter will be removed soon */
 	u8 reserved_mode_definition[4096];
 } __packed;
-
-enum slpc_power_profile {
-	SLPC_POWER_PROFILE_BASE = 0x0,
-	SLPC_POWER_PROFILE_POWER_SAVING = 0x1
-};
 
 /**
  * DOC: SLPC H2G MESSAGE FORMAT
