@@ -202,7 +202,10 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 	if (!name)
 		return;
 
+	pr_info("===========================\n");
 	pr_info("Machine model: %s\n", name);
+	pr_info("         @sib0ndt\n");
+	pr_info("===========================\n");
 	dump_stack_set_arch_desc("%s (DT)", name);
 }
 
