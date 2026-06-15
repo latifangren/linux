@@ -1,0 +1,764 @@
+/ # dmesg 
+[    0.000000] Booting Linux on physical CPU 0x0
+[    0.000000] Linux version 4.9.119 (darron@TVSTORM-BUILDSERVER11) (gcc version 6.4.1 20180307 (Realtek ASDK-6.4.1 Build 2778) ) #72 SMP PREEMPT Wed Mar 10 02:30:40 UTC 2021
+[    0.000000] CPU: ARMv7 Processor [411fd050] revision 0 (ARMv7), cr=10c0383d
+[    0.000000] CPU: div instructions available: patching division code
+[    0.000000] CPU: PIPT / VIPT nonaliasing data cache, VIPT aliasing instruction cache
+[    0.000000] OF: fdt:Machine model: Realtek RTD1619 (Rescue, TEE, Melon)
+[    0.000000] DT: logo_start_addr 0x2f700000, size 0x900000
+[    0.000000] DT: free_logo_reserved_region 0
+[    0.000000] DT: saving_section_page_table 0
+[    0.000000] earlycon: uart8250 at MMIO32 0x98007800 (options '')
+[    0.000000] bootconsole [uart8250] enabled
+[    0.000000] efi: Getting EFI parameters from FDT:
+[    0.000000] efi: UEFI not found.
+[    0.000000] rsvmem_remap_setup 234, not remap common@0 now
+[    0.000000] rsvmem_remap_setup 234, not remap ringbuf@0 now
+[    0.000000] rsvmem_remap_setup 234, not remap rbus@0 now
+[    0.000000] cma: size 0x02000000, base 0x00000000, fixed(0)
+[    0.000000] cma: Reserved 32 MiB at 0x2d000000
+[    0.000000] Memory policy: Data cache writealloc
+[    0.000000] On node 0 totalpages: 262144
+[    0.000000] free_area_init_node: node 0, pgdat c1492ec0, node_mem_map ec700000
+[    0.000000]   DMA zone: 1728 pages used for memmap
+[    0.000000]   DMA zone: 0 pages reserved
+[    0.000000]   DMA zone: 196608 pages, LIFO batch:31
+[    0.000000]   HighMem zone: 65536 pages, LIFO batch:15
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.0 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: Trusted OS migration not required
+[    0.000000] psci: SMC Calling Convention v1.0
+[    0.000000] percpu: Embedded 15 pages/cpu @ef66b000 s32140 r8192 d21108 u61440
+[    0.000000] pcpu-alloc: s32140 r8192 d21108 u61440 alloc=15*4096
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 [0] 3 [0] 4 [0] 5 
+[    0.000000] Built 1 zonelists in Zone order, mobility grouping on.  Total pages: 260416
+[    0.000000] Kernel command line: earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 init=/init androidboot.hardware=thor androidboot.storage=emmc loglevel=4 androidboot.dtbo_idx=0 androidboot.serialno=thor6de8
+[    0.000000] log_buf_len individual max cpu contribution: 8192 bytes
+[    0.000000] log_buf_len total cpu_extra contributions: 40960 bytes
+[    0.000000] log_buf_len min size: 65536 bytes
+[    0.000000] log_buf_len: 131072 bytes
+[    0.000000] early log buf free: 62856(95%)
+[    0.000000] PID hash table entries: 4096 (order: 2, 16384 bytes)
+[    0.000000] Dentry cache hash table entries: 131072 (order: 7, 524288 bytes)
+[    0.000000] Inode-cache hash table entries: 65536 (order: 6, 262144 bytes)
+[    0.000000] Memory: 509444K/1048576K available (11264K kernel code, 738K rwdata, 3568K rodata, 1024K init, 1378K bss, 506364K reserved, 32768K cma-reserved, 4032K highmem)
+[    0.000000] Virtual kernel memory layout:
+[    0.000000]     vector  : 0xffff0000 - 0xffff1000   (   4 kB)
+[    0.000000]     fixmap  : 0xffc00000 - 0xfff00000   (3072 kB)
+[    0.000000]     vmalloc : 0xf0800000 - 0xff800000   ( 240 MB)
+[    0.000000]     lowmem  : 0xc0000000 - 0xf0000000   ( 768 MB)
+[    0.000000]     pkmap   : 0xbfe00000 - 0xc0000000   (   2 MB)
+[    0.000000]     modules : 0xbf000000 - 0xbfe00000   (  14 MB)
+[    0.000000]       .text : 0xc0208000 - 0xc0e00000   (12256 kB)
+[    0.000000]       .init : 0xc1300000 - 0xc1400000   (1024 kB)
+[    0.000000]       .data : 0xc1400000 - 0xc14b8ac8   ( 739 kB)
+[    0.000000]        .bss : 0xc14ba000 - 0xc16128c4   (1379 kB)
+[    0.000000] Preemptible hierarchical RCU implementation.
+[    0.000000] 	Build-time adjustment of leaf fanout to 32.
+[    0.000000] NR_IRQS:16 nr_irqs:16 16
+[    0.000000] GICv3: CPU0: found redistributor 0 region 0:0xff140000
+[    0.000000] arm_arch_timer: Architected cp15 timer(s) running at 27.00MHz (virt).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x63a1e71a3, max_idle_ns: 440795203123 ns
+[    0.000004] sched_clock: 56 bits at 27MHz, resolution 37ns, wraps every 4398046511093ns
+[    0.000010] Switching to timer-based delay loop, resolution 37ns
+[    0.000305] rmem_count: 3
+[    0.000308] 
+[    0.000312] rsvmem_remap 143, rmem->name common@0
+[    0.000318] rsvmem_remap 151, type rsvmem-remap
+[    0.000323] rsvmem_remap 163, ioremap(c108d0f800001000,10000001c)
+[    0.000331] rsvmem_remap 175, remap addr f0811000
+[    0.000336] rsvmem_remap 184, save_remap_name common
+[    0.000339] rsvmem_remap 203, save rpc_common_base
+[    0.000343] rsvmem_remap 216, init common@0/common done
+[    0.000345] 
+[    0.000348] rsvmem_remap 143, rmem->name ringbuf@0
+[    0.000352] rsvmem_remap 151, type rsvmem-remap
+[    0.000356] rsvmem_remap 163, ioremap(c108d0f800004000,20000001c)
+[    0.000362] rsvmem_remap 175, remap addr f0814000
+[    0.000367] rsvmem_remap 184, save_remap_name ringbuf
+[    0.000370] rsvmem_remap 210, save rpc_ringbuf_base
+[    0.000373] rsvmem_remap 216, init ringbuf@0/ringbuf done
+[    0.000376] 
+[    0.000379] rsvmem_remap 143, rmem->name rbus@0
+[    0.000383] rsvmem_remap 151, type rsvmem-remap
+[    0.000387] rsvmem_remap 163, ioremap(c108d0f800200000,30000001c)
+[    0.000407] rsvmem_remap 175, remap addr f0b00000
+[    0.000412] rsvmem_remap 184, save_remap_name rbus
+[    0.000415] rsvmem_remap 188, save rbus_addr
+[    0.000420] rsvmem_remap 195, set rtk_rbus_barrier_flag to 1
+[    0.000424] rsvmem_remap 216, init rbus@0/rbus done
+[    0.000781] Console: colour dummy device 80x30
+[    0.000800] Calibrating delay loop (skipped), value calculated using timer frequency.. 54.00 BogoMIPS (lpj=108000)
+[    0.000808] pid_max: default: 32768 minimum: 301
+[    0.000948] Security Framework initialized
+[    0.000954] SELinux:  Initializing.
+[    0.001012] SELinux:  Starting in permissive mode
+[    0.001053] Mount-cache hash table entries: 2048 (order: 1, 8192 bytes)
+[    0.001059] Mountpoint-cache hash table entries: 2048 (order: 1, 8192 bytes)
+[    0.001703] CPU: Testing write buffer coherency: ok
+[    0.001724] ftrace: allocating 34527 entries in 102 pages
+[    0.057172] CPU0: update cpu_capacity 1024
+[    0.057179] CPU0: thread 0, cpu 0, socket 0, mpidr 81000000
+[    0.057244] Setting up static identity map for 0x300000 - 0x300058
+[    0.091297] EFI services will not be available.
+[    0.126757] GICv3: CPU1: found redistributor 100 region 0:0xff160000
+[    0.126783] CPU1: update cpu_capacity 1024
+[    0.126787] CPU1: thread 0, cpu 1, socket 0, mpidr 81000100
+[    0.154799] GICv3: CPU2: found redistributor 200 region 0:0xff180000
+[    0.154817] CPU2: update cpu_capacity 1024
+[    0.154820] CPU2: thread 0, cpu 2, socket 0, mpidr 81000200
+[    0.182867] GICv3: CPU3: found redistributor 300 region 0:0xff1a0000
+[    0.182884] CPU3: update cpu_capacity 1024
+[    0.182888] CPU3: thread 0, cpu 3, socket 0, mpidr 81000300
+[    0.212342] GICv3: CPU4: found redistributor 400 region 0:0xff1c0000
+[    0.212359] CPU4: update cpu_capacity 1024
+[    0.212362] CPU4: thread 0, cpu 4, socket 0, mpidr 81000400
+[    0.240076] GICv3: CPU5: found redistributor 500 region 0:0xff1e0000
+[    0.240093] CPU5: update cpu_capacity 1024
+[    0.240096] CPU5: thread 0, cpu 5, socket 0, mpidr 81000500
+[    0.240174] Brought up 6 CPUs
+[    0.240180] SMP: Total of 6 processors activated (324.00 BogoMIPS).
+[    0.240183] CPU: All CPU(s) started in SVC mode.
+[    0.240231] CPU5: update max cpu_capacity 1024
+[    0.241355] devtmpfs: initialized
+[    0.246922] CPU1: update max cpu_capacity 1024
+[    0.252034] VFP support v0.3: implementor 41 architecture 3 part 40 variant 5 rev 2
+[    0.252294] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.252306] futex hash table entries: 2048 (order: 5, 131072 bytes)
+[    0.252360] kworker/u12:0 (41) used greatest stack depth: 5964 bytes left
+[    0.253247] pinctrl core: initialized pinctrl subsystem
+[    0.254059] NET: Registered protocol family 16
+[    0.256443] DMA: preallocated 256 KiB pool for atomic coherent allocations
+[    0.259017] crt-controller: secure config found
+[    0.259025] crt-controller: hw semaphore used
+[    0.259044] iso-controller: hw semaphore used
+[    0.273437] cpuidle: using governor ladder
+[    0.289447] cpuidle: using governor menu
+[    0.289785] [PINCTRL] driver init
+[    0.290385] [PINCTRL] init done
+[    0.291575] get_rtd_chip_revision ERROR no rtd_soc_device
+[    0.301390] [GPIO] No default gpio need to set
+[    0.301436] [RTD16xx_gpio-suspend] wakeup-gpio Cnt: en(2) act(2) list(2)
+[    0.301467] [RTD16xx_gpio-suspend] wakeup-gpio[0] Successful registration! (en:1 act:0 gpio:10)
+[    0.301491] [RTD16xx_gpio-suspend] wakeup-gpio[1] Successful registration! (en:1 act:0 gpio:26)
+[    0.301497] [RTD16xx_gpio-suspend] gpio-output-change Cnt: en(0) act(0) list(-2)
+[    0.308498] hw-breakpoint: found 5 (+1 reserved) breakpoint and 4 watchpoint registers.
+[    0.308504] hw-breakpoint: maximum watchpoint size is 8 bytes.
+[    0.309076] rtk-rtd16xx-power 98007000.power-domain: initialized
+[    0.311184] kworker/u12:2 (180) used greatest stack depth: 5336 bytes left
+[    0.334611] [RTD16xx_PM] Initial Power Management
+[    0.334666] [RTD16xx_PM] wakeup flags = 0x3f
+[    0.334827] rtk-usb-manager 98000000.rtk_usb_power_manager: ENTER rtk_usb_manager_probe
+[    0.334867] rtk-usb-manager 98000000.rtk_usb_power_manager: parse_gpio_setting get power-gpio (id=57) OK
+[    0.334888] rtk-usb-manager 98000000.rtk_usb_power_manager: parse_gpio_setting get power-gpio (id=49) OK
+[    0.334930] mac_node: rtk_dwc3_drd status is okay
+[    0.334945] rtk-usb-manager 98000000.rtk_usb_power_manager: __of_parse_port_gpio_mapping port0 mapping gpio_num=57
+[    0.334967] mac_node: rtk_dwc3_u3host status is okay
+[    0.334979] rtk-usb-manager 98000000.rtk_usb_power_manager: __of_parse_port_gpio_mapping port2 mapping gpio_num=49
+[    0.334986] rtk_usb_soc_init START (drivers/soc/realtek/rtd16xx/rtk_usb.c)
+[    0.334995] rtk_usb_soc_init END
+[    0.335853] rtk-usb-manager 98000000.rtk_usb_power_manager: Realtek USB init OK
+[    0.335883] rtk-usb-manager 98000000.rtk_usb_power_manager: __gpio_on_off to set power off by gpio (id=57) OK
+[    0.335901] rtk-usb-manager 98000000.rtk_usb_power_manager: __gpio_on_off to set power off by gpio (id=49) OK
+[    0.335907] rtk_usb_set_hw_l4icg_on_off set l4_icg port 0
+[    0.335912] rtk_usb_set_hw_l4icg_on_off set l4_icg port 2
+[    0.336015] rtk-usb-manager 98000000.rtk_usb_power_manager: create_debug_files
+[    0.344107] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_manager_probe OK (take 8 ms)
+[    0.344382] vgaarb: loaded
+[    0.344573] SCSI subsystem initialized
+[    0.344767] libata version 3.00 loaded.
+[    0.344896] usbcore: registered new interface driver usbfs
+[    0.344951] usbcore: registered new interface driver hub
+[    0.345049] usbcore: registered new device driver usb
+[    0.345198] Linux video capture interface: v2.00
+[    0.345681] rtk-efuse 98017000.efuse: use hw lock
+[    0.346018] Advanced Linux Sound Architecture Driver Initialized.
+[    0.346558] NET: Registered protocol family 23
+[    0.346606] Bluetooth: Core ver 2.22
+[    0.346645] NET: Registered protocol family 31
+[    0.346648] Bluetooth: HCI device and connection manager initialized
+[    0.346660] Bluetooth: HCI socket layer initialized
+[    0.346667] Bluetooth: L2CAP socket layer initialized
+[    0.346697] Bluetooth: SCO socket layer initialized
+[    0.347458] Realtek Thor RTD1619 (0x00006525) rev A01 (0x00010000) detected
+[    0.347885] rtk-sb2-dbg 9801a000.sb2:dbg: no permission
+[    0.354001] rtk-sb2-inv 9801a000.sb2:inv: no permission
+[    0.360061] cpu-volt-sel: pll_scpu not ready: register rtk-clk-event
+[    0.360478] clocksource: Switched to clocksource arch_sys_counter
+[    0.388306] VFS: Disk quotas dquot_6.6.0
+[    0.388364] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.388520] FS-Cache: Loaded
+[    0.388906] drivers/soc/realtek/common/rtk_ion_of.c rtk_ion_probe
+[    0.388932] drivers/soc/realtek/common/rtk_ion_of.c rtk_ion_probe nr_heaps:6
+[    0.389599] rtk_ion_probe: adding heap Audio of type 8 with 3000000@100000 (type:GEN_POOL)
+[    0.420585] rtk_ion_probe: adding heap Media of type 7 with 2d000000@2000000 (type:CMA_POOL)
+[    0.420590] rtk_ion_probe: adding heap Media of type 7 with 3100000@6000000 (type:GEN_POOL)
+[    0.420611] rtk_ion_probe: adding heap Secure of type 9 with 40000000@5700000 (type:GEN_POOL)
+[    0.420616] rtk_ion_probe: adding heap Secure of type 9 with 32b00000@d500000 (type:GEN_POOL)
+[    0.429868] TEE SEM INIT
+[    0.429908] optee: probing for conduit method from DT.
+[    0.430201] optee: initialized driver
+[    0.430325] NET: Registered protocol family 2
+[    0.430914] TCP established hash table entries: 8192 (order: 3, 32768 bytes)
+[    0.430964] TCP bind hash table entries: 8192 (order: 4, 65536 bytes)
+[    0.431038] TCP: Hash tables configured (established 8192 bind 8192)
+[    0.431080] UDP hash table entries: 512 (order: 2, 16384 bytes)
+[    0.431101] UDP-Lite hash table entries: 512 (order: 2, 16384 bytes)
+[    0.431266] NET: Registered protocol family 1
+[    0.431287] PCI: CLS 0 bytes, default 64
+[    0.431501] Trying to unpack rootfs image as initramfs...
+[    0.785226] Freeing initrd memory: 12288K
+[    0.790132] audit: initializing netlink subsys (disabled)
+[    0.790188] audit: type=2000 audit(0.747:1): initialized
+[    0.791049] workingset: timestamp_bits=14 max_order=18 bucket_order=4
+[    0.791754] Registering sdcardfs 0.1
+[    0.792165] fuse init (API version 7.26)
+[    0.792550] SELinux:  Registering netfilter hooks
+[    0.796410] bounce: pool size: 64 pages
+[    0.796506] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 250)
+[    0.796514] io scheduler noop registered
+[    0.796518] io scheduler deadline registered
+[    0.796557] io scheduler cfq registered (default)
+[    0.796900] [RTK_PWM] rtd1295_pwm_probe - hwpwm=(0) enable=(0) duty_rate=(5) clksrc_div=(1) clkout_div=(255)---  
+[    0.796904] [RTK_PWM] rtd1295_pwm_probe - defualt output frequence = 26367Hz ---  
+[    0.796911] [RTK_PWM] rtd1295_pwm_probe - hwpwm=(1) enable=(1) duty_rate=(50) clksrc_div=(1) clkout_div=(255)---  
+[    0.796914] [RTK_PWM] rtd1295_pwm_probe - defualt output frequence = 26367Hz ---  
+[    0.796921] [RTK_PWM] rtd1295_pwm_probe - hwpwm=(2) enable=(0) duty_rate=(50) clksrc_div=(1) clkout_div=(255)---  
+[    0.796924] [RTK_PWM] rtd1295_pwm_probe - defualt output frequence = 26367Hz ---  
+[    0.796931] [RTK_PWM] rtd1295_pwm_probe - hwpwm=(3) enable=(0) duty_rate=(50) clksrc_div=(1) clkout_div=(255)---  
+[    0.796934] [RTK_PWM] rtd1295_pwm_probe - defualt output frequence = 26367Hz ---  
+[    0.798024] [PUWRAP] begin pu_init
+[    0.798028] [PUWRAP] end pu_init result=0x0
+[    0.798111] [PUWRAP] pu_probe
+[    0.798147] [PUWRAP] success to probe pu wrapper device with USE_ION_ALLOCATOR
+[    0.798456] [RTK_VE1] vpu_probe
+[    0.798471] [RTK_VE1] vpu base address get from DTB physical base addr=0x98040000, virtual base=0xfe040000, size=0xc000
+[    0.798631] [RTK_VE1] res.start:0x498007000, bonding_value:0xc000
+[    0.798750] [RTK_VE1] s_ve1_irq:41 want to register ve1_irq_handler
+[    0.798797] [RTK_VE1] s_ve2_irq:42 want to register ve2_irq_handler
+[    0.798823] [RTK_VE1] success to probe vpu device with non reserved video memory
+[    0.799026] [RTK_JPU] jpu_probe
+[    0.799040] [RTK_JPU] jpu base address get from DTB physical base addr=0x9803e000, virtual base=0xfe03e000, size=0x1000
+[    0.799184] [RTK_JPU] get clock controller s_jpu_clk=0xeb65f7c0
+[    0.799209] [RTK_JPU] s_jpu_irq:40 want to register jpu_irq_handler
+[    0.799241] [RTK_JPU] success to probe jpu device with non reserved video memory
+[    0.799301] [RTK_JPU] jpu_init
+[    0.799305] [RTK_JPU] end jpu_init result=0x0
+[    0.799498] [RTK_RPC] rpc driver initial begin
+[    0.799623] [RTK_RPC]rpc is not paused & suspended
+[    0.800900] [RTK_RPC] rpc_int_base:fe01a104
+[    0.800903] [RTK_RPC] acpu_irq:34
+[    0.800939] [RTK_RPC] rpc driver initial done
+[    0.801112] [RTK MCP] MCP driver initial begin.
+[    0.801124] [RTK MCP] MCP Base: 0xfe015000
+[    0.801127] [RTK MCP] TP Base: 0xfe014000
+[    0.801265] [RTK MCP] MCP driver initial done.
+[    0.801692] rtk-demod 9801e000.demod: initialized
+[    0.801984] rtk-tp 98014000.tp: initialized
+[    0.802257] rtk-r2rdsc 9800b000.r2rdsc: initialized
+[    0.802305] led: module init
+[    0.802415] led: green_gpio = 58
+[    0.802418] led: active_low = 0
+[    0.802513] led: module probed ok
+[    0.802561] led: module init
+[    0.802669] led: green_gpio = 57
+[    0.802672] led: active_low = 0
+[    0.802761] led: module probed ok
+[    0.802805] led: module init
+[    0.802911] led: red_gpio = 64
+[    0.802914] led: active_low = 0
+[    0.802999] led: module probed ok
+[    0.803042] led: module init
+[    0.803147] led: red_gpio = 23
+[    0.803150] led: active_low = 0
+[    0.803233] led: failed level (null)
+[    0.807310] led: module probed ok
+[    0.807899] Serial: 8250/16550 driver, 2 ports, IRQ sharing disabled
+[    0.808862] console [ttyS0] disabled
+[    0.808916] 98007800.serial0: ttyS0 at MMIO 0x98007800 (irq = 25, base_baud = 1687500) is a 16550A
+[    0.808940] console [ttyS0] enabled
+[    0.808943] bootconsole [uart8250] disabled
+[    0.809488] 9801b200.serial1: ttyS1 at MMIO 0x9801b200 (irq = 26, base_baud = 27000000) is a 16550A
+[    0.810008] rtd_rng_init 107
+[    0.820560] rtd-rng 98001000.rng: hwrng registered
+[    0.820576] random: fast init done
+[    0.820612] random: crng init done
+[    0.830518] brd: module loaded
+[    0.836624] loop: module loaded
+[    0.837273] zram: Added device: zram0
+[    0.838611] apw8889 0-0012: apw8889(5a) rev3
+[    0.854481] tun: Universal TUN/TAP device driver, 1.6
+[    0.854487] tun: (C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>
+[    0.854847] r8169 Gigabit Ethernet driver 2.6.5LK-NAPI loaded
+[    0.856000] wait all ACP access finished...done.
+[    0.856009] ARM ACP off
+[    0.856009] .
+[    0.881065] wait 23 ms for PHY interrupt. UMSK_ISR = 0x18180002
+[    0.882767] wait 1 ms for PHY ready, current = 0x23
+[    0.886580] wait 0 ms for GPHY patch_rdy. reg = 0xc0
+[    0.912686] patch_rdy is asserted!!
+[    0.935473] check patch key = 5600
+[    0.965524] wait 0 ms for GPHY patch_rdy. reg = 0x80
+[    0.996582] 
+[    0.996582] patch_rdy is de-asserted!!
+[    1.015725] GPHY uC code patched.
+[    1.049375] r8169 98016000.gmac eth0: RTL8169SOC at 0xfe016000, XID 10900800 IRQ 27
+[    1.049381] r8169 98016000.gmac eth0: jumbo features [frames: 9200 bytes, tx checksumming: ko]
+[    1.049513] [Ethernet] Watch link status change.
+[    1.049869] rtk-irda 98007000.irda: wakeup key = 116
+[    1.062066] input: venus_IR_input as /devices/virtual/input/input0
+[    1.062221] PPP generic driver version 2.4.2
+[    1.062393] PPP BSD Compression module registered
+[    1.062397] PPP Deflate Compression module registered
+[    1.062415] PPP MPPE Compression module registered
+[    1.062420] NET: Registered protocol family 24
+[    1.062492] usbcore: registered new interface driver cdc_ether
+[    1.062792] rtk-uio 98000000.rbus: initialized
+[    1.062996] rtk-uio 9801b000.refclk: initialized
+[    1.063546] rtk-se 9800c000.se: irq=39
+[    1.063553] rtk-se 9800c000.se: phys:0x9800c000 virt:0xfe00c000 size:0x00001000 type:1 name:SE reg space
+[    1.063559] rtk-se 9800c000.se: phys:0x2d040000 virt:0xed040000 size:0x00001000 type:1 name:SE driver data
+[    1.063565] rtk-se 9800c000.se: phys:0x2d044000 virt:0xed044000 size:0x00004000 type:1 name:SE command queue
+[    1.063830] rtk-se 9800c000.se: [SE] Engine[0] Ctrl:00000001 Base:2d044000 ReadPtr:2d044000 WritePtr:2d044000 Limit:2d048000
+[    1.063836] rtk-se 9800c000.se: shared mode
+[    1.063840] rtk-se 9800c000.se: initialized
+[    1.064082] rtk-md 9800b000.md: irq=38
+[    1.064089] rtk-md 9800b000.md: phys:0x9800b000 virt:0xfe00b000 size:0x00001000 type:1 name:MD reg space
+[    1.064095] rtk-md 9800b000.md: phys:0x2d041000 virt:0xed041000 size:0x00001000 type:1 name:MD driver data
+[    1.064101] rtk-md 9800b000.md: phys:0x2d048000 virt:0xed048000 size:0x00004000 type:1 name:MD command queue
+[    1.064356] rtk-md 9800b000.md: [MD] Engine[0] Ctrl:00000005 Base:2d048000 ReadPtr:2d048000 WritePtr:2d048000 Limit:2d04c000
+[    1.064362] rtk-md 9800b000.md: shared mode
+[    1.064367] rtk-md 9800b000.md: initialized
+[    1.064757] rtk-usb2phy 98028280.dwc3_drd_usb2phy: rtk_usb2phy_probe: Chip 1619 revision is a01
+[    1.064825] rtk-usb2phy 98028280.dwc3_drd_usb2phy: drivers/usb/phy/phy-rtk-usb2.c Probe RTK USB 2.0 PHY
+[    1.064857] rtk-usb2phy 98031280.dwc3_u2host_usb2phy: rtk_usb2phy_probe: Chip 1619 revision is a01
+[    1.064896] rtk-usb2phy 98031280.dwc3_u2host_usb2phy: drivers/usb/phy/phy-rtk-usb2.c Probe RTK USB 2.0 PHY
+[    1.064929] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: rtk_usb2phy_probe: Chip 1619 revision is a01
+[    1.064968] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: drivers/usb/phy/phy-rtk-usb2.c Probe RTK USB 2.0 PHY
+[    1.065160] rtk-usb3phy 98013210.dwc3_drd_usb3phy: rtk_usb3phy_probe: Chip 1619 revision is a01
+[    1.065176] rtk-usb3phy 98013210.dwc3_drd_usb3phy: rtk_usb3phy_probe load phy_data_revA parameter
+[    1.065206] rtk-usb3phy 98013210.dwc3_drd_usb3phy: drivers/usb/phy/phy-rtk-usb3.c Probe RTK USB 3.0 PHY
+[    1.065241] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: rtk_usb3phy_probe: Chip 1619 revision is a01
+[    1.065255] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: rtk_usb3phy_probe load phy_data_revA parameter
+[    1.065278] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: drivers/usb/phy/phy-rtk-usb3.c Probe RTK USB 3.0 PHY
+[    1.065847] rtk-dwc3 98013200.rtk_dwc3_drd: Probe Realtek-SoC USB DWC3 Host Controller
+[    1.066158] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_manager_schedule_work for 98013200.rtk_dwc3_drd
+[    1.066170] rtk-dwc3 98013200.rtk_dwc3_drd: dwc3_rtk_probe ok! (take 0 ms)
+[    1.066176] rtk-dwc3 98013200.rtk_dwc3_drd: dwc3_rtk_probe_work Start ...
+[    1.066204] rtk-dwc3 98013c00.rtk_dwc3_u2host: Probe Realtek-SoC USB DWC3 Host Controller
+[    1.066504] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_manager_schedule_work for 98013c00.rtk_dwc3_u2host
+[    1.066516] rtk-dwc3 98013c00.rtk_dwc3_u2host: dwc3_rtk_probe ok! (take 0 ms)
+[    1.066538] dwc3 98020000.dwc3_drd: fixed dwc3 globals register start address to 0x98028100
+[    1.066553] rtk-dwc3 98013e00.rtk_dwc3_u3host: Probe Realtek-SoC USB DWC3 Host Controller
+[    1.066721] rtk-usb2phy 98028280.dwc3_drd_usb2phy: rtk_usb2_phy_init Init RTK USB 2.0 PHY
+[    1.066727] rtk-usb2phy 98028280.dwc3_drd_usb2phy: do_rtk_usb2_phy_init Init RTK USB 2.0 PHY phy#0
+[    1.066731] check_phy_power
+[    1.066775] rtk-dwc3 98013e00.rtk_dwc3_u3host: dwc3_rtk_probe: disable usb 3.0 port (usb_hmac_ctr0=0x60000111)
+[    1.066857] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_manager_schedule_work for 98013e00.rtk_dwc3_u3host
+[    1.066868] rtk-dwc3 98013e00.rtk_dwc3_u3host: dwc3_rtk_probe ok! (take 0 ms)
+[    1.067304] ehci_hcd: USB 2.0 'Enhanced' Host Controller (EHCI) Driver
+[    1.067316] ehci-pci: EHCI PCI platform driver
+[    1.067384] ehci-rtk: EHCI realtek driver init
+[    1.067541] ohci_hcd: USB 1.1 'Open' Host Controller (OHCI) Driver
+[    1.067559] ohci-pci: OHCI PCI platform driver
+[    1.067991] usbcore: registered new interface driver uas
+[    1.068051] usbcore: registered new interface driver usb-storage
+[    1.068101] usbcore: registered new interface driver ums-realtek
+[    1.068203] usbcore: registered new interface driver usbserial
+[    1.068237] usbcore: registered new interface driver pl2303
+[    1.068284] usbserial: USB Serial support registered for pl2303
+[    1.068325] usbcore: registered new interface driver lvs
+[    1.068806] rtk-usb2phy 98028280.dwc3_drd_usb2phy: Set addr e4 value 68 by efuse_usb_dc_cal=0
+[    1.068840] mousedev: PS/2 mouse device common for all mice
+[    1.068846] rtk-usb2phy 98028280.dwc3_drd_usb2phy: do_rtk_usb2_phy_toggle ########## to toggle Page1 addr 0xe0 BIT(2)
+[    1.069101] usbcore: registered new interface driver xpad
+[    1.069147] usbcore: registered new interface driver usb_acecad
+[    1.069195] usbcore: registered new interface driver aiptek
+[    1.069248] usbcore: registered new interface driver gtco
+[    1.069292] usbcore: registered new interface driver hanwang
+[    1.069341] usbcore: registered new interface driver kbtab
+[    1.069862] rtk-usb2phy 98028280.dwc3_drd_usb2phy: do_rtk_usb2_phy_toggle disconnect to set Page0 0xE7=f1
+[    1.069867] rtk-usb2phy 98028280.dwc3_drd_usb2phy: rtk_usb2_phy_init Initialized RTK USB 2.0 PHY (take 4ms)
+[    1.069873] rtk-usb3phy 98013210.dwc3_drd_usb3phy: rtk_usb_phy_init Init RTK USB 3.0 PHY
+[    1.069878] rtk-usb3phy 98013210.dwc3_drd_usb3phy: do_rtk_usb_phy_init Init RTK USB 3.0 PHY phy#0
+[    1.070427] rtk-sw-rtc rtk-sw-rtc.0: rtc core: registered rtc-sw as rtc0
+[    1.070433] rtk-sw-rtc rtk-sw-rtc.0: initialized
+[    1.070441] i2c /dev entries driver
+[    1.071201] [HDMITx] Driver init
+[    1.071222] [HDMITx] support-frl property doesn't exist
+[    1.071226] [HDMITx] init_frl_support is_support=0
+[    1.071392] [HDMITx] hotplug gpio(7)
+[    1.071550] [HDMITx] [setup_mute_gpio]
+[    1.071554] [HDMITx] Undefined gpio-audio-mute, sikp
+[    1.071557] [HDMITx] Undefined gpio-i2s-ctrl, sikp
+[    1.071560] [HDMITx] [register_hdmitx_scdcrr]
+[    1.071573] [HDMITx] Skip SCDC RR init
+[    1.071687] [HDMITx] Found DP TX node
+[    1.071689] [HDMITx] Driver init done
+[    1.071924] HDCP_INFO: Driver init
+[    1.071949] HDCP_INFO: hdcp_irq_num=30
+[    1.072301] [HDMI RX]driver init
+[    1.072453] [HDMI RX]driver init done
+[    1.072570] register cec driver cec (c146f4fc)
+[    1.072666] cec cec0: bus match name = cec0, drv_name = cec
+[    1.072697] cec cec0: probe dev cec0
+[    1.072951] cec cec0: probe success
+[    1.073159] cec cec1: bus match name = cec1, drv_name = cec
+[    1.073188] cec cec1: probe dev cec1
+[    1.073301] cec cec1: probe fail
+[    1.075714] rtk-usb3phy 98013210.dwc3_drd_usb3phy: do_rtk_usb3_phy_toggle ########## to toggle PHY addr 0x09 BIT(9)
+[    1.077022] rtk-usb3phy 98013210.dwc3_drd_usb3phy: do_rtk_usb3_phy_toggle ########## PHY addr 0x1f = 0xa86e1f10
+[    1.077027] rtk-usb3phy 98013210.dwc3_drd_usb3phy: rtk_usb_phy_init Initialized RTK USB 3.0 PHY (take 8ms)
+[    1.077239] xhci-hcd xhci-hcd.6.auto: xHCI Host Controller
+[    1.077435] xhci-hcd xhci-hcd.6.auto: new USB bus registered, assigned bus number 1
+[    1.096429] rtk_dptx 9803d000.dptx: [rtk_dptx_probe] start
+[    1.096460] xhci-hcd xhci-hcd.6.auto: hcc params 0x0220fe64 hci version 0x110 quirks 0x00010010
+[    1.096524] xhci-hcd xhci-hcd.6.auto: irq 45, io mem 0x98020000
+[    1.096763] usb usb1: New USB device found, idVendor=1d6b, idProduct=0002
+[    1.096769] usb usb1: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[    1.096774] usb usb1: Product: xHCI Host Controller
+[    1.096779] usb usb1: Manufacturer: Linux 4.9.119 xhci-hcd
+[    1.096783] usb usb1: SerialNumber: xhci-hcd.6.auto
+[    1.096837] rtk_dptx 9803d000.dptx: [register_dptx_switch] can't find hot plug gpio in dtb
+[    1.097290] hub 1-0:1.0: USB hub found
+[    1.097326] hub 1-0:1.0: 1 port detected
+[    1.097622] xhci-hcd xhci-hcd.6.auto: xHCI Host Controller
+[    1.097792] xhci-hcd xhci-hcd.6.auto: new USB bus registered, assigned bus number 2
+[    1.097894] usb usb2: We don't know the algorithms for LPM for this host, disabling LPM.
+[    1.098036] usb usb2: New USB device found, idVendor=1d6b, idProduct=0003
+[    1.098041] usb usb2: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[    1.098045] usb usb2: Product: xHCI Host Controller
+[    1.098048] usb usb2: Manufacturer: Linux 4.9.119 xhci-hcd
+[    1.098052] usb usb2: SerialNumber: xhci-hcd.6.auto
+[    1.098533] hub 2-0:1.0: USB hub found
+[    1.098564] hub 2-0:1.0: 1 port detected
+[    1.099067] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_init_port_power_on for 98013200.rtk_dwc3_drd
+[    1.099074] rtk-usb-manager 98000000.rtk_usb_power_manager: __usb_port_power_on_off port0 power=on enable=0x1 enable_mask=0x1
+[    1.099082] rtk-usb-manager 98000000.rtk_usb_power_manager: __gpio_on_off ERROR Request gpio_num (id=57) fail
+[    1.099087] rtk-dwc3 98013200.rtk_dwc3_drd: dwc3_rtk_initiated
+[    1.099094] rtk-dwc3 98013200.rtk_dwc3_drd: dwc3_rtk_probe_work End ... ok! (take 32 ms)
+[    1.099100] rtk-dwc3 98013c00.rtk_dwc3_u2host: dwc3_rtk_probe_work Start ...
+[    1.099385] dwc3 98029000.dwc3_u2host: fixed dwc3 globals register start address to 0x98031100
+[    1.142961] rtk_dptx 9803d000.dptx: [rtk_dptx_probe] finished
+[    1.143160] usbcore: registered new interface driver uvcvideo
+[    1.143164] USB Video Class driver (1.1.1)
+[    1.143259] rtk-reboot 98007680.reboot: set oe to 1
+[    1.164684] [rtk_wdt] rtk_wdt_probe enter
+[    1.169205] [rtk_wdt] rtk_wdt_probe exit
+[    1.201587] device-mapper: uevent: version 1.0.3
+[    1.201729] xhci-hcd xhci-hcd.6.auto: RTK_phy_toggle to call RTK_dwc3_usb2_phy_toggle (wValue=10 port=0 status=202a0)
+[    1.201738] rtk-usb2phy 98028280.dwc3_drd_usb2phy: do_rtk_usb2_phy_toggle ########## to toggle Page1 addr 0xe0 BIT(2)
+[    1.201807] device-mapper: ioctl: 4.35.0-ioctl (2016-06-23) initialised: dm-devel@redhat.com
+[    1.201938] Bluetooth: HCI UART driver ver 2.3
+[    1.201942] Bluetooth: HCI UART protocol H4 registered
+[    1.201946] Bluetooth: HCI UART protocol LL registered
+[    1.202751] rtk-usb2phy 98028280.dwc3_drd_usb2phy: do_rtk_usb2_phy_toggle disconnect to set Page0 0xE7=f1
+[    1.202784] EMMC : emmc of_node found
+[    1.202890] dwc3 98029000.dwc3_u2host: this is not a DesignWare USB3 DRD Core
+[    1.202895] dwc3 98029000.dwc3_u2host: failed to initialize core
+[    1.202914] dwc3 98029000.dwc3_u2host: restore dwc3 globals register start address 0x98029000
+[    1.219487] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_init_port_power_on for 98013c00.rtk_dwc3_u2host
+[    1.219493] rtk-dwc3 98013c00.rtk_dwc3_u2host: ERROR! dwc3 is NULL
+[    1.219499] rtk-dwc3 98013c00.rtk_dwc3_u2host: dwc3_rtk_probe_work End ... ok! (take 120 ms)
+[    1.219505] rtk-dwc3 98013e00.rtk_dwc3_u3host: dwc3_rtk_probe_work Start ...
+[    1.219787] dwc3 98050000.dwc3_u3host: fixed dwc3 globals register start address to 0x98058100
+[    1.228906] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: rtk_usb2_phy_init Init RTK USB 2.0 PHY
+[    1.228911] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: do_rtk_usb2_phy_init Init RTK USB 2.0 PHY phy#0
+[    1.228913] check_phy_power
+[    1.230972] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: Set addr e4 value 6b by efuse_usb_dc_cal=0
+[    1.231009] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: do_rtk_usb2_phy_toggle ########## to toggle Page1 addr 0xe0 BIT(2)
+[    1.232020] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: do_rtk_usb2_phy_toggle disconnect to set Page0 0xE7=f1
+[    1.232024] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: rtk_usb2_phy_init Initialized RTK USB 2.0 PHY (take 0ms)
+[    1.232029] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: rtk_usb_phy_init Init RTK USB 3.0 PHY
+[    1.232033] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: do_rtk_usb_phy_init Init RTK USB 3.0 PHY phy#0
+[    1.237867] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: do_rtk_usb3_phy_toggle ########## to toggle PHY addr 0x09 BIT(9)
+[    1.239174] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: do_rtk_usb3_phy_toggle ########## PHY addr 0x1f = 0xa0001f10
+[    1.239178] rtk-usb3phy 98013e10.dwc3_u3host_usb3phy: rtk_usb_phy_init Initialized RTK USB 3.0 PHY (take 8ms)
+[    1.239371] xhci-hcd xhci-hcd.7.auto: xHCI Host Controller
+[    1.239576] xhci-hcd xhci-hcd.7.auto: new USB bus registered, assigned bus number 3
+[    1.239786] xhci-hcd xhci-hcd.7.auto: hcc params 0x0220fe64 hci version 0x110 quirks 0x00010010
+[    1.239806] xhci-hcd xhci-hcd.7.auto: irq 45, io mem 0x98050000
+[    1.240047] usb usb3: New USB device found, idVendor=1d6b, idProduct=0002
+[    1.240053] usb usb3: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[    1.240056] usb usb3: Product: xHCI Host Controller
+[    1.240060] usb usb3: Manufacturer: Linux 4.9.119 xhci-hcd
+[    1.240063] usb usb3: SerialNumber: xhci-hcd.7.auto
+[    1.240596] hub 3-0:1.0: USB hub found
+[    1.240629] hub 3-0:1.0: 1 port detected
+[    1.240941] xhci-hcd xhci-hcd.7.auto: xHCI Host Controller
+[    1.241109] xhci-hcd xhci-hcd.7.auto: new USB bus registered, assigned bus number 4
+[    1.241185] usb usb4: We don't know the algorithms for LPM for this host, disabling LPM.
+[    1.241318] usb usb4: New USB device found, idVendor=1d6b, idProduct=0003
+[    1.241323] usb usb4: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+[    1.241326] usb usb4: Product: xHCI Host Controller
+[    1.241330] usb usb4: Manufacturer: Linux 4.9.119 xhci-hcd
+[    1.241333] usb usb4: SerialNumber: xhci-hcd.7.auto
+[    1.241845] hub 4-0:1.0: USB hub found
+[    1.241877] hub 4-0:1.0: 1 port detected
+[    1.242367] rtk-usb-manager 98000000.rtk_usb_power_manager: rtk_usb_init_port_power_on for 98013e00.rtk_dwc3_u3host
+[    1.242374] rtk-usb-manager 98000000.rtk_usb_power_manager: __usb_port_power_on_off port2 power=on enable=0x1 enable_mask=0x1
+[    1.242401] rtk-usb-manager 98000000.rtk_usb_power_manager: __gpio_on_off to set power on by gpio (id=49) OK
+[    1.242411] rtk-dwc3 98013e00.rtk_dwc3_u3host: dwc3_rtk_initiated
+[    1.242417] rtk-dwc3 98013e00.rtk_dwc3_u3host: dwc3_rtk_probe_work End ... ok! (take 24 ms)
+[    1.296186] EMMC : can't find hw semaphore in dtb, use default - 0x9801a63c
+[    1.303351] [rtkemmc_probe] get speed-step : 3 
+[    1.303360] [rtkemmc_probe] get driving s3 : 0x1
+[    1.308107] [rtkemmc_probe] get driving s3 : 0x4
+[    1.312859] [rtkemmc_probe] get driving s3 : 0x4
+[    1.317603] [rtkemmc_probe] get driving s3 : 0x4
+[    1.322347] [rtkemmc_probe] get driving s3 : 0x0
+[    1.327090] [rtkemmc_probe] get tx tuning switch : 0
+[    1.332188] [rtkemmc_probe] get rx tuning switch : 1
+[    1.337285] [rtkemmc_probe] get dqs tuning switch : 1
+[    1.342472] [rtkemmc_probe] get User defined tx reference phase: 9
+[    1.344566] xhci-hcd xhci-hcd.7.auto: RTK_phy_toggle to call RTK_dwc3_usb2_phy_toggle (wValue=10 port=0 status=202a0)
+[    1.344574] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: do_rtk_usb2_phy_toggle ########## to toggle Page1 addr 0xe0 BIT(2)
+[    1.345585] rtk-usb2phy 98058280.dwc3_u3host_usb2phy: do_rtk_usb2_phy_toggle disconnect to set Page0 0xE7=f1
+[    1.348820] [rtkemmc_probe] GPT format: emmc tuning offset start from 0xc9d1e00
+[    1.356319] [rtkemmc_probe] hs400 force tuning setting 1
+[    1.361885] EMMC: set to 0x00000000, EMMC_CTYPE=00000000
+[    1.361893] EMMC: set_wrapper_div to 0x00000000
+[    1.361896] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.362117] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.362253] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.362257] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.380524] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.380528] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.400542] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.400545] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.402231] mmc0: EMMC driver initialized
+[    1.403442] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.403446] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.404460] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.404463] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.413320] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.413324] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.413338] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.413341] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.415566] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.415570] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.420880] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.420884] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.421593] rtkemmc_set_rspparam : cmd7 arg : 0x00010000
+[    1.421596] rtkemmc_set_rspparam : cmd7 with rsp
+[    1.437809] card->mmc_avail_type = 0x00000057 
+[    1.443250] EMMC: set_freq to 0x46, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00464388, PLL_EMMC4=00000007
+[    1.443254] EMMC, set_ip_div = cur_div(0x00000080), ignored. 
+[    1.443256] set bus width 8
+[    1.443261] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.446542] EMMC: set_freq to 0xa6, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00a64388, PLL_EMMC4=00000007
+[    1.446551] EMMC: set div to 0x00, EMMC_CLKDIV=00000000
+[    1.446553] set bus width 8
+[    1.446558] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.446571] EMMC: set_freq to 0xa6, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00a64388, PLL_EMMC4=00000007
+[    1.446575] EMMC, set_ip_div = cur_div(0x00000000), ignored. 
+[    1.446577] set bus width 8
+[    1.446581] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.446584] Prepare Thor HS400 mode ...
+[    1.450534] emmc card manid = 0x000000ea
+[    1.450538] EMMC: set_wrapper_div to 0x00000000
+[    1.450552] EMMC: set_freq to 0x70, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=00000003, PLL_EMMC2=04517893, PLL_EMMC3=00704388, PLL_EMMC4=00000007
+[    1.450555] EMMC, set_ip_div = cur_div(0x00000000), ignored. 
+[    1.450767] Start HS400 RX Tuning:
+[    1.468854] RX_WINDOW = 0xff707fff RX_best=0x3
+[    1.483633] HS400 first stage: final phase=0x34b
+[    1.488390] EMMC: set_freq to 0x57, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=0000034b, PLL_EMMC2=04517893, PLL_EMMC3=00574388, PLL_EMMC4=00000007
+[    1.488398] EMMC: set div to 0x01, EMMC_CLKDIV=00000001
+[    1.488401] set bus width 8
+[    1.488405] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.488418] EMMC: set_freq to 0x57, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=0000034b, PLL_EMMC2=04517893, PLL_EMMC3=00574388, PLL_EMMC4=00000007
+[    1.488422] EMMC, set_ip_div = cur_div(0x00000001), ignored. 
+[    1.488424] set bus width 8
+[    1.488428] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.490625] mmc_select_hs400: card->ext_csd.raw_driver_strength=1
+[    1.497990] EMMC: set_freq to 0x57, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=0000034b, PLL_EMMC2=04517893, PLL_EMMC3=00574388, PLL_EMMC4=00000007
+[    1.497993] EMMC, set_ip_div = cur_div(0x00000001), ignored. 
+[    1.497996] set bus width 8
+[    1.498000] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.498014] EMMC: set_freq to 0x70, EMMC_CKGEN_CTL=0x00000000, PLL_EMMC1=0000034b, PLL_EMMC2=04517893, PLL_EMMC3=00704388, PLL_EMMC4=00000007
+[    1.498021] EMMC: set div to 0x00, EMMC_CLKDIV=00000000
+[    1.498025] rtkemmc_set_ios - enable HS400, DDR_REG:0x80000000
+[    1.498027] set bus width 8
+[    1.498031] EMMC: set to 0x00010000, EMMC_CTYPE=00010000
+[    1.500041] emmc_port->emmc_tuning_addr = 0xc9d1e00, dqs_tuning_blk_addr = 0x64e8f
+[    2.815536] max sample point=22, bitmap=0xfffffe00, DQS=0x28
+[    2.821563] Start HS400 RX Tuning:
+[    2.846250] RX_WINDOW = 0xffffffff RX_best=0x10
+[    2.864449] RX_WINDOW = 0xffffffff RX_best=0x10
+[    2.882629] RX_WINDOW = 0xffefffff RX_best=0x4
+[    2.887408] HS400: final phase=0x44b
+[    2.901089] rtkemmc_dqs_tuning finished!!! EMMC_UHSREG=10001
+[    2.906900] save eMMC hs400 parameter to emmc dqs_tuning_blk_addr 0x6528f
+[    2.913867] hs400 parameter: hs400_TX[1]=0x9, hs400_RX[2]=0x4,hs400_dqs[3]=0x28
+[    2.924723] mmc0: new HS400 MMC card at address 0001
+[    2.925404] mmcblk0: mmc0:0001 SPeMMC 7.22 GiB 
+[    2.925748] mmcblk0boot0: mmc0:0001 SPeMMC partition 1 4.00 MiB
+[    2.926079] mmcblk0boot1: mmc0:0001 SPeMMC partition 2 4.00 MiB
+[    2.926412] mmcblk0rpmb: mmc0:0001 SPeMMC partition 3 4.00 MiB
+[    2.929106] Alternate GPT is invalid, using primary GPT.
+[    2.929186]  mmcblk0: p1 p2 p3 p4 p5 p6 p7 p8 p9 p10 p11 p12 p13 p14 p15 p16 p17 p18 p19 p20 p21 p22 p23 p24 p25 p26 p27 p28 p29
+[    2.940524] mmc0: retry_left=422, block_dev=[25 -> 58], time=1538ms
+[    2.940673] sdhci: Secure Digital Host Controller Interface driver
+[    2.940676] sdhci: Copyright(c) Pierre Ossman
+[    2.940679] sdhci-pltfm: SDHCI platform and OF driver helper
+[    2.940988] rtk-sdio: build at : #72 SMP PREEMPT Wed Mar 10 02:30:40 UTC 2021 
+[    3.028514] [SDIO] SDHCI_SPEC_300: rtk_sdhci_set_clock end real_div=1f4, div=fa, c3c=0, PLL=ae4388, CLK=fa07
+[    3.056545] mmc1: SDHCI controller on 98010c00.sdio [98010c00.sdio] using ADMA
+[    3.057028] rtk-sdmmc: build at : #72 SMP PREEMPT Wed Mar 10 02:30:40 UTC 2021 
+[    3.057031] rtk-sdmmc: CONFIG_MMC_BLOCK_BOUNCE enable
+[    3.060774] rtk-sdio 98010c00.sdio: card claims to support voltages below defined range
+[    3.063507] SDIO 3.0 A01 version
+[    3.066836] SDIO SDR104 mode
+[    3.069277] SD CD irq=259
+[    3.069280] SD WP irq=258
+[    3.080578] [SDIO] SDHCI_SPEC_300: rtk_sdhci_set_clock end real_div=1, div=0, c3c=b0000, PLL=ae4388, CLK=7
+[    3.090489] rtk_sdhci_execute_tuning : Execute Clock Phase Tuning
+[    3.108892] rtk_sdhci_tuning_tx TX phase_map = 0xfffe7fff
+[    3.114452] rtk_sdhci_tuning_tx final phase = 0x00000000
+[    3.116529] rtk_sdmmc_get_cd: SD card does not exist, card_exist = 0xfc13c008
+[    3.127546] SD card does not exist and sd clk is disabled...
+[    3.127883] hidraw: raw HID events driver (C) Jiri Kosina
+[    3.130293] usbcore: registered new interface driver usbhid
+[    3.130299] usbhid: USB HID core driver
+[    3.130510] ashmem: initialized
+[    3.130960] hw perfevents: enabled with armv8_pmuv3 PMU driver, 7 counters available
+[    3.132456] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132592] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132630] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132667] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132706] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132746] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.132782] [sound/arm/snd-realtek.c snd_card_create_PCM_instance 4210]
+[    3.134493] usbcore: registered new interface driver snd-usb-audio
+[    3.135319] oprofile: using timer interrupt.
+[    3.135440] u32 classifier
+[    3.135443]     Actions configured
+[    3.135449] Netfilter messages via NETLINK v0.30.
+[    3.135461] nfnl_acct: registering with nfnetlink.
+[    3.135574] nf_conntrack version 0.5.0 (9216 buckets, 36864 max)
+[    3.135736] ctnetlink v0.93: registering with nfnetlink.
+[    3.135907] nf_tables: (c) 2007-2009 Patrick McHardy <kaber@trash.net>
+[    3.136280] xt_time: kernel timezone is -0000
+[    3.136287] ip_set: protocol 6
+[    3.136394] IPv4 over IPsec tunneling driver
+[    3.136993] ip_tables: (C) 2000-2006 Netfilter Core Team
+[    3.137248] arp_tables: arp_tables: (C) 2002 David S. Miller
+[    3.137287] Initializing XFRM netlink socket
+[    3.137431] NET: Registered protocol family 10
+[    3.138229] mip6: Mobile IPv6
+[    3.138249] ip6_tables: (C) 2000-2006 Netfilter Core Team
+[    3.139601] NET: Registered protocol family 17
+[    3.139622] NET: Registered protocol family 15
+[    3.139704] Bluetooth: RFCOMM TTY layer initialized
+[    3.139714] Bluetooth: RFCOMM socket layer initialized
+[    3.139733] Bluetooth: RFCOMM ver 1.11
+[    3.139742] Bluetooth: BNEP (Ethernet Emulation) ver 1.3
+[    3.139745] Bluetooth: BNEP filters: protocol multicast
+[    3.139755] Bluetooth: BNEP socket layer initialized
+[    3.139771] Key type dns_resolver registered
+[    3.139981] Registering SWP/SWPB emulation handler
+[    3.140120] rtk_sdhci_tuning_rx RX phase_map = 0xfffffc0f
+[    3.140649] registered taskstats version 1
+[    3.141496] [drivers/video/fbdev/rtk/rtk_fb.c rtk_fb_probe] 
+[    3.141496] 
+[    3.141501] [drivers/video/fbdev/rtk/rtk_fb.c rtk_fb_probe] osd-init not enabled
+[    3.141501] 
+[    3.141786] [drivers/video/fbdev/rtk/rtk_fb.c rtk_fb_update_by_memory] [1920 x 1080] addr:0x7945000 size:0x17bb000 irq:0
+[    3.141786] 
+[    3.141789] [drivers/video/fbdev/rtk/rtk_fb.c rtk_fb_update_by_memory] numberofbuffers 3
+[    3.141789] 
+[    3.141793] [DC_Init] start
+[    3.141795] [DC_Init] allocate DC info buffer
+[    3.141798] [DC_Init] rpc_common_base = f0811000, ipc = f08110c4
+[    3.141963] [DC_Init] done
+[    3.145689] rtk_sdhci_tuning_rx final phase = 0x00000017
+[    3.145795] After tuning, current SDIO PLL = ae
+[    3.157171] mmc1: new ultra high speed SDR104 SDIO card at address 0001
+[    3.159947] cpu-volt-sel: prop_from_dss: dss val=23355
+[    3.159953] cpu-volt-sel: dev_pm_opp_set_prop_name: name=ss
+[    3.160007] rtk-tee-cc tee-clocks: ready
+[    3.160173] scpu wrappee irq 28, scpu_wrap_addr 0xfffffffffe01d000
+[    3.160173] 
+[    3.160223] [SCPU_WRAPPER] initialized
+[    3.160227] [SCPU_WRAPPER][scpu_wrapper_init] memory monitor 0x98013b00 - 0x98013c00
+[    3.160737] rtk-uctrl rtk-uctrl.0: initialized
+[    3.164025] otg_wakelock_init: No USB transceiver found
+[    3.169675] rtk-sw-rtc rtk-sw-rtc.0: setting system clock to 2014-01-01 00:00:02 UTC (1388534402)
+[    3.169679] -->rfkill_bluetooth_init
+[    3.169805] -->rfkill_bluetooth_probe
+[    3.169988] bluetooth_set_power: block=1
+[    3.169994] <--rfkill_bluetooth_probe
+[    3.170482] audio-notifier spdif: rtk_audio_notifier_probe
+[    3.170517] audio-notifier spdif: request gpio22
+[    3.170659] r2rdsc: clk_regmap_gate_disable_unused
+[    3.170676] tpb: clk_regmap_gate_disable_unused
+[    3.170690] nf: clk_regmap_gate_disable_unused
+[    3.170695] rsa: clk_regmap_gate_disable_unused
+[    3.170715] sc1: clk_regmap_gate_disable_unused
+[    3.170742] pctrl_hdmirx: rtk_sram_power_off_unused
+[    3.170762] ALSA device list:
+[    3.170766]   #0: snd_alsa_rtk
+[    3.170923] ttyS0 - failed to request DMA
+[    3.171750] Freeing unused kernel memory: 1024K
+>[    3.176676] init: init first stage started!
+>[    3.176705] init: First stage mount skipped (recovery mode)
+>[    3.176831] init: Using Android DT directory /proc/device-tree/firmware/android/
+>[    3.176931] init: Skipped setting INIT_AVB_VERSION (not vbmeta compatible)
+>[    3.177042] init: Loading SELinux policy
+[    3.182337] SELinux: 8192 avtab hash slots, 20112 rules.
+[    3.194752] SELinux: 8192 avtab hash slots, 20112 rules.
+[    3.194764] SELinux:  1 users, 2 roles, 1601 types, 0 bools, 1 sens, 1024 cats
+[    3.194773] SELinux:  93 classes, 20112 rules
+[    3.198791] SELinux:  Completing initialization.
+[    3.198794] SELinux:  Setting up existing superblocks.
+[    3.279035] audit: type=1403 audit(1388534402.603:2): policy loaded auid=4294967295 ses=4294967295
+>[    3.279342] selinux: SELinux: Loaded policy from /sepolicy
+>[    3.279342] 
+>[    3.284210] selinux: SELinux: Loaded file_contexts
+>[    3.284210] 
+[    3.284691] audit: type=1400 audit(1388534402.611:3): avc:  denied  { fowner } for  pid=1 comm="init" capability=3  scontext=u:r:kernel:s0 tcontext=u:r:kernel:s0 tclass=capability permissive=1
+>[    3.289018] init: init second stage started!
+>[    3.314402] init: Using Android DT directory /proc/device-tree/firmware/android/
+>[    3.319411] selinux: SELinux: Loaded file_contexts
+>[    3.319411] 
+>[    3.319434] init: Running restorecon...
+>[    3.323710] selinux: SELinux:  Could not stat /dev/block: No such file or directory.
+>[    3.323710] 
+>[    3.333691] init: waitid failed: No child processes
+>[    3.338797] init: Couldn't load property file '/system/etc/prop.default': open() failed: No such file or directory: No such file or directory
+>[    3.343550] init: Unable to set property 'ro.product.first_api_level' to '28' in property file '/prop.default': Read-only property was already set
+>[    3.359492] init: Couldn't load property file '/product/build.prop': open() failed: No such file or directory: No such file or directory
+>[    3.359536] init: Couldn't load property file '/odm/default.prop': open() failed: No such file or directory: No such file or directory
+[    3.364225] audit: type=1400 audit(1388534402.687:4): avc:  denied  { create } for  pid=1 comm="init" name="cgroup.procs" scontext=u:r:init:s0 tcontext=u:object_r:rootfs:s0 tclass=file permissive=1
+[    3.364289] audit: type=1400 audit(1388534402.687:5): avc:  denied  { write } for  pid=1 comm="init" path="/acct/uid_0/pid_1165/cgroup.procs" dev="rootfs" ino=2408 scontext=u:r:init:s0 tcontext=u:object_r:rootfs:s0 tclass=file permissive=1
+>[    3.368306] ueventd: ueventd started!
+>[    3.372384] selinux: SELinux: Loaded file_contexts
+>[    3.372384] 
+>[    3.372448] ueventd: Parsing file /ueventd.rc...
+>[    3.373301] ueventd: Parsing file /vendor/ueventd.rc...
+>[    3.373345] ueventd: Unable to read config file '/vendor/ueventd.rc': open() failed: No such file or directory
+>[    3.383642] ueventd: Parsing file /odm/ueventd.rc...
+>[    3.383679] ueventd: Unable to read config file '/odm/ueventd.rc': open() failed: No such file or directory
+>[    3.393779] ueventd: Parsing file /ueventd.thor.rc...
+>[    3.393816] ueventd: Unable to read config file '/ueventd.thor.rc': open() failed: No such file or directory
+>[    3.404351] ueventd: [libfs_mgr]fs_mgr_read_fstab_dt(): failed to read fstab from dt
+[    3.579858] audit: type=1400 audit(1388534402.903:6): avc:  denied  { setattr } for  pid=1 comm="init" name="system" dev="rootfs" ino=7883 scontext=u:r:init:s0 tcontext=u:object_r:rootfs:s0 tclass=lnk_file permissive=1
+[    3.580568] audit: type=1400 audit(1388534402.907:7): avc:  denied  { create } for  pid=1 comm="init" name="ta" scontext=u:r:init:s0 tcontext=u:object_r:vendor_file:s0 tclass=dir permissive=1
+[    3.582644] file system registered
+[    3.583348] using random self ethernet address
+[    3.583354] using random host ethernet address
+[    3.586140] audit: type=1400 audit(1388534402.911:8): avc:  denied  { read write } for  pid=1597 comm="busybox" path="/dev/console" dev="tmpfs" ino=2446 scontext=u:r:recovery:s0 tcontext=u:object_r:console_device:s0 tclass=chr_file permissive=1
+[    3.587117] audit: type=1400 audit(1388534402.911:9): avc:  denied  { ioctl } for  pid=1597 comm="busybox" path="/dev/console" dev="tmpfs" ino=2446 ioctlcmd=0x5401 scontext=u:r:recovery:s0 tcontext=u:object_r:console_device:s0 tclass=chr_file permissive=1
+[    3.587986] audit: type=1400 audit(1388534402.911:10): avc:  denied  { getattr } for  pid=1597 comm="busybox" path="/dev/console" dev="tmpfs" ino=2446 scontext=u:r:recovery:s0 tcontext=u:object_r:console_device:s0 tclass=chr_file permissive=1
+[    3.590300] ffs_data_put(): freeing
+[    3.607148] factory (1602) used greatest stack depth: 5272 bytes left
+>[    3.610794] healthd: battery none chg=a
+[   16.672032] audit_printk_skb: 96 callbacks suppressed
+[   16.672037] audit: type=1400 audit(1388534415.999:43): avc:  denied  { getattr } for  pid=1615 comm="ls" path="/sepolicy" dev="rootfs" ino=7894 scontext=u:r:recovery:s0 tcontext=u:object_r:sepolicy_file:s0 tclass=file permissive=1
+[   16.672312] audit: type=1400 audit(1388534415.999:44): avc:  denied  { getattr } for  pid=1615 comm="ls" path="/init" dev="rootfs" ino=7868 scontext=u:r:recovery:s0 tcontext=u:object_r:init_exec:s0 tclass=file permissive=1
+[   53.622120] audit: type=1400 audit(1388534452.951:45): avc:  denied  { read } for  pid=1600 comm="loader_m" name="/" dev="tmpfs" ino=2276 scontext=u:r:adbd:s0 tcontext=u:object_r:tmpfs:s0 tclass=dir permissive=1
+[   53.622154] audit: type=1400 audit(1388534452.951:46): avc:  denied  { open } for  pid=1600 comm="loader_m" path="/mnt" dev="tmpfs" ino=2276 scontext=u:r:adbd:s0 tcontext=u:object_r:tmpfs:s0 tclass=dir permissive=1
+>[   63.610334] healthd: battery none chg=a
+>[  123.610283] healthd: battery none chg=a
+/ # 

@@ -1,0 +1,2530 @@
+/dts-v1/;
+
+/memreserve/	0x0000000010200000 0x0000000004000000;
+/memreserve/	0x000000000f900000 0x0000000000307000;
+/memreserve/	0x000000000fc07000 0x00000000001f9000;
+/memreserve/	0x0000000000000000 0x0000000000001000;
+/memreserve/	0x0000000000002000 0x0000000000001000;
+/memreserve/	0x0000000032800000 0x0000000000300000;
+/memreserve/	0x0000000032b00000 0x0000000012c00000;
+/memreserve/	0x0000000000000000 0x0000000000100000;
+/memreserve/	0x000000000002f000 0x0000000000001000;
+/memreserve/	0x0000000001ffe000 0x0000000000004000;
+/memreserve/	0x0000000002200000 0x0000000000c00000;
+/memreserve/	0x0000000003000000 0x0000000000100000;
+/memreserve/	0x0000000003100000 0x0000000006000000;
+/memreserve/	0x0000000010000000 0x0000000000014000;
+/memreserve/	0x0000000032600000 0x0000000000200000;
+/memreserve/	0x00000000303f0000 0x0000000002210000;
+/memreserve/	0x0000000015000000 0x00000000017bb000;
+/memreserve/	0x0000000010100000 0x0000000000f00000;
+/memreserve/	0x000000000f900000 0x0000000000500000;
+/memreserve/	0x000000002f700000 0x0000000000900000;
+/ {
+	compatible = "realtek,rtd1619";
+	interrupt-parent = <0x01>;
+	#address-cells = <0x02>;
+	#size-cells = <0x02>;
+	model = "Realtek RTD1619 (Rescue, TEE, Melon)";
+	model_hex = <0x653>;
+
+	pinctrl@9804E000 {
+		compatible = "realtek,rtk16xx-pinctrl";
+		reg = <0x00 0x9804e000 0x00 0x100 0x00 0x9804f000 0x00 0x100>;
+		#gpio-range-cells = <0x03>;
+		status = "okay";
+		linux,phandle = <0x19>;
+		phandle = <0x19>;
+
+		sdcard_low {
+			realtek,pins = "sd3_data_3", "sd3_data_2", "sd3_data_1", "sd3_data_0", "sd3_clk", "sd3_cmd";
+			realtek,function = "sd";
+			realtek,pull_en = <0x01>;
+			realtek,pull_sel = <0x00>;
+			linux,phandle = <0x28>;
+			phandle = <0x28>;
+		};
+
+		sdcard_high {
+			realtek,pins = "gpio_35", "gpio_34";
+			realtek,function = "mmc";
+			realtek,pull_en = <0x01>;
+			realtek,pull_sel = <0x01>;
+			linux,phandle = <0x42>;
+			phandle = <0x42>;
+		};
+
+		sdio_pins_0 {
+			realtek,pins = "sd3_data_3", "sd3_data_2", "sd3_data_1", "sd3_data_0", "sd3_clk", "sd3_cmd", "sdio_loc";
+			realtek,function = "sdio_loc0";
+			linux,phandle = <0x43>;
+			phandle = <0x43>;
+		};
+
+		sdio_pins_1 {
+			realtek,pins = "gpio_40", "gpio_41", "gpio_42", "gpio_43", "gpio_44", "gpio_45", "sdio_loc";
+			realtek,function = "sdio_loc1";
+			linux,phandle = <0x2a>;
+			phandle = <0x2a>;
+		};
+
+		uart0_pins {
+			realtek,pins = "ur0_rx", "ur0_tx";
+			realtek,function = "uart0";
+			linux,phandle = <0x44>;
+			phandle = <0x44>;
+		};
+
+		uart1_pins {
+			realtek,pins = "gpio_8", "gpio_9";
+			realtek,function = "uart1";
+			linux,phandle = <0x1c>;
+			phandle = <0x1c>;
+		};
+
+		uart2_pins_0 {
+			realtek,pins = "ur2_loc", "gpio_2", "gpio_3", "gpio_4", "gpio_5";
+			realtek,function = "uart2_loc0";
+			linux,phandle = <0x45>;
+			phandle = <0x45>;
+		};
+
+		uart2_pins_1 {
+			realtek,pins = "ur2_loc", "gpio_25", "gpio_26", "gpio_27", "gpiio_28";
+			realtek,function = "uart2_loc1";
+			linux,phandle = <0x46>;
+			phandle = <0x46>;
+		};
+
+		i2c_pins_0 {
+			realtek,pins = "gpio_12", "gpio_13";
+			realtek,function = "i2c0";
+			realtek,drive = <0x04>;
+			linux,phandle = <0x20>;
+			phandle = <0x20>;
+		};
+
+		i2c_pins_0_HS {
+			realtek,pins = "gpio_12", "gpio_13";
+			realtek,function = "i2c0";
+			realtek,drive = <0x08>;
+			linux,phandle = <0x21>;
+			phandle = <0x21>;
+		};
+
+		i2c_pins_1 {
+			realtek,pins = "gpio_16", "gpio_17";
+			realtek,function = "i2c1";
+			linux,phandle = <0x22>;
+			phandle = <0x22>;
+		};
+
+		i2c_pins_2 {
+			realtek,pins = "gpio_18", "gpio_19";
+			realtek,function = "i2c2";
+			linux,phandle = <0x27>;
+			phandle = <0x27>;
+		};
+
+		i2c_pins_3 {
+			realtek,pins = "gpio_34", "gpio_35";
+			realtek,function = "i2c3";
+			linux,phandle = <0x23>;
+			phandle = <0x23>;
+		};
+
+		i2c_pins_4 {
+			realtek,pins = "gpio_83", "gpio_84";
+			realtek,function = "i2c4";
+			linux,phandle = <0x47>;
+			phandle = <0x47>;
+		};
+
+		i2c_pins_5 {
+			realtek,pins = "gpio_5", "gpio_6";
+			realtek,function = "i2c5";
+			linux,phandle = <0x24>;
+			phandle = <0x24>;
+		};
+
+		spi-pins-enable {
+			realtek,pins = "sf_en";
+			realtek,function = "sf_enable";
+			linux,phandle = <0x48>;
+			phandle = <0x48>;
+		};
+
+		spi_pins_loc_spi {
+			realtek,pins = "gpio_25", "gpio_26", "gpio_27", "gpio_28";
+			realtek,function = "spi";
+			linux,phandle = <0x49>;
+			phandle = <0x49>;
+		};
+
+		gspi_pins_0 {
+			realtek,pins = "gspi_loc", "gpio_2", "gpio_3", "gpio_4", "gpio_5";
+			realtek,function = "gspi_loc0";
+			linux,phandle = <0x25>;
+			phandle = <0x25>;
+		};
+
+		gspi_pins_1 {
+			realtek,pins = "gspi_loc", "gpio_25", "gpio_26", "gpio_27", "gpio_28";
+			realtek,function = "gspi_loc1";
+			linux,phandle = <0x4a>;
+			phandle = <0x4a>;
+		};
+
+		smartcard_pins_0 {
+			realtek,pins = "gpio_59", "gpio_60", "gpio_61", "gpio_62";
+			realtek,function = "sc0";
+			linux,phandle = <0x2b>;
+			phandle = <0x2b>;
+		};
+
+		smartcard_pins_1 {
+			realtek,pins = "sd3_cmd", "sd3_clk", "sd3_data_0", "sd3_data_1";
+			realtek,function = "sc1";
+			linux,phandle = <0x4b>;
+			phandle = <0x4b>;
+		};
+
+		tp0_loc_tp0_pins {
+			realtek,pins = "tp_sync", "tp_valid", "tp_clk", "tp_data_0", "tp_data_1", "tp_data_2", "tp_data_3", "tp_data_4", "tp_data_5", "tp_data_6", "tp_data_7";
+			realtek,function = "tp0";
+			linux,phandle = <0x4c>;
+			phandle = <0x4c>;
+		};
+
+		tp1_loc_tp1_pins {
+			realtek,pins = "tp_data_1", "tp_data_2", "tp_data_3", "tp_data_4";
+			realtek,function = "tp1";
+			linux,phandle = <0x4d>;
+			phandle = <0x4d>;
+		};
+
+		ao_pins {
+			realtek,pins = "tp_data_1", "tp_data_2", "tp_data_3", "tp_data_4", "tp_data_5", "tp_data_6", "tp_data_7";
+			realtek,function = "ao";
+			linux,phandle = <0x34>;
+			phandle = <0x34>;
+		};
+
+		ir_rx_pins {
+			realtek,pins = "ir_rx";
+			realtek,function = "ir_rx";
+			linux,phandle = <0x2c>;
+			phandle = <0x2c>;
+		};
+
+		spdif_pins {
+			realtek,pins = "gpio_50";
+			realtek,function = "spdif";
+			linux,phandle = <0x33>;
+			phandle = <0x33>;
+		};
+
+		spdif_optical_pins {
+			realtek,pins = "gpio_21", "gpio_68", "gpio_85";
+			realtek,function = "spdif";
+			realtek,pull_en = <0x00>;
+			linux,phandle = <0x4e>;
+			phandle = <0x4e>;
+		};
+
+		ai_loc0_pins {
+			realtek,pins = "gpio_59", "gpio_60", "gpio_61", "gpio_62", "tp_sync", "tp_valid", "tp_clk";
+			realtek,function = "ai_loc0";
+			linux,phandle = <0x4f>;
+			phandle = <0x4f>;
+		};
+
+		ai_loc1_pins {
+			realtek,pins = "gpio_40", "gpio_41", "gpio_42", "gpio_43", "gpio_44", "gpio_45", "gpio_57";
+			realtek,function = "ai_loc1";
+			linux,phandle = <0x50>;
+			phandle = <0x50>;
+		};
+
+		dmic_loc0_pins {
+			realtek,pins = "dmic_loc", "gpio_59", "gpio_60", "gpio_61", "gpio_62", "tp_sync", "tp_valid", "tp_clk", "tp_data_0";
+			realtek,function = "dmic_loc0";
+			linux,phandle = <0x51>;
+			phandle = <0x51>;
+		};
+
+		dmic_loc1_pins {
+			realtek,pins = "dmic_loc", "gpio_40", "gpio_41", "gpio_42", "gpio_43", "gpio_44", "gpio_45", "gpio_57", "gpio_58";
+			realtek,function = "dmic_loc1";
+			linux,phandle = <0x52>;
+			phandle = <0x52>;
+		};
+
+		tdm_loc0_pins {
+			realtek,pins = "tp_sync", "tp_valid", "tp_clk", "tp_data_0";
+			realtek,function = "tdm_ai_loc0";
+			linux,phandle = <0x53>;
+			phandle = <0x53>;
+		};
+
+		tdm_dmic_loc0_pins {
+			realtek,pins = "dmic_loc";
+			realtek,function = "dmic_loc0";
+			linux,phandle = <0x54>;
+			phandle = <0x54>;
+		};
+
+		tdm_loc1_pins {
+			realtek,pins = "gpio_40", "gpio_41", "gpio_42", "gpio_43";
+			realtek,function = "tdm_ai_loc1";
+			linux,phandle = <0x55>;
+			phandle = <0x55>;
+		};
+
+		tdm_dmic_loc1_pins {
+			realtek,pins = "dmic_loc";
+			realtek,function = "dmic_loc1";
+			linux,phandle = <0x56>;
+			phandle = <0x56>;
+		};
+
+		etn_led_pins {
+			realtek,pins = "gpio_14", "gpio_15", "gpio_51";
+			realtek,function = "etn_led";
+			linux,phandle = <0x1e>;
+			phandle = <0x1e>;
+		};
+
+		sgmii_mdio_pins {
+			realtek,pins = "gpio_29", "gpio_46";
+			realtek,function = "extphy";
+			linux,phandle = <0x1f>;
+			phandle = <0x1f>;
+		};
+
+		pcie_clk_pins_0 {
+			realtek,pins = "gpio_46";
+			realtek,function = "pcie0";
+			linux,phandle = <0x3b>;
+			phandle = <0x3b>;
+		};
+
+		pcie_clk_pins_1 {
+			realtek,pins = "gpio_66";
+			realtek,function = "pcie1";
+			linux,phandle = <0x3c>;
+			phandle = <0x3c>;
+		};
+
+		scpu_ejtag_pins_loc_0 {
+			realtek,pins = "gpio_2", "gpio_3", "gpio_4", "gpio_5", "gpio_6", "ejtag_scpu_loc";
+			realtek,function = "scpu_ejtag_loc0";
+			linux,phandle = <0x57>;
+			phandle = <0x57>;
+		};
+
+		scpu_ejtag_pins_loc_1 {
+			realtek,pins = "sd3_cmd", "sd3_data_0", "sd3_data_1", "sd3_data_3", "ejtag_scpu_loc";
+			realtek,function = "scpu_ejtag_loc1";
+			linux,phandle = <0x58>;
+			phandle = <0x58>;
+		};
+
+		scpu_ejtag_pins_disable {
+			realtek,pins = "ejtag_scpu_loc";
+			realtek,function = "scpu_ejtag_disable";
+			linux,phandle = <0x29>;
+			phandle = <0x29>;
+		};
+
+		lx_ejtag_pins_loc_0 {
+			realtek,pins = "gpio_2", "gpio_3", "gpio_4", "gpio_5", "gpio_6", "ejtag_avcpu_loc";
+			realtek,function = "lx_ejtag_loc0";
+			linux,phandle = <0x59>;
+			phandle = <0x59>;
+		};
+
+		acpu_ejtag_pins_loc_1 {
+			realtek,pins = "sd3_cmd", "sd3_clk", "sd3_data_0", "sd3_data_1", "sd3_data_3", "ejtag_avcpu_loc";
+			realtek,function = "lx_ejtag_loc1";
+			linux,phandle = <0x5a>;
+			phandle = <0x5a>;
+		};
+
+		dc_fan_sensor_pins {
+			realtek,pins = "gpio_47";
+			realtek,function = "dc_fan_sensor";
+			linux,phandle = <0x5b>;
+			phandle = <0x5b>;
+		};
+
+		pwm0_0_pins {
+			realtek,pins = "gpio_12";
+			realtek,function = "pwm0";
+			linux,phandle = <0x5c>;
+			phandle = <0x5c>;
+		};
+
+		pwm0_1_pins {
+			realtek,pins = "gpio_20";
+			realtek,function = "pwm0";
+			linux,phandle = <0x5d>;
+			phandle = <0x5d>;
+		};
+
+		pwm1_0_pins {
+			realtek,pins = "gpio_13";
+			realtek,function = "pwm1";
+			linux,phandle = <0x5e>;
+			phandle = <0x5e>;
+		};
+
+		pwm1_1_pins {
+			realtek,pins = "gpio_21";
+			realtek,function = "pwm1";
+			linux,phandle = <0x5f>;
+			phandle = <0x5f>;
+		};
+
+		pwm2_0_pins {
+			realtek,pins = "gpio_14";
+			realtek,function = "pwm2";
+			linux,phandle = <0x60>;
+			phandle = <0x60>;
+		};
+
+		pwm2_1_pins {
+			realtek,pins = "gpio_22";
+			realtek,function = "pwm2";
+			linux,phandle = <0x61>;
+			phandle = <0x61>;
+		};
+
+		pwm3_0_pins {
+			realtek,pins = "gpio_15";
+			realtek,function = "pwm3";
+			linux,phandle = <0x62>;
+			phandle = <0x62>;
+		};
+
+		pwm3_1_pins {
+			realtek,pins = "gpio_23";
+			realtek,function = "pwm3";
+			linux,phandle = <0x63>;
+			phandle = <0x63>;
+		};
+
+		usb_cc1_pins {
+			realtek,pins = "usb_cc1";
+			realtek,function = "usb_cc1";
+			linux,phandle = <0x64>;
+			phandle = <0x64>;
+		};
+
+		usb_cc2_pins {
+			realtek,pins = "usb_cc2";
+			realtek,function = "usb_cc2";
+			linux,phandle = <0x65>;
+			phandle = <0x65>;
+		};
+
+		demod-pins {
+			realtek,pins = "demod_agc";
+			realtek,function = "qam_agc_if";
+			linux,phandle = <0x35>;
+			phandle = <0x35>;
+		};
+	};
+
+	aliases {
+		serial0 = "/serial0@98007800";
+		i2c0 = "/i2c@0x98007D00";
+		i2c1 = "/i2c@0x98007C00";
+		i2c3 = "/i2c@0x9801B900";
+		i2c4 = "/i2c@0x9801BA00";
+		i2c5 = "/i2c@0x9801BB00";
+	};
+
+	cpus {
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x00>;
+			enable-method = "rtk-spin-table";
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x31>;
+			phandle = <0x31>;
+		};
+
+		cpu@1 {
+			boot-secondary-addr = <0x20000>;
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x100>;
+			enable-method = "rtk-spin-table";
+			cpu-release-addr = <0x00 0x98007f30>;
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x66>;
+			phandle = <0x66>;
+		};
+
+		cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x200>;
+			enable-method = "rtk-spin-table";
+			cpu-release-addr = <0x00 0x98007f30>;
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x67>;
+			phandle = <0x67>;
+		};
+
+		cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x300>;
+			enable-method = "rtk-spin-table";
+			cpu-release-addr = <0x00 0x98007f30>;
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x68>;
+			phandle = <0x68>;
+		};
+
+		cpu@4 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x400>;
+			enable-method = "rtk-spin-table";
+			cpu-release-addr = <0x00 0x98007f30>;
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x69>;
+			phandle = <0x69>;
+		};
+
+		cpu@5 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55", "arm,armv8";
+			reg = <0x500>;
+			enable-method = "rtk-spin-table";
+			cpu-release-addr = <0x00 0x98007f30>;
+			next-level-cache = <0x02>;
+			clocks = <0x03>;
+			cpu-supply = <0x04>;
+			operating-points-v2 = <0x05>;
+			#cooling-cells = <0x02>;
+			linux,phandle = <0x6a>;
+			phandle = <0x6a>;
+		};
+
+		l2-cache {
+			compatible = "cache";
+			linux,phandle = <0x02>;
+			phandle = <0x02>;
+		};
+	};
+
+	arm_psci {
+		compatible = "arm,psci-0.2";
+		method = "smc";
+	};
+
+	rtk_pm@0 {
+		compatible = "realtek,pm";
+		system-power-controller;
+		reg = <0x00 0x98000000 0x00 0x1800 0x00 0x98007000 0x00 0x1000 0x00 0x9801a000 0x00 0x1000>;
+		wakeup-flags = <0x3f>;
+		status = "okay";
+	};
+
+	soc@0 {
+		reg = <0x00 0x98000000 0x00 0x70000>;
+		compatible = "simple-bus";
+		device_type = "soc";
+	};
+
+	chip-info@9801A200 {
+		compatible = "realtek,soc-chip";
+		reg = <0x00 0x9801a200 0x00 0x08 0x00 0x980174f4 0x00 0x04>;
+	};
+
+	sb2-lock@9801A000 {
+		compatible = "realtek,sb2-sem";
+		reg = <0x00 0x9801a000 0x00 0x04>;
+		linux,phandle = <0x17>;
+		phandle = <0x17>;
+	};
+
+	sb2-lock@9801A62C {
+		compatible = "realtek,sb2-sem";
+		reg = <0x00 0x9801a62c 0x00 0x04>;
+		linux,phandle = <0x07>;
+		phandle = <0x07>;
+	};
+
+	sb2@9801a000 {
+		compatible = "realtek,sysbrg2", "syscon", "simple-bus";
+		reg = <0x00 0x9801a000 0x00 0x1000>;
+
+		dbg {
+			compatible = "realtek,sysbrg2-dbg";
+			interrupts = <0x00 0x24 0x04>;
+			nvmem-cells = <0x06>;
+			nvmem-cell-names = "secure_en";
+			status = "okay";
+		};
+
+		inv {
+			compatible = "realtek,sysbrg2-inv";
+			interrupts = <0x00 0x24 0x04>;
+			nvmem-cells = <0x06>;
+			nvmem-cell-names = "secure_en";
+			status = "okay";
+		};
+	};
+
+	efuse@98017000 {
+		compatible = "realtek,efuse";
+		reg = <0x00 0x98017000 0x00 0x1000>;
+		read-only;
+		status = "okay";
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		realtek,sb2-lock = <0x07>;
+		nvmem-cells = <0x08 0x06 0x09 0x0a 0x0b 0x0c 0x0d 0x0e 0x0f 0x10 0x11 0x12 0x13 0x14 0x15>;
+		nvmem-cell-names = "chip-id", "secure-chip-en", "bond-id", "iddq", "etn-rc-cal", "etn-r-amp-cal", "usb-cc1-comp-cal", "usb-cc2-comp-cal", "usb-cc1-4-7k-cal", "usb-cc1-12k-cal", "usb-cc2-4-7k-cal", "usb-cc2-12k-cal", "usb-cc-en", "cpu-dss", "usb-dc-cal";
+		linux,phandle = <0x6b>;
+		phandle = <0x6b>;
+
+		chip-id@3cc {
+			reg = <0x3cc 0x10>;
+			linux,phandle = <0x08>;
+			phandle = <0x08>;
+		};
+
+		secure-chip-en@3fd {
+			reg = <0x3fd 0x01>;
+			bits = <0x02 0x03>;
+			linux,phandle = <0x06>;
+			phandle = <0x06>;
+		};
+
+		bond-id@4f4 {
+			reg = <0x4f4 0x04>;
+			linux,phandle = <0x09>;
+			phandle = <0x09>;
+		};
+
+		iddq@4f8 {
+			reg = <0x4f8 0x02>;
+			linux,phandle = <0x0a>;
+			phandle = <0x0a>;
+		};
+
+		etn-rc-cal@4fb {
+			reg = <0x4fb 0x01>;
+			bits = <0x00 0x04>;
+			linux,phandle = <0x0b>;
+			phandle = <0x0b>;
+		};
+
+		etn-r-amp-cal@4fc {
+			reg = <0x4fc 0x08>;
+			linux,phandle = <0x0c>;
+			phandle = <0x0c>;
+		};
+
+		usb-cc1-comp-cal@504 {
+			reg = <0x504 0x03>;
+			linux,phandle = <0x0d>;
+			phandle = <0x0d>;
+		};
+
+		usb-cc2-comp-cal@507 {
+			reg = <0x507 0x03>;
+			linux,phandle = <0x0e>;
+			phandle = <0x0e>;
+		};
+
+		usb-cc1-4-7k-cal@50a {
+			reg = <0x50a 0x01>;
+			bits = <0x00 0x04>;
+			linux,phandle = <0x0f>;
+			phandle = <0x0f>;
+		};
+
+		usb-cc1-12k-cal@50a {
+			reg = <0x50a 0x01>;
+			bits = <0x04 0x04>;
+			linux,phandle = <0x10>;
+			phandle = <0x10>;
+		};
+
+		usb-cc2-4-7k-cal@50b {
+			reg = <0x50b 0x01>;
+			bits = <0x00 0x04>;
+			linux,phandle = <0x11>;
+			phandle = <0x11>;
+		};
+
+		usb-cc2-12k-cal@50b {
+			reg = <0x50b 0x01>;
+			bits = <0x04 0x04>;
+			linux,phandle = <0x12>;
+			phandle = <0x12>;
+		};
+
+		usb-cc-en@50d {
+			reg = <0x50d 0x01>;
+			bits = <0x04 0x01>;
+			linux,phandle = <0x13>;
+			phandle = <0x13>;
+		};
+
+		cpu-dss@510 {
+			reg = <0x510 0x17>;
+			bits = <0x00 0xb4>;
+			linux,phandle = <0x14>;
+			phandle = <0x14>;
+		};
+
+		usb-dc-cal@530 {
+			reg = <0x530 0x02>;
+			bits = <0x00 0x0c>;
+			linux,phandle = <0x15>;
+			phandle = <0x15>;
+		};
+	};
+
+	osc27m {
+		compatible = "fixed-clock";
+		#clock-cells = <0x00>;
+		clock-frequency = <0x19bfcc0>;
+		clock-output-names = "osc27m";
+		linux,phandle = <0x16>;
+		phandle = <0x16>;
+	};
+
+	crt-controller@98000000 {
+		compatible = "realtek,rtd1619-cc", "syscon", "realtek,syscon";
+		reg = <0x00 0x98000000 0x00 0x1000>;
+		#clock-cells = <0x01>;
+		#reset-cells = <0x01>;
+		clocks = <0x16>;
+		realtek,sb2-lock = <0x17>;
+		linux,phandle = <0x1d>;
+		phandle = <0x1d>;
+	};
+
+	iso-controller@98007000 {
+		compatible = "realtek,rtd1619-ic", "syscon", "realtek,syscon";
+		reg = <0x00 0x98007000 0x00 0x1000>;
+		#clock-cells = <0x01>;
+		#reset-cells = <0x01>;
+		realtek,sb2-lock = <0x17>;
+		linux,phandle = <0x1b>;
+		phandle = <0x1b>;
+	};
+
+	power-domain@98007000 {
+		compatible = "realtek,rtd16xx-power-controller";
+		reg = <0x00 0x98007000 0x00 0x1000>;
+		#power-domain-cells = <0x01>;
+		#powerctrl-cells = <0x01>;
+		linux,phandle = <0x26>;
+		phandle = <0x26>;
+	};
+
+	rbus@98000000 {
+		compatible = "realtek,uio";
+		reg = <0x00 0x98000000 0x00 0x200000>;
+	};
+
+	refclk@9801b540 {
+		compatible = "realtek,uio";
+		reg = <0x00 0x9801b000 0x00 0x1000>;
+		status = "okay";
+	};
+
+	interrupt-controller@FF100000 {
+		compatible = "arm,gic-v3";
+		#interrupt-cells = <0x03>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		interrupt-controller;
+		redistributor-stride = <0x00 0x20000>;
+		#redistributor-regions = <0x01>;
+		reg = <0x00 0xff100000 0x00 0x10000 0x00 0xff140000 0x00 0x200000>;
+		interrupts = <0x01 0x09 0x04>;
+		linux,phandle = <0x01>;
+		phandle = <0x01>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <0x01 0x0d 0xf08 0x01 0x0e 0xf08 0x01 0x0b 0xf08 0x01 0x0a 0xf08>;
+		clock-frequency = <0x19bfcc0>;
+	};
+
+	pmu {
+		compatible = "arm,armv8-pmuv3";
+		interrupts = <0x01 0x07 0xf08>;
+	};
+
+	intc@9801B000 {
+		compatible = "Realtek,rtk-irq-mux";
+		Realtek,mux-nr = <0x02>;
+		#interrupt-cells = <0x02>;
+		interrupt-controller;
+		reg = <0x00 0x9801b000 0x00 0x100 0x00 0x98007000 0x00 0x100>;
+		interrupts = <0x00 0x28 0x04 0x00 0x29 0x04>;
+		intr-status = <0x0c 0x00>;
+		intr-en = <0x80 0x40>;
+		status = "okay";
+		linux,phandle = <0x18>;
+		phandle = <0x18>;
+	};
+
+	rtk_iso_gpio@98007100 {
+		compatible = "realtek,rtk16xx-iso-gpio-irq-mux";
+		gpio-controller;
+		#gpio-cells = <0x03>;
+		Realtek,gpio_base = <0x00>;
+		Realtek,gpio_numbers = <0x56>;
+		interrupt-parent = <0x18>;
+		#interrupt-cells = <0x01>;
+		interrupt-controller;
+		interrupts = <0x33 0x04 0x34 0x04>;
+		reg = <0x00 0x98007000 0x00 0x100 0x00 0x98007100 0x00 0x100>;
+		gpio-ranges = <0x19 0x00 0x00 0x56>;
+		wakeup-gpio-list = <0x1a 0x0a 0x00 0x01 0x1a 0x1a 0x00 0x01>;
+		wakeup-gpio-enable = <0x01 0x01>;
+		wakeup-gpio-activity = <0x00 0x00>;
+		status = "okay";
+		linux,phandle = <0x1a>;
+		phandle = <0x1a>;
+	};
+
+	serial0@98007800 {
+		compatible = "snps,dw-apb-uart";
+		reg = <0x00 0x98007800 0x00 0x400 0x00 0x98007000 0x00 0x100>;
+		reg-shift = <0x02>;
+		reg-io-width = <0x04>;
+		interrupts = <0x00 0x44 0x04>;
+		clock-frequency = <0x19bfcc0>;
+		clocks = <0x1b 0x08>;
+		resets = <0x1b 0x08>;
+		status = "okay";
+		linux,phandle = <0x6c>;
+		phandle = <0x6c>;
+	};
+
+	serial1@9801B200 {
+		compatible = "snps,dw-apb-uart";
+		reg = <0x00 0x9801b200 0x00 0x100 0x00 0x9801b00c 0x00 0x100>;
+		interrupts-st-mask = <0x08>;
+		interrupts = <0x00 0x59 0x04>;
+		reg-shift = <0x02>;
+		reg-io-width = <0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x1c>;
+		clocks = <0x1d 0x3d>;
+		resets = <0x1d 0x11c>;
+		clock-frequency = <0x19bfcc00>;
+		status = "okay";
+		linux,phandle = <0x6d>;
+		phandle = <0x6d>;
+	};
+
+	serial2@9801B400 {
+		compatible = "snps,dw-apb-uart";
+		reg = <0x00 0x9801b400 0x00 0x100 0x00 0x9801b00c 0x00 0x100>;
+		interrupts-st-mask = <0x100>;
+		interrupts = <0x00 0x5a 0x04>;
+		reg-shift = <0x02>;
+		reg-io-width = <0x04>;
+		clocks = <0x1d 0x3c>;
+		resets = <0x1d 0x11a>;
+		clock-frequency = <0x19bfcc00>;
+		status = "disabled";
+		linux,phandle = <0x6e>;
+		phandle = <0x6e>;
+	};
+
+	gmac@98016000 {
+		compatible = "Realtek,r8168";
+		reg = <0x00 0x98016000 0x00 0x1000 0x00 0x98007000 0x00 0x1000 0x00 0x9801c000 0x00 0x2000 0x00 0x980174f8 0x00 0x20 0x00 0x981c8000 0x00 0x2000 0x00 0x9804e000 0x00 0x1000>;
+		interrupts = <0x00 0x16 0x04>;
+		pinctrl-names = "default", "sgmii";
+		pinctrl-0 = <0x1e>;
+		pinctrl-1 = <0x1f>;
+		local-mac-address = [00 10 20 30 05 a0];
+		rtl-config = <0x01>;
+		mac-version = <0x2a>;
+		rtl-features = <0x02>;
+		wake-mask0 = <0x3f3080c0 0x3f1080ff 0xff1f0000 0x00>;
+		wake-crc0 = <0x8d25>;
+		wake-mask1 = <0x3f3080c0 0x3f100000 0xc0ffff0f 0x00>;
+		wake-crc1 = <0x8d25>;
+		wake-mask2 = <0x3f3080c0 0x3f100000 0x00 0x80ffff1f>;
+		wake-crc2 = <0x8d25>;
+		wake-mask3 = <0x3f301000 0xc0ffff03 0x1f8ffff 0x1000000>;
+		wake-crc3 = <0x11da>;
+		wake-mask4 = <0x3f301000 0xc0ffff03 0x10000fc 0xffff0000>;
+		wake-crc4 = <0x11da>;
+		wake-mask5 = <0x3f301000 0xc0ffff03 0x1000000 0xf8>;
+		wake-crc5 = <0x15f8>;
+		output-mode = <0x00>;
+		ext-phy-id = <0x03>;
+		sgmii-swing = <0x00>;
+		bypass = <0x01>;
+		acp = <0x00>;
+		eee = <0x01>;
+		clocks = <0x1b 0x0b 0x1b 0x0c 0x1d 0x24>;
+		clock-names = "etn_250m", "etn_sys", "sds";
+		resets = <0x1b 0x09 0x1b 0x0a 0x1d 0x08 0x1d 0x06 0x1d 0x112 0x1d 0x10c 0x1d 0x118 0x1d 0x116>;
+		reset-names = "gmac", "gphy", "sds_reg", "sds", "pcie0_power", "pcie0_phy", "pcie0_sgmii_mdio", "pcie0_phy_mdio";
+		nvmem-cells = <0x0b 0x0c>;
+		nvmem-cell-names = "rc_k", "r_amp_k";
+		status = "okay";
+		linux,phandle = <0x6f>;
+		phandle = <0x6f>;
+	};
+
+	scpu_wrapper@9801d000 {
+		compatible = "Realtek,rtk-scpu_wrapper";
+		reg = <0x00 0x9801d000 0x00 0x500>;
+		interrupts = <0x00 0x2e 0x04>;
+		status = "okay";
+	};
+
+	watchdog@9801b5b0 {
+		compatible = "realtek,rtk-watchdog";
+		reg = <0x00 0x9801b5b0 0x00 0x20 0x00 0x9801b000 0x00 0x10>;
+		interrupts = <0x00 0x00 0x04>;
+		timeout-sec = <0x0a>;
+		status = "okay";
+	};
+
+	reboot@98007680 {
+		compatible = "realtek,reboot";
+		reg = <0x00 0x98007680 0x00 0x48>;
+		rst-oe = <0x01>;
+		rst-oe-for-init = <0x01>;
+		status = "okay";
+	};
+
+	reboot-mode@98007640 {
+		compatible = "realtek,reboot-mode";
+		reg = <0x00 0x98007640 0x00 0x04>;
+		status = "okay";
+	};
+
+	i2c@0x98007D00 {
+		compatible = "Realtek,rtk-i2c";
+		reg = <0x00 0x98007d00 0x00 0x100>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x28 0x04>;
+		i2c-num = <0x00>;
+		status = "okay";
+		pinctrl-names = "default", "high_speed";
+		pinctrl-0 = <0x20>;
+		pinctrl-1 = <0x21>;
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		clocks = <0x1b 0x09>;
+		resets = <0x1b 0x0b>;
+		linux,phandle = <0x70>;
+		phandle = <0x70>;
+
+		apw8889@12 {
+			compatible = "anpec,apw8889";
+			reg = <0x12>;
+			status = "okay";
+			linux,phandle = <0x71>;
+			phandle = <0x71>;
+
+			powerkey {
+				compatible = "gmt,g22xx-powerkey";
+				status = "disabled";
+				linux,phandle = <0x72>;
+				phandle = <0x72>;
+			};
+
+			poweroff {
+				compatible = "gmt,g22xx-poweroff";
+				system-power-controller;
+				status = "disabled";
+				linux,phandle = <0x73>;
+				phandle = <0x73>;
+			};
+
+			regulators {
+				compatible = "anpec,apw8889-regulator";
+				status = "okay";
+				linux,phandle = <0x74>;
+				phandle = <0x74>;
+
+				dc1 {
+					regulator-name = "vd33";
+					regulator-min-microvolt = <0x2191c0>;
+					regulator-max-microvolt = <0x39a3dc>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					linux,phandle = <0x75>;
+					phandle = <0x75>;
+
+					regulator-state-mem {
+						regulator-on-in-suspend;
+						regulator-suspend-microvolt = <0x30d400>;
+					};
+				};
+
+				dc2 {
+					regulator-name = "core";
+					regulator-min-microvolt = <0x86470>;
+					regulator-max-microvolt = <0x14689c>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					linux,phandle = <0x76>;
+					phandle = <0x76>;
+
+					regulator-state-mem {
+						regulator-on-in-suspend;
+						regulator-suspend-microvolt = <0xdbba0>;
+					};
+				};
+
+				dc3 {
+					regulator-name = "cpudvs";
+					regulator-min-microvolt = <0x86470>;
+					regulator-max-microvolt = <0x14689c>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					regulator-ramp-delay = <0x271>;
+					linux,phandle = <0x04>;
+					phandle = <0x04>;
+
+					regulator-state-mem {
+						regulator-off-in-suspend;
+					};
+				};
+
+				dc4 {
+					regulator-name = "gpudvs";
+					regulator-min-microvolt = <0x86470>;
+					regulator-max-microvolt = <0x14689c>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					regulator-ramp-delay = <0x271>;
+					linux,phandle = <0x2d>;
+					phandle = <0x2d>;
+
+					regulator-state-mem {
+						regulator-off-in-suspend;
+					};
+				};
+
+				dc5 {
+					regulator-name = "ddr";
+					regulator-min-microvolt = <0x124f80>;
+					regulator-max-microvolt = <0x124f80>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					linux,phandle = <0x77>;
+					phandle = <0x77>;
+				};
+
+				dc6 {
+					regulator-name = "vd18";
+					regulator-min-microvolt = "", "\f5";
+					regulator-max-microvolt = <0x1f6ee0>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					linux,phandle = <0x78>;
+					phandle = <0x78>;
+				};
+
+				ldo1 {
+					regulator-name = "vd25";
+					regulator-min-microvolt = <0x1b2920>;
+					regulator-max-microvolt = <0x2e14e0>;
+					regulator-boot-on;
+					regulator-always-on;
+					regulator-initial-mode = <0x00>;
+					linux,phandle = <0x79>;
+					phandle = <0x79>;
+				};
+			};
+		};
+	};
+
+	i2c@0x98007C00 {
+		compatible = "Realtek,rtk-i2c";
+		reg = <0x00 0x98007c00 0x00 0x100>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x2b 0x04>;
+		i2c-num = <0x01>;
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x22>;
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		clocks = <0x1b 0x0a>;
+		resets = <0x1b 0x0c>;
+		linux,phandle = <0x7a>;
+		phandle = <0x7a>;
+	};
+
+	i2c@0x9801B900 {
+		compatible = "Realtek,rtk-i2c";
+		reg = <0x00 0x9801b900 0x00 0x100>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x17 0x04>;
+		i2c-num = <0x03>;
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x23>;
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		clocks = <0x1d 0x37>;
+		resets = <0x1d 0x20c>;
+		linux,phandle = <0x7b>;
+		phandle = <0x7b>;
+	};
+
+	i2c@0x9801BA00 {
+		compatible = "Realtek,rtk-i2c";
+		reg = <0x00 0x9801ba00 0x00 0x100>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x0f 0x04>;
+		i2c-num = <0x04>;
+		status = "okay";
+		pinctrl-names = "default";
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		clocks = <0x1d 0x44>;
+		resets = <0x1d 0x502>;
+		linux,phandle = <0x7c>;
+		phandle = <0x7c>;
+	};
+
+	i2c@0x9801BB00 {
+		compatible = "Realtek,rtk-i2c";
+		reg = <0x00 0x9801bb00 0x00 0x100>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x0e 0x04>;
+		i2c-num = <0x05>;
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x24>;
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		clocks = <0x1d 0x45>;
+		resets = <0x1d 0x504>;
+		linux,phandle = <0x7d>;
+		phandle = <0x7d>;
+	};
+
+	spi@9801BD00 {
+		compatible = "Realtek,rtk-dw-apb-ssi";
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+		interrupt-parent = <0x18>;
+		interrupts = <0x1b 0x04>;
+		reg = <0x00 0x9801bd00 0x00 0x100 0x00 0x9801b300 0x00 0x18>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x25>;
+		num-chipselect = <0x01>;
+		bus-num = <0x00>;
+		clocks = <0x1d 0x23>;
+		clock-frequency = <0xf424000>;
+		resets = <0x1d 0x04>;
+		status = "disabled";
+		linux,phandle = <0x7e>;
+		phandle = <0x7e>;
+	};
+
+	pwm@980070D0 {
+		compatible = "Realtek,rtd1295-pwm";
+		#pwm-cells = <0x02>;
+		reg = <0x00 0x980070d0 0x00 0x0c>;
+		status = "okay";
+		linux,phandle = <0x7f>;
+		phandle = <0x7f>;
+
+		pwm_0 {
+			enable = <0x00>;
+			clkout_div = <0xff>;
+			clksrc_div = <0x01>;
+			duty_rate = <0x05>;
+		};
+
+		pwm_1 {
+			enable = <0x01>;
+			clkout_div = <0xff>;
+			clksrc_div = <0x01>;
+			duty_rate = <0x32>;
+		};
+
+		pwm_2 {
+			enable = <0x00>;
+			clkout_div = <0xff>;
+			clksrc_div = <0x01>;
+			duty_rate = <0x32>;
+		};
+
+		pwm_3 {
+			enable = <0x00>;
+			clkout_div = <0xff>;
+			clksrc_div = <0x01>;
+			duty_rate = <0x32>;
+		};
+	};
+
+	rtk-lsadc@98007900 {
+		compatible = "Realtek,rtk-lsadc";
+		interrupt-parent = <0x18>;
+		interrupts = <0x23 0x04 0x24 0x04>;
+		reg = <0x00 0x98007000 0x00 0x04 0x00 0x98007900 0x00 0x200 0x00 0x9800034c 0x00 0x04>;
+		status = "disabled";
+		clk_gating_en = <0x01 0x01>;
+		vdd_mux_sel = <0x00>;
+		vdd_mux1 = <0x00>;
+		vdd_mux2 = <0x00>;
+		vdd_mux_en = <0x01>;
+		clocks = <0x1d 0x26>;
+		resets = <0x1d 0x1a>;
+
+		rtk-lsadc0-pad0 {
+			activate = <0x01>;
+			ctrl_mode = <0x00>;
+			sw_idx = <0x00>;
+			voltage_threshold = <0x20>;
+			adc_val_baseline = <0x3f>;
+		};
+
+		rtk-lsadc0-pad1 {
+			activate = <0x01>;
+			ctrl_mode = <0x00>;
+			sw_idx = <0x01>;
+			voltage_threshold = <0x3f>;
+			adc_val_baseline = <0x3f>;
+		};
+
+		rtk-lsadc1-pad0 {
+			activate = <0x01>;
+			ctrl_mode = <0x00>;
+			sw_idx = <0x00>;
+			voltage_threshold = <0xff>;
+			adc_val_baseline = <0xff>;
+			detect_range_ctrl = <0x00>;
+		};
+
+		rtk-lsadc1-pad1 {
+			activate = <0x01>;
+			ctrl_mode = <0x00>;
+			sw_idx = <0x00>;
+			voltage_threshold = <0xff>;
+			adc_val_baseline = <0xff>;
+			detect_range_ctrl = <0x01>;
+		};
+	};
+
+	hdmitx@9800D000 {
+		compatible = "realtek,rtd161x-hdmitx";
+		reg = <0x00 0x9800d000 0x00 0x560 0x00 0x98007200 0x00 0x04 0x00 0x98000000 0x00 0x7a4 0x00 0x9804d000 0x00 0x820>;
+		gpio-hpd-detect = <0x1a 0x07 0x00 0x00>;
+		clocks = <0x1d 0x25>;
+		clock-names = "clk_en_hdmi";
+		resets = <0x1d 0x21c 0x1d 0x31e>;
+		reset-names = "rstn_hdmi", "rstn_hdmitop";
+		status = "okay";
+
+		scdc_rr {
+			enable-scdc-rr = <0x00>;
+			interrupt-parent = <0x18>;
+			#interrupt-cells = <0x01>;
+			interrupt-controller;
+			interrupts = <0x3f 0x04>;
+		};
+	};
+
+	hdcptx@9800D000 {
+		compatible = "realtek,rtd161x-hdcptx";
+		reg = <0x00 0x9800d000 0x00 0x400>;
+		interrupts = <0x00 0x1f 0x04>;
+		status = "okay";
+	};
+
+	hdmirx@98034000 {
+		compatible = "realtek,rtd161x-hdmirx";
+		reg = <0x00 0x98037000 0x00 0xe0 0x00 0x98034000 0x00 0xf54 0x00 0x98035f00 0x00 0x4c 0x00 0x98037700 0x00 0x98 0x00 0x98004000 0x00 0x224 0x00 0x9801b500 0x00 0x48>;
+		interrupts = <0x00 0x17 0x04>;
+		gpio-rx-hpd-ctrl = <0x1a 0x1f 0x01 0x01>;
+		gpio-5v-detect = <0x1a 0x14 0x00 0x00>;
+		clocks = <0x1d 0x3a 0x1d 0x30 0x1b 0x06 0x1b 0x05 0x1b 0x04 0x1b 0x03 0x1d 0x2a 0x1d 0x28>;
+		clock-names = "hdmirx", "mipi", "cbus_osc", "cbus_sys", "cbustx_sys", "cbusrx_sys", "tp", "cp";
+		resets = <0x1d 0x218 0x1d 0x21a 0x1d 0x41c 0x1b 0x0d 0x1b 0x05 0x1b 0x06>;
+		reset-names = "hdmirx", "hdmirx_wrap", "mipi", "cbus", "cbustx", "cbusrx";
+		powerctrls = <0x26 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x27>;
+		status = "disabled";
+	};
+
+	sdmmc@98010400 {
+		compatible = "Realtek,rtk1295-sdmmc";
+		gpios = <0x1a 0x1e 0x01 0x00 0x1a 0x22 0x00 0x01 0x1a 0x23 0x00 0x01>;
+		reg = <0x00 0x98000000 0x00 0x400 0x00 0x98010400 0x00 0x200 0x00 0x9801a000 0x00 0x400 0x00 0x9804f000 0x00 0x40 0x00 0x98010a00 0x00 0x40 0x00 0x98007000 0x00 0x200>;
+		interrupts = <0x00 0x2c 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x28 0x29>;
+		clocks = <0x1d 0x2e 0x1d 0x33>;
+		clock-names = "sd", "sd_ip";
+		resets = <0x1d 0x102>;
+		status = "okay";
+		linux,phandle = <0x80>;
+		phandle = <0x80>;
+	};
+
+	sdio@98010A00 {
+		compatible = "Realtek,rtk1295-sdio";
+		gpios = <0x1a 0x1b 0x01 0x01>;
+		reg = <0x00 0x98010c00 0x00 0x200 0x00 0x98000000 0x00 0x200000>;
+		interrupts = <0x00 0x2d 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x2a>;
+		clocks = <0x1d 0x32 0x1d 0x2f>;
+		clock-names = "sdio", "sdio_ip";
+		resets = <0x1d 0x106>;
+		status = "okay";
+		linux,phandle = <0x81>;
+		phandle = <0x81>;
+	};
+
+	emmc@98012000 {
+		emmc_tuning_addr = <0xc9d1e00>;
+		compatible = "Realtek,rtk1295-emmc";
+		reg = <0x00 0x98012000 0x00 0xa00 0x00 0x98000000 0x00 0x600 0x00 0x9801a000 0x00 0x80 0x00 0x9801b000 0x00 0x150 0x00 0x9801a954 0x00 0x20 0x00 0x9804f000 0x00 0x100>;
+		interrupts = <0x00 0x2a 0x04>;
+		speed-step = <0x03>;
+		clocks = <0x1d 0x2d 0x1d 0x31>;
+		clock-names = "emmc", "emmc_ip";
+		resets = <0x1d 0x40a>;
+		reset-names = "emmc";
+		status = "okay";
+		pddrive_nf_s0 = <0x01 0x00 0x00 0x00 0x00>;
+		pddrive_nf_s1 = <0x01 0x00 0x00 0x00 0x00>;
+		pddrive_nf_s2 = <0x01 0x04 0x04 0x04 0x00>;
+		pddrive_nf_s3 = <0x01 0x04 0x04 0x04 0x00>;
+		phase_tuning = <0x00 0x01>;
+		reference_phase = <0x01 0x09 0x00 0x00>;
+		dqs_tuning = <0x01>;
+		mbr_tuning_addr = <0x9a0e00>;
+		hs400_force_tuning = <0x01>;
+		linux,phandle = <0x82>;
+		phandle = <0x82>;
+	};
+
+	nand@98010000 {
+		compatible = "Realtek,rtk1295-nand";
+		reg = <0x00 0x98010000 0x00 0x400 0x00 0x9801f000 0x00 0x400>;
+		clocks = <0x1d 0x2c>;
+		resets = <0x1d 0x40c>;
+		status = "disabled";
+	};
+
+	rfkilligpio {
+		compatible = "Realtek,rfkill";
+		gpios = <0x1a 0x02 0x01 0x01>;
+		status = "okay";
+		linux,phandle = <0x83>;
+		phandle = <0x83>;
+	};
+
+	rng@98001000 {
+		compatible = "Realtek,rtk-rng";
+		reg = <0x00 0x98001000 0x00 0x70>;
+		status = "okay";
+	};
+
+	smartcard@9801BE00 {
+		compatible = "Realtek,rtk-smc";
+		interrupts = <0x00 0x3f 0x04>;
+		reg = <0x00 0x9801b000 0x00 0x100 0x00 0x9801be00 0x00 0x80>;
+		smc-num = <0x00>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x2b>;
+		clock-names = "clk_en_misc_sc";
+		clocks = <0x1d 0x39>;
+		resets = <0x1d 0x11e>;
+		status = "disabled";
+
+		lsic_control {
+			pin_cmd_vcc = <0x1a 0x3f 0x01 0x00>;
+			cmd_vcc_en = <0x01>;
+			cmd_vcc_polarity = <0x00>;
+			pwr_sel_en = <0x01>;
+			pwr_sel_polarity = <0x01>;
+		};
+	};
+
+	irda@98007400 {
+		compatible = "Realtek,rtk-irda";
+		interrupt-parent = <0x18>;
+		reg = <0x00 0x98007000 0x00 0x400 0x00 0x98007400 0x00 0x100>;
+		interrupts = <0x25 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x2c>;
+		resets = <0x1b 0x01>;
+		clocks = <0x1b 0x07>;
+		status = "okay";
+
+		irda_rx0 {
+			irrx-protocol = "NEC";
+			transcode-mode = <0x01>;
+			cust-code = <0x1af2>;
+			scancode-msk = <0xff0000>;
+			custcode-msk = <0xffff>;
+			keymap-tbl = <0x1e 0x74 0x0a 0x73 0x0b 0x72 0x50 0xc7 0x1b 0x16a 0x0c 0x192 0x0d 0x193 0x38 0x9e 0x41 0xac 0x4f 0xc2 0x21 0x1b6 0x12 0x69 0x13 0x6a 0x10 0x67 0x11 0x6c 0x14 0x161 0x4e 0xa8 0x4b 0xa7 0x0f 0xa4 0x4d 0xd0 0x00 0x02 0x01 0x03 0x02 0x04 0x03 0x05 0x04 0x06 0x05 0x07 0x06 0x08 0x07 0x09 0x08 0x0a 0x09 0x0b 0x25 0x166 0x51 0x54 0x26 0x18e 0x22 0x18f 0x23 0x190 0x24 0x191 0x20 0x71 0x42 0x9c 0x4a 0x0e 0x2c 0x19c 0x36 0x244 0x31 0x88 0x4c 0x80 0x39 0x3b 0x2b 0x3c 0x37 0x3d 0x43 0x3e 0x34 0x3f 0x15 0x40 0xfe 0x42 0xeeee 0x00 0xeeee 0x01 0xffff 0x110 0xffff 0x71>;
+			reg-ir-dpir = <0x0a>;
+			sample-rate = <0x28>;
+			repeat-time = <0x78>;
+		};
+	};
+
+	rtc@9801B600 {
+		compatible = "realtek,rtd1619-rtc", "syscon";
+		reg = <0x00 0x9801b600 0x00 0x34 0x00 0x98007000 0x00 0x100>;
+		rtc-base-year = <0x7e2>;
+		rtc-bias = <0x02>;
+		interrupts = <0x00 0x27 0x04>;
+		status = "disabled";
+	};
+
+	rpc@9801a104 {
+		compatible = "Realtek,rtk-rpc";
+		reg = <0x00 0x9801a104 0x00 0x0c 0x00 0x1ffe000 0x00 0x4000 0x00 0x2f000 0x00 0x1000 0x00 0x9801a020 0x00 0x04>;
+		interrupts = <0x00 0x21 0x04>;
+		status = "okay";
+	};
+
+	cpu-dvfs {
+		nvmem-cells = <0x14>;
+		nvmem-cell-names = "cpu-dss";
+		linux,phandle = <0x84>;
+		phandle = <0x84>;
+
+		cpu-opp-table {
+			compatible = "operating-points-v2";
+			opp-shared;
+			linux,phandle = <0x05>;
+			phandle = <0x05>;
+
+			opp-300mhz {
+				opp-hz = <0x00 0x11e1a300>;
+				opp-microvolt = <0xc042c>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x85>;
+				phandle = <0x85>;
+			};
+
+			opp-400mhz {
+				opp-hz = <0x00 0x17d78400>;
+				opp-microvolt = <0xc042c>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x86>;
+				phandle = <0x86>;
+			};
+
+			opp-500mhz {
+				opp-hz = <0x00 0x1dcd6500>;
+				opp-microvolt = <0xc042c>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x87>;
+				phandle = <0x87>;
+			};
+
+			opp-600mhz {
+				opp-hz = <0x00 0x23c34600>;
+				opp-microvolt = <0xc042c>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x88>;
+				phandle = <0x88>;
+			};
+
+			opp-700mhz {
+				opp-hz = <0x00 0x29b92700>;
+				opp-microvolt = <0xc65d4>;
+				clock-latency-ns = <0x249f0>;
+				status = "okay";
+				linux,phandle = <0x89>;
+				phandle = <0x89>;
+			};
+
+			opp-800mhz {
+				opp-hz = <0x00 0x2faf0800>;
+				opp-microvolt = <0xcf850>;
+				opp-microvolt-tt = <0xcc77c>;
+				clock-latency-ns = <0x249f0>;
+				status = "okay";
+				linux,phandle = <0x8a>;
+				phandle = <0x8a>;
+			};
+
+			opp-900mhz {
+				opp-hz = <0x00 0x35a4e900>;
+				opp-microvolt = <0xdbba0>;
+				opp-microvolt-tt = <0xd8acc>;
+				clock-latency-ns = <0x249f0>;
+				status = "okay";
+				linux,phandle = <0x8b>;
+				phandle = <0x8b>;
+			};
+
+			opp-1000mhz {
+				opp-hz = <0x00 0x3b9aca00>;
+				opp-microvolt = <0xe7ef0>;
+				opp-microvolt-tt = <0xe4e1c>;
+				clock-latency-ns = <0x249f0>;
+				status = "okay";
+				linux,phandle = <0x8c>;
+				phandle = <0x8c>;
+			};
+
+			opp-1100mhz {
+				opp-hz = <0x00 0x4190ab00>;
+				opp-microvolt = <0xf7314>;
+				opp-microvolt-tt = <0xf116c>;
+				clock-latency-ns = <0x249f0>;
+				status = "okay";
+				linux,phandle = <0x8d>;
+				phandle = <0x8d>;
+			};
+
+			opp-1200mhz {
+				opp-hz = <0x00 0x47868c00>;
+				opp-microvolt = <0x100590>;
+				opp-microvolt-tt = <0xfa3e8>;
+				clock-latency-ns = <0x249f0>;
+				opp-suspend;
+				status = "okay";
+				linux,phandle = <0x8e>;
+				phandle = <0x8e>;
+			};
+
+			opp-1300mhz {
+				opp-hz = <0x00 0x4d7c6d00>;
+				opp-microvolt = <0x10f9b4>;
+				opp-microvolt-tt = <0x106738>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x8f>;
+				phandle = <0x8f>;
+			};
+
+			opp-1400mhz {
+				opp-hz = <0x00 0x53724e00>;
+				opp-microvolt = <0x112a88>;
+				clock-latency-ns = <0x249f0>;
+				status = "disabled";
+				linux,phandle = <0x90>;
+				phandle = <0x90>;
+			};
+		};
+	};
+
+	gpu@981D0000 {
+		compatible = "arm,mali-midgard";
+		reg = <0x00 0x981d0000 0x00 0x10000 0x00 0x98007000 0x00 0x1000>;
+		interrupts = <0x00 0x4c 0x04 0x00 0x4d 0x04 0x00 0x4b 0x04>;
+		interrupt-names = "JOB", "MMU", "GPU";
+		clocks = <0x1d 0x0a>;
+		clock-name = "clk_mali";
+		resets = <0x1d 0x14>;
+		power-domains = <0x26 0x02>;
+		assigned-clocks = <0x1d 0x0a>;
+		assigned-clock-rates = <0x1dcd6500>;
+		status = "okay";
+		mali-supply = <0x2d>;
+		operating-points-v2 = <0x2e>;
+		linux,phandle = <0x91>;
+		phandle = <0x91>;
+
+		power_model {
+			compatible = "arm,mali-simple-power-model";
+			static-coefficient = <0x00>;
+			dynamic-coefficient = <0x00>;
+			ts = <0x00 0x00 0x00 0x00>;
+			thermal-zone = [00];
+		};
+
+		gpu-opp-table {
+			compatible = "operating-points-v2", "operating-points-v2-mali";
+			linux,phandle = <0x2e>;
+			phandle = <0x2e>;
+
+			opp-1x400 {
+				opp-hz = <0x00 0x7ed6b40>;
+				opp-hz-real = <0x00 0x17d78400>;
+				opp-microvolt = <0xf4240>;
+				opp-core-mask = <0x00 0x02>;
+			};
+
+			opp-2x400 {
+				opp-hz = <0x00 0xfdad680>;
+				opp-hz-real = <0x00 0x17d78400>;
+				opp-microvolt = <0xf4240>;
+				opp-core-mask = <0x00 0x01>;
+			};
+
+			opp-3x400 {
+				opp-hz = <0x00 0x17d78400>;
+				opp-hz-real = <0x00 0x17d78400>;
+				opp-microvolt = <0xf4240>;
+				opp-suspend;
+			};
+
+			opp-3x500 {
+				opp-hz = <0x00 0x1dcd6500>;
+				opp-hz-real = <0x00 0x1dcd6500>;
+				opp-microvolt = <0xf4240>;
+			};
+
+			opp-3x600 {
+				opp-hz = <0x00 0x23c34600>;
+				opp-hz-real = <0x00 0x23c34600>;
+				opp-microvolt = <0xf4240>;
+			};
+
+			opp-3x700 {
+				opp-hz = <0x00 0x29b92700>;
+				opp-hz-real = <0x00 0x29b92700>;
+				opp-microvolt = <0xf4240>;
+			};
+		};
+	};
+
+	thermal-sensor@9801db00 {
+		compatible = "realtek,rtd16xx-thermal-sensor";
+		reg = <0x00 0x9801db00 0x00 0x50>;
+		#thermal-sensor-cells = <0x00>;
+		status = "okay";
+		linux,phandle = <0x2f>;
+		phandle = <0x2f>;
+	};
+
+	thermal-zones {
+
+		cpu-thermal {
+			polling-delay-passive = <0xfa>;
+			polling-delay = <0x3e8>;
+			thermal-sensors = <0x2f>;
+			linux,phandle = <0x92>;
+			phandle = <0x92>;
+
+			trips {
+
+				cpu-crit {
+					temperature = <0x1fbd0>;
+					hysteresis = <0x00>;
+					type = "critical";
+					linux,phandle = <0x93>;
+					phandle = <0x93>;
+				};
+
+				cpu-alert0 {
+					temperature = <0x15f90>;
+					hysteresis = <0x00>;
+					type = "passive";
+					linux,phandle = <0x30>;
+					phandle = <0x30>;
+				};
+
+				cpu-alert1 {
+					temperature = <0x186a0>;
+					hysteresis = <0x00>;
+					type = "passive";
+					linux,phandle = <0x32>;
+					phandle = <0x32>;
+				};
+			};
+
+			cooling-maps {
+
+				cpu-map0 {
+					trip = <0x30>;
+					cooling-device = <0x31 0xffffffff 0x04>;
+					contribution = <0x46>;
+				};
+
+				cpu-map1 {
+					trip = <0x32>;
+					cooling-device = <0x31 0x04 0xffffffff>;
+					contribution = <0x46>;
+				};
+			};
+		};
+	};
+
+	hse@98005000 {
+		reg = <0x00 0x98005000 0x00 0x1000>;
+		compatible = "realtek,highspeed-streaming-engine";
+		interrupts = <0x00 0x1b 0x04>;
+		clocks = <0x1d 0x3b>;
+		resets = <0x1d 0x406>;
+		reset-names = "core";
+		status = "disabled";
+		engine-0-enabled;
+		engine-1-disabled;
+	};
+
+	md@9800b000 {
+		compatible = "realtek,md";
+		reg = <0x00 0x9800b000 0x00 0x1000>;
+		interrupts = <0x00 0x26 0x04>;
+		clocks = <0x1d 0x29>;
+		resets = <0x1d 0x40e>;
+		status = "okay";
+		linux,phandle = <0x94>;
+		phandle = <0x94>;
+	};
+
+	se@9800c000 {
+		compatible = "realtek,se";
+		reg = <0x00 0x9800c000 0x00 0x1000>;
+		interrupts = <0x00 0x14 0x04>;
+		clocks = <0x1d 0x27>;
+		resets = <0x1d 0x1c>;
+		status = "okay";
+		linux,phandle = <0x95>;
+		phandle = <0x95>;
+	};
+
+	mcp@0 {
+		compatible = "Realtek,rtk-mcp";
+		reg = <0x00 0x98015000 0x00 0x1000 0x00 0x98014000 0x00 0x1000>;
+		status = "okay";
+	};
+
+	pu_pll@98000000 {
+		compatible = "Realtek,rtk16xx-pu_pll";
+		reg = <0x00 0x98000000 0x00 0x200>;
+	};
+
+	jpeg@9803e000 {
+		compatible = "Realtek,rtk16xx-jpeg";
+		reg = <0x00 0x9803e000 0x00 0x1000 0x00 0x98000000 0x00 0x200 0x00 0x98007000 0x00 0x30>;
+		interrupts = <0x00 0x34 0x04>;
+		clocks = <0x1d 0x38>;
+		clock-names = "jpeg";
+		resets = <0x1d 0x100>;
+		status = "okay";
+		linux,phandle = <0x96>;
+		phandle = <0x96>;
+	};
+
+	ve1@98040000 {
+		compatible = "Realtek,rtk16xx-ve1";
+		reg = <0x00 0x98040000 0x00 0xc000 0x00 0x98008000 0x00 0x1000 0x00 0x98007000 0x00 0x30 0x00 0x9800e000 0x00 0x1000>;
+		interrupts = <0x00 0x35 0x04 0x00 0x36 0x04>;
+		clocks = <0x1d 0x0d 0x1d 0x0e 0x1d 0x10 0x1d 0x0f 0x1d 0x06 0x1d 0x0b 0x1d 0x0c>;
+		clock-names = "clk_ve1", "clk_ve2", "clk_ve2_bpu", "clk_ve3", "clk_sysh", "pll_ve1", "pll_ve2";
+		resets = <0x1d 0x0c 0x1d 0x0e 0x1d 0x508>;
+		reset-names = "ve1", "ve2", "ve3";
+		assigned-clocks = <0x1d 0x0d 0x1d 0x0e 0x1d 0x10 0x1d 0x0f>;
+		assigned-clock-parents = <0x1d 0x0b 0x1d 0x0c 0x1d 0x0b 0x1d 0x0b>;
+		assigned-clock-rates = <0x20c85580 0x2a9e08c0 0x20c85580 0x20c85580>;
+		status = "okay";
+		linux,phandle = <0x97>;
+		phandle = <0x97>;
+	};
+
+	cec0@98037800 {
+		compatible = "Realtek,rtk-cec0";
+		reg = <0x00 0x98037800 0x00 0xe0 0x00 0x98007000 0x00 0x100 0x00 0x98037500 0x00 0x100>;
+		interrupts = <0x00 0x1a 0x04>;
+		clocks = <0x1b 0x06 0x1b 0x05 0x1b 0x04 0x1b 0x03>;
+		clock-names = "cbus_osc", "cbus_sys", "cbustx_sys", "cbusrx_sys";
+		resets = <0x1b 0x0d 0x1b 0x05 0x1b 0x06>;
+		reset-names = "cbus", "cbustx", "cbusrx";
+		status = "okay";
+	};
+
+	dptx@9803D000 {
+		compatible = "Realtek,rtk-dptx";
+		reg = <0x00 0x9803d000 0x00 0x1000 0x00 0x98000000 0x00 0x1000 0x00 0x98009400 0x00 0x600 0x00 0x98080000 0x00 0x2000>;
+		interrupts = <0x00 0x1d 0x04>;
+		clocks = <0x1d 0x46 0x1d 0x47 0x1d 0x48 0x1d 0x49>;
+		clock-names = "clk_en_edp", "clk_en_tsio_trx", "clk_en_tve", "clk_en_vo";
+		resets = <0x1b 0x04 0x1d 0x50a 0x1d 0x210 0x1d 0x214>;
+		reset-names = "dp", "edp", "tve", "vo";
+	};
+
+	spdif {
+		compatible = "realtek,audio";
+		gpios = <0x1a 0x16 0x01 0x01>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x33>;
+		status = "okay";
+	};
+
+	audio-out-devices {
+		compatible = "realtek,audio-out";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x34>;
+		status = "disabled";
+		linux,phandle = <0x98>;
+		phandle = <0x98>;
+
+		dac {
+			compatible = "dac";
+			status = "okay";
+		};
+
+		spdif {
+			compatible = "spdif";
+			status = "okay";
+		};
+
+		i2s {
+			compatible = "i2s";
+			channel = <0x02>;
+			status = "okay";
+		};
+
+		hdmi {
+			compatible = "hdmi";
+			status = "okay";
+		};
+
+		global {
+			compatible = "global";
+			status = "okay";
+		};
+	};
+
+	demod@9801E000 {
+		compatible = "realtek,demod";
+		reg = <0x00 0x9801e000 0x00 0x1000>;
+		clocks = <0x1d 0x34 0x1d 0x11>;
+		clock-names = "cablerx", "pll";
+		resets = <0x1d 0x202>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x35>;
+		status = "okay";
+	};
+
+	tp@98014000 {
+		compatible = "realtek,tp";
+		reg = <0x00 0x98014000 0x00 0x1000 0x00 0x98039000 0x00 0x1000>;
+		clocks = <0x1d 0x2a 0x1d 0x35>;
+		clock-names = "tp", "tpb";
+		resets = <0x1d 0x41a 0x1d 0x418>;
+		reset-names = "tp", "tpb";
+		status = "okay";
+	};
+
+	r2rdsc@9800b800 {
+		compatible = "realtek,r2rdsc";
+		reg = <0x00 0x9800b000 0x00 0x1000>;
+		clocks = <0x1d 0x42>;
+		clock-names = "r2rdsc";
+		resets = <0x1d 0x408>;
+		reset-names = "r2rdsc";
+		status = "okay";
+	};
+
+	rtk_usb_power_manager@0 {
+		clocks = <0x1b 0x10 0x1b 0x0d 0x1b 0x0e 0x1b 0x0f>;
+		clock-names = "clk_en_usb", "clk_en_phy0_to_host", "clk_en_phy1_to_host", "clk_en_phy2_to_host";
+		resets = <0x1b 0x20 0x1b 0x0e 0x1b 0x0f 0x1b 0x10 0x1b 0x11 0x1b 0x12 0x1b 0x13 0x1b 0x14 0x1b 0x15 0x1b 0x16 0x1b 0x17 0x1b 0x18 0x1b 0x19>;
+		reset-names = "apply", "usb_host0", "usb_host1", "u2phy0", "u2phy1", "u2phy2", "usb", "type_c", "usb_host2", "u3phy0", "u3mdio0", "u3phy2", "u3mdio2";
+		compatible = "Realtek,usb-manager";
+		reg = <0x00 0x98000000 0x00 0x10>;
+		status = "okay";
+
+		gpio0 {
+			realtek,power-gpio = <0x1a 0x39 0x01 0x03>;
+			linux,phandle = <0x38>;
+			phandle = <0x38>;
+		};
+
+		gpio2 {
+			realtek,power-gpio = <0x1a 0x31 0x01 0x00>;
+			linux,phandle = <0x3a>;
+			phandle = <0x3a>;
+		};
+
+		port0 {
+			usb = <0x36>;
+			type_c = <0x37>;
+			gpio = <0x38>;
+		};
+
+		port2 {
+			usb = <0x39>;
+			gpio = <0x3a>;
+		};
+
+		rtk_usb {
+
+			power_ctrl_reg {
+				p0_l4_icg = <0x98013364>;
+				p1_l4_icg = <0x98013d60>;
+				p2_l4_icg = <0x98013f60>;
+				usb_power_cut;
+			};
+
+			type_c {
+				drd_wrap_base = <0x98013200>;
+				u3host_wrap_base = <0x98013e00>;
+				drd_u3_portsc = <0x98020430>;
+				drd_u3_sus_en = <0x980282c0>;
+				u3host_u3_sus_en = <0x980582c0>;
+			};
+		};
+	};
+
+	rtk-vpmu {
+		compatible = "realtek,rtk-vpmu";
+		status = "okay";
+	};
+
+	pcie@98060000 {
+		compatible = "realtek,rtk16xx-pcie-slot1";
+		reg = <0x00 0x98060000 0x00 0x1000 0x00 0x98061000 0x00 0x1000 0x00 0x9801c800 0x00 0x100 0x00 0x9801a000 0x00 0x300>;
+		interrupt-names = "rtk-pcie1-intr";
+		#interrupt-cells = <0x01>;
+		interrupt-map-mask = <0x00 0x00 0x00 0x00>;
+		interrupt-map = <0x00 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x3d 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x3b>;
+		bus-range = <0x00 0xff>;
+		linux,pci-domain = <0x00>;
+		device_type = "pci";
+		gpios = <0x1a 0x1d 0x01 0x00>;
+		#size-cells = <0x02>;
+		#address-cells = <0x03>;
+		num-lanes = <0x01>;
+		phys = <0x03 0x40080001 0x2e000701 0x35910801 0x521c0901 0x7c421901 0x11c01 0x32001d01 0x20eb1e01 0xf8001f01 0x3d402a01 0x81bd2f01 0x52f50401 0x27e90301 0xead70501 0x80601 0xb6730a01 0x84552001 0x55552101 0xa85c0101 0x60420201 0xab632301 0x80c2401 0xa8032b01 0x80a11b01 0x27e94301 0x52f54401 0xead74501 0x64601 0x86734a01 0x84666001 0x55aa6101 0xa84a4101 0x60424201 0xab636301 0x8106401 0xa8036b01 0xf8022801 0xf8026801 0x69050b01 0x69054b01 0xc0080c01 0xc0084c01 0xf7060d01 0xf7064d01 0x10000e01 0x10004e01 0x720c0901 0x700c0901 0x720c0901 0x720c4901 0x700c4901 0x720c4901>;
+		ranges = <0x2000000 0x00 0x98062000 0x00 0x98062000 0x00 0x1e000 0x1000000 0x00 0x30000 0x00 0x30000 0x00 0x10000>;
+		resets = <0x1d 0x10e 0x1d 0x110 0x1d 0x112 0x1d 0x114 0x1d 0x10a 0x1d 0x10c 0x1d 0x116 0x1d 0x118>;
+		reset-names = "rstn", "core", "power", "nonstitch", "stitch", "phy", "phy_mdio", "sgmii_mdio";
+		clocks = <0x1d 0x22>;
+		status = "disabled";
+		linux,phandle = <0x99>;
+		phandle = <0x99>;
+	};
+
+	pcie2@980A0000 {
+		compatible = "realtek,rtk16xx-pcie-slot2";
+		reg = <0x00 0x980a0000 0x00 0x1000 0x00 0x980a1000 0x00 0x1000 0x00 0x9801c600 0x00 0x100 0x00 0x9804f000 0x00 0x100>;
+		interrupt-names = "rtk-pcie2-intr";
+		#interrupt-cells = <0x01>;
+		interrupt-map-mask = <0x00 0x00 0x00 0x00>;
+		interrupt-map = <0x00 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x3e 0x04>;
+		pinctrl-names = "default";
+		pinctrl-0 = <0x3c>;
+		bus-range = <0x00 0xff>;
+		linux,pci-domain = <0x01>;
+		device_type = "pci";
+		gpios = <0x1a 0x41 0x01 0x00>;
+		#size-cells = <0x02>;
+		#address-cells = <0x03>;
+		num-lanes = <0x01>;
+		phys = <0x03 0x40080001 0x2e000701 0x35910801 0x521c0901 0x7c421901 0x11c01 0x32001d01 0x20eb1e01 0xf8001f01 0x3d402a01 0x81bd2f01 0x52f50401 0x27e90301 0xead70501 0x80601 0xb6730a01 0x84552001 0x55552101 0xa85c0101 0x60420201 0xab632301 0x80c2401 0xa8032b01 0x80a11b01 0x27e94301 0x52f54401 0xead74501 0x64601 0x86734a01 0x84666001 0x55aa6101 0xa84a4101 0x60424201 0xab636301 0x8106401 0xa8036b01 0xf8022801 0xf8026801 0x69050b01 0x69054b01 0xc0080c01 0xc0084c01 0xf7060d01 0xf7064d01 0x10000e01 0x10004e01 0x720c0901 0x700c0901 0x720c0901 0x720c4901 0x700c4901 0x720c4901>;
+		ranges = <0x2000000 0x00 0x980a2000 0x00 0x980a2000 0x00 0x1e000 0x1000000 0x00 0x40000 0x00 0x40000 0x00 0x10000>;
+		resets = <0x1d 0x314 0x1d 0x316 0x1d 0x318 0x1d 0x31a 0x1d 0x310 0x1d 0x312 0x1d 0x31c>;
+		reset-names = "rstn", "core", "power", "nonstitch", "stitch", "phy", "phy_mdio";
+		clocks = <0x1d 0x43>;
+		status = "disabled";
+		linux,phandle = <0x9a>;
+		phandle = <0x9a>;
+	};
+
+	rtk-dc-pmu@98008000 {
+		compatible = "realtek,rtk-16xx-dc-pmu";
+		reg = <0x00 0x98008000 0x00 0x900>;
+		status = "disabled";
+	};
+
+	rtk-dmc-pmu@9800EB00 {
+		compatible = "realtek,rtk-dmc-pmu";
+		reg = <0x00 0x9800eb00 0x00 0x40>;
+		status = "disabled";
+	};
+
+	sysled {
+		compatible = "jiuzhou, sysled";
+		status = "ok";
+		red_gpio = <0x1a 0x17 0x01 0x00>;
+		green_gpio = <0x1a 0x3a 0x01 0x00>;
+		led_active_low = <0x00>;
+	};
+
+	sysRed {
+		compatible = "jiuzhou, sysRed";
+		status = "ok";
+		red_gpio = <0x1a 0x17 0x01 0x01>;
+		green_gpio = <0x1a 0x3a 0x01 0x00>;
+		led_active_low = <0x00>;
+	};
+
+	netled {
+		compatible = "jiuzhou, netled";
+		status = "ok";
+		red_gpio = <0x1a 0x40 0x01 0x00>;
+		green_gpio = <0x1a 0x39 0x01 0x00>;
+		led_active_low = <0x00>;
+	};
+
+	netRed {
+		compatible = "jiuzhou, netRed";
+		status = "ok";
+		red_gpio = <0x1a 0x40 0x01 0x00>;
+		green_gpio = <0x1a 0x39 0x01 0x00>;
+		led_active_low = <0x00>;
+	};
+
+	tee-clocks {
+		compatible = "realtek,tee-clock-controller";
+		#clock-cells = <0x00>;
+		linux,phandle = <0x03>;
+		phandle = <0x03>;
+	};
+
+	dwc3_drd_usb3phy@0 {
+		compatible = "Realtek,usb3phy";
+		reg = <0x00 0x98013210 0x00 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		port_index = <0x00>;
+		phyN = <0x01>;
+		linux,phandle = <0x3e>;
+		phandle = <0x3e>;
+
+		phy0 {
+			phy_data_size = <0x30>;
+			phy_data_addr = <0x10203 0x4050607 0x8090a0b 0xc0d0e0f 0x10111213 0x14151617 0x18191a1b 0x1c1d1e1f 0x20212223 0x24252627 0x28292a2b 0x2c2d2e2f>;
+			phy_data_revA = <0x400cac43 0x60422771 0x72f52ad3 0x62e00 0x3591565c 0x8608ab05 0xc000f70a 0x20008d50 0xc4c10 0xfc000c81 0xde010000 0x00 0x6020 0x852014 0xc900a03f 0xc2e0a000 0x403a88aa 0x53bb66 0xe01260 0x840b01d6 0xf842ff00 0x30408028 0xffffffff 0x8635>;
+			do_toggle;
+		};
+	};
+
+	dwc3_drd_usb2phy@0 {
+		compatible = "Realtek,usb2phy";
+		reg = <0x00 0x98028280 0x00 0x04 0x00 0x98013214 0x00 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		nvmem-cells = <0x15>;
+		nvmem-cell-names = "usb-dc-cal";
+		port_index = <0x00>;
+		phyN = <0x01>;
+		linux,phandle = <0x3d>;
+		phandle = <0x3d>;
+
+		phy0 {
+			phy_data_page0_size = <0x10>;
+			phy_data_page0_addr = <0xe0e1e2e3 0xe4e5e6e7 0xf0f1f2f3 0xf4f5f6f7>;
+			phy_data_page0_data = <0xe030798d 0x686501f1 0xfc8c0011 0x9b000002>;
+			phy_data_page1_size = <0x08>;
+			phy_data_page1_addr = <0xe0e1e2e3 0xe4e5e6e7>;
+			phy_data_page1_data = <0x25ef6048 0xf18e3>;
+			do_toggle;
+			check_efuse;
+		};
+	};
+
+	rtk_dwc3_drd@98013200 {
+		compatible = "Realtek,dwc3";
+		reg = <0x00 0x98013200 0x00 0x200>;
+		interrupts = <0x00 0x15 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		delay_probe_work;
+		ordered_probe;
+		status = "okay";
+		linux,phandle = <0x36>;
+		phandle = <0x36>;
+
+		dwc3_drd@98020000 {
+			compatible = "synopsys,dwc3";
+			reg = <0x00 0x98020000 0x00 0x9000>;
+			interrupts = <0x00 0x15 0x04>;
+			fixed_dwc3_globals_regs_start = <0x8100>;
+			usb-phy = <0x3d 0x3e>;
+			dr_mode = "host";
+			snps,dis_u3_susphy_quirk;
+			snps,dis_ss_park_mode;
+			enable_switch_otg;
+		};
+
+		rtk_dwc3_drd_type_c@0 {
+			compatible = "Realtek,dwc3-type_c";
+			reg = <0x00 0x98013200 0x00 0x200 0x00 0x98007220 0x00 0x20>;
+			interrupts = <0x00 0x3c 0x04>;
+			drd_mode;
+			delay_probe_work;
+			ordered_probe;
+			boot_check_time = <0x2710>;
+			default_revision = <0xa00>;
+			status = "disabled";
+			linux,phandle = <0x37>;
+			phandle = <0x37>;
+
+			A00 {
+				cc_dfp_mode = "dfp_3_0";
+				rd_config = "internal";
+				cc1_rp_4p7k_code = <0x0c>;
+				cc1_rp_36k_code = <0x0f>;
+				cc1_rp_12k_code = <0x0e>;
+				cc1_rd_code = <0x11>;
+				cc1_vref_ufp = [07 0a 02];
+				cc1_vref_dfp_usb = [07 02 00];
+				cc1_vref_dfp_1_5 = [07 03 02];
+				cc1_vref_dfp_3_0 = [05 0a 02];
+				cc2_rp_4p7k_code = <0x0c>;
+				cc2_rp_36k_code = <0x0f>;
+				cc2_rp_12k_code = <0x0e>;
+				cc2_rd_code = <0x0f>;
+				cc2_vref_ufp = [08 0a 02];
+				cc2_vref_dfp_usb = [07 02 00];
+				cc2_vref_dfp_1_5 = [07 03 02];
+				cc2_vref_dfp_3_0 = [05 0a 02];
+			};
+		};
+	};
+
+	dwc3_u2host_usb2phy@0 {
+		compatible = "Realtek,usb2phy";
+		reg = <0x00 0x98031280 0x00 0x04 0x00 0x98013c14 0x00 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		nvmem-cells = <0x15>;
+		nvmem-cell-names = "usb-dc-cal";
+		port_index = <0x01>;
+		phyN = <0x01>;
+		linux,phandle = <0x3f>;
+		phandle = <0x3f>;
+
+		phy0 {
+			phy_data_page0_size = <0x10>;
+			phy_data_page0_addr = <0xe0e1e2e3 0xe4e5e6e7 0xf0f1f2f3 0xf4f5f6f7>;
+			phy_data_page0_data = <0xe030798d 0x676501f1 0xfc8c0011 0x9b000002>;
+			phy_data_page1_size = <0x08>;
+			phy_data_page1_addr = <0xe0e1e2e3 0xe4e5e6e7>;
+			phy_data_page1_data = <0x25ef6048 0xf18e3>;
+			do_toggle;
+			check_efuse;
+		};
+	};
+
+	rtk_dwc3_u2host@98013C00 {
+		compatible = "Realtek,dwc3";
+		reg = <0x00 0x98013c00 0x00 0x200>;
+		interrupts = <0x00 0x15 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		delay_probe_work;
+		ordered_probe;
+		status = "okay";
+		linux,phandle = <0x9b>;
+		phandle = <0x9b>;
+
+		dwc3_u2host@98029000 {
+			compatible = "synopsys,dwc3";
+			reg = <0x00 0x98029000 0x00 0x9000>;
+			interrupts = <0x00 0x15 0x04>;
+			fixed_dwc3_globals_regs_start = <0x8100>;
+			usb-phy = <0x3f>;
+			dr_mode = "host";
+			snps,dis_ss_park_mode;
+		};
+	};
+
+	dwc3_u3host_usb3phy@0 {
+		compatible = "Realtek,usb3phy";
+		reg = <0x00 0x98013e10 0x00 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		status = "okay";
+		port_index = <0x01>;
+		phyN = <0x01>;
+		linux,phandle = <0x41>;
+		phandle = <0x41>;
+
+		phy0 {
+			phy_data_size = <0x30>;
+			phy_data_addr = <0x10203 0x4050607 0x8090a0b 0xc0d0e0f 0x10111213 0x14151617 0x18191a1b 0x1c1d1e1f 0x20212223 0x24252627 0x28292a2b 0x2c2d2e2f>;
+			phy_data_revA = <0x400cac43 0x60422771 0x72f52ad3 0x62e00 0x3591565c 0x8608ab05 0xc000f70a 0x20008d50 0xc4c10 0xfc000c81 0xde010000 0x00 0x6020 0x852014 0xc900a03f 0xc2e0a000 0x403a88aa 0x53bb66 0xe01260 0x840b01d6 0xf842ff00 0x30408028 0xffffffff 0x8635>;
+			do_toggle;
+		};
+	};
+
+	dwc3_u3host_usb2phy@0 {
+		compatible = "Realtek,usb2phy";
+		reg = <0x00 0x98058280 0x00 0x04 0x00 0x98013e14 0x00 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		status = "okay";
+		nvmem-cells = <0x15>;
+		nvmem-cell-names = "usb-dc-cal";
+		port_index = <0x02>;
+		phyN = <0x01>;
+		linux,phandle = <0x40>;
+		phandle = <0x40>;
+
+		phy0 {
+			phy_data_page0_size = <0x10>;
+			phy_data_page0_addr = <0xe0e1e2e3 0xe4e5e6e7 0xf0f1f2f3 0xf4f5f6f7>;
+			phy_data_page0_data = <0xe030798d 0x6b6501f1 0xfc8c0011 0x9b000002>;
+			phy_data_page1_size = <0x08>;
+			phy_data_page1_addr = <0xe0e1e2e3 0xe4e5e6e7>;
+			phy_data_page1_data = <0x25ef6048 0xf18e3>;
+			do_toggle;
+			check_efuse;
+		};
+	};
+
+	rtk_dwc3_u3host@98013E00 {
+		compatible = "Realtek,dwc3";
+		reg = <0x00 0x98013e00 0x00 0x200>;
+		interrupts = <0x00 0x15 0x04>;
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+		delay_probe_work;
+		ordered_probe;
+		dis_u3_port;
+		status = "okay";
+		linux,phandle = <0x39>;
+		phandle = <0x39>;
+
+		dwc3_u3host@981F0000 {
+			compatible = "synopsys,dwc3";
+			reg = <0x00 0x98050000 0x00 0x9000>;
+			interrupts = <0x00 0x15 0x04>;
+			fixed_dwc3_globals_regs_start = <0x8100>;
+			usb-phy = <0x40 0x41>;
+			dr_mode = "host";
+			snps,dis_u3_susphy_quirk;
+			snps,dis_ss_park_mode;
+			status = "okay";
+		};
+	};
+
+	chosen {
+		logo-area = <0x2f700000 0x900000>;
+		linux,initrd-start = <0x2200000>;
+		linux,initrd-end = <0x2e00000>;
+		bootargs = "earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 init=/init androidboot.hardware=thor androidboot.storage=emmc loglevel=4 androidboot.dtbo_idx=0 androidboot.serialno=thor6de8";
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00 0x00 0x00 0x40000000>;
+	};
+
+	firmware {
+
+		optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+		};
+	};
+
+	reserved-memory {
+		#address-cells = <0x02>;
+		#size-cells = <0x02>;
+		ranges;
+
+		rbus@0 {
+			compatible = "rsvmem-remap";
+			save_remap_name = "rbus";
+			reg = <0x00 0x98000000 0x00 0x200000>;
+			rtk_rbus_barrier_flag;
+		};
+
+		common@0 {
+			compatible = "rsvmem-remap";
+			save_remap_name = "common";
+			reg = <0x00 0x2f000 0x00 0x1000>;
+		};
+
+		ringbuf@0 {
+			compatible = "rsvmem-remap";
+			save_remap_name = "ringbuf";
+			reg = <0x00 0x1ffe000 0x00 0x4000>;
+		};
+	};
+
+	rtk,ion {
+		compatible = "Realtek,rtk-ion";
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+
+		rtk,ion-heap@0 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x00>;
+			rtk,memory-reservation-size = <0x00>;
+		};
+
+		rtk,ion-heap@1 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x01>;
+			rtk,memory-reservation-size = <0x00>;
+		};
+
+		rtk,ion-heap@4 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x04>;
+			rtk,memory-reservation-size = <0x00>;
+		};
+
+		rtk,ion-heap@8 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x08>;
+			rtk,memory-reserve = <0x3000000 0x100000 0x8e>;
+		};
+
+		rtk,ion-heap@7 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x07>;
+			rtk,memory-reserve = <0x3100000 0x6000000 0x8e>;
+		};
+
+		rtk,ion-heap@9 {
+			compatible = "Realtek,rtk-ion-reserve";
+			reg = <0x09>;
+			rtk,memory-reserve = <0x32b00000 0xd500000 0x0c 0x40000000 0x5700000 0x08>;
+		};
+	};
+
+	fb@0 {
+		compatible = "Realtek,rtk-fb";
+		reg = <0x00 0x15000000 0x00 0xa8c000>;
+		buffer-cnt = <0x03>;
+		resolution = <0x780 0x438>;
+		fps = <0x3c>;
+	};
+
+	test_vo@98005000 {
+		compatible = "Realtek,rtk1295-test_vo";
+		reg = <0x00 0x98005000 0x00 0x1000 0x00 0x9800d000 0x00 0x1000 0x00 0x98000000 0x00 0x1000>;
+		interrupts = <0x00 0x22 0x04>;
+	};
+
+	rtk_avcpu {
+		compatible = "Realtek,rtk-avcpu";
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+
+		crt@0 {
+			reg = <0x00 0x98000000 0x00 0x200000>;
+		};
+
+		rpc@0 {
+			reg = <0x2f000 0x1000>;
+		};
+	};
+
+	__symbols__ {
+		pinctrl = "/pinctrl@9804E000";
+		sdcard_pins_low = "/pinctrl@9804E000/sdcard_low";
+		sdcard_pins_high = "/pinctrl@9804E000/sdcard_high";
+		sdio_pins_0 = "/pinctrl@9804E000/sdio_pins_0";
+		sdio_pins_1 = "/pinctrl@9804E000/sdio_pins_1";
+		uart0_pins = "/pinctrl@9804E000/uart0_pins";
+		uart1_pins = "/pinctrl@9804E000/uart1_pins";
+		uart2_pins_0 = "/pinctrl@9804E000/uart2_pins_0";
+		uart2_pins_1 = "/pinctrl@9804E000/uart2_pins_1";
+		i2c_pins_0 = "/pinctrl@9804E000/i2c_pins_0";
+		i2c_pins_0_HS = "/pinctrl@9804E000/i2c_pins_0_HS";
+		i2c_pins_1 = "/pinctrl@9804E000/i2c_pins_1";
+		i2c_pins_2 = "/pinctrl@9804E000/i2c_pins_2";
+		i2c_pins_3 = "/pinctrl@9804E000/i2c_pins_3";
+		i2c_pins_4 = "/pinctrl@9804E000/i2c_pins_4";
+		i2c_pins_5 = "/pinctrl@9804E000/i2c_pins_5";
+		spi_pins_enable = "/pinctrl@9804E000/spi-pins-enable";
+		spi_pins_loc_spi = "/pinctrl@9804E000/spi_pins_loc_spi";
+		gspi_pins_0 = "/pinctrl@9804E000/gspi_pins_0";
+		gspi_pins_1 = "/pinctrl@9804E000/gspi_pins_1";
+		smartcard_pins_0 = "/pinctrl@9804E000/smartcard_pins_0";
+		smartcard_pins_1 = "/pinctrl@9804E000/smartcard_pins_1";
+		tp0_loc_tp0_pins = "/pinctrl@9804E000/tp0_loc_tp0_pins";
+		tp1_loc_tp1_pins = "/pinctrl@9804E000/tp1_loc_tp1_pins";
+		ao_pins = "/pinctrl@9804E000/ao_pins";
+		ir_rx_pins = "/pinctrl@9804E000/ir_rx_pins";
+		spdif_pins = "/pinctrl@9804E000/spdif_pins";
+		spdif_optical_pins = "/pinctrl@9804E000/spdif_optical_pins";
+		ai_loc0_pins = "/pinctrl@9804E000/ai_loc0_pins";
+		ai_loc1_pins = "/pinctrl@9804E000/ai_loc1_pins";
+		dmic_loc0_pins = "/pinctrl@9804E000/dmic_loc0_pins";
+		dmic_loc1_pins = "/pinctrl@9804E000/dmic_loc1_pins";
+		tdm_loc0_pins = "/pinctrl@9804E000/tdm_loc0_pins";
+		tdm_dmic_loc0_pins = "/pinctrl@9804E000/tdm_dmic_loc0_pins";
+		tdm_loc1_pins = "/pinctrl@9804E000/tdm_loc1_pins";
+		tdm_dmic_loc1_pins = "/pinctrl@9804E000/tdm_dmic_loc1_pins";
+		etn_led_pins = "/pinctrl@9804E000/etn_led_pins";
+		sgmii_mdio_pins = "/pinctrl@9804E000/sgmii_mdio_pins";
+		pcie_clk_pins_0 = "/pinctrl@9804E000/pcie_clk_pins_0";
+		pcie_clk_pins_1 = "/pinctrl@9804E000/pcie_clk_pins_1";
+		scpu_ejtag_pins_loc_0 = "/pinctrl@9804E000/scpu_ejtag_pins_loc_0";
+		scpu_ejtag_pins_loc_1 = "/pinctrl@9804E000/scpu_ejtag_pins_loc_1";
+		scpu_ejtag_pins_disable = "/pinctrl@9804E000/scpu_ejtag_pins_disable";
+		lx_ejtag_pins_loc_0 = "/pinctrl@9804E000/lx_ejtag_pins_loc_0";
+		acpu_ejtag_pins_loc_1 = "/pinctrl@9804E000/acpu_ejtag_pins_loc_1";
+		dc_fan_sensor_pins = "/pinctrl@9804E000/dc_fan_sensor_pins";
+		pwm0_0_pins = "/pinctrl@9804E000/pwm0_0_pins";
+		pwm0_1_pins = "/pinctrl@9804E000/pwm0_1_pins";
+		pwm1_0_pins = "/pinctrl@9804E000/pwm1_0_pins";
+		pwm1_1_pins = "/pinctrl@9804E000/pwm1_1_pins";
+		pwm2_0_pins = "/pinctrl@9804E000/pwm2_0_pins";
+		pwm2_1_pins = "/pinctrl@9804E000/pwm2_1_pins";
+		pwm3_0_pins = "/pinctrl@9804E000/pwm3_0_pins";
+		pwm3_1_pins = "/pinctrl@9804E000/pwm3_1_pins";
+		usb_cc1_pins = "/pinctrl@9804E000/usb_cc1_pins";
+		usb_cc2_pins = "/pinctrl@9804E000/usb_cc2_pins";
+		demod_pins = "/pinctrl@9804E000/demod-pins";
+		A55_0 = "/cpus/cpu@0";
+		A55_1 = "/cpus/cpu@1";
+		A55_2 = "/cpus/cpu@2";
+		A55_3 = "/cpus/cpu@3";
+		A55_4 = "/cpus/cpu@4";
+		A55_5 = "/cpus/cpu@5";
+		a55_l2 = "/cpus/l2-cache";
+		sb2_lock0 = "/sb2-lock@9801A000";
+		sb2_lock4 = "/sb2-lock@9801A62C";
+		efuse = "/efuse@98017000";
+		otp_chip_id = "/efuse@98017000/chip-id@3cc";
+		otp_secure_chip_en = "/efuse@98017000/secure-chip-en@3fd";
+		otp_bond_id = "/efuse@98017000/bond-id@4f4";
+		otp_iddq = "/efuse@98017000/iddq@4f8";
+		otp_etn_rc_cal = "/efuse@98017000/etn-rc-cal@4fb";
+		otp_etn_r_amp_cal = "/efuse@98017000/etn-r-amp-cal@4fc";
+		otp_usb_cc1_comp_cal = "/efuse@98017000/usb-cc1-comp-cal@504";
+		otp_usb_cc2_comp_cal = "/efuse@98017000/usb-cc2-comp-cal@507";
+		otp_usb_cc1_4_7k_cal = "/efuse@98017000/usb-cc1-4-7k-cal@50a";
+		otp_usb_cc1_12k_cal = "/efuse@98017000/usb-cc1-12k-cal@50a";
+		otp_usb_cc2_4_7k_cal = "/efuse@98017000/usb-cc2-4-7k-cal@50b";
+		otp_usb_cc2_12k_cal = "/efuse@98017000/usb-cc2-12k-cal@50b";
+		otp_usb_cc_en = "/efuse@98017000/usb-cc-en@50d";
+		otp_cpu_dss = "/efuse@98017000/cpu-dss@510";
+		otp_usb_dc_cal = "/efuse@98017000/usb-dc-cal@530";
+		osc27m = "/osc27m";
+		cc = "/crt-controller@98000000";
+		ic = "/iso-controller@98007000";
+		pd = "/power-domain@98007000";
+		gic = "/interrupt-controller@FF100000";
+		mux_intc = "/intc@9801B000";
+		rtk_iso_gpio = "/rtk_iso_gpio@98007100";
+		uart0 = "/serial0@98007800";
+		uart1 = "/serial1@9801B200";
+		uart2 = "/serial2@9801B400";
+		nic = "/gmac@98016000";
+		i2c_0 = "/i2c@0x98007D00";
+		apw8889 = "/i2c@0x98007D00/apw8889@12";
+		apw8889_powerkey = "/i2c@0x98007D00/apw8889@12/powerkey";
+		apw8889_poweroff = "/i2c@0x98007D00/apw8889@12/poweroff";
+		apw8889_regulators = "/i2c@0x98007D00/apw8889@12/regulators";
+		apw8889_vd33_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc1";
+		apw8889_core_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc2";
+		apw8889_cpu_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc3";
+		apw8889_gpu_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc4";
+		apw8889_ddr_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc5";
+		apw8889_vd18_supp = "/i2c@0x98007D00/apw8889@12/regulators/dc6";
+		apw8889_vd25_supp = "/i2c@0x98007D00/apw8889@12/regulators/ldo1";
+		i2c_1 = "/i2c@0x98007C00";
+		i2c_3 = "/i2c@0x9801B900";
+		i2c_4 = "/i2c@0x9801BA00";
+		i2c_5 = "/i2c@0x9801BB00";
+		spi_0 = "/spi@9801BD00";
+		pwm = "/pwm@980070D0";
+		sd = "/sdmmc@98010400";
+		sdio = "/sdio@98010A00";
+		emmc = "/emmc@98012000";
+		rfkill = "/rfkilligpio";
+		dvfs = "/cpu-dvfs";
+		cpu_opps = "/cpu-dvfs/cpu-opp-table";
+		opp300 = "/cpu-dvfs/cpu-opp-table/opp-300mhz";
+		opp400 = "/cpu-dvfs/cpu-opp-table/opp-400mhz";
+		opp500 = "/cpu-dvfs/cpu-opp-table/opp-500mhz";
+		opp600 = "/cpu-dvfs/cpu-opp-table/opp-600mhz";
+		opp700 = "/cpu-dvfs/cpu-opp-table/opp-700mhz";
+		opp800 = "/cpu-dvfs/cpu-opp-table/opp-800mhz";
+		opp900 = "/cpu-dvfs/cpu-opp-table/opp-900mhz";
+		opp1000 = "/cpu-dvfs/cpu-opp-table/opp-1000mhz";
+		opp1100 = "/cpu-dvfs/cpu-opp-table/opp-1100mhz";
+		opp1200 = "/cpu-dvfs/cpu-opp-table/opp-1200mhz";
+		opp1300 = "/cpu-dvfs/cpu-opp-table/opp-1300mhz";
+		opp1400 = "/cpu-dvfs/cpu-opp-table/opp-1400mhz";
+		gpu = "/gpu@981D0000";
+		gpu_opps = "/gpu@981D0000/gpu-opp-table";
+		cpu_tm = "/thermal-sensor@9801db00";
+		cpu_thermal = "/thermal-zones/cpu-thermal";
+		cpu_crit = "/thermal-zones/cpu-thermal/trips/cpu-crit";
+		tm_alert0 = "/thermal-zones/cpu-thermal/trips/cpu-alert0";
+		tm_alert1 = "/thermal-zones/cpu-thermal/trips/cpu-alert1";
+		md = "/md@9800b000";
+		se = "/se@9800c000";
+		jpeg = "/jpeg@9803e000";
+		ve1 = "/ve1@98040000";
+		audio_out = "/audio-out-devices";
+		gpio0 = "/rtk_usb_power_manager@0/gpio0";
+		gpio2 = "/rtk_usb_power_manager@0/gpio2";
+		pcie = "/pcie@98060000";
+		pcie2 = "/pcie2@980A0000";
+		tcc = "/tee-clocks";
+		dwc3_drd_usb3phy = "/dwc3_drd_usb3phy@0";
+		dwc3_drd_usb2phy = "/dwc3_drd_usb2phy@0";
+		dwc3_drd = "/rtk_dwc3_drd@98013200";
+		dwc3_type_c = "/rtk_dwc3_drd@98013200/rtk_dwc3_drd_type_c@0";
+		dwc3_u2host_usb2phy = "/dwc3_u2host_usb2phy@0";
+		dwc3_u2host = "/rtk_dwc3_u2host@98013C00";
+		dwc3_u3host_usb3phy = "/dwc3_u3host_usb3phy@0";
+		dwc3_u3host_usb2phy = "/dwc3_u3host_usb2phy@0";
+		dwc3_u3host = "/rtk_dwc3_u3host@98013E00";
+	};
+};

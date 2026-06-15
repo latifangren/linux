@@ -1,0 +1,108 @@
+Realtek> sysparam dump
+system parameters:
+_________ RTK_AARCH32      : 31 | 1
+_________ kernel_loadaddr  : 30783030323038303030 | 0x00208000
+_________ fdt_loadaddr     : 30783032313030303030 | 0x02100000
+_________ rootfs_loadaddr  : 30783032323030303030 | 0x02200000
+_________ audio_loadaddr   : 30783066393030303030 | 0x0f900000
+_________ dtbo_loadaddr    : 30783236343030303030 | 0x26400000
+_________ ethaddr          : 30303a31303a32303a33303a30353a6130 | 00:10:20:30:05:a0
+_________ serial_number    : 74686f7236646538 | thor6de8
+_________ gatewayip        : 3139322e3136382e3130302e323534 | 192.168.100.254
+_________ ipaddr           : 3139322e3136382e3130302e31 | 192.168.100.1
+_________ netmask          : 3235352e3235352e3235352e30 | 255.255.255.0
+_________ eth_drv_para     : 677068792c6279706173732c6e6f616370 | gphy,bypass,noacp
+_________ emmc_tuning_addr : 30783063396431653030 | 0x0c9d1e00
+total in-memory usage: 1063 bytes
+OK
+
+Realtek> bdinfo
+---- Thor Rev. A01 ----
+cpu_id       = THOR 1619
+baudrate     = 115200 bps
+---- PLL information ----
+BUS PLL      =  513 MHz
+BUS          =  513 MHz (div 1)
+DCSB PLL     =  553 MHz
+DCSB         =  138 MHz (div 4)
+ACPU PLL     =  550 MHz
+ACPU         =  550 MHz (div 1)
+DDSA PLL     =  432 MHz
+GPU PLL      =    0 MHz
+VCPU PLL     =    0 MHz
+VCPU_2 PLL   =    0 MHz
+SCPU PLL     = 1188 MHz
+SCPU         = 1188 MHz (div 1)
+---- DDR information ----
+DDR          = 2400 MT/s (0x29) - DC0
+DC0 DDR4, total size is 8Gb(x16)x2=16Gb
+---- Flash information ----
+boot_flash   = emmc
+Realtek> 
+
+Realtek> fdt info
+---------------------------------------
+ fdt info
+---------------------------------------
+  fdt_addr  : 0x0000000000000000
+  fdt_state : Not ready
+  curr_node : /
+  last_node : /
+---------------------------------------
+Realtek> 
+
+Realtek> pwm show
+Registers:
+	 MUXPAD0: 0x1401b6d8
+	 MUXPAD1: 0x00000000
+	 MUXPAD6: 0x00420900
+	 PWM_OCD: 0x00000000
+	 PWM_CD:  0x00000000
+	 PWM_CSD: 0x00000000
+
+PWM 0:	 enable      0, 	 out_freq 26367, 	 duty_rate   0
+	 clksrc_div  1, 	 clkout_div 255, 	 clk_duty    1
+
+PWM 1:	 enable      0, 	 out_freq 26367, 	 duty_rate   0
+	 clksrc_div  1, 	 clkout_div 255, 	 clk_duty    1
+
+PWM 2:	 enable      0, 	 out_freq 26367, 	 duty_rate   0
+	 clksrc_div  1, 	 clkout_div 255, 	 clk_duty    1
+
+PWM 3:	 enable      0, 	 out_freq 26367, 	 duty_rate   0
+	 clksrc_div  1, 	 clkout_div 255, 	 clk_duty    1
+Realtek> 
+
+Realtek> gpt dump
+GPT mmc0, size 7755268096, block_size 512
+ptn[0]:Name[bootcode] Size[6144] Type[0] First[256] Last[6399]
+ptn[1]:Name[bootcode2] Size[6144] Type[0] First[6400] Last[12543]
+ptn[2]:Name[SCS_UnCheck_Area] Size[8] Type[0] First[12544] Last[12551]
+ptn[3]:Name[factory] Size[8192] Type[0] First[12552] Last[20743]
+ptn[4]:Name[fw_table] Size[64] Type[0] First[20744] Last[20807]
+ptn[5]:Name[FwTable2] Size[64] Type[0] First[20808] Last[20871]
+ptn[6]:Name[audioKernel] Size[20480] Type[0] First[20880] Last[41359]
+ptn[7]:Name[audio2] Size[20480] Type[0] First[41360] Last[61839]
+ptn[8]:Name[pcpu] Size[128] Type[0] First[61840] Last[61967]
+ptn[9]:Name[pcpu2] Size[128] Type[0] First[61968] Last[62095]
+ptn[10]:Name[boot] Size[65536] Type[0] First[62096] Last[127631]
+ptn[11]:Name[boot2] Size[65536] Type[0] First[127632] Last[193167]
+ptn[12]:Name[recovery] Size[81920] Type[0] First[193168] Last[275087]
+ptn[13]:Name[recovery2] Size[81920] Type[0] First[275088] Last[357007]
+ptn[14]:Name[pkcsc] Size[8192] Type[0] First[357008] Last[365199]
+ptn[15]:Name[ta] Size[32768] Type[0] First[365200] Last[397967]
+ptn[16]:Name[misc] Size[8192] Type[0] First[397968] Last[406159]
+ptn[17]:Name[param] Size[8192] Type[0] First[406160] Last[414351]
+ptn[18]:Name[dtbo] Size[16384] Type[0] First[414352] Last[430735]
+ptn[19]:Name[vbmeta] Size[2048] Type[0] First[430736] Last[432783]
+ptn[20]:Name[uboot] Size[8192] Type[0] First[432784] Last[440975]
+ptn[21]:Name[logo] Size[32768] Type[0] First[440976] Last[473743]
+ptn[22]:Name[cak] Size[16384] Type[0] First[473744] Last[490127]
+ptn[23]:Name[vendor] Size[573440] Type[0] First[490128] Last[1063567]
+ptn[24]:Name[system] Size[2736128] Type[0] First[1063568] Last[3799695]
+ptn[25]:Name[cache] Size[1536000] Type[0] First[3799696] Last[5335695]
+ptn[26]:Name[tvhome] Size[102400] Type[0] First[5335696] Last[5438095]
+ptn[27]:Name[swap] Size[1048576] Type[0] First[5438096] Last[6486671]
+ptn[28]:Name[data] Size[8660303] Type[0] First[6486672] Last[15146974]
+Realtek> 
+
