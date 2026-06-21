@@ -15,59 +15,6 @@
 #include "mds_client.h"
 #include "crypto.h"
 
-/*
- * The base64url encoding used by fscrypt includes the '_' character, which may
- * cause problems in snapshot names (which can not start with '_').  Thus, we
- * used the base64 encoding defined for IMAP mailbox names (RFC 3501) instead,
- * which replaces '-' and '_' by '+' and ','.
- */
-static const char base64_table[65] =
-	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
-
-int ceph_base64_encode(const u8 *src, int srclen, char *dst)
-{
-	u32 ac = 0;
-	int bits = 0;
-	int i;
-	char *cp = dst;
-
-	for (i = 0; i < srclen; i++) {
-		ac = (ac << 8) | src[i];
-		bits += 8;
-		do {
-			bits -= 6;
-			*cp++ = base64_table[(ac >> bits) & 0x3f];
-		} while (bits >= 6);
-	}
-	if (bits)
-		*cp++ = base64_table[(ac << (6 - bits)) & 0x3f];
-	return cp - dst;
-}
-
-int ceph_base64_decode(const char *src, int srclen, u8 *dst)
-{
-	u32 ac = 0;
-	int bits = 0;
-	int i;
-	u8 *bp = dst;
-
-	for (i = 0; i < srclen; i++) {
-		const char *p = strchr(base64_table, src[i]);
-
-		if (p == NULL || src[i] == 0)
-			return -1;
-		ac = (ac << 6) | (p - base64_table);
-		bits += 6;
-		if (bits >= 8) {
-			bits -= 8;
-			*bp++ = (u8)(ac >> bits);
-		}
-	}
-	if (ac & ((1 << bits) - 1))
-		return -1;
-	return bp - dst;
-}
-
 static int ceph_crypt_get_context(struct inode *inode, void *ctx, size_t len)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
@@ -103,7 +50,7 @@ static int ceph_crypt_set_context(struct inode *inode, const void *ctx,
 	if (len > FSCRYPT_SET_CONTEXT_MAX_SIZE)
 		return -EINVAL;
 
-	cfa = kzalloc(sizeof(*cfa), GFP_KERNEL);
+	cfa = kzalloc_obj(*cfa);
 	if (!cfa)
 		return -ENOMEM;
 
@@ -133,6 +80,8 @@ static const union fscrypt_policy *ceph_get_dummy_policy(struct super_block *sb)
 }
 
 static struct fscrypt_operations ceph_fscrypt_ops = {
+	.inode_info_offs	= (int)offsetof(struct ceph_inode_info, i_crypt_info) -
+				  (int)offsetof(struct ceph_inode_info, netfs.inode),
 	.needs_bounce_pages	= 1,
 	.get_context		= ceph_crypt_get_context,
 	.set_context		= ceph_crypt_set_context,
@@ -163,7 +112,7 @@ int ceph_fscrypt_prepare_context(struct inode *dir, struct inode *inode,
 	if (!encrypted)
 		return 0;
 
-	as->fscrypt_auth = kzalloc(sizeof(*as->fscrypt_auth), GFP_KERNEL);
+	as->fscrypt_auth = kzalloc_obj(*as->fscrypt_auth);
 	if (!as->fscrypt_auth)
 		return -ENOMEM;
 
@@ -254,36 +203,26 @@ static struct inode *parse_longname(const struct inode *parent,
 	return dir;
 }
 
-int ceph_encode_encrypted_dname(struct inode *parent, struct qstr *d_name,
-				char *buf)
+int ceph_encode_encrypted_dname(struct inode *parent, char *buf, int elen)
 {
 	struct ceph_client *cl = ceph_inode_to_client(parent);
 	struct inode *dir = parent;
-	struct qstr iname;
+	char *p = buf;
 	u32 len;
-	int name_len;
-	int elen;
+	int name_len = elen;
 	int ret;
 	u8 *cryptbuf = NULL;
 
-	iname.name = d_name->name;
-	name_len = d_name->len;
-
 	/* Handle the special case of snapshot names that start with '_' */
-	if ((ceph_snap(dir) == CEPH_SNAPDIR) && (name_len > 0) &&
-	    (iname.name[0] == '_')) {
-		dir = parse_longname(parent, iname.name, &name_len);
+	if (ceph_snap(dir) == CEPH_SNAPDIR && *p == '_') {
+		dir = parse_longname(parent, p, &name_len);
 		if (IS_ERR(dir))
 			return PTR_ERR(dir);
-		iname.name++; /* skip initial '_' */
+		p++; /* skip initial '_' */
 	}
-	iname.len = name_len;
 
-	if (!fscrypt_has_encryption_key(dir)) {
-		memcpy(buf, d_name->name, d_name->len);
-		elen = d_name->len;
+	if (!fscrypt_has_encryption_key(dir))
 		goto out;
-	}
 
 	/*
 	 * Convert cleartext d_name to ciphertext. If result is longer than
@@ -291,7 +230,7 @@ int ceph_encode_encrypted_dname(struct inode *parent, struct qstr *d_name,
 	 *
 	 * See: fscrypt_setup_filename
 	 */
-	if (!fscrypt_fname_encrypted_size(dir, iname.len, NAME_MAX, &len)) {
+	if (!fscrypt_fname_encrypted_size(dir, name_len, NAME_MAX, &len)) {
 		elen = -ENAMETOOLONG;
 		goto out;
 	}
@@ -304,7 +243,9 @@ int ceph_encode_encrypted_dname(struct inode *parent, struct qstr *d_name,
 		goto out;
 	}
 
-	ret = fscrypt_fname_encrypt(dir, &iname, cryptbuf, len);
+	ret = fscrypt_fname_encrypt(dir,
+				    &(struct qstr)QSTR_INIT(p, name_len),
+				    cryptbuf, len);
 	if (ret) {
 		elen = ret;
 		goto out;
@@ -325,36 +266,23 @@ int ceph_encode_encrypted_dname(struct inode *parent, struct qstr *d_name,
 	}
 
 	/* base64 encode the encrypted name */
-	elen = ceph_base64_encode(cryptbuf, len, buf);
-	doutc(cl, "base64-encoded ciphertext name = %.*s\n", elen, buf);
+	elen = base64_encode(cryptbuf, len, p, false, BASE64_IMAP);
+	doutc(cl, "base64-encoded ciphertext name = %.*s\n", elen, p);
 
 	/* To understand the 240 limit, see CEPH_NOHASH_NAME_MAX comments */
 	WARN_ON(elen > 240);
-	if ((elen > 0) && (dir != parent)) {
-		char tmp_buf[NAME_MAX];
-
-		elen = snprintf(tmp_buf, sizeof(tmp_buf), "_%.*s_%ld",
-				elen, buf, dir->i_ino);
-		memcpy(buf, tmp_buf, elen);
-	}
+	if (dir != parent) // leading _ is already there; append _<inum>
+		elen += 1 + sprintf(p + elen, "_%llu", dir->i_ino);
 
 out:
 	kfree(cryptbuf);
 	if (dir != parent) {
-		if ((dir->i_state & I_NEW))
+		if ((inode_state_read_once(dir) & I_NEW))
 			discard_new_inode(dir);
 		else
 			iput(dir);
 	}
 	return elen;
-}
-
-int ceph_encode_encrypted_fname(struct inode *parent, struct dentry *dentry,
-				char *buf)
-{
-	WARN_ON_ONCE(!fscrypt_has_encryption_key(parent));
-
-	return ceph_encode_encrypted_dname(parent, &dentry->d_name, buf);
 }
 
 /**
@@ -432,7 +360,8 @@ int ceph_fname_to_usr(const struct ceph_fname *fname, struct fscrypt_str *tname,
 			tname = &_tname;
 		}
 
-		declen = ceph_base64_decode(name, name_len, tname->name);
+		declen = base64_decode(name, name_len,
+				       tname->name, false, BASE64_IMAP);
 		if (declen <= 0) {
 			ret = -EIO;
 			goto out;
@@ -446,9 +375,9 @@ int ceph_fname_to_usr(const struct ceph_fname *fname, struct fscrypt_str *tname,
 
 	ret = fscrypt_fname_disk_to_usr(dir, 0, 0, &iname, oname);
 	if (!ret && (dir != fname->dir)) {
-		char tmp_buf[CEPH_BASE64_CHARS(NAME_MAX)];
+		char tmp_buf[BASE64_CHARS(NAME_MAX)];
 
-		name_len = snprintf(tmp_buf, sizeof(tmp_buf), "_%.*s_%ld",
+		name_len = snprintf(tmp_buf, sizeof(tmp_buf), "_%.*s_%llu",
 				    oname->len, oname->name, dir->i_ino);
 		memcpy(oname->name, tmp_buf, name_len);
 		oname->len = name_len;
@@ -458,7 +387,7 @@ out:
 	fscrypt_fname_free_buffer(&_tname);
 out_inode:
 	if (dir != fname->dir) {
-		if ((dir->i_state & I_NEW))
+		if ((inode_state_read_once(dir) & I_NEW))
 			discard_new_inode(dir);
 		else
 			iput(dir);
@@ -510,15 +439,13 @@ int ceph_fscrypt_decrypt_block_inplace(const struct inode *inode,
 
 int ceph_fscrypt_encrypt_block_inplace(const struct inode *inode,
 				  struct page *page, unsigned int len,
-				  unsigned int offs, u64 lblk_num,
-				  gfp_t gfp_flags)
+				  unsigned int offs, u64 lblk_num)
 {
 	struct ceph_client *cl = ceph_inode_to_client(inode);
 
 	doutc(cl, "%p %llx.%llx len %u offs %u blk %llu\n", inode,
 	      ceph_vinop(inode), len, offs, lblk_num);
-	return fscrypt_encrypt_block_inplace(inode, page, len, offs, lblk_num,
-					     gfp_flags);
+	return fscrypt_encrypt_block_inplace(inode, page, len, offs, lblk_num);
 }
 
 /**
@@ -636,9 +563,8 @@ int ceph_fscrypt_decrypt_extents(struct inode *inode, struct page **page,
  * @page: pointer to page array
  * @off: offset into the file that the data starts
  * @len: max length to encrypt
- * @gfp: gfp flags to use for allocation
  *
- * Decrypt an array of cleartext pages and return the amount of
+ * Encrypt an array of cleartext pages and return the amount of
  * data encrypted. Any data in the page prior to the start of the
  * first complete block in the read is ignored. Any incomplete
  * crypto blocks at the end of the array are ignored.
@@ -646,7 +572,7 @@ int ceph_fscrypt_decrypt_extents(struct inode *inode, struct page **page,
  * Returns the length of the encrypted data or a negative errno.
  */
 int ceph_fscrypt_encrypt_pages(struct inode *inode, struct page **page, u64 off,
-				int len, gfp_t gfp)
+				int len)
 {
 	int i, num_blocks;
 	u64 baseblk = off >> CEPH_FSCRYPT_BLOCK_SHIFT;
@@ -667,7 +593,7 @@ int ceph_fscrypt_encrypt_pages(struct inode *inode, struct page **page, u64 off,
 
 		fret = ceph_fscrypt_encrypt_block_inplace(inode, page[pgidx],
 				CEPH_FSCRYPT_BLOCK_SIZE, pgoffs,
-				baseblk + i, gfp);
+				baseblk + i);
 		if (fret < 0) {
 			if (ret == 0)
 				ret = fret;

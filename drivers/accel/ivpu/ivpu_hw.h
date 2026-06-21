@@ -6,17 +6,9 @@
 #ifndef __IVPU_HW_H__
 #define __IVPU_HW_H__
 
-#include <linux/kfifo.h>
-
 #include "ivpu_drv.h"
 #include "ivpu_hw_btrs.h"
 #include "ivpu_hw_ip.h"
-
-#define IVPU_HW_IRQ_FIFO_LENGTH 1024
-
-#define IVPU_HW_IRQ_SRC_IPC 1
-#define IVPU_HW_IRQ_SRC_MMU_EVTQ 2
-#define IVPU_HW_IRQ_SRC_DCT 3
 
 struct ivpu_addr_range {
 	resource_size_t start;
@@ -27,9 +19,9 @@ struct ivpu_hw_info {
 	struct {
 		bool (*btrs_irq_handler)(struct ivpu_device *vdev, int irq);
 		bool (*ip_irq_handler)(struct ivpu_device *vdev, int irq);
-		DECLARE_KFIFO(fifo, u8, IVPU_HW_IRQ_FIFO_LENGTH);
 	} irq;
 	struct {
+		struct ivpu_addr_range runtime;
 		struct ivpu_addr_range global;
 		struct ivpu_addr_range user;
 		struct ivpu_addr_range shave;
@@ -60,6 +52,8 @@ struct ivpu_hw_info {
 };
 
 int ivpu_hw_init(struct ivpu_device *vdev);
+int ivpu_hw_range_init(struct ivpu_device *vdev, struct ivpu_addr_range *range, u64 start,
+		       u64 size);
 int ivpu_hw_power_up(struct ivpu_device *vdev);
 int ivpu_hw_power_down(struct ivpu_device *vdev);
 int ivpu_hw_reset(struct ivpu_device *vdev);
@@ -69,6 +63,7 @@ void ivpu_irq_handlers_init(struct ivpu_device *vdev);
 void ivpu_hw_irq_enable(struct ivpu_device *vdev);
 void ivpu_hw_irq_disable(struct ivpu_device *vdev);
 irqreturn_t ivpu_hw_irq_handler(int irq, void *ptr);
+bool ivpu_hw_uses_ecc_mca_signal(struct ivpu_device *vdev);
 
 static inline u32 ivpu_hw_btrs_irq_handler(struct ivpu_device *vdev, int irq)
 {
@@ -80,12 +75,6 @@ static inline u32 ivpu_hw_ip_irq_handler(struct ivpu_device *vdev, int irq)
 	return vdev->hw->irq.ip_irq_handler(vdev, irq);
 }
 
-static inline void ivpu_hw_range_init(struct ivpu_addr_range *range, u64 start, u64 size)
-{
-	range->start = start;
-	range->end = start + size;
-}
-
 static inline u64 ivpu_hw_range_size(const struct ivpu_addr_range *range)
 {
 	return range->end - range->start;
@@ -94,6 +83,11 @@ static inline u64 ivpu_hw_range_size(const struct ivpu_addr_range *range)
 static inline u32 ivpu_hw_dpu_max_freq_get(struct ivpu_device *vdev)
 {
 	return ivpu_hw_btrs_dpu_max_freq_get(vdev);
+}
+
+static inline u32 ivpu_hw_dpu_freq_get(struct ivpu_device *vdev)
+{
+	return ivpu_hw_btrs_dpu_freq_get(vdev);
 }
 
 static inline void ivpu_hw_irq_clear(struct ivpu_device *vdev)

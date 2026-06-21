@@ -98,5 +98,28 @@
 				snps,dis_u3_susphy_quirk;
 			};
 		};
+		
+		nic: gmac@98016000 {
+			compatible = "Realtek,r8168";
+			reg = <0x98016000 0x1000>,
+				<0x98007000 0x1000>,
+				<0x9801c000 0x2000>,
+				<0x980174f8 0x20>,
+				<0x981c8000 0x2000>,
+				<0x9804e000 0x1000>;
+			interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>;
+
+			rtl-config = <0x01>;
+			mac-version = <0x2a>;
+			rtl-features = <0x02>;
+			output-mode = <0x00>;
+			ext-phy-id = <0x03>;
+			sgmii-swing = <0x00>;
+			bypass = <0x01>;
+			acp = <0x00>;
+			eee = <0x01>;
+			local-mac-address = [00 10 20 30 05 a0];
+			status = "okay";
+		};
 	};
 };

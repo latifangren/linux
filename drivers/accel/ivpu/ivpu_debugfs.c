@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) 2020-2024 Intel Corporation
+ * Copyright (C) 2020-2026 Intel Corporation
  */
 
 #include <linux/debugfs.h>
+#include <linux/fault-inject.h>
 
 #include <drm/drm_debugfs.h>
 #include <drm/drm_file.h>
@@ -19,6 +20,7 @@
 #include "ivpu_hw.h"
 #include "ivpu_jsm_msg.h"
 #include "ivpu_pm.h"
+#include "vpu_boot_api.h"
 
 static inline struct ivpu_device *seq_to_ivpu(struct seq_file *s)
 {
@@ -42,6 +44,14 @@ static int fw_name_show(struct seq_file *s, void *v)
 	struct ivpu_device *vdev = seq_to_ivpu(s);
 
 	seq_printf(s, "%s\n", vdev->fw->name);
+	return 0;
+}
+
+static int fw_version_show(struct seq_file *s, void *v)
+{
+	struct ivpu_device *vdev = seq_to_ivpu(s);
+
+	seq_printf(s, "%s\n", vdev->fw->version);
 	return 0;
 }
 
@@ -87,7 +97,8 @@ static int last_bootmode_show(struct seq_file *s, void *v)
 {
 	struct ivpu_device *vdev = seq_to_ivpu(s);
 
-	seq_printf(s, "%s\n", (vdev->pm->is_warmboot) ? "warmboot" : "coldboot");
+	seq_printf(s, "%s\n", (vdev->fw->last_boot_mode == VPU_BOOT_TYPE_WARMBOOT) ?
+		   "warm boot" : "cold boot");
 
 	return 0;
 }
@@ -116,43 +127,44 @@ static int firewall_irq_counter_show(struct seq_file *s, void *v)
 	return 0;
 }
 
+static int engine_reset_counter_show(struct seq_file *s, void *v)
+{
+	struct ivpu_device *vdev = seq_to_ivpu(s);
+
+	seq_printf(s, "%d\n", atomic_read(&vdev->pm->engine_reset_counter));
+	return 0;
+}
+
 static const struct drm_debugfs_info vdev_debugfs_list[] = {
 	{"bo_list", bo_list_show, 0},
 	{"fw_name", fw_name_show, 0},
+	{"fw_version", fw_version_show, 0},
 	{"fw_trace_capability", fw_trace_capability_show, 0},
 	{"fw_trace_config", fw_trace_config_show, 0},
 	{"last_bootmode", last_bootmode_show, 0},
 	{"reset_counter", reset_counter_show, 0},
 	{"reset_pending", reset_pending_show, 0},
 	{"firewall_irq_counter", firewall_irq_counter_show, 0},
+	{"engine_reset_counter", engine_reset_counter_show, 0},
 };
 
-static ssize_t
-dvfs_mode_fops_write(struct file *file, const char __user *user_buf, size_t size, loff_t *pos)
+static int dvfs_mode_get(void *data, u64 *dvfs_mode)
 {
-	struct ivpu_device *vdev = file->private_data;
-	struct ivpu_fw_info *fw = vdev->fw;
-	u32 dvfs_mode;
-	int ret;
+	struct ivpu_device *vdev = (struct ivpu_device *)data;
 
-	ret = kstrtou32_from_user(user_buf, size, 0, &dvfs_mode);
-	if (ret < 0)
-		return ret;
-
-	fw->dvfs_mode = dvfs_mode;
-
-	ret = pci_try_reset_function(to_pci_dev(vdev->drm.dev));
-	if (ret)
-		return ret;
-
-	return size;
+	*dvfs_mode = vdev->fw->dvfs_mode;
+	return 0;
 }
 
-static const struct file_operations dvfs_mode_fops = {
-	.owner = THIS_MODULE,
-	.open = simple_open,
-	.write = dvfs_mode_fops_write,
-};
+static int dvfs_mode_set(void *data, u64 dvfs_mode)
+{
+	struct ivpu_device *vdev = (struct ivpu_device *)data;
+
+	vdev->fw->dvfs_mode = (u32)dvfs_mode;
+	return pci_try_reset_function(to_pci_dev(vdev->drm.dev));
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(dvfs_mode_fops, dvfs_mode_get, dvfs_mode_set, "%llu\n");
 
 static ssize_t
 fw_dyndbg_fops_write(struct file *file, const char __user *user_buf, size_t size, loff_t *pos)
@@ -349,8 +361,9 @@ static const struct file_operations ivpu_force_recovery_fops = {
 static int ivpu_reset_engine_fn(void *data, u64 val)
 {
 	struct ivpu_device *vdev = (struct ivpu_device *)data;
+	struct vpu_jsm_msg resp;
 
-	return ivpu_jsm_reset_engine(vdev, (u32)val);
+	return ivpu_jsm_reset_engine(vdev, (u32)val, &resp);
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(ivpu_reset_engine_fops, NULL, ivpu_reset_engine_fn, "0x%02llx\n");
@@ -397,35 +410,25 @@ static int dct_active_set(void *data, u64 active_percent)
 
 DEFINE_DEBUGFS_ATTRIBUTE(ivpu_dct_fops, dct_active_get, dct_active_set, "%llu\n");
 
+static void print_priority_band(struct seq_file *s, struct ivpu_hw_info *hw,
+				int band, const char *name)
+{
+	seq_printf(s, "%-9s: grace_period %9u process_grace_period %9u process_quantum %9u\n",
+		   name,
+		   hw->hws.grace_period[band],
+		   hw->hws.process_grace_period[band],
+		   hw->hws.process_quantum[band]);
+}
+
 static int priority_bands_show(struct seq_file *s, void *v)
 {
 	struct ivpu_device *vdev = s->private;
 	struct ivpu_hw_info *hw = vdev->hw;
 
-	for (int band = VPU_JOB_SCHEDULING_PRIORITY_BAND_IDLE;
-	     band < VPU_JOB_SCHEDULING_PRIORITY_BAND_COUNT; band++) {
-		switch (band) {
-		case VPU_JOB_SCHEDULING_PRIORITY_BAND_IDLE:
-			seq_puts(s, "Idle:     ");
-			break;
-
-		case VPU_JOB_SCHEDULING_PRIORITY_BAND_NORMAL:
-			seq_puts(s, "Normal:   ");
-			break;
-
-		case VPU_JOB_SCHEDULING_PRIORITY_BAND_FOCUS:
-			seq_puts(s, "Focus:    ");
-			break;
-
-		case VPU_JOB_SCHEDULING_PRIORITY_BAND_REALTIME:
-			seq_puts(s, "Realtime: ");
-			break;
-		}
-
-		seq_printf(s, "grace_period %9u process_grace_period %9u process_quantum %9u\n",
-			   hw->hws.grace_period[band], hw->hws.process_grace_period[band],
-			   hw->hws.process_quantum[band]);
-	}
+	print_priority_band(s, hw, VPU_JOB_SCHEDULING_PRIORITY_BAND_IDLE, "Idle");
+	print_priority_band(s, hw, VPU_JOB_SCHEDULING_PRIORITY_BAND_NORMAL, "Normal");
+	print_priority_band(s, hw, VPU_JOB_SCHEDULING_PRIORITY_BAND_FOCUS, "Focus");
+	print_priority_band(s, hw, VPU_JOB_SCHEDULING_PRIORITY_BAND_REALTIME, "Realtime");
 
 	return 0;
 }
@@ -447,14 +450,14 @@ priority_bands_fops_write(struct file *file, const char __user *user_buf, size_t
 	u32 band;
 	int ret;
 
-	if (size >= sizeof(buf))
+	if (*pos != 0 || size >= sizeof(buf))
 		return -EINVAL;
 
 	ret = simple_write_to_buffer(buf, sizeof(buf) - 1, pos, user_buf, size);
 	if (ret < 0)
 		return ret;
 
-	buf[size] = '\0';
+	buf[ret] = '\0';
 	ret = sscanf(buf, "%u %u %u %u", &band, &grace_period, &process_grace_period,
 		     &process_quantum);
 	if (ret != 4)
@@ -488,7 +491,7 @@ void ivpu_debugfs_init(struct ivpu_device *vdev)
 	debugfs_create_file("force_recovery", 0200, debugfs_root, vdev,
 			    &ivpu_force_recovery_fops);
 
-	debugfs_create_file("dvfs_mode", 0200, debugfs_root, vdev,
+	debugfs_create_file("dvfs_mode", 0644, debugfs_root, vdev,
 			    &dvfs_mode_fops);
 
 	debugfs_create_file("fw_dyndbg", 0200, debugfs_root, vdev,
@@ -514,4 +517,8 @@ void ivpu_debugfs_init(struct ivpu_device *vdev)
 				    debugfs_root, vdev, &fw_profiling_freq_fops);
 		debugfs_create_file("dct", 0644, debugfs_root, vdev, &ivpu_dct_fops);
 	}
+
+#ifdef CONFIG_FAULT_INJECTION
+	fault_create_debugfs_attr("fail_hw", debugfs_root, &ivpu_hw_failure);
+#endif
 }

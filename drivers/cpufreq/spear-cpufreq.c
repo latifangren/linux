@@ -165,7 +165,6 @@ static struct cpufreq_driver spear_cpufreq_driver = {
 	.target_index	= spear_cpufreq_target,
 	.get		= cpufreq_generic_get,
 	.init		= spear_cpufreq_init,
-	.attr		= cpufreq_generic_attr,
 };
 
 static int spear_cpufreq_probe(struct platform_device *pdev)
@@ -192,7 +191,7 @@ static int spear_cpufreq_probe(struct platform_device *pdev)
 		goto out_put_node;
 	}
 
-	freq_tbl = kcalloc(cnt + 1, sizeof(*freq_tbl), GFP_KERNEL);
+	freq_tbl = kzalloc_objs(*freq_tbl, cnt + 1);
 	if (!freq_tbl) {
 		ret = -ENOMEM;
 		goto out_put_node;

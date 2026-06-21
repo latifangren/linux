@@ -89,8 +89,9 @@ struct ceph_dir_layout {
 } __attribute__ ((packed));
 
 /* crypto algorithms */
-#define CEPH_CRYPTO_NONE 0x0
-#define CEPH_CRYPTO_AES  0x1
+#define CEPH_CRYPTO_NONE       0x0
+#define CEPH_CRYPTO_AES        0x1
+#define CEPH_CRYPTO_AES256KRB5 0x2 /* AES256-CTS-HMAC384-192 */
 
 #define CEPH_AES_IV "cephsageyudagreg"
 
@@ -510,20 +511,6 @@ struct ceph_mds_request_head_legacy {
 
 #define CEPH_MDS_REQUEST_HEAD_VERSION  3
 
-struct ceph_mds_request_head_old {
-	__le16 version;                /* struct version */
-	__le64 oldest_client_tid;
-	__le32 mdsmap_epoch;           /* on client */
-	__le32 flags;                  /* CEPH_MDS_FLAG_* */
-	__u8 num_retry, num_fwd;       /* count retry, fwd attempts */
-	__le16 num_releases;           /* # include cap/lease release records */
-	__le32 op;                     /* mds op code */
-	__le32 caller_uid, caller_gid;
-	__le64 ino;                    /* use this ino for openc, mkdir, mknod,
-					  etc. (if replaying) */
-	union ceph_mds_request_args_ext args;
-} __attribute__ ((packed));
-
 struct ceph_mds_request_head {
 	__le16 version;                /* struct version */
 	__le64 oldest_client_tid;
@@ -814,7 +801,7 @@ struct ceph_mds_caps {
 
 struct ceph_mds_cap_peer {
 	__le64 cap_id;
-	__le32 seq;
+	__le32 issue_seq;
 	__le32 mseq;
 	__le32 mds;
 	__u8   flags;
@@ -828,7 +815,7 @@ struct ceph_mds_cap_release {
 struct ceph_mds_cap_item {
 	__le64 ino;
 	__le64 cap_id;
-	__le32 migrate_seq, seq;
+	__le32 migrate_seq, issue_seq;
 } __attribute__ ((packed));
 
 #define CEPH_MDS_LEASE_REVOKE           1  /*    mds  -> client */

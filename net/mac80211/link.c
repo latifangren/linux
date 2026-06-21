@@ -14,29 +14,38 @@
 
 static void ieee80211_update_apvlan_links(struct ieee80211_sub_if_data *sdata)
 {
+	unsigned long rem = ~sdata->vif.valid_links &
+				    GENMASK(IEEE80211_MLD_MAX_NUM_LINKS - 1, 0);
+	struct ieee80211_local *local = sdata->local;
+	unsigned long add = sdata->vif.valid_links;
+	struct wiphy *wiphy = local->hw.wiphy;
 	struct ieee80211_sub_if_data *vlan;
 	struct ieee80211_link_data *link;
-	u16 ap_bss_links = sdata->vif.valid_links;
-	u16 new_links, vlan_links;
-	unsigned long add;
+	struct sta_info *sta;
 
 	list_for_each_entry(vlan, &sdata->u.ap.vlans, u.vlan.list) {
 		int link_id;
 
-		if (!vlan)
+		if (vlan->wdev.use_4addr) {
+			sta = wiphy_dereference(wiphy,
+						vlan->u.vlan.sta);
+			if (sta)
+				add = add & sta->sta.valid_links;
+		}
+
+		if (add == vlan->vif.valid_links)
 			continue;
 
-		/* No support for 4addr with MLO yet */
-		if (vlan->wdev.use_4addr)
-			return;
+		for_each_set_bit(link_id, &add, IEEE80211_MLD_MAX_NUM_LINKS) {
+			vlan->wdev.valid_links |= BIT(link_id);
+			ether_addr_copy(vlan->wdev.links[link_id].addr,
+					sdata->wdev.links[link_id].addr);
+		}
 
-		vlan_links = vlan->vif.valid_links;
-
-		new_links = ap_bss_links;
-
-		add = new_links & ~vlan_links;
-		if (!add)
-			continue;
+		for_each_set_bit(link_id, &rem, IEEE80211_MLD_MAX_NUM_LINKS) {
+			vlan->wdev.valid_links &= ~BIT(link_id);
+			eth_zero_addr(vlan->wdev.links[link_id].addr);
+		}
 
 		ieee80211_vif_set_links(vlan, add, 0);
 
@@ -99,8 +108,13 @@ void ieee80211_link_init(struct ieee80211_sub_if_data *sdata,
 
 		ap_bss = container_of(sdata->bss,
 				      struct ieee80211_sub_if_data, u.ap);
-		ap_bss_conf = sdata_dereference(ap_bss->vif.link_conf[link_id],
-						ap_bss);
+
+		if (deflink)
+			ap_bss_conf = &ap_bss->vif.bss_conf;
+		else
+			ap_bss_conf = sdata_dereference(ap_bss->vif.link_conf[link_id],
+							ap_bss);
+
 		memcpy(link_conf, ap_bss_conf, sizeof(*link_conf));
 	}
 
@@ -109,6 +123,9 @@ void ieee80211_link_init(struct ieee80211_sub_if_data *sdata,
 	link->conf = link_conf;
 	link_conf->link_id = link_id;
 	link_conf->vif = &sdata->vif;
+	link->ap_power_level = IEEE80211_UNSET_POWER_LEVEL;
+	link->user_power_level = sdata->local->user_power_level;
+	link_conf->txpower = INT_MIN;
 
 	wiphy_work_init(&link->csa.finalize_work,
 			ieee80211_csa_finalize_work);
@@ -116,9 +133,7 @@ void ieee80211_link_init(struct ieee80211_sub_if_data *sdata,
 			ieee80211_color_change_finalize_work);
 	wiphy_delayed_work_init(&link->color_collision_detect_work,
 				ieee80211_color_collision_detection_work);
-	INIT_LIST_HEAD(&link->assigned_chanctx_list);
-	INIT_LIST_HEAD(&link->reserved_chanctx_list);
-	wiphy_delayed_work_init(&link->dfs_cac_timer_work,
+	wiphy_hrtimer_work_init(&link->dfs_cac_timer_work,
 				ieee80211_dfs_cac_timer_work);
 
 	if (!deflink) {
@@ -157,7 +172,7 @@ void ieee80211_link_stop(struct ieee80211_link_data *link)
 			  &link->csa.finalize_work);
 
 	if (link->sdata->wdev.links[link->link_id].cac_started) {
-		wiphy_delayed_work_cancel(link->sdata->local->hw.wiphy,
+		wiphy_hrtimer_work_cancel(link->sdata->local->hw.wiphy,
 					  &link->dfs_cac_timer_work);
 		cfg80211_cac_event(link->sdata->dev,
 				   &link->conf->chanreq.oper,
@@ -298,7 +313,7 @@ static int ieee80211_vif_update_links(struct ieee80211_sub_if_data *sdata,
 
 	/* allocate new link structures first */
 	for_each_set_bit(link_id, &add, IEEE80211_MLD_MAX_NUM_LINKS) {
-		link = kzalloc(sizeof(*link), GFP_KERNEL);
+		link = kzalloc_obj(*link);
 		if (!link) {
 			ret = -ENOMEM;
 			goto free;
@@ -477,6 +492,37 @@ static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
 						 ktime_get_boottime());
 	}
 
+	for_each_set_bit(link_id, &add, IEEE80211_MLD_MAX_NUM_LINKS) {
+		struct ieee80211_link_data *link;
+
+		link = sdata_dereference(sdata->link[link_id], sdata);
+
+		/*
+		 * This call really should not fail. Unfortunately, it appears
+		 * that this may happen occasionally with some drivers. Should
+		 * it happen, we are stuck in a bad place as going backwards is
+		 * not really feasible.
+		 *
+		 * So lets just tell link_use_channel that it must not fail to
+		 * assign the channel context (from mac80211's perspective) and
+		 * assume the driver is going to trigger a recovery flow if it
+		 * had a failure.
+		 * That really is not great nor guaranteed to work. But at least
+		 * the internal mac80211 state remains consistent and there is
+		 * a chance that we can recover.
+		 */
+		ret = _ieee80211_link_use_channel(link,
+						  &link->conf->chanreq,
+						  IEEE80211_CHANCTX_SHARED,
+						  true);
+		WARN_ON_ONCE(ret);
+
+		/*
+		 * inform about the link info changed parameters after all
+		 * stations are also added
+		 */
+	}
+
 	list_for_each_entry(sta, &local->sta_list, list) {
 		if (sdata != sta->sdata)
 			continue;
@@ -519,26 +565,6 @@ static int _ieee80211_set_active_links(struct ieee80211_sub_if_data *sdata,
 		struct ieee80211_link_data *link;
 
 		link = sdata_dereference(sdata->link[link_id], sdata);
-
-		/*
-		 * This call really should not fail. Unfortunately, it appears
-		 * that this may happen occasionally with some drivers. Should
-		 * it happen, we are stuck in a bad place as going backwards is
-		 * not really feasible.
-		 *
-		 * So lets just tell link_use_channel that it must not fail to
-		 * assign the channel context (from mac80211's perspective) and
-		 * assume the driver is going to trigger a recovery flow if it
-		 * had a failure.
-		 * That really is not great nor guaranteed to work. But at least
-		 * the internal mac80211 state remains consistent and there is
-		 * a chance that we can recover.
-		 */
-		ret = _ieee80211_link_use_channel(link,
-						  &link->conf->chanreq,
-						  IEEE80211_CHANCTX_SHARED,
-						  true);
-		WARN_ON_ONCE(ret);
 
 		ieee80211_mgd_set_link_qos_params(link);
 		ieee80211_link_info_change_notify(sdata, link,

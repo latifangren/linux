@@ -49,6 +49,21 @@
 #include <linux/clk-provider.h>
 #include <linux/reset.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/timer.h>
+
+#ifndef del_timer_sync
+#define del_timer_sync timer_delete_sync
+#endif
+
+#ifndef from_timer
+#define from_timer(var, callback_timer, timer_fieldname) \
+	timer_container_of(var, callback_timer, timer_fieldname)
+#endif
+
+#ifndef u64_stats_fetch_begin_irq
+#define u64_stats_fetch_begin_irq u64_stats_fetch_begin
+#define u64_stats_fetch_retry_irq u64_stats_fetch_retry
+#endif
 
 #ifndef CONFIG_ARCH_RTD16xx
 #define CONFIG_ARCH_RTD16xx 1
@@ -6482,7 +6497,7 @@ static int link_status(void *data)
 	struct rtl8169_private *tp = netdev_priv(dev);
 	void __iomem *ioaddr = tp->mmio_addr;
 	set_user_nice(current, 5);
-	printk("[Ethernet] Watch link status change.\n");
+	pr_debug("[Ethernet] Watch link status change.\n");
 
 	while(!kthread_should_stop()){
 		wait_event_interruptible(tp->thr_wait, kthread_should_stop() || tp->link_chg);
@@ -8434,7 +8449,7 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 			}
 		}
 		if (tmp < 100)
-			pr_info("done.\n");
+			pr_debug("done.\n");
 
 		/* reg_0x9801d100[29] = 0 */
 		/* SCPU wrapper spec, CLKACP division, 0 = div 2, 1 = div 3 */
@@ -8503,7 +8518,7 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 		tmp |= BIT(17);
 		writel(tmp, tp->mmio_sbxaddr + SBX_ACP_MISC_CTRL);
 
-		pr_info("ARM ACP on\n.");
+		pr_debug("ARM ACP on\n.");
 	} else {
 		#if 0
 		/* reg_0x9801c814[17] = 0 */
@@ -8832,7 +8847,7 @@ static void r8169soc_mdio_init(struct rtl8169_private *tp)
 			break;
 		}
 	}
-	pr_info("wait %d ms for PHY interrupt. UMSK_ISR = 0x%x\n",
+	pr_debug("wait %d ms for PHY interrupt. UMSK_ISR = 0x%x\n",
 		tmp, readl(tp->mmio_clkaddr + ISO_UMSK_ISR));
 
 	MDIO_LOCK;
@@ -8894,7 +8909,7 @@ static void r8169soc_mdio_init(struct rtl8169_private *tp)
 		}
 	} while (0x3 != (r8169_mdio_read(tp, 16) & 0x07));
 	MDIO_UNLOCK;
-	pr_info("wait %d ms for PHY ready, current = 0x%x\n",
+	pr_debug("wait %d ms for PHY ready, current = 0x%x\n",
 		tmp, r8169_mdio_read(tp, 16));
 
 	if (tp->output_mode == OUTPUT_EMBEDDED_PHY) {
@@ -9140,7 +9155,7 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 			}
 		}
 		if (tmp < 100)
-			pr_info("done.\n");
+			pr_debug("done.\n");
 
 		/* reg_0x9801d100[29] = 0 */
 		/* SCPU wrapper spec, CLKACP division, 0 = div 2, 1 = div 3 */
@@ -9215,14 +9230,14 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 		writel(tmp, tp->mmio_sbxaddr + SBX_ACP_CHANNEL_REQ_MASK);
 
 
-		pr_info("ARM ACP on\n.");
+		pr_debug("ARM ACP on\n.");
 	} else {
 		/* SBX spec, Mask ETN_ALL to ACP DBUS REQ */
 		tmp = readl(tp->mmio_sbxaddr + SBX_ACP_CHANNEL_REQ_MASK);
 		tmp |= BIT(1);
 		writel(tmp, tp->mmio_sbxaddr + SBX_ACP_CHANNEL_REQ_MASK);
 
-		pr_info("wait all ACP access finished...");
+		pr_debug("wait all ACP access finished...");
 		tmp = 0;
 		while (0 != (BIT(1) & readl(tp->mmio_sbxaddr + SBX_ACP_CHANNEL_REQ_BUSY))) {
 			mdelay(10);
@@ -9233,7 +9248,7 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 			}
 		}
 		if (tmp < 100)
-			pr_info("done.\n");
+			pr_debug("done.\n");
 
 		/* SCPU wrapper spec, Inactive MP4 AINACTS signal */
 		tmp = readl(tp->mmio_sbxaddr + SC_WRAP_INTERFACE_EN);
@@ -9261,7 +9276,7 @@ static void r8169soc_acp_init(struct rtl8169_private *tp)
 		tmp &= ~BIT(6);
 		writel(tmp, tp->mmio_sbxaddr + SBX_SB3_CHANNEL_REQ_MASK);
 
-		pr_info("ARM ACP off\n.");
+		pr_debug("ARM ACP off\n.");
 	}
 }
 
@@ -9618,16 +9633,16 @@ static void r8169soc_patch_gphy_uc_code(struct rtl8169_private *tp)
 			break;
 		}
 	}
-	pr_err("wait %d ms for GPHY patch_rdy. reg = 0x%x\n",
+	pr_debug("wait %d ms for GPHY patch_rdy. reg = 0x%x\n",
 		tmp, r8169_mdio_read(tp, 16));
-	pr_err("patch_rdy is asserted!!\n");
+	pr_debug("patch_rdy is asserted!!\n");
 
 	/* Set patch_key & patch_lock */
 	r8169_mdio_write(tp, 31, 0);
 	r8169_mdio_write(tp, 27, PATCH_KEY_ADDR);
 	r8169_mdio_write(tp, 28, PATCH_KEY);
 	r8169_mdio_write(tp, 27, PATCH_KEY_ADDR);
-	pr_err("check patch key = %04x\n", r8169_mdio_read(tp, 28));
+	pr_debug("check patch key = %04x\n", r8169_mdio_read(tp, 28));
 	r8169_mdio_write(tp, 27, 0xb82e);
 	r8169_mdio_write(tp, 28, 0x0001);
 
@@ -9698,11 +9713,11 @@ static void r8169soc_patch_gphy_uc_code(struct rtl8169_private *tp)
 			break;
 		}
 	}
-	pr_err("wait %d ms for GPHY patch_rdy. reg = 0x%x\n",
+	pr_debug("wait %d ms for GPHY patch_rdy. reg = 0x%x\n",
 		tmp, r8169_mdio_read(tp, 16));
 
-	pr_err("\npatch_rdy is de-asserted!!\n");
-	pr_err("GPHY uC code patched.\n");
+	pr_debug("\npatch_rdy is de-asserted!!\n");
+	pr_debug("GPHY uC code patched.\n");
 }
 
 static void r8169soc_mdio_init(struct rtl8169_private *tp)
@@ -9722,7 +9737,7 @@ static void r8169soc_mdio_init(struct rtl8169_private *tp)
 			break;
 		}
 	}
-	pr_info("wait %d ms for PHY interrupt. UMSK_ISR = 0x%x\n",
+	pr_debug("wait %d ms for PHY interrupt. UMSK_ISR = 0x%x\n",
 		tmp, readl(tp->mmio_clkaddr + ISO_UMSK_ISR));
 
 	MDIO_LOCK;
@@ -9767,7 +9782,7 @@ static void r8169soc_mdio_init(struct rtl8169_private *tp)
 			break;
 		}
 	} while (0x3 != (r8169_mdio_read(tp, 16) & 0x07));
-	pr_info("wait %d ms for PHY ready, current = 0x%x\n",
+	pr_debug("wait %d ms for PHY ready, current = 0x%x\n",
 		tmp, r8169_mdio_read(tp, 16));
 
 	/* adjust PHY SRAM table */
@@ -10402,11 +10417,11 @@ rtl_init_one(struct platform_device *pdev)
 //	pci_set_drvdata(pdev, dev);
 	platform_set_drvdata(pdev, ndev);
 
-	netif_info(tp, probe, ndev, "%s at 0x%p, XID %08x IRQ %d\n",
+	netif_dbg(tp, probe, ndev, "%s at 0x%p, XID %08x IRQ %d\n",
 		   rtl_chip_infos[chipset].name, ioaddr,
 		   (u32)(RTL_R32(TxConfig) & 0x9cf0f8ff), ndev->irq);
 	if (rtl_chip_infos[chipset].jumbo_max != JUMBO_1K) {
-		netif_info(tp, probe, ndev, "jumbo features [frames: %d bytes, "
+		netif_dbg(tp, probe, ndev, "jumbo features [frames: %d bytes, "
 			   "tx checksumming: %s]\n",
 			   rtl_chip_infos[chipset].jumbo_max,
 			   rtl_chip_infos[chipset].jumbo_tx_csum ? "ok" : "ko");

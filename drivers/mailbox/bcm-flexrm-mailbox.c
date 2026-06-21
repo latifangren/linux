@@ -26,7 +26,6 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/mailbox_controller.h>
-#include <linux/mailbox_client.h>
 #include <linux/mailbox/brcm-message.h>
 #include <linux/module.h>
 #include <linux/msi.h>
@@ -1665,7 +1664,7 @@ static struct platform_driver flexrm_mbox_driver = {
 		.of_match_table = flexrm_mbox_of_match,
 	},
 	.probe		= flexrm_mbox_probe,
-	.remove_new	= flexrm_mbox_remove,
+	.remove		= flexrm_mbox_remove,
 };
 module_platform_driver(flexrm_mbox_driver);
 

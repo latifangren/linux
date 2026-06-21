@@ -3,7 +3,7 @@
 # List of files in the vdso, has to be asm only for now
 
 # Include the generic Makefile to check the built vdso.
-include $(srctree)/lib/vdso/Makefile
+include $(srctree)/lib/vdso/Makefile.include
 
 obj-vdso32 = sigtramp32-32.o gettimeofday-32.o datapage-32.o cacheflush-32.o note-32.o getcpu-32.o
 obj-vdso64 = sigtramp64-64.o gettimeofday-64.o datapage-64.o cacheflush-64.o note-64.o getcpu-64.o
@@ -50,7 +50,7 @@ ldflags-$(CONFIG_LD_IS_LLD) += $(call cc-option,--ld-path=$(LD),-fuse-ld=lld)
 ldflags-$(CONFIG_LD_ORPHAN_WARN) += -Wl,--orphan-handling=$(CONFIG_LD_ORPHAN_WARN_LEVEL)
 
 # Filter flags that clang will warn are unused for linking
-ldflags-y += $(filter-out $(CC_AUTO_VAR_INIT_ZERO_ENABLER) $(CC_FLAGS_FTRACE) -Wa$(comma)%, $(KBUILD_CFLAGS))
+ldflags-y += $(filter-out $(CC_AUTO_VAR_INIT_ZERO_ENABLER) $(CC_FLAGS_FTRACE) -Wa$(comma)%, $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS))
 
 CC32FLAGS := -m32
 CC32FLAGSREMOVE := -mcmodel=medium -mabi=elfv1 -mabi=elfv2 -mcall-aixdesc -mpcrel
@@ -62,6 +62,12 @@ CC32FLAGSREMOVE += -fno-stack-clash-protection
 # 32-bit one. clang validates the values passed to these arguments during
 # parsing, even when -fno-stack-protector is passed afterwards.
 CC32FLAGSREMOVE += -mstack-protector-guard%
+# ftrace is disabled for the vdso but arch/powerpc/Makefile adds this define to
+# KBUILD_CPPFLAGS, which enables use of the 'patchable_function_entry'
+# attribute in the 'inline' define via 'notrace'. This attribute is not
+# supported for the powerpcle target, resulting in many instances of
+# -Wunknown-attributes.
+CC32FLAGSREMOVE += -DCC_USING_PATCHABLE_FUNCTION_ENTRY
 endif
 LD32FLAGS := -Wl,-soname=linux-vdso32.so.1
 AS32FLAGS := -D__VDSO32__

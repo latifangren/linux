@@ -2,7 +2,7 @@
 /*
  * Intel PCH pinctrl/GPIO driver
  *
- * Copyright (C) 2021-2023, Intel Corporation
+ * Copyright (C) 2021-2023 Intel Corporation
  * Author: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
  */
 
@@ -221,4 +221,4 @@ module_platform_driver(intel_platform_pinctrl_driver);
 MODULE_AUTHOR("Andy Shevchenko <andriy.shevchenko@linux.intel.com>");
 MODULE_DESCRIPTION("Intel PCH pinctrl/GPIO driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(PINCTRL_INTEL);
+MODULE_IMPORT_NS("PINCTRL_INTEL");

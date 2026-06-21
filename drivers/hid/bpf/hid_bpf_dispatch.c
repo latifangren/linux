@@ -19,12 +19,13 @@
 #include <linux/module.h>
 #include "hid_bpf_dispatch.h"
 
-struct hid_ops *hid_ops;
+const struct hid_ops *hid_ops;
 EXPORT_SYMBOL(hid_ops);
 
 u8 *
 dispatch_hid_bpf_device_event(struct hid_device *hdev, enum hid_report_type type, u8 *data,
-			      u32 *size, int interrupt, u64 source, bool from_bpf)
+			      size_t *buf_size, u32 *size, int interrupt, u64 source,
+			      bool from_bpf)
 {
 	struct hid_bpf_ctx_kern ctx_kern = {
 		.ctx = {
@@ -74,6 +75,7 @@ dispatch_hid_bpf_device_event(struct hid_device *hdev, enum hid_report_type type
 		*size = ret;
 	}
 
+	*buf_size = ctx_kern.ctx.allocated_size;
 	return ctx_kern.data;
 }
 EXPORT_SYMBOL_GPL(dispatch_hid_bpf_device_event);
@@ -157,7 +159,7 @@ out:
 }
 EXPORT_SYMBOL_GPL(dispatch_hid_bpf_output_report);
 
-u8 *call_hid_bpf_rdesc_fixup(struct hid_device *hdev, const u8 *rdesc, unsigned int *size)
+const u8 *call_hid_bpf_rdesc_fixup(struct hid_device *hdev, const u8 *rdesc, unsigned int *size)
 {
 	int ret;
 	struct hid_bpf_ctx_kern ctx_kern = {
@@ -192,7 +194,7 @@ u8 *call_hid_bpf_rdesc_fixup(struct hid_device *hdev, const u8 *rdesc, unsigned 
 
  ignore_bpf:
 	kfree(ctx_kern.data);
-	return kmemdup(rdesc, *size, GFP_KERNEL);
+	return rdesc;
 }
 EXPORT_SYMBOL_GPL(call_hid_bpf_rdesc_fixup);
 
@@ -269,8 +271,11 @@ int hid_bpf_allocate_event_data(struct hid_device *hdev)
 
 int hid_bpf_reconnect(struct hid_device *hdev)
 {
-	if (!test_and_set_bit(ffs(HID_STAT_REPROBED), &hdev->status))
+	if (!test_and_set_bit(ffs(HID_STAT_REPROBED), &hdev->status)) {
+		/* trigger call to call_hid_bpf_rdesc_fixup() during the next probe */
+		hdev->bpf_rsize = 0;
 		return device_reprobe(&hdev->dev);
+	}
 
 	return 0;
 }
@@ -291,9 +296,6 @@ __bpf_kfunc __u8 *
 hid_bpf_get_data(struct hid_bpf_ctx *ctx, unsigned int offset, const size_t rdwr_buf_size)
 {
 	struct hid_bpf_ctx_kern *ctx_kern;
-
-	if (!ctx)
-		return NULL;
 
 	ctx_kern = container_of(ctx, struct hid_bpf_ctx_kern, ctx);
 
@@ -320,7 +322,7 @@ hid_bpf_allocate_context(unsigned int hid_id)
 	if (IS_ERR(hdev))
 		return NULL;
 
-	ctx_kern = kzalloc(sizeof(*ctx_kern), GFP_KERNEL);
+	ctx_kern = kzalloc_obj(*ctx_kern);
 	if (!ctx_kern) {
 		hid_put_device(hdev);
 		return NULL;
@@ -358,11 +360,10 @@ __hid_bpf_hw_check_params(struct hid_bpf_ctx *ctx, __u8 *buf, size_t *buf__sz,
 {
 	struct hid_report_enum *report_enum;
 	struct hid_report *report;
-	struct hid_device *hdev;
 	u32 report_len;
 
 	/* check arguments */
-	if (!ctx || !hid_ops || !buf)
+	if (!hid_ops)
 		return -EINVAL;
 
 	switch (rtype) {
@@ -377,9 +378,7 @@ __hid_bpf_hw_check_params(struct hid_bpf_ctx *ctx, __u8 *buf, size_t *buf__sz,
 	if (*buf__sz < 1)
 		return -EINVAL;
 
-	hdev = (struct hid_device *)ctx->hid; /* discard const */
-
-	report_enum = hdev->report_enum + rtype;
+	report_enum = ctx->hid->report_enum + rtype;
 	report = hid_ops->hid_get_report(report_enum, buf);
 	if (!report)
 		return -EINVAL;
@@ -408,7 +407,6 @@ hid_bpf_hw_request(struct hid_bpf_ctx *ctx, __u8 *buf, size_t buf__sz,
 		   enum hid_report_type rtype, enum hid_class_request reqtype)
 {
 	struct hid_bpf_ctx_kern *ctx_kern;
-	struct hid_device *hdev;
 	size_t size = buf__sz;
 	u8 *dma_data;
 	int ret;
@@ -435,13 +433,11 @@ hid_bpf_hw_request(struct hid_bpf_ctx *ctx, __u8 *buf, size_t buf__sz,
 		return -EINVAL;
 	}
 
-	hdev = (struct hid_device *)ctx->hid; /* discard const */
-
 	dma_data = kmemdup(buf, size, GFP_KERNEL);
 	if (!dma_data)
 		return -ENOMEM;
 
-	ret = hid_ops->hid_hw_raw_request(hdev,
+	ret = hid_ops->hid_hw_raw_request(ctx->hid,
 					      dma_data[0],
 					      dma_data,
 					      size,
@@ -472,7 +468,6 @@ __bpf_kfunc int
 hid_bpf_hw_output_report(struct hid_bpf_ctx *ctx, __u8 *buf, size_t buf__sz)
 {
 	struct hid_bpf_ctx_kern *ctx_kern;
-	struct hid_device *hdev;
 	size_t size = buf__sz;
 	u8 *dma_data;
 	int ret;
@@ -486,13 +481,11 @@ hid_bpf_hw_output_report(struct hid_bpf_ctx *ctx, __u8 *buf, size_t buf__sz)
 	if (ret)
 		return ret;
 
-	hdev = (struct hid_device *)ctx->hid; /* discard const */
-
 	dma_data = kmemdup(buf, size, GFP_KERNEL);
 	if (!dma_data)
 		return -ENOMEM;
 
-	ret = hid_ops->hid_hw_output_report(hdev, dma_data, size, (u64)(long)ctx, true);
+	ret = hid_ops->hid_hw_output_report(ctx->hid, dma_data, size, (u64)(long)ctx, true);
 
 	kfree(dma_data);
 	return ret;
@@ -514,7 +507,7 @@ __hid_bpf_input_report(struct hid_bpf_ctx *ctx, enum hid_report_type type, u8 *b
 	if (ret)
 		return ret;
 
-	return hid_ops->hid_input_report(ctx->hid, type, buf, size, 0, (u64)(long)ctx, true,
+	return hid_ops->hid_input_report(ctx->hid, type, buf, size, size, 0, (u64)(long)ctx, true,
 					 lock_already_taken);
 }
 

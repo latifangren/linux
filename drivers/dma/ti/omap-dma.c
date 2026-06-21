@@ -1002,7 +1002,7 @@ static struct dma_async_tx_descriptor *omap_dma_prep_slave_sg(
 	}
 
 	/* Now allocate and setup the descriptor. */
-	d = kzalloc(struct_size(d, sg, sglen), GFP_ATOMIC);
+	d = kzalloc_flex(*d, sg, sglen, GFP_ATOMIC);
 	if (!d)
 		return NULL;
 	d->sglen = sglen;
@@ -1503,7 +1503,7 @@ static int omap_dma_chan_init(struct omap_dmadev *od)
 {
 	struct omap_chan *c;
 
-	c = kzalloc(sizeof(*c), GFP_KERNEL);
+	c = kzalloc_obj(*c);
 	if (!c)
 		return -ENOMEM;
 
@@ -1919,7 +1919,7 @@ MODULE_DEVICE_TABLE(of, omap_dma_match);
 
 static struct platform_driver omap_dma_driver = {
 	.probe	= omap_dma_probe,
-	.remove_new = omap_dma_remove,
+	.remove = omap_dma_remove,
 	.driver = {
 		.name = "omap-dma-engine",
 		.of_match_table = omap_dma_match,

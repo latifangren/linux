@@ -184,7 +184,9 @@ fn main() {
     let mut ts = TargetSpec::new();
 
     // `llvm-target`s are taken from `scripts/Makefile.clang`.
-    if cfg.has("ARM64") {
+    if cfg.has("ARM") {
+        panic!("arm uses the builtin rustc target");
+    } else if cfg.has("ARM64") {
         panic!("arm64 uses the builtin rustc aarch64-unknown-none target");
     } else if cfg.has("RISCV") {
         if cfg.has("64BIT") {
@@ -194,7 +196,9 @@ fn main() {
         }
     } else if cfg.has("X86_64") {
         ts.push("arch", "x86_64");
-        if cfg.rustc_version_atleast(1, 86, 0) {
+        if cfg.rustc_version_atleast(1, 98, 0) {
+            ts.push("rustc-abi", "softfloat");
+        } else if cfg.rustc_version_atleast(1, 86, 0) {
             ts.push("rustc-abi", "x86-softfloat");
         }
         ts.push(
@@ -207,7 +211,7 @@ fn main() {
             // target feature of the same name plus the other two target features in
             // `clang/lib/Driver/ToolChains/Arch/X86.cpp`. These should be eventually enabled via
             // `-Ctarget-feature` when `rustc` starts recognizing them (or via a new dedicated
-            // flag); see https://github.com/rust-lang/rust/issues/116852.
+            // flag); see <https://github.com/rust-lang/rust/issues/116852>.
             features += ",+retpoline-external-thunk";
             features += ",+retpoline-indirect-branches";
             features += ",+retpoline-indirect-calls";
@@ -216,7 +220,7 @@ fn main() {
             // The kernel uses `-mharden-sls=all`, which Clang maps to both these target features in
             // `clang/lib/Driver/ToolChains/Arch/X86.cpp`. These should be eventually enabled via
             // `-Ctarget-feature` when `rustc` starts recognizing them (or via a new dedicated
-            // flag); see https://github.com/rust-lang/rust/issues/116851.
+            // flag); see <https://github.com/rust-lang/rust/issues/116851>.
             features += ",+harden-sls-ijmp";
             features += ",+harden-sls-ret";
         }
@@ -234,7 +238,9 @@ fn main() {
             panic!("32-bit x86 only works under UML");
         }
         ts.push("arch", "x86");
-        if cfg.rustc_version_atleast(1, 86, 0) {
+        if cfg.rustc_version_atleast(1, 98, 0) {
+            ts.push("rustc-abi", "softfloat");
+        } else if cfg.rustc_version_atleast(1, 86, 0) {
             ts.push("rustc-abi", "x86-softfloat");
         }
         ts.push(

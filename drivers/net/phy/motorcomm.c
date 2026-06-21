@@ -6,7 +6,6 @@
  * Author: Frank <Frank.Sae@motor-comm.com>
  */
 
-#include <linux/bitfield.h>
 #include <linux/etherdevice.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -384,8 +383,6 @@ struct yt8521_priv {
 	 * YT8521_RSSR_TO_BE_ARBITRATED
 	 */
 	u8 reg_page;
-	bool led_dts_cfg[YT8521_MAX_LEDS];
-	u16 led_vals[YT8521_MAX_LEDS];
 };
 
 /**
@@ -1046,102 +1043,6 @@ static int yt8531_set_ds(struct phy_device *phydev)
 	return 0;
 }
 
-static const struct {
-	const char *name;
-	u16 mask;
-} yt8521_led_trigger_map[] = {
-	{ "activity", YT8521_LED_ACT_BLK_IND | YT8521_LED_TXACT_BLK_EN | YT8521_LED_RXACT_BLK_EN},
-	{ "full-duplex", YT8521_LED_FDX_ON_EN },
-	{ "half-duplex", YT8521_LED_HDX_ON_EN },
-	{ "link-10", YT8521_LED_10_ON_EN },
-	{ "link-100", YT8521_LED_100_ON_EN },
-	{ "link-1000", YT8521_LED_1000_ON_EN },
-};
-
-static const char *led_propnames[YT8521_MAX_LEDS] = {
-	"motorcomm,led0-triggers",
-	"motorcomm,led1-triggers",
-	"motorcomm,led2-triggers",
-};
-
-static int yt8521_parse_led_triggers(struct phy_device *phydev, u8 led_index,
-				     const char *propname)
-{
-	struct device_node *np = phydev->mdio.dev.of_node;
-	struct yt8521_priv *priv = phydev->priv;
-	const char **trigger_names;
-	int count, i, j;
-	u16 val = 0;
-	int ret;
-
-	count = of_property_count_strings(np, propname);
-	if (count <= 0)
-		return 0;
-
-	trigger_names = kcalloc(count, sizeof(char *), GFP_KERNEL);
-	if (!trigger_names)
-		return -ENOMEM;
-
-	ret = of_property_read_string_array(np, propname, trigger_names, count);
-	if (ret < 0) {
-		kfree(trigger_names);
-		return ret;
-	}
-
-	for (i = 0; i < count; i++) {
-		bool found = false;
-		for (j = 0; j < ARRAY_SIZE(yt8521_led_trigger_map); j++) {
-			if (strcmp(trigger_names[i], yt8521_led_trigger_map[j].name) == 0) {
-				val |= yt8521_led_trigger_map[j].mask;
-				found = true;
-				break;
-			}
-		}
-		if (!found) {
-			phydev_warn(phydev, "Unknown LED trigger '%s' for LED%d\n",
-				    trigger_names[i], led_index);
-		}
-	}
-	kfree(trigger_names);
-
-	ret = ytphy_write_ext_with_lock(phydev, YT8521_LED0_CFG_REG + led_index, val);
-	if (ret < 0) {
-		phydev_err(phydev, "Failed to write LED%d config, err=%d\n",
-			   led_index, ret);
-		return ret;
-	}
-
-	priv->led_vals[led_index] = val;
-	priv->led_dts_cfg[led_index] = true;
-	phydev_dbg(phydev, "LED%d configured via DTS with triggers, val=0x%04x\n",
-		   led_index, val);
-
-	return 0;
-}
-
-static inline void yt8521_restore_leds(struct phy_device *phydev)
-{
-	struct yt8521_priv *priv = phydev->priv;
-	int i, ret;
-
-	if (!priv)
-		return;
-
-	for (i = 0; i < YT8521_MAX_LEDS; i++) {
-		if (priv->led_dts_cfg[i]) {
-			ret = ytphy_write_ext_with_lock(phydev,
-							YT8521_LED0_CFG_REG + i,
-							priv->led_vals[i]);
-			if (ret < 0)
-				phydev_err(phydev, "Failed to restore LED%d config: %d\n",
-					   i, ret);
-			else
-				phydev_dbg(phydev, "Restored LED%d config to 0x%04x\n",
-					   i, priv->led_vals[i]);
-		}
-	}
-}
-
 /**
  * yt8521_probe() - read chip config then set suitable polling_mode
  * @phydev: a pointer to a &struct phy_device
@@ -1156,16 +1057,13 @@ static int yt8521_probe(struct phy_device *phydev)
 	int chip_config;
 	u16 mask, val;
 	u32 freq;
-	int ret, i;
+	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
 
 	phydev->priv = priv;
-
-	for (i = 0; i < YT8521_MAX_LEDS; i++)
-		yt8521_parse_led_triggers(phydev, i, led_propnames[i]);
 
 	chip_config = ytphy_read_ext_with_lock(phydev, YT8521_CHIP_CONFIG_REG);
 	if (chip_config < 0)
@@ -1272,20 +1170,8 @@ static int yt8521_probe(struct phy_device *phydev)
 static int yt8531_probe(struct phy_device *phydev)
 {
 	struct device_node *node = phydev->mdio.dev.of_node;
-	struct device *dev = &phydev->mdio.dev;
-	struct yt8521_priv *priv;
 	u16 mask, val;
 	u32 freq;
-	int i;
-
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if(!priv)
-		return -ENOMEM;
-
-	phydev->priv = priv;
-
-	for (i = 0; i < YT8521_MAX_LEDS; i++)
-		yt8521_parse_led_triggers(phydev, i, led_propnames[i]);
 
 	if (of_property_read_u32(node, "motorcomm,clk-out-frequency-hz", &freq))
 		freq = YTPHY_DTS_OUTPUT_CLK_DIS;
@@ -1809,9 +1695,6 @@ static int yt8521_config_init(struct phy_device *phydev)
 		if (ret < 0)
 			goto err_restore_page;
 	}
-
-	yt8521_restore_leds(phydev);
-
 err_restore_page:
 	return phy_restore_page(phydev, old_page, ret);
 }
@@ -1828,11 +1711,6 @@ static const unsigned long supported_trgs = (BIT(TRIGGER_NETDEV_FULL_DUPLEX) |
 static int yt8521_led_hw_is_supported(struct phy_device *phydev, u8 index,
 				      unsigned long rules)
 {
-	struct yt8521_priv *priv = phydev->priv;
-
-	if (priv && index < YT8521_MAX_LEDS && priv->led_dts_cfg[index])
-		return -EOPNOTSUPP;
-
 	if (index >= YT8521_MAX_LEDS)
 		return -EINVAL;
 
@@ -1846,11 +1724,7 @@ static int yt8521_led_hw_is_supported(struct phy_device *phydev, u8 index,
 static int yt8521_led_hw_control_set(struct phy_device *phydev, u8 index,
 				     unsigned long rules)
 {
-	struct yt8521_priv *priv = phydev->priv;
 	u16 val = 0;
-
-	if (priv && index < YT8521_MAX_LEDS && priv->led_dts_cfg[index])
-		return -EOPNOTSUPP;
 
 	if (index >= YT8521_MAX_LEDS)
 		return -EINVAL;
@@ -1892,11 +1766,7 @@ static int yt8521_led_hw_control_set(struct phy_device *phydev, u8 index,
 static int yt8521_led_hw_control_get(struct phy_device *phydev, u8 index,
 				     unsigned long *rules)
 {
-	struct yt8521_priv *priv = phydev->priv;
 	int val;
-
-	if (priv && index < YT8521_MAX_LEDS && priv->led_dts_cfg[index])
-		return -EOPNOTSUPP;
 
 	if (index >= YT8521_MAX_LEDS)
 		return -EINVAL;
@@ -1959,8 +1829,6 @@ static int yt8531_config_init(struct phy_device *phydev)
 	ret = yt8531_set_ds(phydev);
 	if (ret < 0)
 		return ret;
-
-	yt8521_restore_leds(phydev);
 
 	return 0;
 }

@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/string_choices.h>
 #include <linux/proc_fs.h>
 #include <linux/errno.h>
 #include <linux/interrupt.h>
@@ -529,7 +530,7 @@ int fsl_otg_start_gadget(struct otg_fsm *fsm, int on)
 	if (!otg->gadget || !otg->gadget->dev.parent)
 		return -ENODEV;
 
-	VDBG("gadget %s\n", on ? "on" : "off");
+	VDBG("gadget %s\n", str_on_off(on));
 	dev = otg->gadget->dev.parent;
 
 	if (on) {
@@ -778,11 +779,11 @@ static int fsl_otg_conf(struct platform_device *pdev)
 		return 0;
 
 	/* allocate space to fsl otg device */
-	fsl_otg_tc = kzalloc(sizeof(struct fsl_otg), GFP_KERNEL);
+	fsl_otg_tc = kzalloc_obj(struct fsl_otg);
 	if (!fsl_otg_tc)
 		return -ENOMEM;
 
-	fsl_otg_tc->phy.otg = kzalloc(sizeof(struct usb_otg), GFP_KERNEL);
+	fsl_otg_tc->phy.otg = kzalloc_obj(struct usb_otg);
 	if (!fsl_otg_tc->phy.otg) {
 		kfree(fsl_otg_tc);
 		return -ENOMEM;

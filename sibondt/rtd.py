@@ -1,130 +1,151 @@
+#!/usr/bin/env python3
+
+# Realtek tethered Kernel booter (@sib0ndt)
 import serial
-import time
 import sys
 
-# --- KONFIGURASI ---
-SERIAL_PORT = '/dev/ttyUSB0' 
-BAUD_RATE = 115200
+SERIAL_PORT = "/dev/ttyUSB0"
+BAUDRATE = 115200
 
-def send_cmd_and_wait(ser, cmd, prompt="Realtek>", timeout=15):
-    """Kirim perintah dan tunggu sampai prompt U-Boot (Realtek>) muncul lagi"""
-    ser.flushInput() 
-    print(f"\n[KIRIM] {cmd}")
-    ser.write((cmd + '\r\n').encode())
-    
-    start_time = time.time()
-    buffer = ""
-    
-    while time.time() - start_time < timeout:
-        if ser.in_waiting > 0:
-            data = ser.read(ser.in_waiting)
-            text = data.decode('utf-8', errors='ignore')
-            
-            sys.stdout.write(text)
-            sys.stdout.flush()
-            buffer += text
-            
-            if prompt in buffer:
-                time.sleep(0.2) 
-                return True
-        time.sleep(0.01)
-        
-    print(f"\n[!] Waktu habis (Timeout) saat menunggu '{cmd}' selesai.")
-    return False
+ESC = b"\x1b"
+ENTER = b"\r"
+
+PROMPT = "Realtek>"
+CHAIN_PROMPT = "RTD1619>"
+
+STAGE1_COMMANDS = [
+    "usb start",
+    "fatload usb 0:1 0x01500000 u-boot.bin",
+    "fatload usb 0:1 0x03000000 Image",
+    "fatload usb 0:1 0x02100000 dtb/realtek/rtd1619-x1-prime-c.dtb",
+    "fatload usb 0:1 0x02200000 uInitrd",
+]
+
+STAGE2_COMMANDS = [
+    "setenv bootargs 'console=ttyS0,115200 earlycon=uart8250,mmio32,0x98007800 loglevel=8 ignore_loglevel rootwait rw root=LABEL=ROOTFS' nosmp",
+    "booti 0x03000000 0x02200000:0x1b8498 0x02100000",
+]
 
 
-def run_automation():
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-        print(f"[*] Terhubung ke {SERIAL_PORT}. Menunggu trigger...")
+def read_and_print(ser):
+    data = ser.read(1)
+    if not data:
+        return ""
 
-        injected = False
-        trigger_buffer = ""
+    text = data.decode("utf-8", errors="replace")
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    return text
 
-        while True:
-            # --- FASE 1: MONITORING TRIGGER ---
-            if not injected:
-                if ser.in_waiting > 0:
-                    data = ser.read(ser.in_waiting)
-                    text = data.decode('utf-8', errors='ignore')
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
-                    
-                    trigger_buffer += text
-                    if len(trigger_buffer) > 500:
-                        trigger_buffer = trigger_buffer[-500:]
 
-                    if "PCPU_FW_START" in trigger_buffer or "r8168 link up" in trigger_buffer:
-                        injected = True
-                        print("\n\n[!] TRIGGER DETECTED! Memulai urutan booting aman...")
-                        
-                        # Pancing prompt dengan Enter agar buffer bersih
-                        ser.write(b'\r\n')
-                        time.sleep(0.5)
+def wait_for_text(ser, target, buffer_limit=32768):
+    buf = ""
+    target_lower = target.lower()
 
-                        # --- FASE 2: LOADING FILE ---
-                        send_cmd_and_wait(ser, "usb start", timeout=15)
-                        send_cmd_and_wait(ser, "fatload usb 0:1 0x04000000 uInitrd", timeout=10)
-                        send_cmd_and_wait(ser, "fatload usb 0:1 0x07f00000 rtd1619-x1-prime-c.dtb", timeout=5)
-                        send_cmd_and_wait(ser, "fatload usb 0:1 0x08000000 Image", timeout=25) 
-                        send_cmd_and_wait(ser, "fatload usb 0:1 0x05000000 u-boot.bin", timeout=10)
+    while True:
+        text = read_and_print(ser)
+        if not text:
+            continue
 
-                        # --- FASE 3: CHAIN & INTERRUPT ESC ---
-                        print("\n[KIRIM] chain 0x05000000")
-                        ser.write(b"chain 0x05000000\r\n")
-                        
-                        time.sleep(0.3) 
-                        
-                        print("[*] Mencecar tombol ESC untuk interrupt U-Boot baru...")
-                        for _ in range(40):
-                            ser.write(b'\x1b')
-                            time.sleep(0.05)
-                        
-                        print("[*] Menunggu prompt U-Boot baru...")
-                        wait_start = time.time()
-                        wait_buf = ""
-                        while time.time() - wait_start < 10:
-                            if ser.in_waiting > 0:
-                                t = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
-                                sys.stdout.write(t)
-                                sys.stdout.flush()
-                                wait_buf += t
-                                if "Realtek>" in wait_buf:
-                                    break
-                            time.sleep(0.01)
+        buf += text
 
-                        # --- FASE 4: SETENV & BOOT ---
-                        # Kirim perintah bootargs 2 kali sesuai kebutuhan (karakter sering terpotong di awal)
-                        bootargs_cmd = "setenv bootargs earlycon=uart8250,mmio32,0x98007800 console=ttyS0,115200 keep_bootcon root=LABEL=rootfs rootwait rw ignore_loglevel loglevel=8"
-                        
-                        print("\n[*] Menjalankan setenv bootargs (Percobaan 1 - Biasanya terpotong)...")
-                        send_cmd_and_wait(ser, bootargs_cmd, timeout=5)
-                        
-                        print("\n[*] Menjalankan setenv bootargs (Percobaan 2 - Memastikan sukses)...")
-                        send_cmd_and_wait(ser, bootargs_cmd, timeout=5)
+        if len(buf) > buffer_limit:
+            buf = buf[-buffer_limit:]
 
-                        send_cmd_and_wait(ser, "setenv initrd_high 0xffffffffffffffff", timeout=5)
-                        send_cmd_and_wait(ser, "fdt addr 0x07f00000", timeout=5)
-                        send_cmd_and_wait(ser, "fdt resize 0x1000", timeout=5)
-                        
-                        # Booting
-                        print("\n[KIRIM] booti 0x08000000 0x04000000:1b4061 0x07f00000")
-                        ser.write(b"booti 0x08000000 0x04000000:1b4061 0x07f00000\r\n")
-                        
-                        print("\n[+] Perintah booting terkirim. Anda sekarang berada di terminal Kernel!\n")
+        if target_lower in buf.lower():
+            return buf
 
-            # --- FASE 5: TERMINAL KERNEL ---
+
+def send_raw(ser, data):
+    ser.write(data)
+    ser.flush()
+
+
+def send_command_wait_prompt(ser, cmd, prompt):
+    print(f"\n>>> {cmd}", flush=True)
+
+    ser.write(cmd.encode("utf-8") + ENTER)
+    ser.flush()
+
+    wait_for_text(ser, prompt)
+
+
+def keep_logging(ser, target_log=None, max_occurrences=0):
+    buf = ""
+    target_lower = target_log.lower() if target_log else None
+    occurrences = 0
+
+    while True:
+        text = read_and_print(ser)
+        if not text:
+            continue
+
+        if target_log:
+            buf += text
+
+            if len(buf) > 4096:
+                buf = buf[-1024:]
+
+            if target_lower in buf.lower():
+                occurrences += 1
+                
+                buf = ""
+
+                if occurrences >= max_occurrences:
+                    print("\n[EXIT]", flush=True)
+                    break
+
+
+def main():
+    print(f"Realtek Kernel Booter by @sib0ndt")
+
+    with serial.Serial(
+        port=SERIAL_PORT,
+        baudrate=BAUDRATE,
+        bytesize=serial.EIGHTBITS,
+        parity=serial.PARITY_NONE,
+        stopbits=serial.STOPBITS_ONE,
+        timeout=0.1,
+        xonxoff=False,
+        rtscts=False,
+        dsrdtr=False,
+    ) as ser:
+
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        wait_for_text(ser, "welcome to lk/MP")
+        send_raw(ser, ESC)
+        wait_for_text(ser, "PCPU_FW_START")
+        send_raw(ser, ENTER)
+        wait_for_text(ser, PROMPT)
+
+        for cmd in STAGE1_COMMANDS:
+            send_command_wait_prompt(ser, cmd, prompt=PROMPT)
+
+        print("\n>>> chain 0x01500000")
+        ser.write(b"chain 0x01500000" + ENTER)
+        ser.flush()
+
+        wait_for_text(ser, CHAIN_PROMPT)
+
+        for cmd in STAGE2_COMMANDS:
+            if cmd.startswith("booti "):
+                print(f"\n>>> {cmd}", flush=True)
+                ser.write(cmd.encode("utf-8") + ENTER)
+                ser.flush()
             else:
-                if ser.in_waiting > 0:
-                    sys.stdout.write(ser.read(ser.in_waiting).decode('utf-8', errors='ignore'))
-                    sys.stdout.flush()
-                time.sleep(0.01)
+                send_command_wait_prompt(ser, cmd, prompt=CHAIN_PROMPT)
 
-    except KeyboardInterrupt:
-        print("\n[!] Dihentikan.")
-    finally:
-        if 'ser' in locals():
-            ser.close()
+        target_message = "r8169 98016000.gmac eth0: link up"
+        keep_logging(ser, target_log=target_message, max_occurrences=3)
+
 
 if __name__ == "__main__":
-    run_automation()
+    try:
+        main()
+        sys.exit(0)
+    except KeyboardInterrupt:
+        print("\n[EXIT] Stopped by user.")
+    except serial.SerialException as e:
+        print(f"\n[ERROR] Serial error: {e}")
+        sys.exit(1)

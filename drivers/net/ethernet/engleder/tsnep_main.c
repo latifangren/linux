@@ -223,20 +223,19 @@ static void tsnep_phy_link_status_change(struct net_device *netdev)
 
 static int tsnep_phy_loopback(struct tsnep_adapter *adapter, bool enable)
 {
-	int retval;
+	int speed;
 
-	retval = phy_loopback(adapter->phydev, enable);
-
-	/* PHY link state change is not signaled if loopback is enabled, it
-	 * would delay a working loopback anyway, let's ensure that loopback
-	 * is working immediately by setting link mode directly
-	 */
-	if (!retval && enable) {
-		netif_carrier_on(adapter->netdev);
-		tsnep_set_link_mode(adapter);
+	if (enable) {
+		if (adapter->phydev->autoneg == AUTONEG_DISABLE &&
+		    adapter->phydev->speed == SPEED_100)
+			speed = SPEED_100;
+		else
+			speed = SPEED_1000;
+	} else {
+		speed = 0;
 	}
 
-	return retval;
+	return phy_loopback(adapter->phydev, enable, speed);
 }
 
 static int tsnep_phy_open(struct tsnep_adapter *adapter)
@@ -860,8 +859,8 @@ static bool tsnep_tx_poll(struct tsnep_tx *tx, int napi_budget)
 			struct skb_shared_hwtstamps hwtstamps;
 			u64 timestamp;
 
-			if (skb_shinfo(entry->skb)->tx_flags &
-			    SKBTX_HW_TSTAMP_USE_CYCLES)
+			if (entry->skb->sk &&
+			    READ_ONCE(entry->skb->sk->sk_tsflags) & SOF_TIMESTAMPING_BIND_PHC)
 				timestamp =
 					__le64_to_cpu(entry->desc_wb->counter);
 			else
@@ -1974,23 +1973,41 @@ failed:
 
 static void tsnep_queue_enable(struct tsnep_queue *queue)
 {
+	struct tsnep_adapter *adapter = queue->adapter;
+
+	netif_napi_set_irq(&queue->napi, queue->irq);
 	napi_enable(&queue->napi);
-	tsnep_enable_irq(queue->adapter, queue->irq_mask);
+	tsnep_enable_irq(adapter, queue->irq_mask);
 
-	if (queue->tx)
+	if (queue->tx) {
+		netif_queue_set_napi(adapter->netdev, queue->tx->queue_index,
+				     NETDEV_QUEUE_TYPE_TX, &queue->napi);
 		tsnep_tx_enable(queue->tx);
+	}
 
-	if (queue->rx)
+	if (queue->rx) {
+		netif_queue_set_napi(adapter->netdev, queue->rx->queue_index,
+				     NETDEV_QUEUE_TYPE_RX, &queue->napi);
 		tsnep_rx_enable(queue->rx);
+	}
 }
 
 static void tsnep_queue_disable(struct tsnep_queue *queue)
 {
-	if (queue->tx)
+	struct tsnep_adapter *adapter = queue->adapter;
+
+	if (queue->rx)
+		netif_queue_set_napi(adapter->netdev, queue->rx->queue_index,
+				     NETDEV_QUEUE_TYPE_RX, NULL);
+
+	if (queue->tx) {
 		tsnep_tx_disable(queue->tx, &queue->napi);
+		netif_queue_set_napi(adapter->netdev, queue->tx->queue_index,
+				     NETDEV_QUEUE_TYPE_TX, NULL);
+	}
 
 	napi_disable(&queue->napi);
-	tsnep_disable_irq(queue->adapter, queue->irq_mask);
+	tsnep_disable_irq(adapter, queue->irq_mask);
 
 	/* disable RX after NAPI polling has been disabled, because RX can be
 	 * enabled during NAPI polling
@@ -2085,14 +2102,12 @@ int tsnep_enable_xsk(struct tsnep_queue *queue, struct xsk_buff_pool *pool)
 	if (frame_size < TSNEP_XSK_RX_BUF_SIZE)
 		return -EOPNOTSUPP;
 
-	queue->rx->page_buffer = kcalloc(TSNEP_RING_SIZE,
-					 sizeof(*queue->rx->page_buffer),
-					 GFP_KERNEL);
+	queue->rx->page_buffer = kzalloc_objs(*queue->rx->page_buffer,
+					      TSNEP_RING_SIZE);
 	if (!queue->rx->page_buffer)
 		return -ENOMEM;
-	queue->rx->xdp_batch = kcalloc(TSNEP_RING_SIZE,
-				       sizeof(*queue->rx->xdp_batch),
-				       GFP_KERNEL);
+	queue->rx->xdp_batch = kzalloc_objs(*queue->rx->xdp_batch,
+					    TSNEP_RING_SIZE);
 	if (!queue->rx->xdp_batch) {
 		kfree(queue->rx->page_buffer);
 		queue->rx->page_buffer = NULL;
@@ -2149,16 +2164,6 @@ static netdev_tx_t tsnep_netdev_xmit_frame(struct sk_buff *skb,
 		queue_mapping = 0;
 
 	return tsnep_xmit_frame_ring(skb, &adapter->tx[queue_mapping]);
-}
-
-static int tsnep_netdev_ioctl(struct net_device *netdev, struct ifreq *ifr,
-			      int cmd)
-{
-	if (!netif_running(netdev))
-		return -EINVAL;
-	if (cmd == SIOCSHWTSTAMP || cmd == SIOCGHWTSTAMP)
-		return tsnep_ptp_ioctl(netdev, ifr, cmd);
-	return phy_mii_ioctl(netdev->phydev, ifr, cmd);
 }
 
 static void tsnep_netdev_set_multicast(struct net_device *netdev)
@@ -2367,7 +2372,7 @@ static const struct net_device_ops tsnep_netdev_ops = {
 	.ndo_open = tsnep_netdev_open,
 	.ndo_stop = tsnep_netdev_close,
 	.ndo_start_xmit = tsnep_netdev_xmit_frame,
-	.ndo_eth_ioctl = tsnep_netdev_ioctl,
+	.ndo_eth_ioctl = phy_do_ioctl_running,
 	.ndo_set_rx_mode = tsnep_netdev_set_multicast,
 	.ndo_get_stats64 = tsnep_netdev_get_stats64,
 	.ndo_set_mac_address = tsnep_netdev_set_mac_address,
@@ -2377,6 +2382,8 @@ static const struct net_device_ops tsnep_netdev_ops = {
 	.ndo_bpf = tsnep_netdev_bpf,
 	.ndo_xdp_xmit = tsnep_netdev_xdp_xmit,
 	.ndo_xsk_wakeup = tsnep_netdev_xsk_wakeup,
+	.ndo_hwtstamp_get = tsnep_ptp_hwtstamp_get,
+	.ndo_hwtstamp_set = tsnep_ptp_hwtstamp_set,
 };
 
 static int tsnep_mac_init(struct tsnep_adapter *adapter)

@@ -444,18 +444,8 @@ static int w1_read(struct device *dev, enum hwmon_sensor_types type,
 	}
 }
 
-static const u32 w1_temp_config[] = {
-	HWMON_T_INPUT,
-	0
-};
-
-static const struct hwmon_channel_info w1_temp = {
-	.type = hwmon_temp,
-	.config = w1_temp_config,
-};
-
 static const struct hwmon_channel_info * const w1_info[] = {
-	&w1_temp,
+	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
 	NULL
 };
 
@@ -983,8 +973,7 @@ static int w1_therm_add_slave(struct w1_slave *sl)
 	struct w1_therm_family_converter *sl_family_conv;
 
 	/* Allocate memory */
-	sl->family_data = kzalloc(sizeof(struct w1_therm_family_data),
-		GFP_KERNEL);
+	sl->family_data = kzalloc_obj(struct w1_therm_family_data);
 	if (!sl->family_data)
 		return -ENOMEM;
 

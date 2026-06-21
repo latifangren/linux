@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-only
-
-config REALTEK_RTD1619_THERMAL
-	tristate "Realtek RTD1619 thermal sensor"
-	depends on ARCH_REALTEK || COMPILE_TEST
-	depends on OF
-	depends on THERMAL_OF
-	help
-	  Enable thermal sensor support for Realtek RTD1619 SoCs.

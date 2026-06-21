@@ -25,6 +25,7 @@
 #define SESSION_HASH_SIZE	512
 
 struct cld_net;
+struct nfsd_net_cb;
 struct nfsd4_client_tracking_ops;
 
 enum {
@@ -67,7 +68,6 @@ struct nfsd_net {
 	struct lock_manager nfsd4_manager;
 	bool grace_ended;
 	bool grace_end_forced;
-	bool client_tracking_active;
 	time64_t boot_time;
 
 	struct dentry *nfsd_client_dir;
@@ -100,6 +100,9 @@ struct nfsd_net {
 	 */
 	struct list_head client_lru;
 	struct list_head close_lru;
+
+	/* protects del_recall_lru and delegation hash/unhash */
+	spinlock_t deleg_lock ____cacheline_aligned;
 	struct list_head del_recall_lru;
 
 	/* protected by blocked_locks_lock */
@@ -131,10 +134,10 @@ struct nfsd_net {
 	unsigned char writeverf[8];
 
 	/*
-	 * Max number of non-validated connections this nfsd container
-	 * will allow.  Defaults to '0' gets mapped to 64.
+	 * Minimum number of threads to run per pool.  If 0 then the
+	 * min == max requested number of threads.
 	 */
-	unsigned int max_connections;
+	unsigned int min_threads;
 
 	u32 clientid_base;
 	u32 clientid_counter;
@@ -222,8 +225,12 @@ struct nfsd_net {
 
 #if IS_ENABLED(CONFIG_NFS_LOCALIO)
 	/* Local clients to be invalidated when net is shut down */
+	spinlock_t              local_clients_lock;
 	struct list_head	local_clients;
 #endif
+	siphash_key_t		*fh_key;
+
+	struct nfsd_net_cb	*nfsd_cb;
 };
 
 /* Simple check to find out if a given net was properly initialized */

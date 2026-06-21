@@ -63,6 +63,7 @@ properties:
               - rockchip,rk3588-vo0-grf
               - rockchip,rk3588-vo1-grf
               - rockchip,rk3588-vop-grf
+              - rockchip,rv1103b-ioc
               - rockchip,rv1108-usbgrf
           - const: syscon
       - items:
@@ -98,6 +99,7 @@ properties:
               - rockchip,rk3576-pmu0-grf
               - rockchip,rk3576-usb2phy-grf
               - rockchip,rk3588-usb2phy-grf
+              - rockchip,rv1103b-pmu-grf
               - rockchip,rv1108-grf
               - rockchip,rv1108-pmugrf
               - rockchip,rv1126-grf
@@ -182,10 +184,12 @@ allOf:
       properties:
         gpio:
           type: object
+          properties:
+            compatible:
+              contains:
+                const: rockchip,rk3328-grf-gpio
 
-          $ref: /schemas/gpio/rockchip,rk3328-grf-gpio.yaml#
-
-          unevaluatedProperties: false
+          additionalProperties: true
 
         power-controller:
           type: object
@@ -229,6 +233,7 @@ allOf:
               - rockchip,rk3036-grf
               - rockchip,rk3308-grf
               - rockchip,rk3368-pmugrf
+              - rockchip,rv1103b-pmu-grf
 
     then:
       properties:
@@ -314,7 +319,6 @@ allOf:
     else:
       properties:
         clocks: false
-
 
 examples:
   - |

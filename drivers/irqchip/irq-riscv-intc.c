@@ -243,7 +243,7 @@ static int __init riscv_intc_init(struct device_node *node,
 		chip = &andes_intc_chip;
 	}
 
-	return riscv_intc_init_common(of_node_to_fwnode(node), chip);
+	return riscv_intc_init_common(of_fwnode_handle(node), chip);
 }
 
 IRQCHIP_DECLARE(riscv, "riscv,cpu-intc", riscv_intc_init);
@@ -349,13 +349,13 @@ static int __init riscv_intc_acpi_init(union acpi_subtable_headers *header,
 		if (count <= 0)
 			return -EINVAL;
 
-		rintc_acpi_data = kcalloc(count, sizeof(*rintc_acpi_data), GFP_KERNEL);
+		rintc_acpi_data = kzalloc_objs(*rintc_acpi_data, count);
 		if (!rintc_acpi_data)
 			return -ENOMEM;
 	}
 
 	rintc = (struct acpi_madt_rintc *)header;
-	rintc_acpi_data[nr_rintc] = kzalloc(sizeof(*rintc_acpi_data[0]), GFP_KERNEL);
+	rintc_acpi_data[nr_rintc] = kzalloc_obj(*rintc_acpi_data[0]);
 	if (!rintc_acpi_data[nr_rintc])
 		return -ENOMEM;
 

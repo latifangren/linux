@@ -84,7 +84,7 @@ module_param(balloon_boot_timeout, uint, 0444);
 #ifdef CONFIG_XEN_BALLOON_MEMORY_HOTPLUG
 static int xen_hotplug_unpopulated;
 
-static struct ctl_table balloon_table[] = {
+static const struct ctl_table balloon_table[] = {
 	{
 		.procname	= "hotplug_unpopulated",
 		.data		= &xen_hotplug_unpopulated,
@@ -157,6 +157,8 @@ static void balloon_append(struct page *page)
 		list_add(&page->lru, &ballooned_pages);
 		balloon_stats.balloon_low++;
 	}
+	inc_node_page_state(page, NR_BALLOON_PAGES);
+
 	wake_up(&balloon_wq);
 }
 
@@ -179,6 +181,8 @@ static struct page *balloon_retrieve(bool require_lowmem)
 		balloon_stats.balloon_low--;
 
 	__ClearPageOffline(page);
+	dec_node_page_state(page, NR_BALLOON_PAGES);
+
 	return page;
 }
 
@@ -238,7 +242,7 @@ static struct resource *additional_memory_resource(phys_addr_t size)
 	struct resource *res;
 	int ret;
 
-	res = kzalloc(sizeof(*res), GFP_KERNEL);
+	res = kzalloc_obj(*res);
 	if (!res)
 		return NULL;
 
@@ -298,7 +302,7 @@ static enum bp_state reserve_additional_memory(void)
          * are not restored since this region is now known not to
          * conflict with any devices.
          */ 
-	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+	if (xen_pv_domain()) {
 		unsigned long pfn, i;
 
 		pfn = PFN_DOWN(resource->start);
@@ -622,7 +626,7 @@ int xen_alloc_ballooned_pages(unsigned int nr_pages, struct page **pages)
 			 */
 			BUILD_BUG_ON(XEN_PAGE_SIZE != PAGE_SIZE);
 
-			if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+			if (xen_pv_domain()) {
 				ret = xen_alloc_p2m_entry(page_to_pfn(page));
 				if (ret < 0)
 					goto out_undo;
@@ -720,7 +724,8 @@ static int __init balloon_add_regions(void)
 static int __init balloon_init(void)
 {
 	struct task_struct *task;
-	unsigned long current_pages;
+	long current_pages = 0;
+	domid_t domid = DOMID_SELF;
 	int rc;
 
 	if (!xen_domain())
@@ -728,15 +733,21 @@ static int __init balloon_init(void)
 
 	pr_info("Initialising balloon driver\n");
 
-	if (xen_pv_domain()) {
-		if (xen_released_pages >= xen_start_info->nr_pages)
-			goto underflow;
-		current_pages = min(xen_start_info->nr_pages -
-		                    xen_released_pages, max_pfn);
-	} else {
-		if (xen_unpopulated_pages >= get_num_physpages())
-			goto underflow;
-		current_pages = get_num_physpages() - xen_unpopulated_pages;
+	if (xen_initial_domain())
+		current_pages = HYPERVISOR_memory_op(XENMEM_current_reservation,
+		                                     &domid);
+	if (current_pages <= 0) {
+		if (xen_pv_domain()) {
+			if (xen_released_pages >= xen_start_info->nr_pages)
+				goto underflow;
+			current_pages = min(xen_start_info->nr_pages -
+			                    xen_released_pages, max_pfn);
+		} else {
+			if (xen_unpopulated_pages >= get_num_physpages())
+				goto underflow;
+			current_pages = get_num_physpages() -
+			                xen_unpopulated_pages;
+		}
 	}
 
 	balloon_stats.current_pages = current_pages;

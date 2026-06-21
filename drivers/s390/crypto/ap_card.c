@@ -6,8 +6,7 @@
  * Adjunct processor bus, card related code.
  */
 
-#define KMSG_COMPONENT "ap"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+#define pr_fmt(fmt) "ap: " fmt
 
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -234,7 +233,7 @@ struct ap_card *ap_card_create(int id, struct ap_tapq_hwinfo hwinfo,
 {
 	struct ap_card *ac;
 
-	ac = kzalloc(sizeof(*ac), GFP_KERNEL);
+	ac = kzalloc_obj(*ac);
 	if (!ac)
 		return NULL;
 	ac->ap_dev.device.release = ap_card_device_release;

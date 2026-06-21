@@ -32,6 +32,7 @@
 #include <asm/scs.h>
 #include <asm/smp.h>
 #include <asm/sysreg.h>
+#include <asm/stacktrace/frame.h>
 #include <asm/thread_info.h>
 #include <asm/virt.h>
 
@@ -59,7 +60,7 @@
 	 */
 	efi_signature_nop			// special NOP to identity as PE/COFF executable
 	b	primary_entry			// branch to kernel start, magic
-	le64sym	_kernel_offset_le		// Image load offset from start of RAM, little-endian
+	.quad	0				// Image load offset from start of RAM, little-endian
 	le64sym	_kernel_size_le			// Effective size of kernel image, little-endian
 	le64sym	_kernel_flags_le		// Informative flags, little-endian
 	.quad	0				// reserved
@@ -88,7 +89,7 @@ SYM_CODE_START(primary_entry)
 	adrp	x1, early_init_stack
 	mov	sp, x1
 	mov	x29, xzr
-	adrp	x0, init_idmap_pg_dir
+	adrp	x0, __pi_init_idmap_pg_dir
 	mov	x1, xzr
 	bl	__pi_create_init_idmap
 
@@ -100,7 +101,7 @@ SYM_CODE_START(primary_entry)
 	cbnz	x19, 0f
 	dmb     sy
 	mov	x1, x0				// end of used region
-	adrp    x0, init_idmap_pg_dir
+	adrp    x0, __pi_init_idmap_pg_dir
 	adr_l	x2, dcache_inval_poc
 	blr	x2
 	b	1f
@@ -199,6 +200,8 @@ SYM_CODE_END(preserve_boot_args)
 	sub	sp, sp, #PT_REGS_SIZE
 
 	stp	xzr, xzr, [sp, #S_STACKFRAME]
+	mov	\tmp1, #FRAME_META_TYPE_FINAL
+	str	\tmp1, [sp, #S_STACKFRAME_TYPE]
 	add	x29, sp, #S_STACKFRAME
 
 	scs_load_current
@@ -296,7 +299,7 @@ SYM_INNER_LABEL(init_el2, SYM_L_LOCAL)
 	isb
 0:
 
-	init_el2_hcr	HCR_HOST_NVHE_FLAGS
+	init_el2_hcr	HCR_HOST_NVHE_FLAGS | HCR_ATA
 	init_el2_state
 
 	/* Hypervisor stub */
@@ -327,47 +330,17 @@ SYM_INNER_LABEL(init_el2, SYM_L_LOCAL)
 	eret
 SYM_FUNC_END(init_kernel_el)
 
-/*
- * RTD1619 secondaries enter the kernel from the Realtek holding pen at EL3.
- * Mainline's init_kernel_el() handles EL2/EL1 only, so drop EL3 to EL2 first.
- */
-SYM_FUNC_START_LOCAL(rtk_init_secondary_el)
-	mrs	x0, CurrentEL
-	cmp	x0, #0xc
-	b.eq	1f
-	ret
-
-1:	mov	x0, #0x5b1			// AArch64 EL2, HCE, SMD, NS
-	msr	scr_el3, x0
-	msr	cptr_el3, xzr
-	mov	x0, #0x33ff
-	msr	cptr_el2, x0
-	msr	cntvoff_el2, xzr
-	mov	x0, #0x0830
-	movk	x0, #0x30c5, lsl #16
-	msr	sctlr_el2, x0
-	mov	x0, sp
-	msr	sp_el2, x0
-	mrs	x0, vbar_el3
-	msr	vbar_el2, x0
-	mov	x0, #0x3c9			// EL2h with D/A/I/F masked
-	msr	spsr_el3, x0
-	msr	elr_el3, lr
-	eret
-SYM_FUNC_END(rtk_init_secondary_el)
-
 	/*
 	 * This provides a "holding pen" for platforms to hold all secondary
 	 * cores are held until we're ready for them to initialise.
 	 */
 SYM_FUNC_START(secondary_holding_pen)
-	bl	rtk_init_secondary_el
 	mov	x0, xzr
 	bl	init_kernel_el			// w0=cpu_boot_mode
 	mrs	x2, mpidr_el1
 	mov_q	x1, MPIDR_HWID_BITMASK
 	and	x2, x2, x1
-	adr_l	x3, rtk_secondary_holding_pen_release
+	adr_l	x3, secondary_holding_pen_release
 pen:	ldr	x4, [x3]
 	cmp	x4, x2
 	b.eq	secondary_startup
@@ -379,26 +352,13 @@ SYM_FUNC_END(secondary_holding_pen)
 	 * Secondary entry point that jumps straight into the kernel. Only to
 	 * be used where CPUs are brought online dynamically by the kernel.
 	 */
-	.align 7
 SYM_FUNC_START(secondary_entry)
-	movz	x9, #0x7f40
-	movk	x9, #0x9800, lsl #16
-	mov	x10, #0x51
-	str	w10, [x9]
 	mov	x0, xzr
 	bl	init_kernel_el			// w0=cpu_boot_mode
-	movz	x9, #0x7f44
-	movk	x9, #0x9800, lsl #16
-	mov	x10, #0x52
-	str	w10, [x9]
 	b	secondary_startup
 SYM_FUNC_END(secondary_entry)
 
 SYM_FUNC_START_LOCAL(secondary_startup)
-	movz	x9, #0x7f48
-	movk	x9, #0x9800, lsl #16
-	mov	x10, #0x53
-	str	w10, [x9]
 	/*
 	 * Common entry point for secondary CPUs.
 	 */
@@ -547,7 +507,7 @@ SYM_FUNC_END(__no_granule_support)
 
 SYM_FUNC_START_LOCAL(__primary_switch)
 	adrp	x1, reserved_pg_dir
-	adrp	x2, init_idmap_pg_dir
+	adrp	x2, __pi_init_idmap_pg_dir
 	bl	__enable_mmu
 
 	adrp	x1, early_init_stack

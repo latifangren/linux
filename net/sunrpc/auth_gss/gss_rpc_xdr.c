@@ -244,11 +244,11 @@ static int gssx_dec_option_array(struct xdr_stream *xdr,
 	/* we recognize only 1 currently: CREDS_VALUE */
 	oa->count = 1;
 
-	oa->data = kmalloc(sizeof(struct gssx_option), GFP_KERNEL);
+	oa->data = kmalloc_obj(struct gssx_option);
 	if (!oa->data)
 		return -ENOMEM;
 
-	creds = kzalloc(sizeof(struct svc_cred), GFP_KERNEL);
+	creds = kzalloc_obj(struct svc_cred);
 	if (!creds) {
 		err = -ENOMEM;
 		goto free_oa;
@@ -840,12 +840,12 @@ int gssx_dec_accept_sec_context(struct rpc_rqst *rqstp,
 	struct gssx_res_accept_sec_context *res = data;
 	u32 value_follows;
 	int err;
-	struct page *scratch;
+	struct folio *scratch;
 
-	scratch = alloc_page(GFP_KERNEL);
+	scratch = folio_alloc(GFP_KERNEL, 0);
 	if (!scratch)
 		return -ENOMEM;
-	xdr_set_scratch_page(xdr, scratch);
+	xdr_set_scratch_folio(xdr, scratch);
 
 	/* res->status */
 	err = gssx_dec_status(xdr, &res->status);
@@ -890,6 +890,6 @@ int gssx_dec_accept_sec_context(struct rpc_rqst *rqstp,
 	err = gssx_dec_option_array(xdr, &res->options);
 
 out_free:
-	__free_page(scratch);
+	folio_put(scratch);
 	return err;
 }

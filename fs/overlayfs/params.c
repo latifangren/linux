@@ -60,6 +60,7 @@ enum ovl_opt {
 	Opt_verity,
 	Opt_fsync,
 	Opt_volatile,
+	Opt_override_creds,
 };
 
 static const struct constant_table ovl_parameter_bool[] = {
@@ -159,10 +160,10 @@ static int ovl_fsync_mode_def(void)
 
 const struct fs_parameter_spec ovl_parameter_spec[] = {
 	fsparam_string_empty("lowerdir",    Opt_lowerdir),
-	fsparam_string("lowerdir+",         Opt_lowerdir_add),
-	fsparam_string("datadir+",          Opt_datadir_add),
-	fsparam_string("upperdir",          Opt_upperdir),
-	fsparam_string("workdir",           Opt_workdir),
+	fsparam_file_or_string("lowerdir+", Opt_lowerdir_add),
+	fsparam_file_or_string("datadir+",  Opt_datadir_add),
+	fsparam_file_or_string("upperdir",  Opt_upperdir),
+	fsparam_file_or_string("workdir",   Opt_workdir),
 	fsparam_flag("default_permissions", Opt_default_permissions),
 	fsparam_enum("redirect_dir",        Opt_redirect_dir, ovl_parameter_redirect_dir),
 	fsparam_enum("index",               Opt_index, ovl_parameter_bool),
@@ -174,6 +175,7 @@ const struct fs_parameter_spec ovl_parameter_spec[] = {
 	fsparam_enum("verity",              Opt_verity, ovl_parameter_verity),
 	fsparam_enum("fsync",               Opt_fsync, ovl_parameter_fsync),
 	fsparam_flag("volatile",            Opt_volatile),
+	fsparam_flag_no("override_creds",   Opt_override_creds),
 	{}
 };
 
@@ -293,19 +295,26 @@ static int ovl_mount_dir(const char *name, struct path *path)
 static int ovl_mount_dir_check(struct fs_context *fc, const struct path *path,
 			       enum ovl_opt layer, const char *name, bool upper)
 {
+	bool is_casefolded = ovl_dentry_casefolded(path->dentry);
 	struct ovl_fs_context *ctx = fc->fs_private;
+	struct ovl_fs *ofs = fc->s_fs_info;
 
 	if (!d_is_dir(path->dentry))
 		return invalfc(fc, "%s is not a directory", name);
 
 	/*
-	 * Root dentries of case-insensitive capable filesystems might
-	 * not have the dentry operations set, but still be incompatible
-	 * with overlayfs.  Check explicitly to prevent post-mount
-	 * failures.
+	 * Allow filesystems that are case-folding capable but deny composing
+	 * ovl stack from inconsistent case-folded directories.
 	 */
-	if (sb_has_encoding(path->mnt->mnt_sb))
-		return invalfc(fc, "case-insensitive capable filesystem on %s not supported", name);
+	if (!ctx->casefold_set) {
+		ofs->casefold = is_casefolded;
+		ctx->casefold_set = true;
+	}
+
+	if (ofs->casefold != is_casefolded) {
+		return invalfc(fc, "case-%ssensitive directory on %s is inconsistent",
+			       is_casefolded ? "in" : "", name);
+	}
 
 	if (ovl_dentry_weird(path->dentry))
 		return invalfc(fc, "filesystem on %s not supported", name);
@@ -386,40 +395,100 @@ static void ovl_add_layer(struct fs_context *fc, enum ovl_opt layer,
 	}
 }
 
-static int ovl_parse_layer(struct fs_context *fc, const char *layer_name, enum ovl_opt layer)
+static inline bool is_upper_layer(enum ovl_opt layer)
 {
-	char *name = kstrdup(layer_name, GFP_KERNEL);
-	bool upper = (layer == Opt_upperdir || layer == Opt_workdir);
-	struct path path;
+	return layer == Opt_upperdir || layer == Opt_workdir;
+}
+
+/* Handle non-file descriptor-based layer options that require path lookup. */
+static inline int ovl_kern_path(const char *layer_name, struct path *layer_path,
+				enum ovl_opt layer)
+{
 	int err;
+
+	switch (layer) {
+	case Opt_upperdir:
+		fallthrough;
+	case Opt_workdir:
+		fallthrough;
+	case Opt_lowerdir:
+		err = ovl_mount_dir(layer_name, layer_path);
+		break;
+	case Opt_lowerdir_add:
+		fallthrough;
+	case Opt_datadir_add:
+		err = ovl_mount_dir_noesc(layer_name, layer_path);
+		break;
+	default:
+		WARN_ON_ONCE(true);
+		err = -EINVAL;
+	}
+
+	return err;
+}
+
+static int ovl_do_parse_layer(struct fs_context *fc, const char *layer_name,
+			      struct path *layer_path, enum ovl_opt layer)
+{
+	char *name __free(kfree) = kstrdup(layer_name, GFP_KERNEL);
+	bool upper;
+	int err = 0;
 
 	if (!name)
 		return -ENOMEM;
 
-	if (upper || layer == Opt_lowerdir)
-		err = ovl_mount_dir(name, &path);
-	else
-		err = ovl_mount_dir_noesc(name, &path);
+	upper = is_upper_layer(layer);
+	err = ovl_mount_dir_check(fc, layer_path, layer, name, upper);
 	if (err)
-		goto out_free;
-
-	err = ovl_mount_dir_check(fc, &path, layer, name, upper);
-	if (err)
-		goto out_put;
+		return err;
 
 	if (!upper) {
 		err = ovl_ctx_realloc_lower(fc);
 		if (err)
-			goto out_put;
+			return err;
 	}
 
 	/* Store the user provided path string in ctx to show in mountinfo */
-	ovl_add_layer(fc, layer, &path, &name);
+	ovl_add_layer(fc, layer, layer_path, &name);
+	return err;
+}
 
-out_put:
-	path_put(&path);
-out_free:
-	kfree(name);
+static int ovl_parse_layer(struct fs_context *fc, struct fs_parameter *param,
+			   enum ovl_opt layer)
+{
+	struct path layer_path __free(path_put) = {};
+	int err = 0;
+
+	switch (param->type) {
+	case fs_value_is_string:
+		err = ovl_kern_path(param->string, &layer_path, layer);
+		if (err)
+			return err;
+		err = ovl_do_parse_layer(fc, param->string, &layer_path, layer);
+		break;
+	case fs_value_is_file: {
+		char *buf __free(kfree);
+		char *layer_name;
+
+		buf = kmalloc(PATH_MAX, GFP_KERNEL_ACCOUNT);
+		if (!buf)
+			return -ENOMEM;
+
+		layer_path = param->file->f_path;
+		path_get(&layer_path);
+
+		layer_name = d_path(&layer_path, buf, PATH_MAX);
+		if (IS_ERR(layer_name))
+			return PTR_ERR(layer_name);
+
+		err = ovl_do_parse_layer(fc, layer_name, &layer_path, layer);
+		break;
+	}
+	default:
+		WARN_ON_ONCE(true);
+		err = -EINVAL;
+	}
+
 	return err;
 }
 
@@ -493,7 +562,13 @@ static int ovl_parse_param_lowerdir(const char *name, struct fs_context *fc)
 
 	iter = dup;
 	for (nr = 0; nr < nr_lower; nr++) {
-		err = ovl_parse_layer(fc, iter, Opt_lowerdir);
+		struct path path __free(path_put) = {};
+
+		err = ovl_kern_path(iter, &path, Opt_lowerdir);
+		if (err)
+			goto out_err;
+
+		err = ovl_do_parse_layer(fc, iter, &path, Opt_lowerdir);
 		if (err)
 			goto out_err;
 
@@ -574,7 +649,7 @@ static int ovl_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	case Opt_datadir_add:
 	case Opt_upperdir:
 	case Opt_workdir:
-		err = ovl_parse_layer(fc, param->string, opt);
+		err = ovl_parse_layer(fc, param, opt);
 		break;
 	case Opt_default_permissions:
 		config->default_permissions = true;
@@ -618,6 +693,29 @@ static int ovl_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	case Opt_userxattr:
 		config->userxattr = true;
 		break;
+	case Opt_override_creds: {
+		const struct cred *cred = NULL;
+
+		if (result.negated) {
+			swap(cred, ofs->creator_cred);
+			put_cred(cred);
+			break;
+		}
+
+		if (!current_in_userns(fc->user_ns)) {
+			err = -EINVAL;
+			break;
+		}
+
+		cred = prepare_creds();
+		if (cred)
+			swap(cred, ofs->creator_cred);
+		else
+			err = -ENOMEM;
+
+		put_cred(cred);
+		break;
+	}
 	default:
 		pr_err("unrecognized mount option \"%s\" or missing value\n",
 		       param->key);
@@ -701,7 +799,7 @@ int ovl_init_fs_context(struct fs_context *fc)
 	struct ovl_fs_context *ctx;
 	struct ovl_fs *ofs;
 
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL_ACCOUNT);
+	ctx = kzalloc_obj(*ctx, GFP_KERNEL_ACCOUNT);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -709,12 +807,12 @@ int ovl_init_fs_context(struct fs_context *fc)
 	 * By default we allocate for three lower layers. It's likely
 	 * that it'll cover most users.
 	 */
-	ctx->lower = kmalloc_array(3, sizeof(*ctx->lower), GFP_KERNEL_ACCOUNT);
+	ctx->lower = kmalloc_objs(*ctx->lower, 3, GFP_KERNEL_ACCOUNT);
 	if (!ctx->lower)
 		goto out_err;
 	ctx->capacity = 3;
 
-	ofs = kzalloc(sizeof(struct ovl_fs), GFP_KERNEL);
+	ofs = kzalloc_obj(struct ovl_fs);
 	if (!ofs)
 		goto out_err;
 
@@ -729,6 +827,8 @@ int ovl_init_fs_context(struct fs_context *fc)
 	fc->s_fs_info		= ofs;
 	fc->fs_private		= ctx;
 	fc->ops			= &ovl_context_ops;
+
+	mutex_init(&ofs->whiteout_lock);
 	return 0;
 
 out_err:
@@ -803,18 +903,6 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 		config->uuid = OVL_UUID_NULL;
 	}
 
-	/* Resolve verity -> metacopy dependency */
-	if (config->verity_mode && !config->metacopy) {
-		/* Don't allow explicit specified conflicting combinations */
-		if (set.metacopy) {
-			pr_err("conflicting options: metacopy=off,verity=%s\n",
-			       ovl_verity_mode(config));
-			return -EINVAL;
-		}
-		/* Otherwise automatically enable metacopy. */
-		config->metacopy = true;
-	}
-
 	/*
 	 * This is to make the logic below simpler.  It doesn't make any other
 	 * difference, since redirect_dir=on is only used for upper.
@@ -822,16 +910,11 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 	if (!config->upperdir && config->redirect_mode == OVL_REDIRECT_FOLLOW)
 		config->redirect_mode = OVL_REDIRECT_ON;
 
-	/* Resolve verity -> metacopy -> redirect_dir dependency */
+	/* metacopy -> redirect_dir dependency */
 	if (config->metacopy && config->redirect_mode != OVL_REDIRECT_ON) {
 		if (set.metacopy && set.redirect) {
 			pr_err("conflicting options: metacopy=on,redirect_dir=%s\n",
 			       ovl_redirect_mode(config));
-			return -EINVAL;
-		}
-		if (config->verity_mode && set.redirect) {
-			pr_err("conflicting options: verity=%s,redirect_dir=%s\n",
-			       ovl_verity_mode(config), ovl_redirect_mode(config));
 			return -EINVAL;
 		}
 		if (set.redirect) {
@@ -902,7 +985,7 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 	}
 
 
-	/* Resolve userxattr -> !redirect && !metacopy && !verity dependency */
+	/* Resolve userxattr -> !redirect && !metacopy dependency */
 	if (config->userxattr) {
 		if (set.redirect &&
 		    config->redirect_mode != OVL_REDIRECT_NOFOLLOW) {
@@ -912,11 +995,6 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 		}
 		if (config->metacopy && set.metacopy) {
 			pr_err("conflicting options: userxattr,metacopy=on\n");
-			return -EINVAL;
-		}
-		if (config->verity_mode) {
-			pr_err("conflicting options: userxattr,verity=%s\n",
-			       ovl_verity_mode(config));
 			return -EINVAL;
 		}
 		/*
@@ -955,11 +1033,6 @@ int ovl_fs_params_verify(const struct ovl_fs_context *ctx,
 		 * Other xattr-dependent features should be disabled without
 		 * great disturbance to the user in ovl_make_workdir().
 		 */
-	}
-
-	if (ctx->nr_data > 0 && !config->metacopy) {
-		pr_err("lower data-only dirs require metacopy support.\n");
-		return -EINVAL;
 	}
 
 	return 0;

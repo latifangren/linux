@@ -125,7 +125,7 @@ struct qcom_iris *qcom_iris_probe(struct device *parent, bool *use_48mhz_xo)
 		return ERR_PTR(-EINVAL);
 	}
 
-	iris = kzalloc(sizeof(*iris), GFP_KERNEL);
+	iris = kzalloc_obj(*iris);
 	if (!iris) {
 		of_node_put(of_node);
 		return ERR_PTR(-ENOMEM);
@@ -155,9 +155,8 @@ struct qcom_iris *qcom_iris_probe(struct device *parent, bool *use_48mhz_xo)
 
 	iris->xo_clk = devm_clk_get(&iris->dev, "xo");
 	if (IS_ERR(iris->xo_clk)) {
-		ret = PTR_ERR(iris->xo_clk);
-		if (ret != -EPROBE_DEFER)
-			dev_err(&iris->dev, "failed to acquire xo clk\n");
+		ret = dev_err_probe(&iris->dev, PTR_ERR(iris->xo_clk),
+				    "failed to acquire xo clk\n");
 		goto err_device_del;
 	}
 

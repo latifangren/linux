@@ -140,7 +140,7 @@ static struct pds_auxiliary_dev *pdsc_auxbus_dev_register(struct pdsc *cf,
 	struct pds_auxiliary_dev *padev;
 	int err;
 
-	padev = kzalloc(sizeof(*padev), GFP_KERNEL);
+	padev = kzalloc_obj(*padev);
 	if (!padev)
 		return ERR_PTR(-ENOMEM);
 
@@ -220,8 +220,8 @@ int pdsc_auxbus_dev_add(struct pdsc *cf, struct pdsc *pf,
 	}
 
 	/* Verify that the type is supported and enabled.  It is not
-	 * an error if there is no auxbus device support for this
-	 * VF, it just means something else needs to happen with it.
+	 * an error if the firmware doesn't support the feature, the
+	 * driver just won't set up an auxiliary_device for it.
 	 */
 	vt_support = !!le16_to_cpu(pf->dev_ident.vif_types[vt]);
 	if (!(vt_support &&

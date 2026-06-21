@@ -184,30 +184,41 @@ static __init struct gen_pool *__dma_atomic_pool_init(size_t pool_size,
 	return pool;
 }
 
+#ifdef CONFIG_ZONE_DMA32
+#define has_managed_dma32 has_managed_zone(ZONE_DMA32)
+#else
+#define has_managed_dma32 false
+#endif
+
 static int __init dma_atomic_pool_init(void)
 {
 	int ret = 0;
 
 	/*
-	 * Always use 2MiB as default pool size.
-	 * See: https://forum.armbian.com/topic/4811-uas-mainline-kernel-coherent-pool-memory-size/
+	 * If coherent_pool was not used on the command line, default the pool
+	 * sizes to 128KB per 1GB of memory, min 128KB, max MAX_PAGE_ORDER.
 	 */
 	if (!atomic_pool_size) {
-		atomic_pool_size = SZ_2M;
+		unsigned long pages = totalram_pages() / (SZ_1G / SZ_128K);
+		pages = min_t(unsigned long, pages, MAX_ORDER_NR_PAGES);
+		atomic_pool_size = max_t(size_t, pages << PAGE_SHIFT, SZ_128K);
 	}
 	INIT_WORK(&atomic_pool_work, atomic_pool_work_fn);
 
-	atomic_pool_kernel = __dma_atomic_pool_init(atomic_pool_size,
+	/* All memory might be in the DMA zone(s) to begin with */
+	if (has_managed_zone(ZONE_NORMAL)) {
+		atomic_pool_kernel = __dma_atomic_pool_init(atomic_pool_size,
 						    GFP_KERNEL);
-	if (!atomic_pool_kernel)
-		ret = -ENOMEM;
+		if (!atomic_pool_kernel)
+			ret = -ENOMEM;
+	}
 	if (has_managed_dma()) {
 		atomic_pool_dma = __dma_atomic_pool_init(atomic_pool_size,
 						GFP_KERNEL | GFP_DMA);
 		if (!atomic_pool_dma)
 			ret = -ENOMEM;
 	}
-	if (IS_ENABLED(CONFIG_ZONE_DMA32)) {
+	if (has_managed_dma32) {
 		atomic_pool_dma32 = __dma_atomic_pool_init(atomic_pool_size,
 						GFP_KERNEL | GFP_DMA32);
 		if (!atomic_pool_dma32)
@@ -222,11 +233,11 @@ postcore_initcall(dma_atomic_pool_init);
 static inline struct gen_pool *dma_guess_pool(struct gen_pool *prev, gfp_t gfp)
 {
 	if (prev == NULL) {
-		if (IS_ENABLED(CONFIG_ZONE_DMA32) && (gfp & GFP_DMA32))
-			return atomic_pool_dma32;
-		if (atomic_pool_dma && (gfp & GFP_DMA))
-			return atomic_pool_dma;
-		return atomic_pool_kernel;
+		if (gfp & GFP_DMA)
+			return atomic_pool_dma ?: atomic_pool_dma32 ?: atomic_pool_kernel;
+		if (gfp & GFP_DMA32)
+			return atomic_pool_dma32 ?: atomic_pool_dma ?: atomic_pool_kernel;
+		return atomic_pool_kernel ?: atomic_pool_dma32 ?: atomic_pool_dma;
 	}
 	if (prev == atomic_pool_kernel)
 		return atomic_pool_dma32 ? atomic_pool_dma32 : atomic_pool_dma;

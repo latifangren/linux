@@ -903,7 +903,7 @@ static int cdns3_prepare_aligned_request_buf(struct cdns3_request *priv_req)
 	buf = priv_req->aligned_buf;
 
 	if (!buf || priv_req->request.length > buf->size) {
-		buf = kzalloc(sizeof(*buf), GFP_ATOMIC);
+		buf = kzalloc_obj(*buf, GFP_ATOMIC);
 		if (!buf)
 			return -ENOMEM;
 
@@ -2315,7 +2315,7 @@ struct usb_request *cdns3_gadget_ep_alloc_request(struct usb_ep *ep,
 	struct cdns3_endpoint *priv_ep = ep_to_cdns3_ep(ep);
 	struct cdns3_request *priv_req;
 
-	priv_req = kzalloc(sizeof(*priv_req), gfp_flags);
+	priv_req = kzalloc_obj(*priv_req, gfp_flags);
 	if (!priv_req)
 		return NULL;
 
@@ -2817,8 +2817,18 @@ int __cdns3_gadget_ep_clear_halt(struct cdns3_endpoint *priv_ep)
 	priv_ep->flags &= ~(EP_STALLED | EP_STALL_PENDING);
 
 	if (request) {
-		if (trb)
+		if (trb) {
 			*trb = trb_tmp;
+
+			/*
+			 * Per datasheet, EPRST causes DMA to reposition to the next TD.
+			 * Manually reset EP_TRADDR to the current TRB to prevent
+			 * the hardware from skipping the interrupted request.
+			 */
+			writel(EP_TRADDR_TRADDR(priv_ep->trb_pool_dma +
+						priv_req->start_trb * TRB_SIZE),
+						&priv_dev->regs->ep_traddr);
+		}
 
 		cdns3_rearm_transfer(priv_ep, 1);
 	}
@@ -3254,7 +3264,6 @@ static void cdns3_gadget_exit(struct cdns *cdns)
 	priv_dev = cdns->gadget_dev;
 
 
-	pm_runtime_mark_last_busy(cdns->dev);
 	pm_runtime_put_autosuspend(cdns->dev);
 
 	usb_del_gadget(&priv_dev->gadget);
@@ -3291,7 +3300,7 @@ static int cdns3_gadget_start(struct cdns *cdns)
 	u32 max_speed;
 	int ret;
 
-	priv_dev = kzalloc(sizeof(*priv_dev), GFP_KERNEL);
+	priv_dev = kzalloc_obj(*priv_dev);
 	if (!priv_dev)
 		return -ENOMEM;
 
@@ -3474,7 +3483,7 @@ __must_hold(&cdns->lock)
 	return 0;
 }
 
-static int cdns3_gadget_resume(struct cdns *cdns, bool hibernated)
+static int cdns3_gadget_resume(struct cdns *cdns, bool lost_power)
 {
 	struct cdns3_device *priv_dev = cdns->gadget_dev;
 
@@ -3482,7 +3491,7 @@ static int cdns3_gadget_resume(struct cdns *cdns, bool hibernated)
 		return 0;
 
 	cdns3_gadget_config(priv_dev);
-	if (hibernated)
+	if (lost_power)
 		writel(USB_CONF_DEVEN, &priv_dev->regs->usb_conf);
 
 	return 0;

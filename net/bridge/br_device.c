@@ -16,6 +16,8 @@
 #include <linux/netfilter_bridge.h>
 
 #include <linux/uaccess.h>
+#include <net/netdev_lock.h>
+
 #include "br_private.h"
 
 #define COMMON_FEATURES (NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA | \
@@ -306,7 +308,7 @@ static int __br_netpoll_enable(struct net_bridge_port *p)
 	struct netpoll *np;
 	int err;
 
-	np = kzalloc(sizeof(*p->np), GFP_KERNEL);
+	np = kzalloc_obj(*p->np);
 	if (!np)
 		return -ENOMEM;
 
@@ -328,7 +330,7 @@ int br_netpoll_enable(struct net_bridge_port *p)
 	return __br_netpoll_enable(p);
 }
 
-static int br_netpoll_setup(struct net_device *dev, struct netpoll_info *ni)
+static int br_netpoll_setup(struct net_device *dev)
 {
 	struct net_bridge *br = netdev_priv(dev);
 	struct net_bridge_port *p;
@@ -488,7 +490,7 @@ void br_dev_setup(struct net_device *dev)
 	SET_NETDEV_DEVTYPE(dev, &br_type);
 	dev->priv_flags = IFF_EBRIDGE | IFF_NO_QUEUE;
 	dev->lltx = true;
-	dev->netns_local = true;
+	dev->netns_immutable = true;
 
 	dev->features = COMMON_FEATURES | NETIF_F_HW_VLAN_CTAG_TX |
 			NETIF_F_HW_VLAN_STAG_TX;
@@ -516,6 +518,7 @@ void br_dev_setup(struct net_device *dev)
 	ether_addr_copy(br->group_addr, eth_stp_addr);
 
 	br->stp_enabled = BR_NO_STP;
+	br->stp_mode = BR_STP_MODE_AUTO;
 	br->group_fwd_mask = BR_GROUPFWD_DEFAULT;
 	br->group_fwd_mask_required = BR_GROUPFWD_DEFAULT;
 

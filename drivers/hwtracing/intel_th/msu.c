@@ -19,7 +19,6 @@
 #include <linux/io.h>
 #include <linux/workqueue.h>
 #include <linux/dma-mapping.h>
-#include <linux/pfn_t.h>
 
 #ifdef CONFIG_X86
 #include <asm/set_memory.h>
@@ -106,23 +105,32 @@ struct msc_iter {
 
 /**
  * struct msc - MSC device representation
- * @reg_base:		register window base address
+ * @reg_base:		register window base address for the entire MSU
+ * @msu_base:		register window base address for this MSC
  * @thdev:		intel_th_device pointer
  * @mbuf:		MSU buffer, if assigned
- * @mbuf_priv		MSU buffer's private data, if @mbuf
+ * @mbuf_priv:		MSU buffer's private data, if @mbuf
+ * @work:		a work to stop the trace when the buffer is full
  * @win_list:		list of windows in multiblock mode
  * @single_sgt:		single mode buffer
  * @cur_win:		current window
+ * @switch_on_unlock:	window to switch to when it becomes available
  * @nr_pages:		total number of pages allocated for this buffer
  * @single_sz:		amount of data in single mode
  * @single_wrap:	single mode wrap occurred
  * @base:		buffer's base pointer
  * @base_addr:		buffer's base address
+ * @orig_addr:		MSC0 buffer's base address
+ * @orig_sz:		MSC0 buffer's size
  * @user_count:		number of users of the buffer
  * @mmap_count:		number of mappings
  * @buf_mutex:		mutex to serialize access to buffer-related bits
+ * @iter_list:		list of open file descriptor iterators
+ * @stop_on_full:	stop the trace if the current window is full
  * @enabled:		MSC is enabled
  * @wrap:		wrapping is enabled
+ * @do_irq:		IRQ resource is available, handle interrupts
+ * @multi_is_broken:	multiblock mode enabled (not disabled by PCI drvdata)
  * @mode:		MSC operating mode
  * @burst_len:		write burst length
  * @index:		number of this MSC in the MSU
@@ -228,7 +236,7 @@ int intel_th_msu_buffer_register(const struct msu_buffer *mbuf,
 	struct msu_buffer_entry *mbe;
 	int ret = 0;
 
-	mbe = kzalloc(sizeof(*mbe), GFP_KERNEL);
+	mbe = kzalloc_obj(*mbe);
 	if (!mbe)
 		return -ENOMEM;
 
@@ -442,7 +450,7 @@ static struct msc_iter *msc_iter_install(struct msc *msc)
 {
 	struct msc_iter *iter;
 
-	iter = kzalloc(sizeof(*iter), GFP_KERNEL);
+	iter = kzalloc_obj(*iter);
 	if (!iter)
 		return ERR_PTR(-ENOMEM);
 
@@ -1097,7 +1105,7 @@ static int msc_buffer_win_alloc(struct msc *msc, unsigned int nr_blocks)
 	if (!nr_blocks)
 		return 0;
 
-	win = kzalloc(sizeof(*win), GFP_KERNEL);
+	win = kzalloc_obj(*win);
 	if (!win)
 		return -ENOMEM;
 
@@ -1609,7 +1617,7 @@ static vm_fault_t msc_mmap_fault(struct vm_fault *vmf)
 		return VM_FAULT_SIGBUS;
 
 	get_page(page);
-	return vmf_insert_mixed(vmf->vma, vmf->address, page_to_pfn_t(page));
+	return vmf_insert_mixed(vmf->vma, vmf->address, page_to_pfn(page));
 }
 
 static const struct vm_operations_struct msc_mmap_ops = {

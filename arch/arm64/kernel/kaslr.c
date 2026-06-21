@@ -10,8 +10,6 @@
 #include <asm/cpufeature.h>
 #include <asm/memory.h>
 
-u16 __initdata memstart_offset_seed;
-
 bool __ro_after_init __kaslr_is_enabled = false;
 
 void __init kaslr_init(void)
@@ -27,7 +25,7 @@ void __init kaslr_init(void)
 	 * of less than MIN_KIMG_ALIGN means that no seed was provided.
 	 */
 	if (kaslr_offset() < MIN_KIMG_ALIGN) {
-		pr_warn("KASLR disabled due to lack of seed\n");
+		pr_warn("\n");
 		return;
 	}
 

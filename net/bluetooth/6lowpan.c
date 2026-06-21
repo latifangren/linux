@@ -13,6 +13,7 @@
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
+#include <net/netdev_lock.h>
 #include <net/pkt_sched.h>
 
 #include <net/bluetooth/bluetooth.h>
@@ -451,7 +452,7 @@ static int send_pkt(struct l2cap_chan *chan, struct sk_buff *skb,
 	memset(&msg, 0, sizeof(msg));
 	iov_iter_kvec(&msg.msg_iter, ITER_SOURCE, &iv, 1, skb->len);
 
-	err = l2cap_chan_send(chan, &msg, skb->len);
+	err = l2cap_chan_send(chan, &msg, skb->len, NULL);
 	if (err > 0) {
 		netdev->stats.tx_bytes += err;
 		netdev->stats.tx_packets++;
@@ -485,6 +486,8 @@ static int send_mcast_pkt(struct sk_buff *skb, struct net_device *netdev)
 			int ret;
 
 			local_skb = skb_clone(skb, GFP_ATOMIC);
+			if (!local_skb)
+				continue;
 
 			BT_DBG("xmit %s to %pMR type %u IP %pI6c chan %p",
 			       netdev->name,
@@ -644,7 +647,7 @@ static struct l2cap_chan *add_peer_chan(struct l2cap_chan *chan,
 {
 	struct lowpan_peer *peer;
 
-	peer = kzalloc(sizeof(*peer), GFP_ATOMIC);
+	peer = kzalloc_obj(*peer, GFP_ATOMIC);
 	if (!peer)
 		return NULL;
 
@@ -926,7 +929,9 @@ static int bt_6lowpan_disconnect(struct l2cap_conn *conn, u8 dst_type)
 
 	BT_DBG("peer %p chan %p", peer, peer->chan);
 
+	l2cap_chan_lock(peer->chan);
 	l2cap_chan_close(peer->chan, ENOENT);
+	l2cap_chan_unlock(peer->chan);
 
 	return 0;
 }
@@ -1088,7 +1093,9 @@ static void do_enable_set(struct work_struct *work)
 
 	mutex_lock(&set_lock);
 	if (listen_chan) {
+		l2cap_chan_lock(listen_chan);
 		l2cap_chan_close(listen_chan, 0);
+		l2cap_chan_unlock(listen_chan);
 		l2cap_chan_put(listen_chan);
 	}
 
@@ -1102,7 +1109,7 @@ static int lowpan_enable_set(void *data, u64 val)
 {
 	struct set_enable *set_enable;
 
-	set_enable = kzalloc(sizeof(*set_enable), GFP_KERNEL);
+	set_enable = kzalloc_obj(*set_enable);
 	if (!set_enable)
 		return -ENOMEM;
 
@@ -1147,7 +1154,9 @@ static ssize_t lowpan_control_write(struct file *fp,
 
 		mutex_lock(&set_lock);
 		if (listen_chan) {
+			l2cap_chan_lock(listen_chan);
 			l2cap_chan_close(listen_chan, 0);
+			l2cap_chan_unlock(listen_chan);
 			l2cap_chan_put(listen_chan);
 			listen_chan = NULL;
 		}
@@ -1238,7 +1247,7 @@ static void disconnect_devices(void)
 	rcu_read_lock();
 
 	list_for_each_entry_rcu(entry, &bt_6lowpan_devices, list) {
-		new_dev = kmalloc(sizeof(*new_dev), GFP_ATOMIC);
+		new_dev = kmalloc_obj(*new_dev, GFP_ATOMIC);
 		if (!new_dev)
 			break;
 
@@ -1309,7 +1318,9 @@ static void __exit bt_6lowpan_exit(void)
 	debugfs_remove(lowpan_control_debugfs);
 
 	if (listen_chan) {
+		l2cap_chan_lock(listen_chan);
 		l2cap_chan_close(listen_chan, 0);
+		l2cap_chan_unlock(listen_chan);
 		l2cap_chan_put(listen_chan);
 	}
 

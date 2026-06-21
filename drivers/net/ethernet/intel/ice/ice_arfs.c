@@ -534,13 +534,11 @@ static int ice_init_arfs_cntrs(struct ice_vsi *vsi)
 	if (!vsi || vsi->type != ICE_VSI_PF)
 		return -EINVAL;
 
-	vsi->arfs_fltr_cntrs = kzalloc(sizeof(*vsi->arfs_fltr_cntrs),
-				       GFP_KERNEL);
+	vsi->arfs_fltr_cntrs = kzalloc_obj(*vsi->arfs_fltr_cntrs);
 	if (!vsi->arfs_fltr_cntrs)
 		return -ENOMEM;
 
-	vsi->arfs_last_fltr_id = kzalloc(sizeof(*vsi->arfs_last_fltr_id),
-					 GFP_KERNEL);
+	vsi->arfs_last_fltr_id = kzalloc_obj(*vsi->arfs_last_fltr_id);
 	if (!vsi->arfs_last_fltr_id) {
 		kfree(vsi->arfs_fltr_cntrs);
 		vsi->arfs_fltr_cntrs = NULL;
@@ -562,8 +560,7 @@ void ice_init_arfs(struct ice_vsi *vsi)
 	if (!vsi || vsi->type != ICE_VSI_PF || ice_is_arfs_active(vsi))
 		return;
 
-	arfs_fltr_list = kcalloc(ICE_MAX_ARFS_LIST, sizeof(*arfs_fltr_list),
-				 GFP_KERNEL);
+	arfs_fltr_list = kzalloc_objs(*arfs_fltr_list, ICE_MAX_ARFS_LIST);
 	if (!arfs_fltr_list)
 		return;
 
@@ -619,25 +616,6 @@ void ice_clear_arfs(struct ice_vsi *vsi)
 }
 
 /**
- * ice_free_cpu_rx_rmap - free setup CPU reverse map
- * @vsi: the VSI to be forwarded to
- */
-void ice_free_cpu_rx_rmap(struct ice_vsi *vsi)
-{
-	struct net_device *netdev;
-
-	if (!vsi || vsi->type != ICE_VSI_PF)
-		return;
-
-	netdev = vsi->netdev;
-	if (!netdev || !netdev->rx_cpu_rmap)
-		return;
-
-	free_irq_cpu_rmap(netdev->rx_cpu_rmap);
-	netdev->rx_cpu_rmap = NULL;
-}
-
-/**
  * ice_set_cpu_rx_rmap - setup CPU reverse map for each queue
  * @vsi: the VSI to be forwarded to
  */
@@ -645,7 +623,6 @@ int ice_set_cpu_rx_rmap(struct ice_vsi *vsi)
 {
 	struct net_device *netdev;
 	struct ice_pf *pf;
-	int i;
 
 	if (!vsi || vsi->type != ICE_VSI_PF)
 		return 0;
@@ -658,18 +635,7 @@ int ice_set_cpu_rx_rmap(struct ice_vsi *vsi)
 	netdev_dbg(netdev, "Setup CPU RMAP: vsi type 0x%x, ifname %s, q_vectors %d\n",
 		   vsi->type, netdev->name, vsi->num_q_vectors);
 
-	netdev->rx_cpu_rmap = alloc_irq_cpu_rmap(vsi->num_q_vectors);
-	if (unlikely(!netdev->rx_cpu_rmap))
-		return -EINVAL;
-
-	ice_for_each_q_vector(vsi, i)
-		if (irq_cpu_rmap_add(netdev->rx_cpu_rmap,
-				     vsi->q_vectors[i]->irq.virq)) {
-			ice_free_cpu_rx_rmap(vsi);
-			return -EINVAL;
-		}
-
-	return 0;
+	return netif_enable_cpu_rmap(netdev, vsi->num_q_vectors);
 }
 
 /**

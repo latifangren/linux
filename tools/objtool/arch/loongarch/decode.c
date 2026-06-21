@@ -1,16 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <string.h>
 #include <objtool/check.h>
+#include <objtool/disas.h>
 #include <objtool/warn.h>
 #include <asm/inst.h>
 #include <asm/orc_types.h>
 #include <linux/objtool_types.h>
+#include <arch/elf.h>
 
-#ifndef EM_LOONGARCH
-#define EM_LOONGARCH	258
-#endif
+const char *arch_reg_name[CFI_NUM_REGS] = {
+	"zero", "ra", "tp", "sp",
+	"a0", "a1", "a2", "a3",
+	"a4", "a5", "a6", "a7",
+	"t0", "t1", "t2", "t3",
+	"t4", "t5", "t6", "t7",
+	"t8", "u0", "fp", "s0",
+	"s1", "s2", "s3", "s4",
+	"s5", "s6", "s7", "s8"
+};
 
-int arch_ftrace_match(char *name)
+int arch_ftrace_match(const char *name)
 {
 	return !strcmp(name, "_mcount");
 }
@@ -20,9 +29,9 @@ unsigned long arch_jump_destination(struct instruction *insn)
 	return insn->offset + (insn->immediate << 2);
 }
 
-unsigned long arch_dest_reloc_offset(int addend)
+s64 arch_insn_adjusted_addend(struct instruction *insn, struct reloc *reloc)
 {
-	return addend;
+	return reloc_addend(reloc);
 }
 
 bool arch_pc_relative_reloc(struct reloc *reloc)
@@ -66,7 +75,7 @@ static bool is_loongarch(const struct elf *elf)
 	if (elf->ehdr.e_machine == EM_LOONGARCH)
 		return true;
 
-	WARN("unexpected ELF machine type %d", elf->ehdr.e_machine);
+	ERROR("unexpected ELF machine type %d", elf->ehdr.e_machine);
 	return false;
 }
 
@@ -357,8 +366,10 @@ const char *arch_nop_insn(int len)
 {
 	static u32 nop;
 
-	if (len != LOONGARCH_INSN_SIZE)
-		WARN("invalid NOP size: %d\n", len);
+	if (len != LOONGARCH_INSN_SIZE) {
+		ERROR("invalid NOP size: %d\n", len);
+		return NULL;
+	}
 
 	nop = LOONGARCH_INSN_NOP;
 
@@ -369,8 +380,10 @@ const char *arch_ret_insn(int len)
 {
 	static u32 ret;
 
-	if (len != LOONGARCH_INSN_SIZE)
-		WARN("invalid RET size: %d\n", len);
+	if (len != LOONGARCH_INSN_SIZE) {
+		ERROR("invalid RET size: %d\n", len);
+		return NULL;
+	}
 
 	emit_jirl((union loongarch_instruction *)&ret, LOONGARCH_GPR_RA, LOONGARCH_GPR_ZERO, 0);
 
@@ -390,3 +403,37 @@ void arch_initial_func_cfi_state(struct cfi_init_state *state)
 	state->cfa.base = CFI_SP;
 	state->cfa.offset = 0;
 }
+
+unsigned int arch_reloc_size(struct reloc *reloc)
+{
+	switch (reloc_type(reloc)) {
+	case R_LARCH_32:
+	case R_LARCH_32_PCREL:
+		return 4;
+	default:
+		return 8;
+	}
+}
+
+unsigned long arch_jump_table_sym_offset(struct reloc *reloc, struct reloc *table)
+{
+	switch (reloc_type(reloc)) {
+	case R_LARCH_32_PCREL:
+	case R_LARCH_64_PCREL:
+		return reloc->sym->offset + reloc_addend(reloc) -
+		       (reloc_offset(reloc) - reloc_offset(table));
+	default:
+		return reloc->sym->offset + reloc_addend(reloc);
+	}
+}
+
+#ifdef DISAS
+
+int arch_disas_info_init(struct disassemble_info *dinfo)
+{
+	return disas_info_init(dinfo, bfd_arch_loongarch,
+			       bfd_mach_loongarch32, bfd_mach_loongarch64,
+			       NULL);
+}
+
+#endif /* DISAS */

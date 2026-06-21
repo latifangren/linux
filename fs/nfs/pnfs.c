@@ -306,7 +306,6 @@ void
 pnfs_put_layout_hdr(struct pnfs_layout_hdr *lo)
 {
 	struct inode *inode;
-	unsigned long i_state;
 
 	if (!lo)
 		return;
@@ -317,12 +316,11 @@ pnfs_put_layout_hdr(struct pnfs_layout_hdr *lo)
 		if (!list_empty(&lo->plh_segs))
 			WARN_ONCE(1, "NFS: BUG unfreed layout segments.\n");
 		pnfs_detach_layout_hdr(lo);
-		i_state = inode->i_state;
+		/* Notify pnfs_destroy_layout_final() that we're done */
+		if (inode_state_read(inode) & (I_FREEING | I_CLEAR))
+			wake_up_var_locked(lo, &inode->i_lock);
 		spin_unlock(&inode->i_lock);
 		pnfs_free_layout_hdr(lo);
-		/* Notify pnfs_destroy_layout_final() that we're done */
-		if (i_state & (I_FREEING | I_CLEAR))
-			wake_up_var(lo);
 	}
 }
 
@@ -811,23 +809,17 @@ void pnfs_destroy_layout(struct nfs_inode *nfsi)
 }
 EXPORT_SYMBOL_GPL(pnfs_destroy_layout);
 
-static bool pnfs_layout_removed(struct nfs_inode *nfsi,
-				struct pnfs_layout_hdr *lo)
-{
-	bool ret;
-
-	spin_lock(&nfsi->vfs_inode.i_lock);
-	ret = nfsi->layout != lo;
-	spin_unlock(&nfsi->vfs_inode.i_lock);
-	return ret;
-}
-
 void pnfs_destroy_layout_final(struct nfs_inode *nfsi)
 {
 	struct pnfs_layout_hdr *lo = __pnfs_destroy_layout(nfsi);
+	struct inode *inode = &nfsi->vfs_inode;
 
-	if (lo)
-		wait_var_event(lo, pnfs_layout_removed(nfsi, lo));
+	if (lo) {
+		spin_lock(&inode->i_lock);
+		wait_var_event_spinlock(lo, nfsi->layout != lo,
+					&inode->i_lock);
+		spin_unlock(&inode->i_lock);
+	}
 }
 
 static bool
@@ -899,7 +891,7 @@ pnfs_layout_free_bulk_destroy_list(struct list_head *layout_list,
 	while (!list_empty(layout_list)) {
 		lo = list_entry(layout_list->next, struct pnfs_layout_hdr,
 				plh_bulk_destroy);
-		dprintk("%s freeing layout for inode %lu\n", __func__,
+		dprintk("%s freeing layout for inode %llu\n", __func__,
 			lo->plh_inode->i_ino);
 		inode = lo->plh_inode;
 
@@ -1151,7 +1143,7 @@ static struct page **nfs4_alloc_pages(size_t size, gfp_t gfp_flags)
 	struct page **pages;
 	int i;
 
-	pages = kmalloc_array(size, sizeof(struct page *), gfp_flags);
+	pages = kmalloc_objs(struct page *, size, gfp_flags);
 	if (!pages) {
 		dprintk("%s: can't alloc array of %zu pages\n", __func__, size);
 		return NULL;
@@ -1183,7 +1175,7 @@ pnfs_alloc_init_layoutget_args(struct inode *ino,
 
 	dprintk("--> %s\n", __func__);
 
-	lgp = kzalloc(sizeof(*lgp), gfp_flags);
+	lgp = kzalloc_obj(*lgp, gfp_flags);
 	if (lgp == NULL)
 		return NULL;
 
@@ -1256,21 +1248,15 @@ static void pnfs_clear_layoutcommit(struct inode *inode,
 static void
 pnfs_layoutreturn_retry_later_locked(struct pnfs_layout_hdr *lo,
 				     const nfs4_stateid *arg_stateid,
-				     const struct pnfs_layout_range *range)
+				     const struct pnfs_layout_range *range,
+				     struct list_head *freeme)
 {
-	const struct pnfs_layout_segment *lseg;
-	u32 seq = be32_to_cpu(arg_stateid->seqid);
-
 	if (pnfs_layout_is_valid(lo) &&
-	    nfs4_stateid_match_other(&lo->plh_stateid, arg_stateid)) {
-		list_for_each_entry(lseg, &lo->plh_return_segs, pls_list) {
-			if (pnfs_seqid_is_newer(lseg->pls_seq, seq) ||
-			    !pnfs_should_free_range(&lseg->pls_range, range))
-				continue;
-			pnfs_set_plh_return_info(lo, range->iomode, seq);
-			break;
-		}
-	}
+	    nfs4_stateid_match_other(&lo->plh_stateid, arg_stateid))
+		pnfs_reset_return_info(lo);
+	else
+		pnfs_mark_layout_stateid_invalid(lo, freeme);
+	pnfs_clear_layoutreturn_waitbit(lo);
 }
 
 void pnfs_layoutreturn_retry_later(struct pnfs_layout_hdr *lo,
@@ -1278,11 +1264,12 @@ void pnfs_layoutreturn_retry_later(struct pnfs_layout_hdr *lo,
 				   const struct pnfs_layout_range *range)
 {
 	struct inode *inode = lo->plh_inode;
+	LIST_HEAD(freeme);
 
 	spin_lock(&inode->i_lock);
-	pnfs_layoutreturn_retry_later_locked(lo, arg_stateid, range);
-	pnfs_clear_layoutreturn_waitbit(lo);
+	pnfs_layoutreturn_retry_later_locked(lo, arg_stateid, range, &freeme);
 	spin_unlock(&inode->i_lock);
+	pnfs_free_lseg_list(&freeme);
 }
 
 void pnfs_layoutreturn_free_lsegs(struct pnfs_layout_hdr *lo,
@@ -1370,7 +1357,7 @@ pnfs_send_layoutreturn(struct pnfs_layout_hdr *lo,
 	int status = 0;
 
 	*pcred = NULL;
-	lrp = kzalloc(sizeof(*lrp), nfs_io_gfp_mask());
+	lrp = kzalloc_obj(*lrp, nfs_io_gfp_mask());
 	if (unlikely(lrp == NULL)) {
 		status = -ENOMEM;
 		spin_lock(&ino->i_lock);
@@ -1453,7 +1440,7 @@ _pnfs_return_layout(struct inode *ino)
 	int status = 0;
 	bool send, valid_layout;
 
-	dprintk("NFS: %s for inode %lu\n", __func__, ino->i_ino);
+	dprintk("NFS: %s for inode %llu\n", __func__, ino->i_ino);
 
 	spin_lock(&ino->i_lock);
 	lo = nfsi->layout;
@@ -1696,14 +1683,38 @@ int pnfs_roc_done(struct rpc_task *task, struct nfs4_layoutreturn_args **argpp,
 		/* Was there an RPC level error? If not, retry */
 		if (task->tk_rpc_status == 0)
 			break;
+		/*
+		 * Is there a fatal network level error?
+		 * If so release the layout, but flag the error.
+		 */
+		if ((task->tk_rpc_status == -ENETDOWN ||
+		     task->tk_rpc_status == -ENETUNREACH) &&
+		    task->tk_flags & RPC_TASK_NETUNREACH_FATAL) {
+			*ret = 0;
+			(*respp)->lrs_present = 0;
+			retval = -EIO;
+			break;
+		}
 		/* If the call was not sent, let caller handle it */
 		if (!RPC_WAS_SENT(task))
 			return 0;
-		/*
-		 * Otherwise, assume the call succeeded and
-		 * that we need to release the layout
-		 */
-		*ret = 0;
+		switch (task->tk_rpc_status) {
+		default:
+			/*
+			 * Defer the layoutreturn if it was due
+			 * to the server being down.
+			 */
+			*ret = -NFS4ERR_NOMATCHING_LAYOUT;
+			break;
+		case -EACCES:
+		case -EIO:
+		case -EKEYEXPIRED:
+		case -ERESTARTSYS:
+		case -EINTR:
+			/* Don't retry */
+			*ret = 0;
+			break;
+		}
 		(*respp)->lrs_present = 0;
 		retval = 0;
 		break;
@@ -1730,6 +1741,7 @@ void pnfs_roc_release(struct nfs4_layoutreturn_args *args,
 	struct inode *inode = args->inode;
 	const nfs4_stateid *res_stateid = NULL;
 	struct nfs4_xdr_opaque_data *ld_private = args->ld_private;
+	LIST_HEAD(freeme);
 
 	switch (ret) {
 	case -NFS4ERR_BADSESSION:
@@ -1738,9 +1750,9 @@ void pnfs_roc_release(struct nfs4_layoutreturn_args *args,
 	case -NFS4ERR_NOMATCHING_LAYOUT:
 		spin_lock(&inode->i_lock);
 		pnfs_layoutreturn_retry_later_locked(lo, &args->stateid,
-						     &args->range);
-		pnfs_clear_layoutreturn_waitbit(lo);
+						     &args->range, &freeme);
 		spin_unlock(&inode->i_lock);
+		pnfs_free_lseg_list(&freeme);
 		break;
 	case 0:
 		if (res->lrs_present)
@@ -3055,7 +3067,7 @@ pnfs_try_to_write_data(struct nfs_pgio_header *hdr,
 
 	hdr->mds_ops = call_ops;
 
-	dprintk("%s: Writing ino:%lu %u@%llu (how %d)\n", __func__,
+	dprintk("%s: Writing ino:%llu %u@%llu (how %d)\n", __func__,
 		inode->i_ino, hdr->args.count, hdr->args.offset, how);
 	trypnfs = nfss->pnfs_curr_ld->write_pagelist(hdr, how);
 	if (trypnfs != PNFS_NOT_ATTEMPTED)
@@ -3181,7 +3193,7 @@ pnfs_try_to_read_data(struct nfs_pgio_header *hdr,
 
 	hdr->mds_ops = call_ops;
 
-	dprintk("%s: Reading ino:%lu %u@%llu\n",
+	dprintk("%s: Reading ino:%llu %u@%llu\n",
 		__func__, inode->i_ino, hdr->args.count, hdr->args.offset);
 
 	trypnfs = nfss->pnfs_curr_ld->read_pagelist(hdr);
@@ -3314,7 +3326,7 @@ pnfs_set_layoutcommit(struct inode *inode, struct pnfs_layout_segment *lseg,
 	if (!test_and_set_bit(NFS_INO_LAYOUTCOMMIT, &nfsi->flags)) {
 		nfsi->layout->plh_lwb = end_pos;
 		mark_as_dirty = true;
-		dprintk("%s: Set layoutcommit for inode %lu ",
+		dprintk("%s: Set layoutcommit for inode %llu ",
 			__func__, inode->i_ino);
 	} else if (end_pos > nfsi->layout->plh_lwb)
 		nfsi->layout->plh_lwb = end_pos;
@@ -3363,7 +3375,7 @@ pnfs_layoutcommit_inode(struct inode *inode, bool sync)
 	if (!pnfs_layoutcommit_outstanding(inode))
 		return 0;
 
-	dprintk("--> %s inode %lu\n", __func__, inode->i_ino);
+	dprintk("--> %s inode %llu\n", __func__, inode->i_ino);
 
 	status = -EAGAIN;
 	if (test_and_set_bit(NFS_INO_LAYOUTCOMMITTING, &nfsi->flags)) {
@@ -3379,7 +3391,7 @@ pnfs_layoutcommit_inode(struct inode *inode, bool sync)
 
 	status = -ENOMEM;
 	/* Note kzalloc ensures data->res.seq_res.sr_slot == NULL */
-	data = kzalloc(sizeof(*data), nfs_io_gfp_mask());
+	data = kzalloc_obj(*data, nfs_io_gfp_mask());
 	if (!data)
 		goto clear_layoutcommitting;
 
@@ -3450,7 +3462,7 @@ struct nfs4_threshold *pnfs_mdsthreshold_alloc(void)
 {
 	struct nfs4_threshold *thp;
 
-	thp = kzalloc(sizeof(*thp), nfs_io_gfp_mask());
+	thp = kzalloc_obj(*thp, nfs_io_gfp_mask());
 	if (!thp) {
 		dprintk("%s mdsthreshold allocation failed\n", __func__);
 		return NULL;
@@ -3487,7 +3499,7 @@ pnfs_report_layoutstat(struct inode *inode, gfp_t gfp_flags)
 	pnfs_get_layout_hdr(hdr);
 	spin_unlock(&inode->i_lock);
 
-	data = kzalloc(sizeof(*data), gfp_flags);
+	data = kzalloc_obj(*data, gfp_flags);
 	if (!data) {
 		status = -ENOMEM;
 		goto out_put;

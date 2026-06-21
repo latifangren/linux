@@ -75,7 +75,7 @@ struct resource *platform_get_mem_or_io(struct platform_device *dev,
 	for (i = 0; i < dev->num_resources; i++) {
 		struct resource *r = &dev->resource[i];
 
-		if ((resource_type(r) & (IORESOURCE_MEM|IORESOURCE_IO)) && num-- == 0)
+		if ((resource_type(r) & (IORESOURCE_MEM | IORESOURCE_IO)) && num-- == 0)
 			return r;
 	}
 	return NULL;
@@ -97,7 +97,7 @@ EXPORT_SYMBOL_GPL(platform_get_mem_or_io);
  */
 void __iomem *
 devm_platform_get_and_ioremap_resource(struct platform_device *pdev,
-				unsigned int index, struct resource **res)
+				       unsigned int index, struct resource **res)
 {
 	struct resource *r;
 
@@ -150,25 +150,37 @@ devm_platform_ioremap_resource_byname(struct platform_device *pdev,
 EXPORT_SYMBOL_GPL(devm_platform_ioremap_resource_byname);
 #endif /* CONFIG_HAS_IOMEM */
 
+static const struct cpumask *get_irq_affinity(struct platform_device *dev,
+					      unsigned int num)
+{
+	const struct cpumask *mask = NULL;
+#ifndef CONFIG_SPARC
+	struct fwnode_handle *fwnode = dev_fwnode(&dev->dev);
+
+	if (is_of_node(fwnode))
+		mask = of_irq_get_affinity(to_of_node(fwnode), num);
+	else if (is_acpi_device_node(fwnode))
+		mask = acpi_irq_get_affinity(ACPI_HANDLE_FWNODE(fwnode), num);
+#endif
+
+	return mask ?: cpu_possible_mask;
+}
+
 /**
- * platform_get_irq_optional - get an optional IRQ for a device
- * @dev: platform device
- * @num: IRQ number index
+ * platform_get_irq_affinity - get an optional IRQ and its affinity for a device
+ * @dev:	platform device
+ * @num:	interrupt number index
+ * @affinity:	optional cpumask pointer to get the affinity of a per-cpu interrupt
  *
- * Gets an IRQ for a platform device. Device drivers should check the return
- * value for errors so as to not pass a negative integer value to the
- * request_irq() APIs. This is the same as platform_get_irq(), except that it
- * does not print an error message if an IRQ can not be obtained.
+ * Gets an interrupt for a platform device. Device drivers should check the
+ * return value for errors so as to not pass a negative integer value to
+ * the request_irq() APIs. Optional affinity information is provided in the
+ * affinity pointer if available, and NULL otherwise.
  *
- * For example::
- *
- *		int irq = platform_get_irq_optional(pdev, 0);
- *		if (irq < 0)
- *			return irq;
- *
- * Return: non-zero IRQ number on success, negative error number on failure.
+ * Return: non-zero interrupt number on success, negative error number on failure.
  */
-int platform_get_irq_optional(struct platform_device *dev, unsigned int num)
+int platform_get_irq_affinity(struct platform_device *dev, unsigned int num,
+			      const struct cpumask **affinity)
 {
 	int ret;
 #ifdef CONFIG_SPARC
@@ -236,7 +248,36 @@ out_not_found:
 out:
 	if (WARN(!ret, "0 is an invalid IRQ number\n"))
 		return -EINVAL;
+
+	if (ret > 0 && affinity)
+		*affinity = get_irq_affinity(dev, num);
+
 	return ret;
+}
+EXPORT_SYMBOL_GPL(platform_get_irq_affinity);
+
+/**
+ * platform_get_irq_optional - get an optional interrupt for a device
+ * @dev:	platform device
+ * @num:	interrupt number index
+ *
+ * Gets an interrupt for a platform device. Device drivers should check the
+ * return value for errors so as to not pass a negative integer value to
+ * the request_irq() APIs. This is the same as platform_get_irq(), except
+ * that it does not print an error message if an interrupt can not be
+ * obtained.
+ *
+ * For example::
+ *
+ *		int irq = platform_get_irq_optional(pdev, 0);
+ *		if (irq < 0)
+ *			return irq;
+ *
+ * Return: non-zero interrupt number on success, negative error number on failure.
+ */
+int platform_get_irq_optional(struct platform_device *dev, unsigned int num)
+{
+	return platform_get_irq_affinity(dev, num, NULL);
 }
 EXPORT_SYMBOL_GPL(platform_get_irq_optional);
 
@@ -565,6 +606,12 @@ static void platform_device_release(struct device *dev)
 	kfree(pa);
 }
 
+static void platform_device_release_full(struct device *dev)
+{
+	device_remove_software_node(dev);
+	platform_device_release(dev);
+}
+
 /**
  * platform_device_alloc - create a platform device
  * @name: base name of the device we're adding
@@ -802,11 +849,19 @@ EXPORT_SYMBOL_GPL(platform_device_unregister);
  *
  * Returns &struct platform_device pointer on success, or ERR_PTR() on error.
  */
-struct platform_device *platform_device_register_full(
-		const struct platform_device_info *pdevinfo)
+struct platform_device *platform_device_register_full(const struct platform_device_info *pdevinfo)
 {
 	int ret;
 	struct platform_device *pdev;
+
+	/*
+	 * Only one software node per device is allowed. Make sure we don't
+	 * accept or create two.
+	 */
+	if ((pdevinfo->swnode && pdevinfo->properties) ||
+	    (pdevinfo->swnode && is_software_node(pdevinfo->fwnode)) ||
+	    (pdevinfo->properties && is_software_node(pdevinfo->fwnode)))
+		return ERR_PTR(-EINVAL);
 
 	pdev = platform_device_alloc(pdevinfo->name, pdevinfo->id);
 	if (!pdev)
@@ -823,17 +878,21 @@ struct platform_device *platform_device_register_full(
 		pdev->dev.coherent_dma_mask = pdevinfo->dma_mask;
 	}
 
-	ret = platform_device_add_resources(pdev,
-			pdevinfo->res, pdevinfo->num_res);
+	ret = platform_device_add_resources(pdev, pdevinfo->res, pdevinfo->num_res);
 	if (ret)
 		goto err;
 
-	ret = platform_device_add_data(pdev,
-			pdevinfo->data, pdevinfo->size_data);
+	ret = platform_device_add_data(pdev, pdevinfo->data, pdevinfo->size_data);
 	if (ret)
 		goto err;
 
-	if (pdevinfo->properties) {
+	if (pdevinfo->swnode) {
+		ret = device_add_software_node(&pdev->dev, pdevinfo->swnode);
+		if (ret)
+			goto err;
+
+		pdev->dev.release = platform_device_release_full;
+	} else if (pdevinfo->properties) {
 		ret = device_create_managed_software_node(&pdev->dev,
 							  pdevinfo->properties, NULL);
 		if (ret)
@@ -857,8 +916,7 @@ EXPORT_SYMBOL_GPL(platform_device_register_full);
  * @drv: platform driver structure
  * @owner: owning module/driver
  */
-int __platform_driver_register(struct platform_driver *drv,
-				struct module *owner)
+int __platform_driver_register(struct platform_driver *drv, struct module *owner)
 {
 	drv->driver.owner = owner;
 	drv->driver.bus = &platform_bus_type;
@@ -910,13 +968,14 @@ static int is_bound_to_driver(struct device *dev, void *driver)
  * a negative error code and with the driver not registered.
  */
 int __init_or_module __platform_driver_probe(struct platform_driver *drv,
-		int (*probe)(struct platform_device *), struct module *module)
+					     int (*probe)(struct platform_device *),
+					     struct module *module)
 {
 	int retval;
 
 	if (drv->driver.probe_type == PROBE_PREFER_ASYNCHRONOUS) {
 		pr_err("%s: drivers registered with %s can not be probed asynchronously\n",
-			 drv->driver.name, __func__);
+		       drv->driver.name, __func__);
 		return -EINVAL;
 	}
 
@@ -972,16 +1031,16 @@ EXPORT_SYMBOL_GPL(__platform_driver_probe);
  *
  * Returns &struct platform_device pointer on success, or ERR_PTR() on error.
  */
-struct platform_device * __init_or_module __platform_create_bundle(
-			struct platform_driver *driver,
-			int (*probe)(struct platform_device *),
-			struct resource *res, unsigned int n_res,
-			const void *data, size_t size, struct module *module)
+struct platform_device * __init_or_module
+__platform_create_bundle(struct platform_driver *driver,
+			 int (*probe)(struct platform_device *),
+			 struct resource *res, unsigned int n_res,
+			 const void *data, size_t size, struct module *module)
 {
 	struct platform_device *pdev;
 	int error;
 
-	pdev = platform_device_alloc(driver->driver.name, -1);
+	pdev = platform_device_alloc(driver->driver.name, PLATFORM_DEVID_NONE);
 	if (!pdev) {
 		error = -ENOMEM;
 		goto err_out;
@@ -1075,9 +1134,8 @@ void platform_unregister_drivers(struct platform_driver * const *drivers,
 }
 EXPORT_SYMBOL_GPL(platform_unregister_drivers);
 
-static const struct platform_device_id *platform_match_id(
-			const struct platform_device_id *id,
-			struct platform_device *pdev)
+static const struct platform_device_id *
+platform_match_id(const struct platform_device_id *id, struct platform_device *pdev)
 {
 	while (id->name[0]) {
 		if (strcmp(pdev->name, id->name) == 0) {
@@ -1270,13 +1328,12 @@ static struct attribute *platform_dev_attrs[] = {
 	NULL,
 };
 
-static umode_t platform_dev_attrs_visible(struct kobject *kobj, struct attribute *a,
-		int n)
+static umode_t platform_dev_attrs_visible(struct kobject *kobj,
+					  struct attribute *a, int n)
 {
 	struct device *dev = container_of(kobj, typeof(*dev), kobj);
 
-	if (a == &dev_attr_numa_node.attr &&
-			dev_to_node(dev) == NUMA_NO_NODE)
+	if (a == &dev_attr_numa_node.attr && dev_to_node(dev) == NUMA_NO_NODE)
 		return 0;
 
 	return a->mode;
@@ -1287,7 +1344,6 @@ static const struct attribute_group platform_dev_group = {
 	.is_visible = platform_dev_attrs_visible,
 };
 __ATTRIBUTE_GROUPS(platform_dev);
-
 
 /**
  * platform_match - bind platform device to platform driver.
@@ -1343,8 +1399,7 @@ static int platform_uevent(const struct device *dev, struct kobj_uevent_env *env
 	if (rc != -ENODEV)
 		return rc;
 
-	add_uevent_var(env, "MODALIAS=%s%s", PLATFORM_MODULE_PREFIX,
-			pdev->name);
+	add_uevent_var(env, "MODALIAS=%s%s", PLATFORM_MODULE_PREFIX, pdev->name);
 	return 0;
 }
 
@@ -1368,15 +1423,13 @@ static int platform_probe(struct device *_dev)
 	if (ret < 0)
 		return ret;
 
-	ret = dev_pm_domain_attach(_dev, true);
+	ret = dev_pm_domain_attach(_dev, PD_FLAG_ATTACH_POWER_ON |
+					 PD_FLAG_DETACH_POWER_OFF);
 	if (ret)
 		goto out;
 
-	if (drv->probe) {
+	if (drv->probe)
 		ret = drv->probe(dev);
-		if (ret)
-			dev_pm_domain_detach(_dev, true);
-	}
 
 out:
 	if (drv->prevent_deferred_probe && ret == -EPROBE_DEFER) {
@@ -1394,7 +1447,6 @@ static void platform_remove(struct device *_dev)
 
 	if (drv->remove)
 		drv->remove(dev);
-	dev_pm_domain_detach(_dev, true);
 }
 
 static void platform_shutdown(struct device *_dev)
@@ -1412,7 +1464,7 @@ static void platform_shutdown(struct device *_dev)
 
 static int platform_dma_configure(struct device *dev)
 {
-	struct platform_driver *drv = to_platform_driver(dev->driver);
+	struct device_driver *drv = READ_ONCE(dev->driver);
 	struct fwnode_handle *fwnode = dev_fwnode(dev);
 	enum dev_dma_attr attr;
 	int ret = 0;
@@ -1423,7 +1475,8 @@ static int platform_dma_configure(struct device *dev)
 		attr = acpi_get_dma_attr(to_acpi_device_node(fwnode));
 		ret = acpi_dma_configure(dev, attr);
 	}
-	if (ret || drv->driver_managed_dma)
+	/* @dev->driver may not be valid when we're called from the IOMMU layer */
+	if (ret || !drv || to_platform_driver(drv)->driver_managed_dma)
 		return ret;
 
 	ret = iommu_device_use_default_domain(dev);

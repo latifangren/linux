@@ -108,6 +108,7 @@ allOf:
       properties:
         clocks:
           minItems: 4
+          maxItems: 4
         clock-names:
           items:
             - const: otp
@@ -116,6 +117,7 @@ allOf:
             - const: sbpi
         resets:
           minItems: 4
+          maxItems: 4
         reset-names:
           items:
             - const: otp
@@ -156,6 +158,7 @@ allOf:
       properties:
         clocks:
           minItems: 4
+          maxItems: 4
         clock-names:
           items:
             - const: otp

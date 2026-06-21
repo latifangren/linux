@@ -26,7 +26,7 @@ struct kmem_cache *btracker_work_cache = NULL;
 
 struct background_tracker *btracker_create(unsigned int max_work)
 {
-	struct background_tracker *b = kmalloc(sizeof(*b), GFP_KERNEL);
+	struct background_tracker *b = kmalloc_obj(*b);
 
 	if (!b) {
 		DMERR("couldn't create background_tracker");
@@ -142,12 +142,6 @@ static void update_stats(struct background_tracker *b, struct policy_work *w, in
 		break;
 	}
 }
-
-unsigned int btracker_nr_writebacks_queued(struct background_tracker *b)
-{
-	return atomic_read(&b->pending_writebacks);
-}
-EXPORT_SYMBOL_GPL(btracker_nr_writebacks_queued);
 
 unsigned int btracker_nr_demotions_queued(struct background_tracker *b)
 {

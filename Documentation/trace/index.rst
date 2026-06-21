@@ -14,7 +14,7 @@ This section provides an overview of Linux tracing mechanisms
 and debugging approaches.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    debugging
    tracepoints
@@ -36,6 +36,7 @@ the Linux kernel.
    kprobes
    kprobetrace
    fprobetrace
+   eprobetrace
    fprobe
    ring-buffer-design
 
@@ -54,6 +55,7 @@ applications.
    events-nmi
    events-msr
    events-pci
+   events-pci-controller
    boottime-trace
    histogram
    histogram-design
@@ -90,15 +92,19 @@ interactions.
    user_events
    uprobetracer
 
+Remote Tracing
+--------------
+
+This section covers the framework to read compatible ring-buffers, written by
+entities outside of the kernel (most likely firmware or hypervisor)
+
+.. toctree::
+   :maxdepth: 1
+
+   remotes
+
 Additional Resources
 --------------------
 
 For more details, refer to the respective documentation of each
 tracing tool and framework.
-
-.. only:: subproject and html
-
-   Indices
-   =======
-
-   * :ref:`genindex`

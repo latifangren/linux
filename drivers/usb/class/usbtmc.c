@@ -172,7 +172,7 @@ static int usbtmc_open(struct inode *inode, struct file *filp)
 		return -ENODEV;
 	}
 
-	file_data = kzalloc(sizeof(*file_data), GFP_KERNEL);
+	file_data = kzalloc_obj(*file_data);
 	if (!file_data)
 		return -ENOMEM;
 
@@ -1939,10 +1939,8 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 	u8 *buffer = NULL;
 	int rv;
 	unsigned int is_in, pipe;
-	unsigned long res;
 
-	res = copy_from_user(&request, arg, sizeof(struct usbtmc_ctrlrequest));
-	if (res)
+	if (copy_from_user(&request, arg, sizeof(struct usbtmc_ctrlrequest)))
 		return -EFAULT;
 
 	if (request.req.wLength > USBTMC_BUFSIZE)
@@ -1959,9 +1957,8 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 
 		if (!is_in) {
 			/* Send control data to device */
-			res = copy_from_user(buffer, request.data,
-					     request.req.wLength);
-			if (res) {
+			if (copy_from_user(buffer, request.data,
+					   request.req.wLength)) {
 				rv = -EFAULT;
 				goto exit;
 			}
@@ -1987,8 +1984,7 @@ static int usbtmc_ioctl_request(struct usbtmc_device_data *data,
 
 	if (rv && is_in) {
 		/* Read control data from device */
-		res = copy_to_user(request.data, buffer, rv);
-		if (res)
+		if (copy_to_user(request.data, buffer, rv))
 			rv = -EFAULT;
 	}
 
@@ -2310,6 +2306,14 @@ static void usbtmc_interrupt(struct urb *urb)
 
 	switch (status) {
 	case 0: /* SUCCESS */
+		/* ensure at least two bytes of headers were transferred */
+		if (urb->actual_length < 2) {
+			dev_warn(dev,
+				"actual length %d not sufficient for interrupt headers\n",
+				urb->actual_length);
+			goto exit;
+		}
+
 		/* check for valid STB notification */
 		if (data->iin_buffer[0] > 0x81) {
 			data->bNotify1 = data->iin_buffer[0];
@@ -2385,7 +2389,7 @@ static int usbtmc_probe(struct usb_interface *intf,
 
 	dev_dbg(&intf->dev, "%s called\n", __func__);
 
-	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	data = kzalloc_obj(*data);
 	if (!data)
 		return -ENOMEM;
 
@@ -2436,6 +2440,12 @@ static int usbtmc_probe(struct usb_interface *intf,
 		data->iin_ep = int_in->bEndpointAddress;
 		data->iin_wMaxPacketSize = usb_endpoint_maxp(int_in);
 		data->iin_interval = int_in->bInterval;
+		/* wMaxPacketSize should be 0x02 or more as per USB488 Table 22 */
+		if (iface_desc->desc.bInterfaceProtocol == 1 &&
+		    data->iin_wMaxPacketSize < 2) {
+			retcode = -EINVAL;
+			goto err_put;
+		}
 		dev_dbg(&intf->dev, "Found Int in endpoint at %u\n",
 				data->iin_ep);
 	}

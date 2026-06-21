@@ -155,7 +155,7 @@
  */
 #define MESON_SAR_ADC_REG11					0x2c
 	#define MESON_SAR_ADC_REG11_BANDGAP_EN			BIT(13)
-	#define MESON_SAR_ADC_REG11_CMV_SEL                     BIT(6)
+	#define MESON_SAR_ADC_REG11_CMV_SEL			BIT(6)
 	#define MESON_SAR_ADC_REG11_VREF_VOLTAGE		BIT(5)
 	#define MESON_SAR_ADC_REG11_EOC				BIT(1)
 	#define MESON_SAR_ADC_REG11_VREF_SEL			BIT(0)
@@ -227,11 +227,6 @@
 enum meson_sar_adc_vref_sel {
 	VREF_CALIBATION_VOLTAGE = 0,
 	VREF_VDDA = 1,
-};
-
-enum meson_sar_adc_vref_voltage {
-	VREF_VOLTAGE_0V9 = 0,
-	VREF_VOLTAGE_1V8 = 1,
 };
 
 enum meson_sar_adc_avg_mode {
@@ -330,12 +325,12 @@ struct meson_sar_adc_param {
 	u8					temperature_trimming_bits;
 	unsigned int				temperature_multiplier;
 	unsigned int				temperature_divider;
-	bool					disable_ring_counter;
+	u8					disable_ring_counter;
 	bool					has_vref_select;
-	bool					cmv_select;
-	bool					adc_eoc;
-	enum meson_sar_adc_vref_sel		vref_select;
-	enum meson_sar_adc_vref_voltage		vref_voltage;
+	u8					vref_select;
+	u8					cmv_select;
+	u8					adc_eoc;
+	enum meson_sar_adc_vref_sel		vref_voltage;
 	bool					enable_mpll_clock_workaround;
 };
 
@@ -797,7 +792,7 @@ static int meson_sar_adc_temp_sensor_init(struct iio_dev *indio_dev)
 	size_t read_len;
 	int ret;
 
-	temperature_calib = devm_nvmem_cell_get(dev, "temperature_calib");
+	temperature_calib = nvmem_cell_get(dev, "temperature_calib");
 	if (IS_ERR(temperature_calib)) {
 		ret = PTR_ERR(temperature_calib);
 
@@ -811,18 +806,21 @@ static int meson_sar_adc_temp_sensor_init(struct iio_dev *indio_dev)
 		return dev_err_probe(dev, ret, "failed to get temperature_calib cell\n");
 	}
 
-	priv->tsc_regmap = syscon_regmap_lookup_by_phandle(dev->of_node, "amlogic,hhi-sysctrl");
-	if (IS_ERR(priv->tsc_regmap))
-		return dev_err_probe(dev, PTR_ERR(priv->tsc_regmap),
-				     "failed to get amlogic,hhi-sysctrl regmap\n");
-
 	read_len = MESON_SAR_ADC_EFUSE_BYTES;
 	buf = nvmem_cell_read(temperature_calib, &read_len);
+	nvmem_cell_put(temperature_calib);
 	if (IS_ERR(buf))
 		return dev_err_probe(dev, PTR_ERR(buf), "failed to read temperature_calib cell\n");
 	if (read_len != MESON_SAR_ADC_EFUSE_BYTES) {
 		kfree(buf);
 		return dev_err_probe(dev, -EINVAL, "invalid read size of temperature_calib cell\n");
+	}
+
+	priv->tsc_regmap = syscon_regmap_lookup_by_phandle(dev->of_node, "amlogic,hhi-sysctrl");
+	if (IS_ERR(priv->tsc_regmap)) {
+		kfree(buf);
+		return dev_err_probe(dev, PTR_ERR(priv->tsc_regmap),
+				     "failed to get amlogic,hhi-sysctrl regmap\n");
 	}
 
 	trimming_bits = priv->param->temperature_trimming_bits;
@@ -979,16 +977,14 @@ static int meson_sar_adc_init(struct iio_dev *indio_dev)
 				  MESON_SAR_ADC_DELTA_10_TS_REVE0);
 	}
 
-	if (priv->param->disable_ring_counter)
-		regval = MESON_SAR_ADC_REG3_CTRL_CONT_RING_COUNTER_EN;
-	else
-		regval = 0;
+	regval = FIELD_PREP(MESON_SAR_ADC_REG3_CTRL_CONT_RING_COUNTER_EN,
+			    priv->param->disable_ring_counter);
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG3,
 			   MESON_SAR_ADC_REG3_CTRL_CONT_RING_COUNTER_EN,
 			   regval);
 
 	if (priv->param->regmap_config->max_register >= MESON_SAR_ADC_REG11) {
-		regval = priv->param->adc_eoc ? MESON_SAR_ADC_REG11_EOC : 0;
+		regval = FIELD_PREP(MESON_SAR_ADC_REG11_EOC, priv->param->adc_eoc);
 		regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
 				   MESON_SAR_ADC_REG11_EOC, regval);
 
@@ -1004,13 +1000,14 @@ static int meson_sar_adc_init(struct iio_dev *indio_dev)
 		regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
 				   MESON_SAR_ADC_REG11_VREF_VOLTAGE, regval);
 
-		regval = priv->param->cmv_select ? MESON_SAR_ADC_REG11_CMV_SEL : 0;
+		regval = FIELD_PREP(MESON_SAR_ADC_REG11_CMV_SEL,
+				    priv->param->cmv_select);
 		regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG11,
 				   MESON_SAR_ADC_REG11_CMV_SEL, regval);
 
 		if (priv->param->enable_mpll_clock_workaround) {
 			dev_warn(dev,
-				 "Enabling unknown bits to make the MPLL clocks work\n");
+				 "Enabling unknown bits to make the MPLL clocks work. This may change so always update dtbs and kernel together\n");
 			regmap_write(priv->regmap, MESON_SAR_ADC_REG12,
 				     MESON_SAR_ADC_REG12_MPLL0_UNKNOWN |
 				     MESON_SAR_ADC_REG12_MPLL1_UNKNOWN |
@@ -1187,12 +1184,12 @@ static int read_label(struct iio_dev *indio_dev,
 		      char *label)
 {
 	if (chan->type == IIO_TEMP)
-		return sprintf(label, "temp-sensor\n");
+		return sysfs_emit(label, "temp-sensor\n");
 	if (chan->type == IIO_VOLTAGE && chan->channel >= NUM_MUX_0_VSS)
-		return sprintf(label, "%s\n",
+		return sysfs_emit(label, "%s\n",
 			       chan7_mux_names[chan->channel - NUM_MUX_0_VSS]);
 	if (chan->type == IIO_VOLTAGE)
-		return sprintf(label, "channel-%d\n", chan->channel);
+		return sysfs_emit(label, "channel-%d\n", chan->channel);
 	return 0;
 }
 
@@ -1226,8 +1223,8 @@ static const struct meson_sar_adc_param meson_sar_adc_gxbb_param = {
 	.clock_rate = 1200000,
 	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 10,
-	.vref_voltage = VREF_VOLTAGE_1V8,
-	.cmv_select = true,
+	.vref_voltage = 1,
+	.cmv_select = 1,
 };
 
 static const struct meson_sar_adc_param meson_sar_adc_gxl_param = {
@@ -1236,8 +1233,8 @@ static const struct meson_sar_adc_param meson_sar_adc_gxl_param = {
 	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.disable_ring_counter = 1,
-	.vref_voltage = VREF_VOLTAGE_1V8,
-	.cmv_select = true,
+	.vref_voltage = 1,
+	.cmv_select = 1,
 };
 
 static const struct meson_sar_adc_param meson_sar_adc_gxlx_param = {
@@ -1246,7 +1243,7 @@ static const struct meson_sar_adc_param meson_sar_adc_gxlx_param = {
 	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.disable_ring_counter = 1,
-	.vref_voltage = VREF_VOLTAGE_1V8,
+	.vref_voltage = 1,
 	.cmv_select = true,
 	.enable_mpll_clock_workaround = true,
 };
@@ -1257,10 +1254,10 @@ static const struct meson_sar_adc_param meson_sar_adc_axg_param = {
 	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.disable_ring_counter = 1,
-	.vref_voltage = VREF_VOLTAGE_1V8,
+	.vref_voltage = 1,
 	.has_vref_select = true,
 	.vref_select = VREF_VDDA,
-	.cmv_select = true,
+	.cmv_select = 1,
 };
 
 static const struct meson_sar_adc_param meson_sar_adc_g12a_param = {
@@ -1269,8 +1266,7 @@ static const struct meson_sar_adc_param meson_sar_adc_g12a_param = {
 	.regmap_config = &meson_sar_adc_regmap_config_gxbb,
 	.resolution = 12,
 	.disable_ring_counter = 1,
-	.vref_voltage = VREF_VOLTAGE_0V9,
-	.adc_eoc = true,
+	.adc_eoc = 1,
 	.has_vref_select = true,
 	.vref_select = VREF_VDDA,
 };
@@ -1320,6 +1316,11 @@ static const struct meson_sar_adc_data meson_sar_adc_g12a_data = {
 	.name = "meson-g12a-saradc",
 };
 
+static const struct meson_sar_adc_data meson_sar_adc_s4_data = {
+	.param = &meson_sar_adc_g12a_param,
+	.name = "meson-s4-saradc",
+};
+
 static const struct of_device_id meson_sar_adc_of_match[] = {
 	{
 		.compatible = "amlogic,meson8-saradc",
@@ -1348,8 +1349,11 @@ static const struct of_device_id meson_sar_adc_of_match[] = {
 	}, {
 		.compatible = "amlogic,meson-g12a-saradc",
 		.data = &meson_sar_adc_g12a_data,
+	}, {
+		.compatible = "amlogic,meson-s4-saradc",
+		.data = &meson_sar_adc_s4_data,
 	},
-	{ /* sentinel */ }
+	{ }
 };
 MODULE_DEVICE_TABLE(of, meson_sar_adc_of_match);
 
@@ -1364,7 +1368,7 @@ static int meson_sar_adc_probe(struct platform_device *pdev)
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*priv));
 	if (!indio_dev)
-		return dev_err_probe(dev, -ENOMEM, "failed allocating iio device\n");
+		return -ENOMEM;
 
 	priv = iio_priv(indio_dev);
 	init_completion(&priv->done);

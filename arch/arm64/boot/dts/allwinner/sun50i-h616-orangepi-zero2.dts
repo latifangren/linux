@@ -24,8 +24,8 @@
 	phy-supply = <&reg_dcdce>;
 };
 
-&hdmi {
-	hvcc-supply = <&reg_bldo1>;
+&gpu {
+	mali-supply = <&reg_dcdcc>;
 };
 
 &mmc0 {

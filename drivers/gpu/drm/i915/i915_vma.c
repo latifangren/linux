@@ -24,9 +24,12 @@
 
 #include <linux/sched/mm.h>
 #include <linux/dma-fence-array.h>
-#include <drm/drm_gem.h>
 
-#include "display/intel_display.h"
+#include <drm/drm_gem.h>
+#include <drm/drm_print.h>
+#include <drm/intel/display_parent_interface.h>
+
+#include "display/intel_fb.h"
 #include "display/intel_frontbuffer.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_object_frontbuffer.h"
@@ -392,7 +395,7 @@ struct i915_vma_work *i915_vma_work(void)
 {
 	struct i915_vma_work *vw;
 
-	vw = kzalloc(sizeof(*vw), GFP_KERNEL);
+	vw = kzalloc_obj(*vw);
 	if (!vw)
 		return NULL;
 
@@ -778,8 +781,8 @@ bool i915_gem_valid_gtt_space(struct i915_vma *vma, unsigned long color)
  * @flags: mask of PIN_* flags to use
  *
  * First we try to allocate some free space that meets the requirements for
- * the VMA. Failiing that, if the flags permit, it will evict an old VMA,
- * preferrably the oldest idle entry to make room for the new VMA.
+ * the VMA. Failing that, if the flags permit, it will evict an old VMA,
+ * preferably the oldest idle entry to make room for the new VMA.
  *
  * Returns:
  * 0 on success, negative error code otherwise.
@@ -877,7 +880,7 @@ i915_vma_insert(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 		 * objects which need to be tightly packed into the low 32bits.
 		 *
 		 * Note that we assume that GGTT are limited to 4GiB for the
-		 * forseeable future. See also i915_ggtt_offset().
+		 * foreseeable future. See also i915_ggtt_offset().
 		 */
 		if (upper_32_bits(end - 1) &&
 		    vma->page_sizes.sg > I915_GTT_PAGE_SIZE &&
@@ -1001,7 +1004,7 @@ rotate_pages(struct drm_i915_gem_object *obj, unsigned int offset,
 
 		/*
 		 * The DE ignores the PTEs for the padding tiles, the sg entry
-		 * here is just a conenience to indicate how many padding PTEs
+		 * here is just a convenience to indicate how many padding PTEs
 		 * to insert at this spot.
 		 */
 		sg_set_page(sg, NULL, left, 0);
@@ -1025,7 +1028,7 @@ intel_rotate_pages(struct intel_rotation_info *rot_info,
 	int i;
 
 	/* Allocate target SG list. */
-	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	st = kmalloc_obj(*st);
 	if (!st)
 		goto err_st_alloc;
 
@@ -1235,7 +1238,7 @@ intel_remap_pages(struct intel_remapped_info *rem_info,
 	int i;
 
 	/* Allocate target SG list. */
-	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	st = kmalloc_obj(*st);
 	if (!st)
 		goto err_st_alloc;
 
@@ -1273,7 +1276,7 @@ intel_partial_pages(const struct i915_gtt_view *view,
 	unsigned int count = view->partial.size;
 	int ret = -ENOMEM;
 
-	st = kmalloc(sizeof(*st), GFP_KERNEL);
+	st = kmalloc_obj(*st);
 	if (!st)
 		goto err_st_alloc;
 
@@ -1616,6 +1619,26 @@ err_rpm:
 		dma_fence_put(moving);
 
 	i915_vma_put_pages(vma);
+	return err;
+}
+
+int i915_vma_pin(struct i915_vma *vma, u64 size, u64 alignment, u64 flags)
+{
+	struct i915_gem_ww_ctx ww;
+	int err;
+
+	i915_gem_ww_ctx_init(&ww, true);
+retry:
+	err = i915_gem_object_lock(vma->obj, &ww);
+	if (!err)
+		err = i915_vma_pin_ww(vma, &ww, size, alignment, flags);
+	if (err == -EDEADLK) {
+		err = i915_gem_ww_ctx_backoff(&ww);
+		if (!err)
+			goto retry;
+	}
+	i915_gem_ww_ctx_fini(&ww);
+
 	return err;
 }
 
@@ -1982,13 +2005,13 @@ int _i915_vma_move_to_active(struct i915_vma *vma,
 	}
 
 	if (flags & EXEC_OBJECT_WRITE) {
-		struct intel_frontbuffer *front;
+		struct i915_frontbuffer *front;
 
-		front = i915_gem_object_get_frontbuffer(obj);
+		front = i915_gem_object_frontbuffer_lookup(obj);
 		if (unlikely(front)) {
-			if (intel_frontbuffer_invalidate(front, ORIGIN_CS))
+			if (intel_frontbuffer_invalidate(&front->base, ORIGIN_CS))
 				i915_active_add_request(&front->write, rq);
-			intel_frontbuffer_put(front);
+			i915_gem_object_frontbuffer_put(front);
 		}
 	}
 
@@ -2169,7 +2192,7 @@ static struct dma_fence *__i915_vma_unbind_async(struct i915_vma *vma)
 int i915_vma_unbind(struct i915_vma *vma)
 {
 	struct i915_address_space *vm = vma->vm;
-	intel_wakeref_t wakeref = 0;
+	intel_wakeref_t wakeref = NULL;
 	int err;
 
 	assert_object_held_shared(vma->obj);
@@ -2208,7 +2231,7 @@ int i915_vma_unbind_async(struct i915_vma *vma, bool trylock_vm)
 {
 	struct drm_i915_gem_object *obj = vma->obj;
 	struct i915_address_space *vm = vma->vm;
-	intel_wakeref_t wakeref = 0;
+	intel_wakeref_t wakeref = NULL;
 	struct dma_fence *fence;
 	int err;
 
@@ -2310,3 +2333,12 @@ int __init i915_vma_module_init(void)
 
 	return 0;
 }
+
+static int i915_vma_fence_id(const struct i915_vma *vma)
+{
+	return vma->fence ? vma->fence->id : -1;
+}
+
+const struct intel_display_vma_interface i915_display_vma_interface = {
+	.fence_id = i915_vma_fence_id,
+};

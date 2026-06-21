@@ -10,6 +10,7 @@
 
 #include "xe_gt_sriov_pf_config_types.h"
 #include "xe_gt_sriov_pf_control_types.h"
+#include "xe_gt_sriov_pf_migration_types.h"
 #include "xe_gt_sriov_pf_monitor_types.h"
 #include "xe_gt_sriov_pf_policy_types.h"
 #include "xe_gt_sriov_pf_service_types.h"
@@ -29,6 +30,9 @@ struct xe_gt_sriov_metadata {
 
 	/** @version: negotiated VF/PF ABI version */
 	struct xe_gt_sriov_pf_service_version version;
+
+	/** @migration: per-VF migration data. */
+	struct xe_gt_sriov_migration_data migration;
 };
 
 /**
@@ -45,6 +49,7 @@ struct xe_gt_sriov_pf_workers {
  * @service: service data.
  * @control: control data.
  * @policy: policy data.
+ * @migration: migration data.
  * @spare: PF-only provisioning configuration.
  * @vfs: metadata for all VFs.
  */

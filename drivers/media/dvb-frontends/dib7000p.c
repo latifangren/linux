@@ -2081,7 +2081,7 @@ static int dib7000p_i2c_enumeration(struct i2c_adapter *i2c, int no_of_demods, u
 	int k = 0;
 	u8 new_addr = 0;
 
-	dpst = kzalloc(sizeof(struct dib7000p_state), GFP_KERNEL);
+	dpst = kzalloc_obj(struct dib7000p_state);
 	if (!dpst)
 		return -ENOMEM;
 
@@ -2638,7 +2638,7 @@ static int dib7090_set_output_mode(struct dvb_frontend *fe, int mode)
 			dib7090_configMpegMux(state, 3, 1, 1);
 			dib7090_setHostBusMux(state, MPEG_ON_HOSTBUS);
 		} else {/* Use Smooth block */
-			dprintk("setting output mode TS_SERIAL using Smooth bloc\n");
+			dprintk("setting output mode TS_SERIAL using Smooth block\n");
 			dib7090_setHostBusMux(state, DEMOUT_ON_HOSTBUS);
 			outreg |= (2<<6) | (0 << 1);
 		}
@@ -2662,7 +2662,7 @@ static int dib7090_set_output_mode(struct dvb_frontend *fe, int mode)
 		outreg |= (1<<6);
 		break;
 
-	case OUTMODE_MPEG2_FIFO:	/* Using Smooth block because not supported by new Mpeg Mux bloc */
+	case OUTMODE_MPEG2_FIFO:	/* Using Smooth block because not supported by new Mpeg Mux block */
 		dprintk("setting output mode TS_FIFO using Smooth block\n");
 		dib7090_setHostBusMux(state, DEMOUT_ON_HOSTBUS);
 		outreg |= (5<<6);
@@ -2741,7 +2741,7 @@ static struct dvb_frontend *dib7000p_init(struct i2c_adapter *i2c_adap, u8 i2c_a
 {
 	struct dvb_frontend *demod;
 	struct dib7000p_state *st;
-	st = kzalloc(sizeof(struct dib7000p_state), GFP_KERNEL);
+	st = kzalloc_obj(struct dib7000p_state);
 	if (st == NULL)
 		return NULL;
 

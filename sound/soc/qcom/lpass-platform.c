@@ -202,7 +202,7 @@ static int lpass_platform_pcmops_open(struct snd_soc_component *component,
 	struct regmap *map;
 	unsigned int dai_id = cpu_dai->driver->id;
 
-	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	data = kzalloc_obj(*data);
 	if (!data)
 		return -ENOMEM;
 
@@ -1239,14 +1239,16 @@ static int lpass_platform_copy(struct snd_soc_component *component,
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		if (is_cdc_dma_port(dai_id)) {
-			ret = copy_from_iter_toio(dma_buf, buf, bytes);
+			if (copy_from_iter_toio(dma_buf, bytes, buf) != bytes)
+				ret = -EFAULT;
 		} else {
 			if (copy_from_iter((void __force *)dma_buf, bytes, buf) != bytes)
 				ret = -EFAULT;
 		}
 	} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
 		if (is_cdc_dma_port(dai_id)) {
-			ret = copy_to_iter_fromio(buf, dma_buf, bytes);
+			if (copy_to_iter_fromio(dma_buf, bytes, buf) != bytes)
+				ret = -EFAULT;
 		} else {
 			if (copy_to_iter((void __force *)dma_buf, bytes, buf) != bytes)
 				ret = -EFAULT;
@@ -1266,7 +1268,7 @@ static const struct snd_soc_component_driver lpass_component_driver = {
 	.trigger	= lpass_platform_pcmops_trigger,
 	.pointer	= lpass_platform_pcmops_pointer,
 	.mmap		= lpass_platform_pcmops_mmap,
-	.pcm_construct	= lpass_platform_pcm_new,
+	.pcm_new	= lpass_platform_pcm_new,
 	.suspend		= lpass_platform_pcmops_suspend,
 	.resume			= lpass_platform_pcmops_resume,
 	.copy		= lpass_platform_copy,

@@ -27,30 +27,6 @@
 
 #include "bcmsysport.h"
 
-/* I/O accessors register helpers */
-#define BCM_SYSPORT_IO_MACRO(name, offset) \
-static inline u32 name##_readl(struct bcm_sysport_priv *priv, u32 off)	\
-{									\
-	u32 reg = readl_relaxed(priv->base + offset + off);		\
-	return reg;							\
-}									\
-static inline void name##_writel(struct bcm_sysport_priv *priv,		\
-				  u32 val, u32 off)			\
-{									\
-	writel_relaxed(val, priv->base + offset + off);			\
-}									\
-
-BCM_SYSPORT_IO_MACRO(intrl2_0, SYS_PORT_INTRL2_0_OFFSET);
-BCM_SYSPORT_IO_MACRO(intrl2_1, SYS_PORT_INTRL2_1_OFFSET);
-BCM_SYSPORT_IO_MACRO(umac, SYS_PORT_UMAC_OFFSET);
-BCM_SYSPORT_IO_MACRO(gib, SYS_PORT_GIB_OFFSET);
-BCM_SYSPORT_IO_MACRO(tdma, SYS_PORT_TDMA_OFFSET);
-BCM_SYSPORT_IO_MACRO(rxchk, SYS_PORT_RXCHK_OFFSET);
-BCM_SYSPORT_IO_MACRO(txchk, SYS_PORT_TXCHK_OFFSET);
-BCM_SYSPORT_IO_MACRO(rbuf, SYS_PORT_RBUF_OFFSET);
-BCM_SYSPORT_IO_MACRO(tbuf, SYS_PORT_TBUF_OFFSET);
-BCM_SYSPORT_IO_MACRO(topctrl, SYS_PORT_TOPCTRL_OFFSET);
-
 /* On SYSTEMPORT Lite, any register after RDMA_STATUS has the exact
  * same layout, except it has been moved by 4 bytes up, *sigh*
  */
@@ -370,32 +346,22 @@ static void bcm_sysport_get_strings(struct net_device *dev,
 {
 	struct bcm_sysport_priv *priv = netdev_priv(dev);
 	const struct bcm_sysport_stats *s;
-	char buf[128];
-	int i, j;
+	int i;
 
 	switch (stringset) {
 	case ETH_SS_STATS:
-		for (i = 0, j = 0; i < BCM_SYSPORT_STATS_LEN; i++) {
+		for (i = 0; i < BCM_SYSPORT_STATS_LEN; i++) {
 			s = &bcm_sysport_gstrings_stats[i];
 			if (priv->is_lite &&
 			    !bcm_sysport_lite_stat_valid(s->type))
 				continue;
 
-			memcpy(data + j * ETH_GSTRING_LEN, s->stat_string,
-			       ETH_GSTRING_LEN);
-			j++;
+			ethtool_puts(&data, s->stat_string);
 		}
 
 		for (i = 0; i < dev->num_tx_queues; i++) {
-			snprintf(buf, sizeof(buf), "txq%d_packets", i);
-			memcpy(data + j * ETH_GSTRING_LEN, buf,
-			       ETH_GSTRING_LEN);
-			j++;
-
-			snprintf(buf, sizeof(buf), "txq%d_bytes", i);
-			memcpy(data + j * ETH_GSTRING_LEN, buf,
-			       ETH_GSTRING_LEN);
-			j++;
+			ethtool_sprintf(&data, "txq%d_packets", i);
+			ethtool_sprintf(&data, "txq%d_bytes", i);
 		}
 		break;
 	default:
@@ -1053,7 +1019,7 @@ static int bcm_sysport_poll(struct napi_struct *napi, int budget)
 	if (priv->dim.use_dim) {
 		dim_update_sample(priv->dim.event_ctr, priv->dim.packets,
 				  priv->dim.bytes, &dim_sample);
-		net_dim(&priv->dim.dim, dim_sample);
+		net_dim(&priv->dim.dim, &dim_sample);
 	}
 
 	return work_done;
@@ -1520,7 +1486,7 @@ static int bcm_sysport_init_tx_ring(struct bcm_sysport_priv *priv,
 	/* Simple descriptors partitioning for now */
 	size = 256;
 
-	ring->cbs = kcalloc(size, sizeof(struct bcm_sysport_cb), GFP_KERNEL);
+	ring->cbs = kzalloc_objs(struct bcm_sysport_cb, size);
 	if (!ring->cbs) {
 		netif_err(priv, hw, priv->netdev, "CB allocation failed\n");
 		return -ENOMEM;
@@ -1699,8 +1665,7 @@ static int bcm_sysport_init_rx_ring(struct bcm_sysport_priv *priv)
 	priv->rx_bds = priv->base + SYS_PORT_RDMA_OFFSET;
 	priv->rx_c_index = 0;
 	priv->rx_read_ptr = 0;
-	priv->rx_cbs = kcalloc(priv->num_rx_bds, sizeof(struct bcm_sysport_cb),
-				GFP_KERNEL);
+	priv->rx_cbs = kzalloc_objs(struct bcm_sysport_cb, priv->num_rx_bds);
 	if (!priv->rx_cbs) {
 		netif_err(priv, hw, priv->netdev, "CB allocation failed\n");
 		return -ENOMEM;

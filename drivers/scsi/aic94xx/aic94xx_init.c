@@ -642,9 +642,9 @@ static int asd_register_sas_ha(struct asd_ha_struct *asd_ha)
 {
 	int i;
 	struct asd_sas_phy   **sas_phys =
-		kcalloc(ASD_MAX_PHYS, sizeof(*sas_phys), GFP_KERNEL);
+		kzalloc_objs(*sas_phys, ASD_MAX_PHYS);
 	struct asd_sas_port  **sas_ports =
-		kcalloc(ASD_MAX_PHYS, sizeof(*sas_ports), GFP_KERNEL);
+		kzalloc_objs(*sas_ports, ASD_MAX_PHYS);
 
 	if (!sas_phys || !sas_ports) {
 		kfree(sas_phys);
@@ -710,7 +710,7 @@ static int asd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	asd_dev = &asd_pcidev_data[asd_id];
 
-	asd_ha = kzalloc(sizeof(*asd_ha), GFP_KERNEL);
+	asd_ha = kzalloc_obj(*asd_ha);
 	if (!asd_ha) {
 		asd_printk("out of memory\n");
 		goto Err_put;
@@ -851,7 +851,7 @@ static void asd_free_queues(struct asd_ha_struct *asd_ha)
 		 * times out.  Apparently we don't wait for the CONTROL PHY
 		 * to complete, so it doesn't matter if we kill the timer.
 		 */
-		del_timer_sync(&ascb->timer);
+		timer_delete_sync(&ascb->timer);
 		WARN_ON(ascb->scb->header.opcode != CONTROL_PHY);
 
 		list_del_init(pos);

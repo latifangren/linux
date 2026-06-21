@@ -151,10 +151,9 @@ int ivpu_jsm_get_heartbeat(struct ivpu_device *vdev, u32 engine, u64 *heartbeat)
 	return ret;
 }
 
-int ivpu_jsm_reset_engine(struct ivpu_device *vdev, u32 engine)
+int ivpu_jsm_reset_engine(struct ivpu_device *vdev, u32 engine, struct vpu_jsm_msg *resp)
 {
 	struct vpu_jsm_msg req = { .type = VPU_JSM_MSG_ENGINE_RESET };
-	struct vpu_jsm_msg resp;
 	int ret;
 
 	if (engine != VPU_ENGINE_COMPUTE)
@@ -162,14 +161,17 @@ int ivpu_jsm_reset_engine(struct ivpu_device *vdev, u32 engine)
 
 	req.payload.engine_reset.engine_idx = engine;
 
-	ret = ivpu_ipc_send_receive(vdev, &req, VPU_JSM_MSG_ENGINE_RESET_DONE, &resp,
+	ret = ivpu_ipc_send_receive(vdev, &req, VPU_JSM_MSG_ENGINE_RESET_DONE, resp,
 				    VPU_IPC_CHAN_ASYNC_CMD, vdev->timeout.jsm);
 	if (ret) {
 		ivpu_err_ratelimited(vdev, "Failed to reset engine %d: %d\n", engine, ret);
 		ivpu_pm_trigger_recovery(vdev, "Engine reset failed");
+		return ret;
 	}
 
-	return ret;
+	atomic_inc(&vdev->pm->engine_reset_counter);
+
+	return 0;
 }
 
 int ivpu_jsm_preempt_engine(struct ivpu_device *vdev, u32 engine, u32 preempt_id)
@@ -201,7 +203,7 @@ int ivpu_jsm_dyndbg_control(struct ivpu_device *vdev, char *command, size_t size
 	strscpy(req.payload.dyndbg_control.dyndbg_cmd, command, VPU_DYNDBG_CMD_MAX_LEN);
 
 	ret = ivpu_ipc_send_receive(vdev, &req, VPU_JSM_MSG_DYNDBG_CONTROL_RSP, &resp,
-				    VPU_IPC_CHAN_ASYNC_CMD, vdev->timeout.jsm);
+				    VPU_IPC_CHAN_GEN_CMD, vdev->timeout.jsm);
 	if (ret)
 		ivpu_warn_ratelimited(vdev, "Failed to send command \"%s\": ret %d\n",
 				      command, ret);
@@ -400,8 +402,6 @@ int ivpu_jsm_hws_set_scheduling_log(struct ivpu_device *vdev, u32 engine_idx, u3
 	req.payload.hws_set_scheduling_log.host_ssid = host_ssid;
 	req.payload.hws_set_scheduling_log.vpu_log_buffer_va = vpu_log_buffer_va;
 	req.payload.hws_set_scheduling_log.notify_index = 0;
-	req.payload.hws_set_scheduling_log.enable_extra_events =
-		ivpu_test_mode & IVPU_TEST_MODE_HWS_EXTRA_EVENTS;
 
 	ret = ivpu_ipc_send_receive(vdev, &req, VPU_JSM_MSG_HWS_SET_SCHEDULING_LOG_RSP, &resp,
 				    VPU_IPC_CHAN_ASYNC_CMD, vdev->timeout.jsm);
@@ -556,6 +556,15 @@ int ivpu_jsm_dct_disable(struct ivpu_device *vdev)
 }
 
 int ivpu_jsm_state_dump(struct ivpu_device *vdev)
+{
+	struct vpu_jsm_msg req = { .type = VPU_JSM_MSG_STATE_DUMP };
+	struct vpu_jsm_msg resp;
+
+	return ivpu_ipc_send_receive_internal(vdev, &req, VPU_JSM_MSG_STATE_DUMP_RSP, &resp,
+					      VPU_IPC_CHAN_ASYNC_CMD, vdev->timeout.jsm);
+}
+
+int ivpu_jsm_state_dump_no_reply(struct ivpu_device *vdev)
 {
 	struct vpu_jsm_msg req = { .type = VPU_JSM_MSG_STATE_DUMP };
 

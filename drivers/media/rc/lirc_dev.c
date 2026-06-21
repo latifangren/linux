@@ -128,7 +128,7 @@ static int lirc_open(struct inode *inode, struct file *file)
 {
 	struct rc_dev *dev = container_of(inode->i_cdev, struct rc_dev,
 					  lirc_cdev);
-	struct lirc_fh *fh = kzalloc(sizeof(*fh), GFP_KERNEL);
+	struct lirc_fh *fh = kzalloc_obj(*fh);
 	unsigned long flags;
 	int retval;
 
@@ -267,7 +267,7 @@ static ssize_t lirc_transmit(struct file *file, const char __user *buf,
 			goto out_unlock;
 		}
 
-		raw = kmalloc_array(LIRCBUF_SIZE, sizeof(*raw), GFP_KERNEL);
+		raw = kmalloc_objs(*raw, LIRCBUF_SIZE);
 		if (!raw) {
 			ret = -ENOMEM;
 			goto out_unlock;
@@ -816,28 +816,23 @@ void __exit lirc_dev_exit(void)
 
 struct rc_dev *rc_dev_get_from_fd(int fd, bool write)
 {
-	struct fd f = fdget(fd);
+	CLASS(fd, f)(fd);
 	struct lirc_fh *fh;
 	struct rc_dev *dev;
 
-	if (!fd_file(f))
+	if (fd_empty(f))
 		return ERR_PTR(-EBADF);
 
-	if (fd_file(f)->f_op != &lirc_fops) {
-		fdput(f);
+	if (fd_file(f)->f_op != &lirc_fops)
 		return ERR_PTR(-EINVAL);
-	}
 
-	if (write && !(fd_file(f)->f_mode & FMODE_WRITE)) {
-		fdput(f);
+	if (write && !(fd_file(f)->f_mode & FMODE_WRITE))
 		return ERR_PTR(-EPERM);
-	}
 
 	fh = fd_file(f)->private_data;
 	dev = fh->rc;
 
 	get_device(&dev->dev);
-	fdput(f);
 
 	return dev;
 }

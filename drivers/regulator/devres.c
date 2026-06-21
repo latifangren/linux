@@ -20,7 +20,7 @@ static void devm_regulator_release(struct device *dev, void *res)
 }
 
 static struct regulator *_devm_regulator_get(struct device *dev, const char *id,
-					     int get_type)
+					     enum regulator_get_type get_type)
 {
 	struct regulator **ptr, *regulator;
 
@@ -78,7 +78,7 @@ static void regulator_action_disable(void *d)
 }
 
 static int _devm_regulator_get_enable(struct device *dev, const char *id,
-				      int get_type)
+				      enum regulator_get_type get_type)
 {
 	struct regulator *r;
 	int ret;
@@ -332,9 +332,8 @@ int devm_regulator_bulk_get_const(struct device *dev, int num_consumers,
 				  const struct regulator_bulk_data *in_consumers,
 				  struct regulator_bulk_data **out_consumers)
 {
-	*out_consumers = devm_kmemdup(dev, in_consumers,
-				      num_consumers * sizeof(*in_consumers),
-				      GFP_KERNEL);
+	*out_consumers = devm_kmemdup_array(dev, in_consumers, num_consumers,
+					    sizeof(*in_consumers), GFP_KERNEL);
 	if (*out_consumers == NULL)
 		return -ENOMEM;
 
@@ -752,7 +751,7 @@ EXPORT_SYMBOL_GPL(devm_regulator_irq_helper);
 
 #if IS_ENABLED(CONFIG_OF)
 static struct regulator *_devm_of_regulator_get(struct device *dev, struct device_node *node,
-						const char *id, int get_type)
+						const char *id, enum regulator_get_type get_type)
 {
 	struct regulator **ptr, *regulator;
 

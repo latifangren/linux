@@ -24,6 +24,7 @@
 		serial0 = &uart0;
 		serial1 = &uart1;
 		serial2 = &uart2;
+		ethernet0 = &nic;
 	};
 };
 
@@ -37,12 +38,10 @@
 	status = "disabled";
 };
 
-/* GPIO connector (T1) */
 &uart2 {
 	status = "disabled";
 };
 
-/* USB host ports */
 &usb0 {
 	status = "okay";
 };
@@ -59,4 +58,8 @@
 
 &usb2 {
 	status = "okay";
+};
+
+&pwm {
+	status = "disabled";
 };

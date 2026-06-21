@@ -429,7 +429,7 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
 	if (index < 0)
 		return ERR_PTR(index);
 
-	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p = kzalloc_obj(*p);
 	if (p == NULL)
 		return ERR_PTR(-ENOMEM);
 
@@ -524,20 +524,6 @@ void br_mtu_auto_adjust(struct net_bridge *br)
 	 */
 	dev_set_mtu(br->dev, br_mtu_min(br));
 	br_opt_toggle(br, BROPT_MTU_SET_BY_USER, false);
-}
-
-static void br_set_gso_limits(struct net_bridge *br)
-{
-	unsigned int tso_max_size = TSO_MAX_SIZE;
-	const struct net_bridge_port *p;
-	u16 tso_max_segs = TSO_MAX_SEGS;
-
-	list_for_each_entry(p, &br->port_list, list) {
-		tso_max_size = min(tso_max_size, p->dev->tso_max_size);
-		tso_max_segs = min(tso_max_segs, p->dev->tso_max_segs);
-	}
-	netif_set_tso_max_size(br->dev, tso_max_size);
-	netif_set_tso_max_segs(br->dev, tso_max_segs);
 }
 
 /*
@@ -653,8 +639,6 @@ int br_add_if(struct net_bridge *br, struct net_device *dev,
 			netdev_err(dev, "failed to sync bridge static fdb addresses to this port\n");
 	}
 
-	netdev_update_features(br->dev);
-
 	br_hr = br->dev->needed_headroom;
 	dev_hr = netdev_get_fwd_headroom(dev);
 	if (br_hr < dev_hr)
@@ -669,7 +653,8 @@ int br_add_if(struct net_bridge *br, struct net_device *dev,
 		/* Ask for permission to use this MAC address now, even if we
 		 * don't end up choosing it below.
 		 */
-		err = dev_pre_changeaddr_notify(br->dev, dev->dev_addr, extack);
+		err = netif_pre_changeaddr_notify(br->dev, dev->dev_addr,
+						  extack);
 		if (err)
 			goto err6;
 	}
@@ -694,7 +679,8 @@ int br_add_if(struct net_bridge *br, struct net_device *dev,
 		call_netdevice_notifiers(NETDEV_CHANGEADDR, br->dev);
 
 	br_mtu_auto_adjust(br);
-	br_set_gso_limits(br);
+
+	netdev_compute_master_upper_features(br->dev, false);
 
 	kobject_uevent(&p->kobj, KOBJ_ADD);
 
@@ -740,7 +726,6 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	del_nbp(p);
 
 	br_mtu_auto_adjust(br);
-	br_set_gso_limits(br);
 
 	spin_lock_bh(&br->lock);
 	changed_addr = br_stp_recalculate_bridge_id(br);
@@ -749,7 +734,7 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	if (changed_addr)
 		call_netdevice_notifiers(NETDEV_CHANGEADDR, br->dev);
 
-	netdev_update_features(br->dev);
+	netdev_compute_master_upper_features(br->dev, false);
 
 	return 0;
 }
@@ -764,28 +749,6 @@ void br_port_flags_change(struct net_bridge_port *p, unsigned long mask)
 	if (mask & (BR_NEIGH_SUPPRESS | BR_NEIGH_VLAN_SUPPRESS))
 		br_recalculate_neigh_suppress_enabled(br);
 }
-
-void br_dev_update_stats(struct net_device *dev,
-			 struct rtnl_link_stats64 *nlstats)
-{
-	
-	struct pcpu_sw_netstats *stats;
-
-	/* Is this a bridge? */
-	if (!(dev->priv_flags & IFF_EBRIDGE))
-		return;
-
-	
-	stats = this_cpu_ptr(dev->tstats);
-
-	u64_stats_update_begin(&stats->syncp);
-	u64_stats_add(&stats->rx_packets, nlstats->rx_packets);
-	u64_stats_add(&stats->rx_bytes, nlstats->rx_bytes);
-	u64_stats_add(&stats->tx_packets, nlstats->tx_packets);
-	u64_stats_add(&stats->tx_bytes, nlstats->tx_bytes);
-	u64_stats_update_end(&stats->syncp);
-}
-EXPORT_SYMBOL_GPL(br_dev_update_stats);
 
 bool br_port_flag_is_set(const struct net_device *dev, unsigned long flag)
 {

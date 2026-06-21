@@ -43,7 +43,7 @@ static int fill_list(unsigned int nr_pages)
 	struct range mhp_range;
 	int ret;
 
-	res = kzalloc(sizeof(*res), GFP_KERNEL);
+	res = kzalloc_obj(*res);
 	if (!res)
 		return -ENOMEM;
 
@@ -65,7 +65,7 @@ static int fill_list(unsigned int nr_pages)
 	 * re-using it by someone else.
 	 */
 	if (target_resource != &iomem_resource) {
-		tmp_res = kzalloc(sizeof(*tmp_res), GFP_KERNEL);
+		tmp_res = kzalloc_obj(*tmp_res);
 		if (!tmp_res) {
 			ret = -ENOMEM;
 			goto err_insert;
@@ -84,7 +84,7 @@ static int fill_list(unsigned int nr_pages)
 		}
 	}
 
-	pgmap = kzalloc(sizeof(*pgmap), GFP_KERNEL);
+	pgmap = kzalloc_obj(*pgmap);
 	if (!pgmap) {
 		ret = -ENOMEM;
 		goto err_pgmap;
@@ -108,7 +108,7 @@ static int fill_list(unsigned int nr_pages)
          * are not restored since this region is now known not to
          * conflict with any devices.
          */
-	if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+	if (xen_pv_domain()) {
 		xen_pfn_t pfn = PFN_DOWN(res->start);
 
 		for (i = 0; i < alloc_pages; i++) {
@@ -187,7 +187,7 @@ int xen_alloc_unpopulated_pages(unsigned int nr_pages, struct page **pages)
 		pages[i] = pg;
 
 #ifdef CONFIG_XEN_HAVE_PVMMU
-		if (!xen_feature(XENFEAT_auto_translated_physmap)) {
+		if (xen_pv_domain()) {
 			ret = xen_alloc_p2m_entry(page_to_pfn(pg));
 			if (ret < 0) {
 				unsigned int j;

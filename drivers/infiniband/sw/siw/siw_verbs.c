@@ -189,10 +189,9 @@ int siw_query_port(struct ib_device *base_dev, u32 port,
 	attr->max_msg_sz = -1;
 	attr->max_mtu = ib_mtu_int_to_enum(ndev->max_mtu);
 	attr->active_mtu = ib_mtu_int_to_enum(READ_ONCE(ndev->mtu));
-	attr->phys_state = (netif_running(ndev) && netif_carrier_ok(ndev)) ?
+	attr->state = ib_get_curr_port_state(ndev);
+	attr->phys_state = attr->state == IB_PORT_ACTIVE ?
 		IB_PORT_PHYS_STATE_LINK_UP : IB_PORT_PHYS_STATE_DISABLED;
-	attr->state = attr->phys_state == IB_PORT_PHYS_STATE_LINK_UP ?
-		IB_PORT_ACTIVE : IB_PORT_DOWN;
 	attr->port_cap_flags = IB_PORT_CM_SUP | IB_PORT_DEVICE_MGMT_SUP;
 	/*
 	 * All zero
@@ -275,7 +274,7 @@ siw_mmap_entry_insert(struct siw_ucontext *uctx,
 		      void *address, size_t length,
 		      u64 *offset)
 {
-	struct siw_user_mmap_entry *entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	struct siw_user_mmap_entry *entry = kzalloc_obj(*entry);
 	int rv;
 
 	*offset = SIW_INVAL_UOBJ_KEY;
@@ -632,9 +631,6 @@ int siw_destroy_qp(struct ib_qp *base_qp, struct ib_udata *udata)
 	}
 	up_write(&qp->state_lock);
 
-	kfree(qp->tx_ctx.mpa_crc_hd);
-	kfree(qp->rx_stream.mpa_crc_hd);
-
 	qp->scq = qp->rcq = NULL;
 
 	siw_qp_put(qp);
@@ -940,7 +936,7 @@ int siw_post_send(struct ib_qp *base_qp, const struct ib_send_wr *wr,
 			rv = -EINVAL;
 			break;
 		}
-		siw_dbg_qp(qp, "opcode %d, flags 0x%x, wr_id 0x%pK\n",
+		siw_dbg_qp(qp, "opcode %d, flags 0x%x, wr_id 0x%p\n",
 			   sqe->opcode, sqe->flags,
 			   (void *)(uintptr_t)sqe->id);
 
@@ -1109,7 +1105,7 @@ int siw_post_receive(struct ib_qp *base_qp, const struct ib_recv_wr *wr,
 		siw_dbg_qp(qp, "error %d\n", rv);
 		*bad_wr = wr;
 	}
-	return rv > 0 ? 0 : rv;
+	return rv;
 }
 
 int siw_destroy_cq(struct ib_cq *base_cq, struct ib_udata *udata)
@@ -1328,10 +1324,12 @@ int siw_dereg_mr(struct ib_mr *base_mr, struct ib_udata *udata)
  * @len:	len of MR
  * @rnic_va:	not used by siw
  * @rights:	MR access rights
+ * @dmah:	dma handle
  * @udata:	user buffer to communicate STag and Key.
  */
 struct ib_mr *siw_reg_user_mr(struct ib_pd *pd, u64 start, u64 len,
-			      u64 rnic_va, int rights, struct ib_udata *udata)
+			      u64 rnic_va, int rights,  struct ib_dmah *dmah,
+			      struct ib_udata *udata)
 {
 	struct siw_mr *mr = NULL;
 	struct siw_umem *umem = NULL;
@@ -1339,9 +1337,12 @@ struct ib_mr *siw_reg_user_mr(struct ib_pd *pd, u64 start, u64 len,
 	struct siw_device *sdev = to_siw_dev(pd->device);
 	int rv;
 
-	siw_dbg_pd(pd, "start: 0x%pK, va: 0x%pK, len: %llu\n",
+	siw_dbg_pd(pd, "start: 0x%p, va: 0x%p, len: %llu\n",
 		   (void *)(uintptr_t)start, (void *)(uintptr_t)rnic_va,
 		   (unsigned long long)len);
+
+	if (dmah)
+		return ERR_PTR(-EOPNOTSUPP);
 
 	if (atomic_inc_return(&sdev->num_mr) > SIW_MAX_MR) {
 		siw_dbg_pd(pd, "too many mr's\n");
@@ -1359,7 +1360,7 @@ struct ib_mr *siw_reg_user_mr(struct ib_pd *pd, u64 start, u64 len,
 		umem = NULL;
 		goto err_out;
 	}
-	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
+	mr = kzalloc_obj(*mr);
 	if (!mr) {
 		rv = -ENOMEM;
 		goto err_out;
@@ -1372,11 +1373,7 @@ struct ib_mr *siw_reg_user_mr(struct ib_pd *pd, u64 start, u64 len,
 		struct siw_uresp_reg_mr uresp = {};
 		struct siw_mem *mem = mr->mem;
 
-		if (udata->inlen < sizeof(ureq)) {
-			rv = -EINVAL;
-			goto err_out;
-		}
-		rv = ib_copy_from_udata(&ureq, udata, sizeof(ureq));
+		rv = ib_copy_validate_udata_in(udata, ureq, pad);
 		if (rv)
 			goto err_out;
 
@@ -1440,7 +1437,7 @@ struct ib_mr *siw_alloc_mr(struct ib_pd *pd, enum ib_mr_type mr_type,
 		pbl = NULL;
 		goto err_out;
 	}
-	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
+	mr = kzalloc_obj(*mr);
 	if (!mr) {
 		rv = -ENOMEM;
 		goto err_out;
@@ -1532,7 +1529,7 @@ int siw_map_mr_sg(struct ib_mr *base_mr, struct scatterlist *sl, int num_sle,
 		mem->len = base_mr->length;
 		mem->va = base_mr->iova;
 		siw_dbg_mem(mem,
-			"%llu bytes, start 0x%pK, %u SLE to %u entries\n",
+			"%llu bytes, start 0x%p, %u SLE to %u entries\n",
 			mem->len, (void *)(uintptr_t)mem->va, num_sle,
 			pbl->num_buf);
 	}
@@ -1555,7 +1552,7 @@ struct ib_mr *siw_get_dma_mr(struct ib_pd *pd, int rights)
 		rv = -ENOMEM;
 		goto err_out;
 	}
-	mr = kzalloc(sizeof(*mr), GFP_KERNEL);
+	mr = kzalloc_obj(*mr);
 	if (!mr) {
 		rv = -ENOMEM;
 		goto err_out;
