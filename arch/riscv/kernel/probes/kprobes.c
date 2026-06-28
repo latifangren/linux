@@ -12,7 +12,7 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 #include <asm/bug.h>
-#include <asm/patch.h>
+#include <asm/text-patching.h>
 
 #include "decode-insn.h"
 
@@ -149,7 +149,7 @@ static void __kprobes set_current_kprobe(struct kprobe *p)
 
 /*
  * Interrupts need to be disabled before single-step mode is set, and not
- * reenabled until after single-step mode ends.
+ * re-enabled until after single-step mode ends.
  * Without disabling interrupt on local CPU, there is a chance of
  * interrupt occurrence in the period of exception return and  start of
  * out-of-line single-step, that result in wrongly single stepping

@@ -7,9 +7,6 @@
 #include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <linux/netfilter/nf_conntrack_tcp.h>
-#ifdef CONFIG_NF_CT_PROTO_DCCP
-#include <linux/netfilter/nf_conntrack_dccp.h>
-#endif
 #ifdef CONFIG_NF_CT_PROTO_SCTP
 #include <linux/netfilter/nf_conntrack_sctp.h>
 #endif
@@ -26,7 +23,6 @@ struct nf_tcp_net {
 	unsigned int timeouts[TCP_CONNTRACK_TIMEOUT_MAX];
 	u8 tcp_loose;
 	u8 tcp_be_liberal;
-	u8 tcp_no_window_check;
 	u8 tcp_max_retrans;
 	u8 tcp_ignore_invalid_rst;
 #if IS_ENABLED(CONFIG_NF_FLOW_TABLE)
@@ -50,13 +46,6 @@ struct nf_udp_net {
 struct nf_icmp_net {
 	unsigned int timeout;
 };
-
-#ifdef CONFIG_NF_CT_PROTO_DCCP
-struct nf_dccp_net {
-	u8 dccp_loose;
-	unsigned int dccp_timeout[CT_DCCP_MAX + 1];
-};
-#endif
 
 #ifdef CONFIG_NF_CT_PROTO_SCTP
 struct nf_sctp_net {
@@ -83,9 +72,6 @@ struct nf_ip_net {
 	struct nf_udp_net	udp;
 	struct nf_icmp_net	icmp;
 	struct nf_icmp_net	icmpv6;
-#ifdef CONFIG_NF_CT_PROTO_DCCP
-	struct nf_dccp_net	dccp;
-#endif
 #ifdef CONFIG_NF_CT_PROTO_SCTP
 	struct nf_sctp_net	sctp;
 #endif
@@ -105,9 +91,6 @@ struct netns_ct {
 	u8			sysctl_checksum;
 
 	struct ip_conntrack_stat __percpu *stat;
-#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
-	struct atomic_notifier_head nf_conntrack_chain;
-#endif
 	struct nf_ct_event_notifier __rcu *nf_conntrack_event_cb;
 	struct nf_ip_net	nf_ct_proto;
 #if defined(CONFIG_NF_CONNTRACK_LABELS)

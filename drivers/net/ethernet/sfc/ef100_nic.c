@@ -351,7 +351,7 @@ int ef100_phy_probe(struct efx_nic *efx)
 	int rc;
 
 	/* Probe for the PHY */
-	efx->phy_data = kzalloc(sizeof(struct efx_mcdi_phy_data), GFP_KERNEL);
+	efx->phy_data = kzalloc_obj(struct efx_mcdi_phy_data);
 	if (!efx->phy_data)
 		return -ENOMEM;
 
@@ -583,7 +583,7 @@ static const struct efx_hw_stat_desc ef100_stat_desc[EF100_STAT_COUNT] = {
 	EFX_GENERIC_SW_STAT(rx_noskb_drops),
 };
 
-static size_t ef100_describe_stats(struct efx_nic *efx, u8 *names)
+static size_t ef100_describe_stats(struct efx_nic *efx, u8 **names)
 {
 	DECLARE_BITMAP(mask, EF100_STAT_COUNT) = {};
 
@@ -1020,7 +1020,7 @@ static int ef100_probe_main(struct efx_nic *efx)
 	if (WARN_ON(bar_size == 0))
 		return -EIO;
 
-	nic_data = kzalloc(sizeof(*nic_data), GFP_KERNEL);
+	nic_data = kzalloc_obj(*nic_data);
 	if (!nic_data)
 		return -ENOMEM;
 	efx->nic_data = nic_data;

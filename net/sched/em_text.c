@@ -84,7 +84,7 @@ retry:
 		return -EAGAIN;
 	}
 
-	tm = kmalloc(sizeof(*tm), GFP_KERNEL);
+	tm = kmalloc_obj(*tm);
 	if (tm == NULL) {
 		textsearch_destroy(ts_conf);
 		return -ENOBUFS;
@@ -115,7 +115,7 @@ static int em_text_dump(struct sk_buff *skb, struct tcf_ematch *m)
 	struct text_match *tm = EM_TEXT_PRIV(m);
 	struct tcf_em_text conf;
 
-	strncpy(conf.algo, tm->config->ops->name, sizeof(conf.algo) - 1);
+	strscpy(conf.algo, tm->config->ops->name);
 	conf.from_offset = tm->from_offset;
 	conf.to_offset = tm->to_offset;
 	conf.from_layer = tm->from_layer;

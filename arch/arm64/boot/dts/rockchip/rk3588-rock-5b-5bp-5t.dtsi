@@ -10,8 +10,8 @@
 
 / {
 	aliases {
-		mmc0 = &sdmmc;
-		mmc1 = &sdhci;
+		mmc0 = &sdhci;
+		mmc1 = &sdmmc;
 		mmc2 = &sdio;
 	};
 
@@ -44,6 +44,7 @@
 	fan: pwm-fan {
 		compatible = "pwm-fan";
 		cooling-levels = <0 120 150 180 210 240 255>;
+		fan-supply = <&vcc5v0_sys>;
 		pwms = <&pwm1 0 50000 0>;
 		#cooling-cells = <2>;
 	};
@@ -291,6 +292,7 @@
 		fcs,suspend-voltage-selector = <1>;
 		regulator-name = "vdd_npu_s0";
 		regulator-boot-on;
+		regulator-enable-ramp-delay = <500>;
 		regulator-min-microvolt = <550000>;
 		regulator-max-microvolt = <950000>;
 		regulator-ramp-delay = <2300>;
@@ -298,7 +300,7 @@
 
 		regulator-state-mem {
 			regulator-off-in-suspend;
-		};
+		 };
 	};
 };
 
@@ -466,48 +468,20 @@
 
 &pcie2x1l0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&pcie2_0_rst>;
+	pinctrl-0 = <&pcie2_0_rst>, <&pcie30x1m1_0_clkreqn>;
+	supports-clkreq;
 	reset-gpios = <&gpio4 RK_PA5 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie2x1l0>;
 	status = "okay";
 };
 
-/* rtl8125b */
 &pcie2x1l2 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&pcie2_2_rst>;
+	pinctrl-0 = <&pcie2_2_rst>, <&pcie20x1m0_clkreqn>;
+	supports-clkreq;
 	reset-gpios = <&gpio3 RK_PB0 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie2x1l2>;
 	status = "okay";
-
-	pcie@0,0 {
-		reg = <0x00400000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-
-		bus-range = <0x40 0x4f>;
-		device_type = "pci";
-		ranges;
-
-		rtl8125: pcie-eth@0,0 {
-			compatible = "pci10ec,8125";
-			reg = <0x410000 0 0 0 0>;
-
-			/* G+: LED0
-			 * G-: LED1
-			 * Y+: 3v3
-			 * Y-: LED2
-			 */
-			// LED0: active high, link on all speed
-			r8125,led0 = <0x102b>;
-
-			// LED1: active low, act on all speed
-			r8125,led1 = <0x0200>;
-
-			// LED2: active low, link on 100 + 1000 + 2500
-			r8125,led2 = <0x002a>;
-		};
-	};
 };
 
 &pcie30phy {

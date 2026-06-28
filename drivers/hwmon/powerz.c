@@ -6,6 +6,7 @@
 
 #include <linux/completion.h>
 #include <linux/device.h>
+#include <linux/dma-mapping.h>
 #include <linux/hwmon.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -33,7 +34,9 @@ struct powerz_sensor_data {
 } __packed;
 
 struct powerz_priv {
-	char transfer_buffer[64];	/* first member to satisfy DMA alignment */
+	__dma_from_device_group_begin();
+	char transfer_buffer[64];
+	__dma_from_device_group_end();
 	struct mutex mutex;
 	struct completion completion;
 	struct urb *urb;
@@ -53,12 +56,6 @@ static const struct hwmon_channel_info *const powerz_info[] = {
 	    HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT | HWMON_T_LABEL),
 	NULL
 };
-
-static umode_t powerz_is_visible(const void *data, enum hwmon_sensor_types type,
-				 u32 attr, int channel)
-{
-	return 0444;
-}
 
 static int powerz_read_string(struct device *dev, enum hwmon_sensor_types type,
 			      u32 attr, int channel, const char **str)
@@ -112,6 +109,7 @@ static void powerz_usb_cmd_complete(struct urb *urb)
 
 static int powerz_read_data(struct usb_device *udev, struct powerz_priv *priv)
 {
+	long rc;
 	int ret;
 
 	if (!priv->urb)
@@ -133,8 +131,14 @@ static int powerz_read_data(struct usb_device *udev, struct powerz_priv *priv)
 	if (ret)
 		return ret;
 
-	if (!wait_for_completion_interruptible_timeout
-	    (&priv->completion, msecs_to_jiffies(5))) {
+	rc = wait_for_completion_interruptible_timeout(&priv->completion,
+						       msecs_to_jiffies(5));
+	if (rc < 0) {
+		usb_kill_urb(priv->urb);
+		return rc;
+	}
+
+	if (rc == 0) {
 		usb_kill_urb(priv->urb);
 		return -EIO;
 	}
@@ -204,7 +208,7 @@ out:
 }
 
 static const struct hwmon_ops powerz_hwmon_ops = {
-	.is_visible = powerz_is_visible,
+	.visible = 0444,
 	.read = powerz_read,
 	.read_string = powerz_read_string,
 };

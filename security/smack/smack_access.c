@@ -45,11 +45,13 @@ LIST_HEAD(smack_known_list);
  */
 static u32 smack_next_secid = 10;
 
+#ifdef CONFIG_AUDIT
 /*
  * what events do we log
  * can be overwritten at run-time by /smack/logging
  */
 int log_policy = SMACK_AUDIT_DENIED;
+#endif /* CONFIG_AUDIT */
 
 /**
  * smk_access_entry - look up matching access rule
@@ -242,7 +244,7 @@ int smk_tskacc(struct task_smack *tsp, struct smack_known *obj_known,
 	}
 
 	/*
-	 * Allow for priviliged to override policy.
+	 * Allow for privileged to override policy.
 	 */
 	if (rc != 0 && smack_privileged(CAP_MAC_OVERRIDE))
 		rc = 0;
@@ -275,15 +277,14 @@ int smk_curacc(struct smack_known *obj_known,
 	return smk_tskacc(tsp, obj_known, mode, a);
 }
 
-#ifdef CONFIG_AUDIT
 /**
- * smack_str_from_perm : helper to transalate an int to a
+ * smack_str_from_perm : helper to translate an int to a
  * readable string
  * @string : the string to fill
  * @access : the int
  *
  */
-static inline void smack_str_from_perm(char *string, int access)
+int smack_str_from_perm(char *string, int access)
 {
 	int i = 0;
 
@@ -299,8 +300,15 @@ static inline void smack_str_from_perm(char *string, int access)
 		string[i++] = 't';
 	if (access & MAY_LOCK)
 		string[i++] = 'l';
+	if (access & MAY_BRINGUP)
+		string[i++] = 'b';
+	if (i == 0)
+		string[i++] = '-';
 	string[i] = '\0';
+	return i;
 }
+
+#ifdef CONFIG_AUDIT
 /**
  * smack_log_callback - SMACK specific information
  * will be called by generic audit code
@@ -384,7 +392,7 @@ void smack_log(char *subject_label, char *object_label, int request,
 }
 #else /* #ifdef CONFIG_AUDIT */
 void smack_log(char *subject_label, char *object_label, int request,
-               int result, struct smk_audit_info *ad)
+	       int result, struct smk_audit_info *ad)
 {
 }
 #endif
@@ -568,6 +576,7 @@ int smack_populate_secattr(struct smack_known *skp)
  * smk_import_valid_allocated_label - import a label, return the list entry
  * @smack: a text string that is a valid Smack label and may be kfree()ed.
  *         It is consumed: either becomes a part of the entry or kfree'ed.
+ * @gfp: Allocation type
  *
  * Returns: see description of smk_import_entry()
  */
@@ -583,7 +592,7 @@ smk_import_allocated_label(char *smack, gfp_t gfp)
 	if (skp != NULL)
 		goto freeout;
 
-	skp = kzalloc(sizeof(*skp), gfp);
+	skp = kzalloc_obj(*skp, gfp);
 	if (skp == NULL) {
 		skp = ERR_PTR(-ENOMEM);
 		goto freeout;
@@ -634,9 +643,11 @@ struct smack_known *smk_import_entry(const char *string, int len)
 
 /**
  * smk_import_valid_label - import a label, return the list entry
- * @label a text string that is a valid Smack label, not null-terminated
+ * @label: a text string that is a valid Smack label, not null-terminated
+ * @label_len: the length of the text string in the @label
+ * @gfp: the GFP mask used for allocating memory for the @label text string copy
  *
- * Returns: see description of smk_import_entry()
+ * Return: see description of smk_import_entry()
  */
 struct smack_known *
 smk_import_valid_label(const char *label, int label_len, gfp_t gfp)

@@ -268,10 +268,11 @@ static const unsigned int eth_act_led_pins[]		= { GPIOZ_15 };
 static const unsigned int pwm_a_pins[]			= { GPIOX_6 };
 
 /* pwm_b */
-static const unsigned int pwm_b_h_pins[]		= { GPIOH_7 };
 static const unsigned int pwm_b_x7_pins[]		= { GPIOX_7 };
 static const unsigned int pwm_b_x19_pins[]		= { GPIOX_19 };
-static const unsigned int pwm_b_z_pins[]		= { GPIOZ_0 };
+static const unsigned int pwm_b_z0_pins[]		= { GPIOZ_0 };
+static const unsigned int pwm_b_z13_pins[]		= { GPIOZ_13 };
+static const unsigned int pwm_b_h_pins[]		= { GPIOH_7 };
 
 /* pwm_c */
 static const unsigned int pwm_c_c_pins[]		= { GPIOC_4 };
@@ -598,10 +599,6 @@ static const struct meson_pmx_group meson_g12a_periphs_groups[] = {
 	GROUP(bt565_a_din5,		2),
 	GROUP(bt565_a_din6,		2),
 	GROUP(bt565_a_din7,		2),
-	GROUP(pwm_b_z,			5),
-	GROUP(pwm_c_z,			5),
-	GROUP(pwm_d_z,			2),
-	GROUP(pwm_d_a,			3),
 	GROUP(tsin_b_valid_z,		3),
 	GROUP(tsin_b_sop_z,		3),
 	GROUP(tsin_b_din0_z,		3),
@@ -660,12 +657,22 @@ static const struct meson_pmx_group meson_g12a_periphs_groups[] = {
 	GROUP(pwm_a,			1),
 	GROUP(pwm_b_x7,			4),
 	GROUP(pwm_b_x19,		1),
+	GROUP(pwm_b_z0,			5),
+	GROUP(pwm_b_z13,		5),
+	GROUP(pwm_b_h,			5),
 	GROUP(pwm_c_x5,			4),
 	GROUP(pwm_c_x8,			5),
+	GROUP(pwm_c_c,			5),
+	GROUP(pwm_c_z,			5),
+	GROUP(pwm_d_z,			4),
+	GROUP(pwm_d_a,			3),
 	GROUP(pwm_d_x3,			4),
 	GROUP(pwm_d_x6,			4),
 	GROUP(pwm_e,			1),
+	GROUP(pwm_f_a,			3),
+	GROUP(pwm_f_h,			4),
 	GROUP(pwm_f_x,			1),
+	GROUP(pwm_f_z,			5),
 	GROUP(tsin_a_valid,		3),
 	GROUP(tsin_a_sop,		3),
 	GROUP(tsin_a_din0,		3),
@@ -735,7 +742,6 @@ static const struct meson_pmx_group meson_g12a_periphs_groups[] = {
 	GROUP(uart_c_rts,		2),
 	GROUP(iso7816_clk_h,		1),
 	GROUP(iso7816_data_h,		1),
-	GROUP(pwm_b_h,			5),
 	GROUP(pwm_f_h,			4),
 	GROUP(cec_ao_a_h,		4),
 	GROUP(cec_ao_b_h,		5),
@@ -1071,7 +1077,7 @@ static const char * const pwm_a_groups[] = {
 };
 
 static const char * const pwm_b_groups[] = {
-	"pwm_b_h", "pwm_b_x7", "pwm_b_x19", "pwm_b_z",
+	"pwm_b_h", "pwm_b_x7", "pwm_b_x19", "pwm_b_z0", "pwm_b_z13"
 };
 
 static const char * const pwm_c_groups[] = {
@@ -1079,7 +1085,7 @@ static const char * const pwm_c_groups[] = {
 };
 
 static const char * const pwm_d_groups[] = {
-	"pwm_d_x3", "pwm_d_x6", "pwm_d_z", "pwm_d_a",
+	"pwm_d_a", "pwm_d_x3", "pwm_d_x6", "pwm_d_z",
 };
 
 static const char * const pwm_e_groups[] = {

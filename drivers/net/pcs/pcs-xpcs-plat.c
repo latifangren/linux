@@ -280,7 +280,7 @@ static int xpcs_plat_init_clk(struct dw_xpcs_plat *pxpcs)
 	struct device *dev = &pxpcs->pdev->dev;
 	int ret;
 
-	pxpcs->cclk = devm_clk_get(dev, "csr");
+	pxpcs->cclk = devm_clk_get_optional(dev, "csr");
 	if (IS_ERR(pxpcs->cclk))
 		return dev_err_probe(dev, PTR_ERR(pxpcs->cclk),
 				     "Failed to get CSR clock\n");
@@ -364,9 +364,6 @@ static int xpcs_plat_init_dev(struct dw_xpcs_plat *pxpcs)
 
 err_clean_data:
 	mdiodev->dev.platform_data = NULL;
-
-	fwnode_handle_put(dev_fwnode(&mdiodev->dev));
-	device_set_node(&mdiodev->dev, NULL);
 
 	mdio_device_free(mdiodev);
 
@@ -456,5 +453,5 @@ static struct platform_driver xpcs_plat_driver = {
 module_platform_driver(xpcs_plat_driver);
 
 MODULE_DESCRIPTION("Synopsys DesignWare XPCS platform device driver");
-MODULE_AUTHOR("Signed-off-by: Serge Semin <fancer.lancer@gmail.com>");
+MODULE_AUTHOR("Serge Semin <fancer.lancer@gmail.com>");
 MODULE_LICENSE("GPL");

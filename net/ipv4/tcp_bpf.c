@@ -39,7 +39,7 @@ static int bpf_tcp_ingress(struct sock *sk, struct sk_psock *psock,
 	struct sk_msg *tmp;
 	int i, ret = 0;
 
-	tmp = kzalloc(sizeof(*tmp), __GFP_NOWARN | GFP_KERNEL);
+	tmp = kzalloc_obj(*tmp, __GFP_NOWARN | GFP_KERNEL);
 	if (unlikely(!tmp))
 		return -ENOMEM;
 
@@ -221,8 +221,7 @@ static bool is_next_msg_fin(struct sk_psock *psock)
 static int tcp_bpf_recvmsg_parser(struct sock *sk,
 				  struct msghdr *msg,
 				  size_t len,
-				  int flags,
-				  int *addr_len)
+				  int flags)
 {
 	int peek = flags & MSG_PEEK;
 	struct sk_psock *psock;
@@ -232,14 +231,14 @@ static int tcp_bpf_recvmsg_parser(struct sock *sk,
 	u32 seq;
 
 	if (unlikely(flags & MSG_ERRQUEUE))
-		return inet_recv_error(sk, msg, len, addr_len);
+		return inet_recv_error(sk, msg, len);
 
 	if (!len)
 		return 0;
 
 	psock = sk_psock_get(sk);
 	if (unlikely(!psock))
-		return tcp_recvmsg(sk, msg, len, flags, addr_len);
+		return tcp_recvmsg(sk, msg, len, flags);
 
 	lock_sock(sk);
 	tcp = tcp_sk(sk);
@@ -352,24 +351,24 @@ static int tcp_bpf_ioctl(struct sock *sk, int cmd, int *karg)
 }
 
 static int tcp_bpf_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
-			   int flags, int *addr_len)
+			   int flags)
 {
 	struct sk_psock *psock;
 	int copied, ret;
 
 	if (unlikely(flags & MSG_ERRQUEUE))
-		return inet_recv_error(sk, msg, len, addr_len);
+		return inet_recv_error(sk, msg, len);
 
 	if (!len)
 		return 0;
 
 	psock = sk_psock_get(sk);
 	if (unlikely(!psock))
-		return tcp_recvmsg(sk, msg, len, flags, addr_len);
+		return tcp_recvmsg(sk, msg, len, flags);
 	if (!skb_queue_empty(&sk->sk_receive_queue) &&
 	    sk_psock_queue_empty(psock)) {
 		sk_psock_put(sk, psock);
-		return tcp_recvmsg(sk, msg, len, flags, addr_len);
+		return tcp_recvmsg(sk, msg, len, flags);
 	}
 	lock_sock(sk);
 msg_bytes_ready:
@@ -389,7 +388,7 @@ msg_bytes_ready:
 				goto msg_bytes_ready;
 			release_sock(sk);
 			sk_psock_put(sk, psock);
-			return tcp_recvmsg(sk, msg, len, flags, addr_len);
+			return tcp_recvmsg(sk, msg, len, flags);
 		}
 		copied = -EAGAIN;
 	}
@@ -426,8 +425,8 @@ more_data:
 	    msg->cork_bytes > msg->sg.size && !enospc) {
 		psock->cork_bytes = msg->cork_bytes - msg->sg.size;
 		if (!psock->cork) {
-			psock->cork = kzalloc(sizeof(*psock->cork),
-					      GFP_ATOMIC | __GFP_NOWARN);
+			psock->cork = kzalloc_obj(*psock->cork,
+						  GFP_ATOMIC | __GFP_NOWARN);
 			if (!psock->cork) {
 				sk_msg_free(sk, msg);
 				*copied = 0;
@@ -518,7 +517,7 @@ more_data:
 static int tcp_bpf_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 {
 	struct sk_msg tmp, *msg_tx = NULL;
-	int copied = 0, err = 0;
+	int copied = 0, err = 0, ret = 0;
 	struct sk_psock *psock;
 	long timeo;
 	int flags;
@@ -561,14 +560,14 @@ static int tcp_bpf_sendmsg(struct sock *sk, struct msghdr *msg, size_t size)
 			copy = msg_tx->sg.size - osize;
 		}
 
-		err = sk_msg_memcopy_from_iter(sk, &msg->msg_iter, msg_tx,
+		ret = sk_msg_memcopy_from_iter(sk, &msg->msg_iter, msg_tx,
 					       copy);
-		if (err < 0) {
+		if (ret < 0) {
 			sk_msg_trim(sk, msg_tx, osize);
 			goto out_err;
 		}
 
-		copied += copy;
+		copied += ret;
 		if (psock->cork_bytes) {
 			if (size > psock->cork_bytes)
 				psock->cork_bytes = 0;

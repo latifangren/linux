@@ -9,6 +9,7 @@
 
 #include <linux/device.h>
 #include <linux/err.h>
+#include <linux/if_hsr.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
@@ -212,7 +213,7 @@ static struct dsa_switch_tree *dsa_tree_alloc(int index)
 {
 	struct dsa_switch_tree *dst;
 
-	dst = kzalloc(sizeof(*dst), GFP_KERNEL);
+	dst = kzalloc_obj(*dst);
 	if (!dst)
 		return NULL;
 
@@ -297,7 +298,7 @@ static struct dsa_link *dsa_link_touch(struct dsa_port *dp,
 		if (dl->dp == dp && dl->link_dp == link_dp)
 			return dl;
 
-	dl = kzalloc(sizeof(*dl), GFP_KERNEL);
+	dl = kzalloc_obj(*dl);
 	if (!dl)
 		return NULL;
 
@@ -843,7 +844,7 @@ static int dsa_tree_setup_lags(struct dsa_switch_tree *dst)
 	if (!len)
 		return 0;
 
-	dst->lags = kcalloc(len, sizeof(*dst->lags), GFP_KERNEL);
+	dst->lags = kzalloc_objs(*dst->lags, len);
 	if (!dst->lags)
 		return -ENOMEM;
 
@@ -1091,7 +1092,7 @@ static struct dsa_port *dsa_port_touch(struct dsa_switch *ds, int index)
 		if (dp->index == index)
 			return dp;
 
-	dp = kzalloc(sizeof(*dp), GFP_KERNEL);
+	dp = kzalloc_obj(*dp);
 	if (!dp)
 		return NULL;
 
@@ -1379,7 +1380,7 @@ static int dsa_switch_parse_of(struct dsa_switch *ds, struct device_node *dn)
 	return dsa_switch_parse_ports_of(ds, dn);
 }
 
-static int dev_is_class(struct device *dev, void *class)
+static int dev_is_class(struct device *dev, const void *class)
 {
 	if (dev->class != NULL && !strcmp(dev->class->name, class))
 		return 1;
@@ -1545,14 +1546,6 @@ static int dsa_switch_probe(struct dsa_switch *ds)
 	if (!ds->num_ports)
 		return -EINVAL;
 
-	if (ds->phylink_mac_ops) {
-		if (ds->ops->phylink_mac_select_pcs ||
-		    ds->ops->phylink_mac_config ||
-		    ds->ops->phylink_mac_link_down ||
-		    ds->ops->phylink_mac_link_up)
-			return -EINVAL;
-	}
-
 	if (np) {
 		err = dsa_switch_parse_of(ds, np);
 		if (err)
@@ -1630,7 +1623,7 @@ void dsa_switch_shutdown(struct dsa_switch *ds)
 	dsa_switch_for_each_cpu_port(dp, ds)
 		list_add(&dp->conduit->close_list, &close_list);
 
-	dev_close_many(&close_list, true);
+	netif_close_many(&close_list, true);
 
 	dsa_switch_for_each_user_port(dp, ds) {
 		conduit = dsa_port_to_conduit(dp);
@@ -1777,6 +1770,70 @@ bool dsa_mdb_present_in_other_db(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL_GPL(dsa_mdb_present_in_other_db);
 
+/* Helpers for switches without specific HSR offloads, but which can implement
+ * NETIF_F_HW_HSR_DUP because their tagger uses dsa_xmit_port_mask()
+ */
+int dsa_port_simple_hsr_validate(struct dsa_switch *ds, int port,
+				 struct net_device *hsr,
+				 struct netlink_ext_ack *extack)
+{
+	enum hsr_port_type type;
+	int err;
+
+	err = hsr_get_port_type(hsr, dsa_to_port(ds, port)->user, &type);
+	if (err)
+		return err;
+
+	if (type != HSR_PT_SLAVE_A && type != HSR_PT_SLAVE_B) {
+		NL_SET_ERR_MSG_MOD(extack,
+				   "Only HSR slave ports can be offloaded");
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dsa_port_simple_hsr_validate);
+
+int dsa_port_simple_hsr_join(struct dsa_switch *ds, int port,
+			     struct net_device *hsr,
+			     struct netlink_ext_ack *extack)
+{
+	struct dsa_port *dp = dsa_to_port(ds, port), *other_dp;
+	int err;
+
+	err = dsa_port_simple_hsr_validate(ds, port, hsr, extack);
+	if (err)
+		return err;
+
+	dsa_hsr_foreach_port(other_dp, ds, hsr) {
+		if (other_dp != dp) {
+			dp->user->features |= NETIF_F_HW_HSR_DUP;
+			other_dp->user->features |= NETIF_F_HW_HSR_DUP;
+			break;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dsa_port_simple_hsr_join);
+
+int dsa_port_simple_hsr_leave(struct dsa_switch *ds, int port,
+			      struct net_device *hsr)
+{
+	struct dsa_port *dp = dsa_to_port(ds, port), *other_dp;
+
+	dsa_hsr_foreach_port(other_dp, ds, hsr) {
+		if (other_dp != dp) {
+			dp->user->features &= ~NETIF_F_HW_HSR_DUP;
+			other_dp->user->features &= ~NETIF_F_HW_HSR_DUP;
+			break;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dsa_port_simple_hsr_leave);
+
 static const struct dsa_stubs __dsa_stubs = {
 	.conduit_hwtstamp_validate = __dsa_conduit_hwtstamp_validate,
 };
@@ -1840,3 +1897,4 @@ MODULE_AUTHOR("Lennert Buytenhek <buytenh@wantstofly.org>");
 MODULE_DESCRIPTION("Driver for Distributed Switch Architecture switch chips");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:dsa");
+MODULE_IMPORT_NS("NETDEV_INTERNAL");

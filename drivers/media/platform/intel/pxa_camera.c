@@ -741,7 +741,7 @@ static struct pxa_camera_format_xlate *pxa_mbus_build_fmts_xlate(
 	if (!fmts)
 		return ERR_PTR(-ENXIO);
 
-	user_formats = kcalloc(fmts + 1, sizeof(*user_formats), GFP_KERNEL);
+	user_formats = kzalloc_objs(*user_formats, fmts + 1);
 	if (!user_formats)
 		return ERR_PTR(-ENOMEM);
 
@@ -1504,8 +1504,6 @@ static const struct vb2_ops pxac_vb2_ops = {
 	.buf_cleanup		= pxac_vb2_cleanup,
 	.start_streaming	= pxac_vb2_start_streaming,
 	.stop_streaming		= pxac_vb2_stop_streaming,
-	.wait_prepare		= vb2_ops_wait_prepare,
-	.wait_finish		= vb2_ops_wait_finish,
 };
 
 static int pxa_camera_init_videobuf2(struct pxa_camera_dev *pcdev)

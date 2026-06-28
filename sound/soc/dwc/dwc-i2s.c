@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ALSA SoC Synopsys I2S Audio Layer
  *
@@ -5,10 +6,6 @@
  *
  * Copyright (C) 2010 ST Microelectronics
  * Rajeev Kumar <rajeevkumar.linux@gmail.com>
- *
- * This file is licensed under the terms of the GNU General Public
- * License version 2. This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  */
 
 #include <linux/clk.h>
@@ -477,7 +474,6 @@ static const struct snd_soc_dai_ops dw_i2s_dai_ops = {
 	.set_tdm_slot	= dw_i2s_set_tdm_slot,
 };
 
-#ifdef CONFIG_PM
 static int dw_i2s_runtime_suspend(struct device *dev)
 {
 	struct dw_i2s_dev *dw_dev = dev_get_drvdata(dev);
@@ -500,6 +496,7 @@ static int dw_i2s_runtime_resume(struct device *dev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int dw_i2s_suspend(struct snd_soc_component *component)
 {
 	struct dw_i2s_dev *dev = snd_soc_component_get_drvdata(component);
@@ -1083,7 +1080,7 @@ MODULE_DEVICE_TABLE(of, dw_i2s_of_match);
 #endif
 
 static const struct dev_pm_ops dwc_pm_ops = {
-	SET_RUNTIME_PM_OPS(dw_i2s_runtime_suspend, dw_i2s_runtime_resume, NULL)
+	RUNTIME_PM_OPS(dw_i2s_runtime_suspend, dw_i2s_runtime_resume, NULL)
 };
 
 static struct platform_driver dw_i2s_driver = {
@@ -1092,7 +1089,7 @@ static struct platform_driver dw_i2s_driver = {
 	.driver		= {
 		.name	= "designware-i2s",
 		.of_match_table = of_match_ptr(dw_i2s_of_match),
-		.pm = &dwc_pm_ops,
+		.pm = pm_ptr(&dwc_pm_ops),
 	},
 };
 

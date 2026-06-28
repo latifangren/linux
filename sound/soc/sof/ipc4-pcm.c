@@ -59,6 +59,8 @@ struct sof_ipc4_pcm_stream_priv {
  */
 #define DELAY_BOUNDARY		U32_MAX
 
+#define DELAY_MAX		(DELAY_BOUNDARY >> 1)
+
 static inline struct sof_ipc4_timestamp_info *
 sof_ipc4_sps_to_time_info(struct snd_sof_pcm_stream *sps)
 {
@@ -67,16 +69,40 @@ sof_ipc4_sps_to_time_info(struct snd_sof_pcm_stream *sps)
 	return stream_priv->time_info;
 }
 
+static
+char *sof_ipc4_set_multi_pipeline_state_debug(struct snd_sof_dev *sdev, char *buf, size_t size,
+					      struct ipc4_pipeline_set_state_data *trigger_list)
+{
+	int i, offset = 0;
+
+	for (i = 0; i < trigger_list->count; i++) {
+		offset += snprintf(buf + offset, size - offset, " %d",
+				   trigger_list->pipeline_instance_ids[i]);
+
+		if (offset >= size - 1) {
+			buf[size - 1] = '\0';
+			break;
+		}
+	}
+	return buf;
+}
+
 static int sof_ipc4_set_multi_pipeline_state(struct snd_sof_dev *sdev, u32 state,
 					     struct ipc4_pipeline_set_state_data *trigger_list)
 {
 	struct sof_ipc4_msg msg = {{ 0 }};
 	u32 primary, ipc_size;
+	char debug_buf[32];
 
 	/* trigger a single pipeline */
 	if (trigger_list->count == 1)
 		return sof_ipc4_set_pipeline_state(sdev, trigger_list->pipeline_instance_ids[0],
 						   state);
+
+	dev_dbg(sdev->dev, "Set pipelines %s to state %d%s",
+		sof_ipc4_set_multi_pipeline_state_debug(sdev, debug_buf, sizeof(debug_buf),
+							trigger_list),
+		state, sof_ipc4_pipeline_state_str(state));
 
 	primary = state;
 	primary |= SOF_IPC4_MSG_TYPE_SET(SOF_IPC4_GLB_SET_PIPELINE_STATE);
@@ -100,7 +126,8 @@ int sof_ipc4_set_pipeline_state(struct snd_sof_dev *sdev, u32 instance_id, u32 s
 	struct sof_ipc4_msg msg = {{ 0 }};
 	u32 primary;
 
-	dev_dbg(sdev->dev, "ipc4 set pipeline instance %d state %d", instance_id, state);
+	dev_dbg(sdev->dev, "Set pipeline %d to state %d%s", instance_id, state,
+		sof_ipc4_pipeline_state_str(state));
 
 	primary = state;
 	primary |= SOF_IPC4_GLB_PIPE_STATE_ID(instance_id);
@@ -324,7 +351,7 @@ static int sof_ipc4_chain_dma_trigger(struct snd_sof_dev *sdev,
 		set_fifo_size = false;
 		break;
 	default:
-		dev_err(sdev->dev, "Unexpected state %d", state);
+		spcm_err(spcm, direction, "Unexpected pipeline state %d\n", state);
 		return -EINVAL;
 	}
 
@@ -344,8 +371,8 @@ static int sof_ipc4_chain_dma_trigger(struct snd_sof_dev *sdev,
 		struct sof_ipc4_pipeline *pipeline = pipe_widget->private;
 
 		if (!pipeline->use_chain_dma) {
-			dev_err(sdev->dev,
-				"All pipelines in chained DMA stream should have use_chain_dma attribute set.");
+			spcm_err(spcm, direction,
+				 "All pipelines in chained DMA path should have use_chain_dma attribute set.");
 			return -EINVAL;
 		}
 
@@ -400,11 +427,11 @@ static int sof_ipc4_trigger_pipelines(struct snd_soc_component *component,
 	int ret;
 	int i;
 
-	dev_dbg(sdev->dev, "trigger cmd: %d state: %d\n", cmd, state);
-
 	spcm = snd_sof_find_spcm_dai(component, rtd);
 	if (!spcm)
 		return -EINVAL;
+
+	spcm_dbg(spcm, substream->stream, "cmd: %d, state: %d\n", cmd, state);
 
 	pipeline_list = &spcm->stream[substream->stream].pipeline_list;
 
@@ -449,8 +476,8 @@ static int sof_ipc4_trigger_pipelines(struct snd_soc_component *component,
 	}
 
 	/* allocate memory for the pipeline data */
-	trigger_list = kzalloc(struct_size(trigger_list, pipeline_instance_ids,
-					   pipeline_list->count), GFP_KERNEL);
+	trigger_list = kzalloc_flex(*trigger_list, pipeline_instance_ids,
+				    pipeline_list->count);
 	if (!trigger_list)
 		return -ENOMEM;
 
@@ -460,7 +487,7 @@ static int sof_ipc4_trigger_pipelines(struct snd_soc_component *component,
 		return -ENOMEM;
 	}
 
-	mutex_lock(&ipc4_data->pipeline_state_mutex);
+	guard(mutex)(&ipc4_data->pipeline_state_mutex);
 
 	/*
 	 * IPC4 requires pipelines to be triggered in order starting at the sink and
@@ -500,7 +527,7 @@ static int sof_ipc4_trigger_pipelines(struct snd_soc_component *component,
 	 */
 	ret = sof_ipc4_set_multi_pipeline_state(sdev, SOF_IPC4_PIPE_PAUSED, trigger_list);
 	if (ret < 0) {
-		dev_err(sdev->dev, "failed to pause all pipelines\n");
+		spcm_err(spcm, substream->stream, "failed to pause all pipelines\n");
 		goto free;
 	}
 
@@ -529,7 +556,9 @@ skip_pause_transition:
 	/* else set the RUNNING/RESET state in the DSP */
 	ret = sof_ipc4_set_multi_pipeline_state(sdev, state, trigger_list);
 	if (ret < 0) {
-		dev_err(sdev->dev, "failed to set final state %d for all pipelines\n", state);
+		spcm_err(spcm, substream->stream,
+			 "failed to set final state %d for all pipelines\n",
+			 state);
 		/*
 		 * workaround: if the firmware is crashed while setting the
 		 * pipelines to reset state we must ignore the error code and
@@ -551,7 +580,6 @@ skip_pause_transition:
 	}
 
 free:
-	mutex_unlock(&ipc4_data->pipeline_state_mutex);
 	kfree(trigger_list);
 	kfree(pipe_priority);
 	return ret;
@@ -590,12 +618,15 @@ static int sof_ipc4_pcm_hw_free(struct snd_soc_component *component,
 	return sof_ipc4_trigger_pipelines(component, substream, SOF_IPC4_PIPE_RESET, 0);
 }
 
-static void ipc4_ssp_dai_config_pcm_params_match(struct snd_sof_dev *sdev, const char *link_name,
-						 struct snd_pcm_hw_params *params)
+static int ipc4_ssp_dai_config_pcm_params_match(struct snd_sof_dev *sdev,
+						const char *link_name,
+						struct snd_pcm_hw_params *params)
 {
 	struct snd_sof_dai_link *slink;
 	struct snd_sof_dai *dai;
 	bool dai_link_found = false;
+	int current_config = -1;
+	bool partial_match;
 	int i;
 
 	list_for_each_entry(slink, &sdev->dai_link_list, list) {
@@ -606,19 +637,50 @@ static void ipc4_ssp_dai_config_pcm_params_match(struct snd_sof_dev *sdev, const
 	}
 
 	if (!dai_link_found)
-		return;
+		return 0;
 
+	/*
+	 * Find the first best matching hardware config:
+	 * rate + format + channels are matching
+	 * rate + channel are matching
+	 *
+	 * The copier cannot do rate and/or channel conversion.
+	 */
 	for (i = 0; i < slink->num_hw_configs; i++) {
 		struct snd_soc_tplg_hw_config *hw_config = &slink->hw_configs[i];
 
-		if (params_rate(params) == le32_to_cpu(hw_config->fsync_rate)) {
-			/* set current config for all DAI's with matching name */
-			list_for_each_entry(dai, &sdev->dai_list, list)
-				if (!strcmp(slink->link->name, dai->name))
-					dai->current_config = le32_to_cpu(hw_config->id);
+		if (params_rate(params) == le32_to_cpu(hw_config->fsync_rate) &&
+		    params_width(params) == le32_to_cpu(hw_config->tdm_slot_width) &&
+		    params_channels(params) <= le32_to_cpu(hw_config->tdm_slots)) {
+			current_config = le32_to_cpu(hw_config->id);
+			partial_match = false;
+			/* best match found */
 			break;
+		} else if (current_config < 0 &&
+			   params_rate(params) == le32_to_cpu(hw_config->fsync_rate) &&
+			   params_channels(params) <= le32_to_cpu(hw_config->tdm_slots)) {
+			current_config = le32_to_cpu(hw_config->id);
+			partial_match = true;
+			/* keep looking for better match */
 		}
 	}
+
+	if (current_config < 0) {
+		dev_err(sdev->dev,
+			"%s: No suitable hw_config found for %s (num_hw_configs: %d)\n",
+			__func__, slink->link->name, slink->num_hw_configs);
+		return -EINVAL;
+	}
+
+	dev_dbg(sdev->dev,
+		"hw_config for %s: %d (num_hw_configs: %d) with %s match\n",
+		slink->link->name, current_config, slink->num_hw_configs,
+		partial_match ? "partial" : "full");
+	list_for_each_entry(dai, &sdev->dai_list, list)
+		if (!strcmp(slink->link->name, dai->name))
+			dai->current_config = current_config;
+
+	return 0;
 }
 
 /*
@@ -638,16 +700,18 @@ static int sof_ipc4_pcm_dai_link_fixup_rate(struct snd_sof_dev *sdev,
 	unsigned int be_rate;
 	int i;
 
+	if (WARN_ON_ONCE(!num_input_formats))
+		return -EINVAL;
+
 	/*
 	 * Copier does not change sampling rate, so we
 	 * need to only consider the input pin information.
 	 */
+	be_rate = pin_fmts[0].audio_fmt.sampling_frequency;
 	for (i = 0; i < num_input_formats; i++) {
 		unsigned int val = pin_fmts[i].audio_fmt.sampling_frequency;
 
-		if (i == 0)
-			be_rate = val;
-		else if (val != be_rate)
+		if (val != be_rate)
 			single_be_rate = false;
 
 		if (val == fe_rate) {
@@ -815,13 +879,10 @@ static int sof_ipc4_pcm_dai_link_fixup(struct snd_soc_pcm_runtime *rtd,
 		break;
 	}
 
-	switch (ipc4_copier->dai_type) {
-	case SOF_DAI_INTEL_SSP:
-		ipc4_ssp_dai_config_pcm_params_match(sdev, (char *)rtd->dai_link->name, params);
-		break;
-	default:
-		break;
-	}
+	if (ipc4_copier->dai_type == SOF_DAI_INTEL_SSP)
+		return ipc4_ssp_dai_config_pcm_params_match(sdev,
+							    (char *)rtd->dai_link->name,
+							    params);
 
 	return 0;
 }
@@ -870,15 +931,14 @@ static int sof_ipc4_pcm_setup(struct snd_sof_dev *sdev, struct snd_sof_pcm *spcm
 		pipeline_list = &spcm->stream[stream].pipeline_list;
 
 		/* allocate memory for max number of pipeline IDs */
-		pipeline_list->pipelines = kcalloc(ipc4_data->max_num_pipelines,
-						   sizeof(*pipeline_list->pipelines),
-						   GFP_KERNEL);
+		pipeline_list->pipelines = kzalloc_objs(*pipeline_list->pipelines,
+							ipc4_data->max_num_pipelines);
 		if (!pipeline_list->pipelines) {
 			sof_ipc4_pcm_free(sdev, spcm);
 			return -ENOMEM;
 		}
 
-		stream_priv = kzalloc(sizeof(*stream_priv), GFP_KERNEL);
+		stream_priv = kzalloc_obj(*stream_priv);
 		if (!stream_priv) {
 			sof_ipc4_pcm_free(sdev, spcm);
 			return -ENOMEM;
@@ -890,7 +950,7 @@ static int sof_ipc4_pcm_setup(struct snd_sof_dev *sdev, struct snd_sof_pcm *spcm
 		if (!support_info || stream == SNDRV_PCM_STREAM_CAPTURE)
 			continue;
 
-		time_info = kzalloc(sizeof(*time_info), GFP_KERNEL);
+		time_info = kzalloc_obj(*time_info);
 		if (!time_info) {
 			sof_ipc4_pcm_free(sdev, spcm);
 			return -ENOMEM;
@@ -1205,6 +1265,13 @@ static int sof_ipc4_pcm_pointer(struct snd_soc_component *component,
 		time_info->delay = DELAY_BOUNDARY - tail_cnt + head_cnt;
 	else
 		time_info->delay = head_cnt - tail_cnt;
+
+	if (time_info->delay > DELAY_MAX) {
+		spcm_dbg_ratelimited(spcm, substream->stream,
+				     "inaccurate delay, host %llu dai_cnt %llu",
+				     host_cnt, dai_cnt);
+		time_info->delay = 0;
+	}
 
 	/*
 	 * Convert the host byte counter to PCM pointer which wraps in buffer

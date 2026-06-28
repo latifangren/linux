@@ -201,6 +201,7 @@
 &hscif0 {
 	pinctrl-0 = <&hscif0_pins>;
 	pinctrl-names = "default";
+	bootph-all;
 
 	status = "okay";
 };
@@ -215,8 +216,7 @@
 	io_expander_a: gpio@20 {
 		compatible = "onnn,pca9654";
 		reg = <0x20>;
-		interrupt-parent = <&gpio0>;
-		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
+		interrupts-extended = <&gpio0 0 IRQ_TYPE_LEVEL_LOW>;
 		gpio-controller;
 		#gpio-cells = <2>;
 		interrupt-controller;
@@ -248,8 +248,7 @@
 		clocks = <&sn65dsi86_refclk>;
 		clock-names = "refclk";
 
-		interrupt-parent = <&intc_ex>;
-		interrupts = <0 IRQ_TYPE_LEVEL_HIGH>;
+		interrupts-extended = <&intc_ex 0 IRQ_TYPE_LEVEL_HIGH>;
 
 		enable-gpios = <&gpio1 26 GPIO_ACTIVE_HIGH>;
 
@@ -304,7 +303,7 @@
 };
 
 &pciec0 {
-	reset-gpio = <&io_expander_a 0 GPIO_ACTIVE_LOW>;
+	reset-gpios = <&io_expander_a 0 GPIO_ACTIVE_LOW>;
 	status = "okay";
 };
 

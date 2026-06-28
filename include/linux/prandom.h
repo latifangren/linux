@@ -10,6 +10,7 @@
 
 #include <linux/types.h>
 #include <linux/once.h>
+#include <linux/percpu.h>
 #include <linux/random.h>
 
 struct rnd_state {
@@ -22,12 +23,6 @@ void prandom_seed_full_state(struct rnd_state __percpu *pcpu_state);
 
 #define prandom_init_once(pcpu_state)			\
 	DO_ONCE(prandom_seed_full_state, (pcpu_state))
-
-/* Deprecated: use get_random_u32_below() instead. */
-static inline u32 prandom_u32_max(u32 ep_ro)
-{
-	return get_random_u32_below(ep_ro);
-}
 
 /*
  * Handle minimum values for seeds
@@ -50,12 +45,6 @@ static inline void prandom_seed_state(struct rnd_state *state, u64 seed)
 	state->s2 = __seed(i,   8U);
 	state->s3 = __seed(i,  16U);
 	state->s4 = __seed(i, 128U);
-}
-
-/* Pseudo random number generator from numerical recipes. */
-static inline u32 next_pseudo_random32(u32 seed)
-{
-	return seed * 1664525 + 1013904223;
 }
 
 #endif

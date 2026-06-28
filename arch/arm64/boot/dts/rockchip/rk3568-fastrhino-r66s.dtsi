@@ -35,12 +35,11 @@
 			color = <LED_COLOR_ID_BLUE>;
 			function = LED_FUNCTION_STATUS;
 			gpios = <&gpio0 RK_PC0 GPIO_ACTIVE_HIGH>;
-			label = "blue:working";
 			linux,default-trigger = "heartbeat";
 		};
 	};
 
-	vcc12v_dcin: vcc12v-dcin-regulator {
+	vcc12v_dcin: regulator-vcc12v-dcin {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc12v_dcin";
 		regulator-always-on;
@@ -49,7 +48,7 @@
 		regulator-max-microvolt = <12000000>;
 	};
 
-	vcc3v3_pcie: vcc3v3-pcie-regulator {
+	vcc3v3_pcie: regulator-vcc3v3-pcie {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc3v3_pcie";
 		regulator-always-on;
@@ -59,7 +58,7 @@
 		vin-supply = <&vcc5v0_sys>;
 	};
 
-	vcc3v3_sys: vcc3v3-sys-regulator {
+	vcc3v3_sys: regulator-vcc3v3-sys {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc3v3_sys";
 		regulator-always-on;
@@ -69,7 +68,7 @@
 		vin-supply = <&vcc12v_dcin>;
 	};
 
-	vcc5v0_sys: vcc5v0-sys-regulator {
+	vcc5v0_sys: regulator-vcc5v0-sys {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc5v0_sys";
 		regulator-always-on;
@@ -79,7 +78,7 @@
 		vin-supply = <&vcc12v_dcin>;
 	};
 
-	vcc5v0_usb_otg: vcc5v0-usb-otg-regulator {
+	vcc5v0_usb_otg: regulator-vcc5v0-usb-otg {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio0 RK_PA5 GPIO_ACTIVE_HIGH>;
@@ -364,29 +363,6 @@
 	reset-gpios = <&gpio0 RK_PC3 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
 	status = "okay";
-
-	pcie@0,0 {
-		reg = <0x00100000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-
-		bus-range = <0x10 0x1f>;
-		device_type = "pci";
-		ranges;
-
-		rtl8125_1: pcie-eth@0,0 {
-			compatible = "pci10ec,8125";
-			reg = <0x110000 0 0 0 0>;
-
-			/* G+ 3v3
-			 * G- LED1: LINK on 100 + 1000 + 2500
-			 * Y+ 3v3
-			 * Y- LED0: ACT on all speed
-			 */
-			r8125,led0 = <0x0200>;
-			r8125,led1 = <0x002a>;
-		};
-	};
 };
 
 &pcie3x2 {
@@ -394,29 +370,6 @@
 	reset-gpios = <&gpio0 RK_PC6 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
 	status = "okay";
-
-	pcie@0,0 {
-		reg = <0x00200000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-
-		bus-range = <0x20 0x2f>;
-		device_type = "pci";
-		ranges;
-
-		rtl8125_2: pcie-eth@0,0 {
-			compatible = "pci10ec,8125";
-			reg = <0x210000 0 0 0 0>;
-
-			/* G+ 3v3
-			 * G- LED1: LINK on 100 + 1000 + 2500
-			 * Y+ 3v3
-			 * Y- LED0: ACT on all speed
-			 */
-			r8125,led0 = <0x0200>;
-			r8125,led1 = <0x002a>;
-		};
-	};
 };
 
 &pinctrl {
@@ -457,10 +410,6 @@
 	status = "okay";
 };
 
-&rng {
-	status = "okay";
-};
-
 &saradc {
 	vref-supply = <&vcca_1v8>;
 	status = "okay";
@@ -476,26 +425,10 @@
 	status = "okay";
 };
 
-&usb_host0_ehci {
-	status = "disabled";
-};
-
-&usb_host0_ohci {
-	status = "disabled";
-};
-
 &usb_host0_xhci {
 	dr_mode = "host";
 	extcon = <&usb2phy0>;
 	status = "okay";
-};
-
-&usb_host1_ehci {
-	status = "disabled";
-};
-
-&usb_host1_ohci {
-	status = "disabled";
 };
 
 &usb_host1_xhci {
@@ -514,18 +447,6 @@
 &usb2phy0_otg {
 	phy-supply = <&vcc5v0_usb_otg>;
 	status = "okay";
-};
-
-&usb2phy1 {
-	status = "disabled";
-};
-
-&usb2phy1_host {
-	status = "disabled";
-};
-
-&usb2phy1_otg {
-	status = "disabled";
 };
 
 &vop {

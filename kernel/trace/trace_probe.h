@@ -10,20 +10,22 @@
  * Author:     Srikar Dronamraju
  */
 
+#include <linux/bitops.h>
+#include <linux/btf.h>
+#include <linux/cleanup.h>
+#include <linux/kprobes.h>
+#include <linux/limits.h>
+#include <linux/perf_event.h>
+#include <linux/ptrace.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/string.h>
+#include <linux/stringify.h>
 #include <linux/tracefs.h>
 #include <linux/types.h>
-#include <linux/string.h>
-#include <linux/ptrace.h>
-#include <linux/perf_event.h>
-#include <linux/kprobes.h>
-#include <linux/stringify.h>
-#include <linux/limits.h>
 #include <linux/uaccess.h>
-#include <linux/bitops.h>
-#include <linux/btf.h>
+
 #include <asm/bitsperlong.h>
 
 #include "trace.h"
@@ -36,6 +38,7 @@
 #define MAX_BTF_ARGS_LEN	128
 #define MAX_DENTRY_ARGS_LEN	256
 #define MAX_STRING_SIZE		PATH_MAX
+#define MAX_PROBE_EVENT_SIZE	3072
 
 /* Reserved field names */
 #define FIELD_STRING_IP		"__probe_ip"
@@ -443,6 +446,14 @@ extern void traceprobe_free_probe_arg(struct probe_arg *arg);
  * this MUST be called for clean up the context and return a resource.
  */
 void traceprobe_finish_parse(struct traceprobe_parse_context *ctx);
+static inline void traceprobe_free_parse_ctx(struct traceprobe_parse_context *ctx)
+{
+	traceprobe_finish_parse(ctx);
+	kfree(ctx);
+}
+
+DEFINE_FREE(traceprobe_parse_context, struct traceprobe_parse_context *,
+	if (_T) traceprobe_free_parse_ctx(_T))
 
 extern int traceprobe_split_symbol_offset(char *symbol, long *offset);
 int traceprobe_parse_event_name(const char **pevent, const char **pgroup,
@@ -549,7 +560,10 @@ extern int traceprobe_define_arg_fields(struct trace_event_call *event_call,
 	C(NO_BTF_FIELD,		"This field is not found."),	\
 	C(BAD_BTF_TID,		"Failed to get BTF type info."),\
 	C(BAD_TYPE4STR,		"This type does not fit for string."),\
-	C(NEED_STRING_TYPE,	"$comm and immediate-string only accepts string type"),
+	C(NEED_STRING_TYPE,	"$comm and immediate-string only accepts string type"),\
+	C(TOO_MANY_ARGS,	"Too many arguments are specified"),	\
+	C(TOO_MANY_EARGS,	"Too many entry arguments specified"),	\
+	C(EVENT_TOO_BIG,	"Event too big (too many fields?)"),
 
 #undef C
 #define C(a, b)		TP_ERR_##a
@@ -566,10 +580,12 @@ struct trace_probe_log {
 	int		index;
 };
 
-void trace_probe_log_init(const char *subsystem, int argc, const char **argv);
+const char *trace_probe_log_init(const char *subsystem, int argc, const char **argv);
 void trace_probe_log_set_index(int index);
 void trace_probe_log_clear(void);
 void __trace_probe_log_err(int offset, int err);
+
+DEFINE_FREE(trace_probe_log_clear, const char *, if (_T) trace_probe_log_clear())
 
 #define trace_probe_log_err(offs, err)	\
 	__trace_probe_log_err(offs, TP_ERR_##err)

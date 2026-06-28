@@ -64,6 +64,24 @@
 				      KVM_REG_ARM_VGIC_SYSREG_CRM_MASK | \
 				      KVM_REG_ARM_VGIC_SYSREG_OP2_MASK)
 
+#define KVM_ICC_SRE_EL2		(ICC_SRE_EL2_ENABLE | ICC_SRE_EL2_SRE |	\
+				 ICC_SRE_EL1_DIB | ICC_SRE_EL1_DFB)
+#define KVM_ICH_VTR_EL2_RES0	(ICH_VTR_EL2_DVIM 	|	\
+				 ICH_VTR_EL2_A3V	|	\
+				 ICH_VTR_EL2_IDbits)
+#define KVM_ICH_VTR_EL2_RES1	ICH_VTR_EL2_nV4
+
+static inline u64 kvm_get_guest_vtr_el2(void)
+{
+	u64 vtr;
+
+	vtr  = kvm_vgic_global_state.ich_vtr_el2;
+	vtr &= ~KVM_ICH_VTR_EL2_RES0;
+	vtr |= KVM_ICH_VTR_EL2_RES1;
+
+	return vtr;
+}
+
 /*
  * As per Documentation/virt/kvm/devices/arm-vgic-its.rst,
  * below macros are defined for ITS table entry encoding.
@@ -146,27 +164,20 @@ static inline int vgic_write_guest_lock(struct kvm *kvm, gpa_t gpa,
 	return ret;
 }
 
-static inline int vgic_its_read_entry_lock(struct vgic_its *its, gpa_t eaddr,
-					   u64 *eval, unsigned long esize)
+void kvm_compute_ich_hcr_trap_bits(struct alt_instr *alt,
+				   __le32 *origptr, __le32 *updptr, int nr_inst);
+
+static inline u64 vgic_ich_hcr_trap_bits(void)
 {
-	struct kvm *kvm = its->dev->kvm;
+	u64 hcr;
 
-	if (KVM_BUG_ON(esize != sizeof(*eval), kvm))
-		return -EINVAL;
+	/* All the traps are in the bottom 16bits */
+	asm volatile(ALTERNATIVE_CB("movz %0, #0\n",
+				    ARM64_ALWAYS_SYSTEM,
+				    kvm_compute_ich_hcr_trap_bits)
+		     : "=r" (hcr));
 
-	return kvm_read_guest_lock(kvm, eaddr, eval, esize);
-
-}
-
-static inline int vgic_its_write_entry_lock(struct vgic_its *its, gpa_t eaddr,
-					    u64 eval, unsigned long esize)
-{
-	struct kvm *kvm = its->dev->kvm;
-
-	if (KVM_BUG_ON(esize != sizeof(eval), kvm))
-		return -EINVAL;
-
-	return vgic_write_guest_lock(kvm, eaddr, &eval, esize);
+	return hcr;
 }
 
 /*
@@ -176,6 +187,7 @@ static inline int vgic_its_write_entry_lock(struct vgic_its *its, gpa_t eaddr,
  * registers regardless of the hardware backed GIC used.
  */
 struct vgic_vmcr {
+	u32	en; /* GICv5-specific */
 	u32	grpen0;
 	u32	grpen1;
 
@@ -195,6 +207,51 @@ struct vgic_reg_attr {
 	gpa_t addr;
 };
 
+struct its_device {
+	struct list_head dev_list;
+
+	/* the head for the list of ITTEs */
+	struct list_head itt_head;
+	u32 num_eventid_bits;
+	gpa_t itt_addr;
+	u32 device_id;
+};
+
+#define COLLECTION_NOT_MAPPED ((u32)~0)
+
+struct its_collection {
+	struct list_head coll_list;
+
+	u32 collection_id;
+	u32 target_addr;
+};
+
+#define its_is_collection_mapped(coll) ((coll) && \
+				((coll)->target_addr != COLLECTION_NOT_MAPPED))
+
+struct its_ite {
+	struct list_head ite_list;
+
+	struct vgic_irq *irq;
+	struct its_collection *collection;
+	u32 event_id;
+};
+
+struct ap_list_summary {
+	unsigned int	nr_pend;	/* purely pending, not active */
+	unsigned int	nr_act;		/* active, or active+pending */
+	unsigned int	nr_sgi;		/* any SGI */
+};
+
+#define irqs_outside_lrs(s)						\
+	 (((s)->nr_pend + (s)->nr_act) > kvm_vgic_global_state.nr_lr)
+
+#define irqs_pending_outside_lrs(s)			\
+	((s)->nr_pend > kvm_vgic_global_state.nr_lr)
+
+#define irqs_active_outside_lrs(s)		\
+	((s)->nr_act &&	irqs_outside_lrs(s))
+
 int vgic_v3_parse_attr(struct kvm_device *dev, struct kvm_device_attr *attr,
 		       struct vgic_reg_attr *reg_attr);
 int vgic_v2_parse_attr(struct kvm_device *dev, struct kvm_device_attr *attr,
@@ -202,9 +259,10 @@ int vgic_v2_parse_attr(struct kvm_device *dev, struct kvm_device_attr *attr,
 const struct vgic_register_region *
 vgic_get_mmio_region(struct kvm_vcpu *vcpu, struct vgic_io_device *iodev,
 		     gpa_t addr, int len);
-struct vgic_irq *vgic_get_irq(struct kvm *kvm, struct kvm_vcpu *vcpu,
-			      u32 intid);
+struct vgic_irq *vgic_get_irq(struct kvm *kvm, u32 intid);
+struct vgic_irq *vgic_get_vcpu_irq(struct kvm_vcpu *vcpu, u32 intid);
 void vgic_put_irq(struct kvm *kvm, struct vgic_irq *irq);
+struct kvm_vcpu *vgic_target_oracle(struct vgic_irq *irq);
 bool vgic_get_phys_line_level(struct vgic_irq *irq);
 void vgic_irq_set_phys_pending(struct vgic_irq *irq, bool pending);
 void vgic_irq_set_phys_active(struct vgic_irq *irq, bool active);
@@ -220,8 +278,9 @@ int vgic_check_iorange(struct kvm *kvm, phys_addr_t ioaddr,
 
 void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu);
 void vgic_v2_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr);
+void vgic_v2_deactivate(struct kvm_vcpu *vcpu, u32 val);
 void vgic_v2_clear_lr(struct kvm_vcpu *vcpu, int lr);
-void vgic_v2_set_underflow(struct kvm_vcpu *vcpu);
+void vgic_v2_configure_hcr(struct kvm_vcpu *vcpu, struct ap_list_summary *als);
 int vgic_v2_has_attr_regs(struct kvm_device *dev, struct kvm_device_attr *attr);
 int vgic_v2_dist_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 			 int offset, u32 *val);
@@ -229,7 +288,7 @@ int vgic_v2_cpuif_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 			  int offset, u32 *val);
 void vgic_v2_set_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
 void vgic_v2_get_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
-void vgic_v2_enable(struct kvm_vcpu *vcpu);
+void vgic_v2_reset(struct kvm_vcpu *vcpu);
 int vgic_v2_probe(const struct gic_kvm_info *info);
 int vgic_v2_map_resources(struct kvm *kvm);
 int vgic_register_dist_iodev(struct kvm *kvm, gpa_t dist_base_address,
@@ -242,7 +301,7 @@ void vgic_v2_put(struct kvm_vcpu *vcpu);
 void vgic_v2_save_state(struct kvm_vcpu *vcpu);
 void vgic_v2_restore_state(struct kvm_vcpu *vcpu);
 
-static inline bool vgic_try_get_irq_kref(struct vgic_irq *irq)
+static inline bool vgic_try_get_irq_ref(struct vgic_irq *irq)
 {
 	if (!irq)
 		return false;
@@ -250,21 +309,23 @@ static inline bool vgic_try_get_irq_kref(struct vgic_irq *irq)
 	if (irq->intid < VGIC_MIN_LPI)
 		return true;
 
-	return kref_get_unless_zero(&irq->refcount);
+	return refcount_inc_not_zero(&irq->refcount);
 }
 
-static inline void vgic_get_irq_kref(struct vgic_irq *irq)
+static inline void vgic_get_irq_ref(struct vgic_irq *irq)
 {
-	WARN_ON_ONCE(!vgic_try_get_irq_kref(irq));
+	WARN_ON_ONCE(!vgic_try_get_irq_ref(irq));
 }
 
 void vgic_v3_fold_lr_state(struct kvm_vcpu *vcpu);
 void vgic_v3_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr);
 void vgic_v3_clear_lr(struct kvm_vcpu *vcpu, int lr);
-void vgic_v3_set_underflow(struct kvm_vcpu *vcpu);
+void vgic_v3_deactivate(struct kvm_vcpu *vcpu, u64 val);
+void vgic_v3_configure_hcr(struct kvm_vcpu *vcpu, struct ap_list_summary *als);
 void vgic_v3_set_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
 void vgic_v3_get_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
-void vgic_v3_enable(struct kvm_vcpu *vcpu);
+void vgic_v3_reset(struct kvm_vcpu *vcpu);
+void vgic_v3_enable_cpuif_traps(void);
 int vgic_v3_probe(const struct gic_kvm_info *info);
 int vgic_v3_map_resources(struct kvm *kvm);
 int vgic_v3_lpi_sync_pending_status(struct kvm *kvm, struct vgic_irq *irq);
@@ -290,6 +351,7 @@ int vgic_v3_redist_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 int vgic_v3_cpu_sysregs_uaccess(struct kvm_vcpu *vcpu,
 				struct kvm_device_attr *attr, bool is_write);
 int vgic_v3_has_cpu_sysregs_attr(struct kvm_vcpu *vcpu, struct kvm_device_attr *attr);
+const struct sys_reg_desc *vgic_v3_get_sysreg_table(unsigned int *sz);
 int vgic_v3_line_level_info_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 				    u32 intid, u32 *val);
 int kvm_register_vgic_device(unsigned long type);
@@ -300,6 +362,21 @@ int vgic_init(struct kvm *kvm);
 
 void vgic_debug_init(struct kvm *kvm);
 void vgic_debug_destroy(struct kvm *kvm);
+
+int vgic_v5_probe(const struct gic_kvm_info *info);
+void vgic_v5_reset(struct kvm_vcpu *vcpu);
+int vgic_v5_init(struct kvm *kvm);
+int vgic_v5_map_resources(struct kvm *kvm);
+void vgic_v5_set_ppi_ops(struct kvm_vcpu *vcpu, u32 vintid);
+bool vgic_v5_has_pending_ppi(struct kvm_vcpu *vcpu);
+void vgic_v5_flush_ppi_state(struct kvm_vcpu *vcpu);
+void vgic_v5_fold_ppi_state(struct kvm_vcpu *vcpu);
+void vgic_v5_load(struct kvm_vcpu *vcpu);
+void vgic_v5_put(struct kvm_vcpu *vcpu);
+void vgic_v5_set_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
+void vgic_v5_get_vmcr(struct kvm_vcpu *vcpu, struct vgic_vmcr *vmcr);
+void vgic_v5_restore_state(struct kvm_vcpu *vcpu);
+void vgic_v5_save_state(struct kvm_vcpu *vcpu);
 
 static inline int vgic_v3_max_apr_idx(struct kvm_vcpu *vcpu)
 {
@@ -362,7 +439,6 @@ void vgic_its_invalidate_all_caches(struct kvm *kvm);
 int vgic_its_inv_lpi(struct kvm *kvm, struct vgic_irq *irq);
 int vgic_its_invall(struct kvm_vcpu *vcpu);
 
-bool vgic_supports_direct_msis(struct kvm *kvm);
 int vgic_v4_init(struct kvm *kvm);
 void vgic_v4_teardown(struct kvm *kvm);
 void vgic_v4_configure_vsgis(struct kvm *kvm);
@@ -375,5 +451,48 @@ static inline bool kvm_has_gicv3(struct kvm *kvm)
 {
 	return kvm_has_feat(kvm, ID_AA64PFR0_EL1, GIC, IMP);
 }
+
+static inline bool kvm_has_gicv5(struct kvm *kvm)
+{
+	return kvm_has_feat(kvm, ID_AA64PFR2_EL1, GCIE, IMP);
+}
+
+void vgic_v3_flush_nested(struct kvm_vcpu *vcpu);
+void vgic_v3_sync_nested(struct kvm_vcpu *vcpu);
+void vgic_v3_load_nested(struct kvm_vcpu *vcpu);
+void vgic_v3_put_nested(struct kvm_vcpu *vcpu);
+void vgic_v3_handle_nested_maint_irq(struct kvm_vcpu *vcpu);
+void vgic_v3_nested_update_mi(struct kvm_vcpu *vcpu);
+
+static inline bool vgic_host_has_gicv3(void)
+{
+	/*
+	 * Either the host is a native GICv3, or it is GICv5 with
+	 * FEAT_GCIE_LEGACY.
+	 */
+	return kvm_vgic_global_state.type == VGIC_V3 ||
+		kvm_vgic_global_state.has_gcie_v3_compat;
+}
+
+static inline bool vgic_host_has_gicv5(void)
+{
+	return kvm_vgic_global_state.type == VGIC_V5;
+}
+
+bool system_supports_direct_sgis(void);
+bool vgic_supports_direct_msis(struct kvm *kvm);
+bool vgic_supports_direct_sgis(struct kvm *kvm);
+
+static inline bool vgic_supports_direct_irqs(struct kvm *kvm)
+{
+	/* GICv5 always supports direct IRQs */
+	if (vgic_is_v5(kvm))
+		return true;
+
+	return vgic_supports_direct_msis(kvm) || vgic_supports_direct_sgis(kvm);
+}
+
+int vgic_its_debug_init(struct kvm_device *dev);
+void vgic_its_debug_destroy(struct kvm_device *dev);
 
 #endif

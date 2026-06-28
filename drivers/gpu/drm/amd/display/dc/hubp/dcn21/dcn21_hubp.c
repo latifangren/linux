@@ -73,8 +73,6 @@
  * On any mode switch, if the new reg values are smaller than the current values,
  * then update the regs with the new values.
  *
- * Link to the ticket: http://ontrack-internal.amd.com/browse/DEDCN21-142
- *
  */
 void apply_DEDCN21_142_wa_for_hostvm_deadline(
 		struct hubp *hubp,
@@ -840,6 +838,7 @@ static struct hubp_funcs dcn21_hubp_funcs = {
 	.hubp_init = hubp21_init,
 	.validate_dml_output = hubp21_validate_dml_output,
 	.hubp_set_flip_int = hubp1_set_flip_int,
+	.hubp_clear_tiling = hubp1_clear_tiling,
 };
 
 bool hubp21_construct(

@@ -219,8 +219,15 @@ static inline int rng_get_data(struct hwrng *rng, u8 *buffer, size_t size,
 	int present;
 
 	BUG_ON(!mutex_is_locked(&reading_mutex));
-	if (rng->read)
-		return rng->read(rng, (void *)buffer, size, wait);
+	if (rng->read) {
+		int err;
+
+		err = rng->read(rng, buffer, size, wait);
+		if (WARN_ON_ONCE(err > 0 && err > size))
+			err = size;
+
+		return err;
+	}
 
 	if (rng->data_present)
 		present = rng->data_present(rng, wait);
@@ -584,7 +591,7 @@ int hwrng_register(struct hwrng *rng)
 	init_completion(&rng->dying);
 
 	/* Adjust quality field to always have a proper value */
-	rng->quality = min_t(u16, min_t(u16, default_quality, 1024), rng->quality ?: 1024);
+	rng->quality = min3(default_quality, 1024, rng->quality ?: 1024);
 
 	if (!cur_rng_set_by_user) {
 		cur_rng = rcu_dereference_protected(current_rng,

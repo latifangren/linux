@@ -2145,8 +2145,6 @@
 		interrupts = <GIC_SPI 10 IRQ_TYPE_LEVEL_HIGH 0>;
 		clocks = <&cru PCLK_EDP>, <&cru PCLK_EDP_CTRL>, <&cru PCLK_VIO_GRF>;
 		clock-names = "dp", "pclk", "grf";
-		pinctrl-names = "default";
-		pinctrl-0 = <&edp_hpd>;
 		power-domains = <&power RK3399_PD_EDP>;
 		resets = <&cru SRST_P_EDP_CTRL>;
 		reset-names = "dp";
@@ -2177,16 +2175,6 @@
 				reg = <1>;
 			};
 		};
-	};
-
-	rng: rng@ff8b8000 {
-		compatible = "rockchip,cryptov1-rng";
-		reg = <0x0 0xff8b8000 0x0 0x1000>;
-		clocks = <&cru SCLK_CRYPTO1>, <&cru HCLK_S_CRYPTO1>;
-		clock-names = "clk_crypto", "hclk_crypto";
-		assigned-clocks = <&cru SCLK_CRYPTO1>, <&cru HCLK_S_CRYPTO1>;
-		assigned-clock-rates = <150000000>, <100000000>;
-		status = "okay";
 	};
 
 	gpu: gpu@ff9a0000 {
@@ -2394,6 +2382,7 @@
 		};
 
 		edp {
+			/omit-if-no-ref/
 			edp_hpd: edp-hpd {
 				rockchip,pins =
 					<4 RK_PC7 2 &pcfg_pull_none>;

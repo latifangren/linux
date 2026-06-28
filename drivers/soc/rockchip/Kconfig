@@ -31,21 +31,20 @@ config ROCKCHIP_DTPM
 	  devices.
 
 config ROCKCHIP_MISC_GPIO_A99
-	tristate "Rockchip YS-A99 misc GPIO defaults"
-	depends on GPIOLIB && OF_GPIO
-	default y if ARCH_ROCKCHIP
+	bool "Rockchip YS-A99 misc GPIO defaults"
+	depends on GPIOLIB
+	default y
 	help
 	  Apply board-specific GPIO default states used by the YS-A99 Android
-	  vendor tree, notably func_io1, func_io2, USB modem wake lines, and
-	  the MCU keepalive pulse exposed through the misc-power-en DT node.
+	  vendor tree, notably the func_io1 and func_io2 lines needed for
+	  onboard SDIO WiFi bring-up.
 
 config ROCKCHIP_MCU_7502
-	tristate "Rockchip YS-A99 MCU companion"
-	depends on I2C && OF
-	default y if ARCH_ROCKCHIP
+	bool "Rockchip YS-A99 MCU companion"
+	depends on I2C
+	default y
 	help
-	  Probe the YS-A99 board MCU over I2C and send the minimal early
-	  handshake observed in the Android vendor tree.
-
+	  Probe the YS-A99 board MCU over I2C early during boot. Android does
+	  this shortly before the onboard FE1.1S USB2 hub enumerates.
 
 endif

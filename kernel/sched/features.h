@@ -19,7 +19,7 @@ SCHED_FEAT(PLACE_REL_DEADLINE, true)
  */
 SCHED_FEAT(RUN_TO_PARITY, true)
 /*
- * Allow wakeup of tasks with a shorter slice to cancel RESPECT_SLICE for
+ * Allow wakeup of tasks with a shorter slice to cancel RUN_TO_PARITY for
  * current.
  */
 SCHED_FEAT(PREEMPT_SHORT, true)
@@ -58,14 +58,20 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
 SCHED_FEAT(DELAY_DEQUEUE, true)
 SCHED_FEAT(DELAY_ZERO, true)
 
+SCHED_FEAT(PARANOID_AVG, false)
+
 /*
  * Allow wakeup-time preemption of the current task:
  */
 SCHED_FEAT(WAKEUP_PREEMPTION, true)
 
+#ifdef CONFIG_HRTIMER_REARM_DEFERRED
+SCHED_FEAT(HRTICK, true)
+SCHED_FEAT(HRTICK_DL, true)
+#else
 SCHED_FEAT(HRTICK, false)
 SCHED_FEAT(HRTICK_DL, false)
-SCHED_FEAT(DOUBLE_TICK, false)
+#endif
 
 /*
  * Decrement CPU capacity based on time not spent running tasks
@@ -127,3 +133,4 @@ SCHED_FEAT(LATENCY_WARN, false)
  * Do newidle balancing proportional to its success rate using randomization.
  */
 SCHED_FEAT(NI_RANDOM, true)
+SCHED_FEAT(NI_RATE, true)

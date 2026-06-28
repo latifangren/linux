@@ -6,7 +6,7 @@
 #include <asm/page_types.h>
 #include <uapi/asm/ptrace.h>
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 #ifdef __i386__
 
 struct pt_regs {
@@ -84,8 +84,8 @@ struct fred_ss {
 			:  4,
 		/* Event was incident to enclave execution */
 		enclave	:  1,
-		/* CPU was in long mode */
-		lm	:  1,
+		/* CPU was in 64-bit mode */
+		l	:  1,
 		/*
 		 * Nested exception during FRED delivery, not set
 		 * for #DF.
@@ -172,7 +172,7 @@ struct pt_regs {
 #endif /* !__i386__ */
 
 #ifdef CONFIG_PARAVIRT
-#include <asm/paravirt_types.h>
+#include <asm/paravirt-base.h>
 #endif
 
 #include <asm/proto.h>
@@ -469,5 +469,5 @@ extern int do_set_thread_area(struct task_struct *p, int idx,
 # define do_set_thread_area_64(p, s, t)	(0)
 #endif
 
-#endif /* !__ASSEMBLY__ */
+#endif /* !__ASSEMBLER__ */
 #endif /* _ASM_X86_PTRACE_H */

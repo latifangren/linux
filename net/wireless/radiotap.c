@@ -1,17 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
  * Radiotap parser
  *
  * Copyright 2007		Andy Green <andy@warmcat.com>
  * Copyright 2009		Johannes Berg <johannes@sipsolutions.net>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * Alternatively, this software may be distributed under the terms of BSD
- * license.
- *
- * See COPYING for more details.
  */
 
 #include <linux/kernel.h>
@@ -200,7 +192,7 @@ static void find_ns(struct ieee80211_radiotap_iterator *iterator,
  * present fields.  @this_arg can be changed by the caller (eg,
  * incremented to move inside a compound argument like
  * IEEE80211_RADIOTAP_CHANNEL).  The args pointed to are in
- * little-endian format whatever the endianess of your CPU.
+ * little-endian format whatever the endianness of your CPU.
  *
  * Alignment Gotcha:
  * You must take care when dereferencing iterator.this_arg

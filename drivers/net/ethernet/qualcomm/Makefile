@@ -11,7 +11,5 @@ qcauart-objs := qca_uart.o
 
 obj-y += emac/
 
-obj-$(CONFIG_SHORTCUT_FE) += sfe/shortcut-fe/
-obj-$(CONFIG_FAST_CLASSIFIER) += sfe/fast-classifier/
-
+obj-$(CONFIG_QCOM_PPE) += ppe/
 obj-$(CONFIG_RMNET) += rmnet/

@@ -49,16 +49,11 @@ static char *last_cmd;
 
 static int errpos(const char *str)
 {
-	int ret = 0;
-
-	mutex_lock(&lastcmd_mutex);
+	guard(mutex)(&lastcmd_mutex);
 	if (!str || !last_cmd)
-		goto out;
+		return 0;
 
-	ret = err_pos(last_cmd, str);
- out:
-	mutex_unlock(&lastcmd_mutex);
-	return ret;
+	return err_pos(last_cmd, str);
 }
 
 static void last_cmd_set(const char *str)
@@ -74,14 +69,12 @@ static void last_cmd_set(const char *str)
 
 static void synth_err(u8 err_type, u16 err_pos)
 {
-	mutex_lock(&lastcmd_mutex);
+	guard(mutex)(&lastcmd_mutex);
 	if (!last_cmd)
-		goto out;
+		return;
 
 	tracing_log_err(NULL, "synthetic_events", last_cmd, err_text,
 			err_type, err_pos);
- out:
-	mutex_unlock(&lastcmd_mutex);
 }
 
 static int create_synth_event(const char *raw_command);
@@ -220,7 +213,7 @@ static int synth_field_string_size(char *type)
 	if (len == 0)
 		return 0; /* variable-length string */
 
-	strncpy(buf, start, len);
+	memcpy(buf, start, len);
 	buf[len] = '\0';
 
 	err = kstrtouint(buf, 0, &size);
@@ -372,7 +365,7 @@ static enum print_line_t print_synth_event(struct trace_iterator *iter,
 		fmt = synth_field_fmt(se->fields[i]->type);
 
 		/* parameter types */
-		if (tr && tr->trace_flags & TRACE_ITER_VERBOSE)
+		if (tr && tr->trace_flags & TRACE_ITER(VERBOSE))
 			trace_seq_printf(s, "%s ", fmt);
 
 		snprintf(print_fmt, sizeof(print_fmt), "%%s=%s%%s", fmt);
@@ -402,7 +395,7 @@ static enum print_line_t print_synth_event(struct trace_iterator *iter,
 			n_u64++;
 		} else {
 			struct trace_print_flags __flags[] = {
-			    __def_gfpflag_names, {-1, NULL} };
+			    __def_gfpflag_names };
 			char *space = (i == se->n_fields - 1 ? "" : " ");
 
 			print_synth_event_num_val(s, print_fmt,
@@ -415,7 +408,7 @@ static enum print_line_t print_synth_event(struct trace_iterator *iter,
 				trace_seq_puts(s, " (");
 				trace_print_flags_seq(s, "|",
 						      entry->fields[n_u64].as_u64,
-						      __flags);
+						      __flags, ARRAY_SIZE(__flags));
 				trace_seq_putc(s, ')');
 			}
 			n_u64++;
@@ -506,9 +499,9 @@ static unsigned int trace_stack(struct synth_trace_event *entry,
 	return len;
 }
 
-static notrace void trace_event_raw_event_synth(void *__data,
-						u64 *var_ref_vals,
-						unsigned int *var_ref_idx)
+static void trace_event_raw_event_synth(void *__data,
+					u64 *var_ref_vals,
+					unsigned int *var_ref_idx)
 {
 	unsigned int i, n_u64, val_idx, len, data_size = 0;
 	struct trace_event_file *trace_file = __data;
@@ -548,12 +541,12 @@ static notrace void trace_event_raw_event_synth(void *__data,
 	 * is being performed within another event.
 	 */
 	buffer = trace_file->tr->array_buffer.buffer;
-	ring_buffer_nest_start(buffer);
+	guard(ring_buffer_nest)(buffer);
 
 	entry = trace_event_buffer_reserve(&fbuffer, trace_file,
 					   sizeof(*entry) + fields_size);
 	if (!entry)
-		goto out;
+		return;
 
 	for (i = 0, n_u64 = 0; i < event->n_fields; i++) {
 		val_idx = var_ref_idx[i];
@@ -596,8 +589,6 @@ static notrace void trace_event_raw_event_synth(void *__data,
 	}
 
 	trace_event_buffer_commit(&fbuffer);
-out:
-	ring_buffer_nest_end(buffer);
 }
 
 static void free_synth_event_print_fmt(struct trace_event_call *call)
@@ -623,7 +614,7 @@ static int __set_synth_event_print_fmt(struct synth_event *event,
 		fmt = synth_field_fmt(event->fields[i]->type);
 		pos += snprintf(buf + pos, LEN_OR_ZERO, "%s=%s%s",
 				event->fields[i]->name, fmt,
-				i == event->n_fields - 1 ? "" : ", ");
+				i == event->n_fields - 1 ? "" : " ");
 	}
 	pos += snprintf(buf + pos, LEN_OR_ZERO, "\"");
 
@@ -720,7 +711,7 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 
 	*field_version = check_field_version(prefix, field_type, field_name);
 
-	field = kzalloc(sizeof(*field), GFP_KERNEL);
+	field = kzalloc_obj(*field);
 	if (!field)
 		return ERR_PTR(-ENOMEM);
 
@@ -828,7 +819,7 @@ static struct tracepoint *alloc_synth_tracepoint(char *name)
 {
 	struct tracepoint *tp;
 
-	tp = kzalloc(sizeof(*tp), GFP_KERNEL);
+	tp = kzalloc_obj(*tp);
 	if (!tp)
 		return ERR_PTR(-ENOMEM);
 
@@ -982,7 +973,7 @@ static struct synth_event *alloc_synth_event(const char *name, int n_fields,
 	unsigned int i, j, n_dynamic_fields = 0;
 	struct synth_event *event;
 
-	event = kzalloc(sizeof(*event), GFP_KERNEL);
+	event = kzalloc_obj(*event);
 	if (!event) {
 		event = ERR_PTR(-ENOMEM);
 		goto out;
@@ -995,7 +986,7 @@ static struct synth_event *alloc_synth_event(const char *name, int n_fields,
 		goto out;
 	}
 
-	event->fields = kcalloc(n_fields, sizeof(*event->fields), GFP_KERNEL);
+	event->fields = kzalloc_objs(*event->fields, n_fields);
 	if (!event->fields) {
 		free_synth_event(event);
 		event = ERR_PTR(-ENOMEM);
@@ -1007,9 +998,8 @@ static struct synth_event *alloc_synth_event(const char *name, int n_fields,
 			n_dynamic_fields++;
 
 	if (n_dynamic_fields) {
-		event->dynamic_fields = kcalloc(n_dynamic_fields,
-						sizeof(*event->dynamic_fields),
-						GFP_KERNEL);
+		event->dynamic_fields = kzalloc_objs(*event->dynamic_fields,
+						     n_dynamic_fields);
 		if (!event->dynamic_fields) {
 			free_synth_event(event);
 			event = ERR_PTR(-ENOMEM);

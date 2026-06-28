@@ -90,6 +90,17 @@ config ARM_EXYNOS_BUS_DEVFREQ
 	  and adjusts the operating frequencies and voltages with OPP support.
 	  This does not yet operate with optimal voltages.
 
+config ARM_HISI_UNCORE_DEVFREQ
+	tristate "HiSilicon uncore DEVFREQ Driver"
+	depends on ACPI && ACPI_PPTT && PCC
+	select DEVFREQ_GOV_PERFORMANCE
+	select DEVFREQ_GOV_USERSPACE
+	help
+	  This adds a DEVFREQ driver that manages uncore frequency scaling for
+	  HiSilicon Kunpeng SoCs. This enables runtime management of uncore
+	  frequency scaling from kernel and userspace. The uncore domain
+	  contains system interconnects and L3 cache.
+
 config ARM_IMX_BUS_DEVFREQ
 	tristate "i.MX Generic Bus DEVFREQ Driver"
 	depends on ARCH_MXC || COMPILE_TEST
@@ -128,18 +139,6 @@ config ARM_MEDIATEK_CCI_DEVFREQ
 	  which is shared the same regulators with the cpu cluster. It can track
 	  buck voltages and update a proper CCI frequency. Use the notification
 	  to get the regulator status.
-
-config ARM_RK3328_DMC_DEVFREQ
-	tristate "ARM RK3328 DMC DEVFREQ Driver"
-	depends on ARCH_ROCKCHIP
-	select DEVFREQ_EVENT_ROCKCHIP_DFI
-	select DEVFREQ_GOV_SIMPLE_ONDEMAND
-	select PM_DEVFREQ_EVENT
-	select PM_OPP
-	help
-	  This adds the DEVFREQ driver for the RK3328 DMC(Dynamic Memory Controller).
-	  It sets the frequency for the memory controller and reads the usage counts
-	  from hardware.
 
 config ARM_RK3399_DMC_DEVFREQ
 	tristate "ARM RK3399 DMC DEVFREQ Driver"

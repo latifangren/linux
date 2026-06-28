@@ -365,16 +365,13 @@ static void mv_cesa_ahash_complete(struct crypto_async_request *req)
 	if (mv_cesa_req_get_type(&creq->base) == CESA_DMA_REQ &&
 	    (creq->base.chain.last->flags & CESA_TDMA_TYPE_MSK) ==
 	     CESA_TDMA_RESULT) {
-		__le32 *data = NULL;
+		const void *data;
 
 		/*
 		 * Result is already in the correct endianness when the SA is
 		 * used
 		 */
 		data = creq->base.chain.last->op->ctx.hash.hash;
-		for (i = 0; i < digsize / 4; i++)
-			creq->state[i] = le32_to_cpu(data[i]);
-
 		memcpy(ahashreq->result, data, digsize);
 	} else {
 		for (i = 0; i < digsize / 4; i++)
@@ -850,8 +847,7 @@ static int mv_cesa_ahash_export(struct ahash_request *req, void *hash,
 
 	*len = creq->len;
 	memcpy(hash, creq->state, digsize);
-	memset(cache, 0, blocksize);
-	memcpy(cache, creq->cache, creq->cache_ptr);
+	memcpy_and_pad(cache, blocksize, creq->cache, creq->cache_ptr, 0);
 
 	return 0;
 }

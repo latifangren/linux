@@ -12,6 +12,7 @@
 #include <linux/backlight.h>
 #include <linux/input.h>
 #include <linux/rfkill.h>
+#include <linux/sysfs.h>
 
 struct cmpc_accel {
 	int sensitivity;
@@ -213,7 +214,7 @@ static ssize_t cmpc_accel_sensitivity_show_v4(struct device *dev,
 	if (!accel)
 		return -ENXIO;
 
-	return sprintf(buf, "%d\n", accel->sensitivity);
+	return sysfs_emit(buf, "%d\n", accel->sensitivity);
 }
 
 static ssize_t cmpc_accel_sensitivity_store_v4(struct device *dev,
@@ -272,7 +273,7 @@ static ssize_t cmpc_accel_g_select_show_v4(struct device *dev,
 	if (!accel)
 		return -ENXIO;
 
-	return sprintf(buf, "%d\n", accel->g_select);
+	return sysfs_emit(buf, "%d\n", accel->g_select);
 }
 
 static ssize_t cmpc_accel_g_select_store_v4(struct device *dev,
@@ -399,7 +400,7 @@ static int cmpc_accel_add_v4(struct acpi_device *acpi)
 	struct input_dev *inputdev;
 	struct cmpc_accel *accel;
 
-	accel = kmalloc(sizeof(*accel), GFP_KERNEL);
+	accel = kmalloc_obj(*accel);
 	if (!accel)
 		return -ENOMEM;
 
@@ -577,7 +578,7 @@ static ssize_t cmpc_accel_sensitivity_show(struct device *dev,
 	if (!accel)
 		return -ENXIO;
 
-	return sprintf(buf, "%d\n", accel->sensitivity);
+	return sysfs_emit(buf, "%d\n", accel->sensitivity);
 }
 
 static ssize_t cmpc_accel_sensitivity_store(struct device *dev,
@@ -649,7 +650,7 @@ static int cmpc_accel_add(struct acpi_device *acpi)
 	struct input_dev *inputdev;
 	struct cmpc_accel *accel;
 
-	accel = kmalloc(sizeof(*accel), GFP_KERNEL);
+	accel = kmalloc_obj(*accel);
 	if (!accel)
 		return -ENOMEM;
 
@@ -963,7 +964,7 @@ static int cmpc_ipml_add(struct acpi_device *acpi)
 	struct ipml200_dev *ipml;
 	struct backlight_properties props;
 
-	ipml = kmalloc(sizeof(*ipml), GFP_KERNEL);
+	ipml = kmalloc_obj(*ipml);
 	if (ipml == NULL)
 		return -ENOMEM;
 

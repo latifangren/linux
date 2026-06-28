@@ -315,8 +315,9 @@ static int cachefiles_ondemand_get_fd(struct cachefiles_req *req,
 		goto err_free_id;
 	}
 
-	anon_file->file = anon_inode_getfile("[cachefiles]",
-				&cachefiles_ondemand_fd_fops, object, O_WRONLY);
+	anon_file->file = anon_inode_getfile_fmode("[cachefiles]",
+				&cachefiles_ondemand_fd_fops, object,
+				O_WRONLY, FMODE_PWRITE | FMODE_LSEEK);
 	if (IS_ERR(anon_file->file)) {
 		ret = PTR_ERR(anon_file->file);
 		goto err_put_fd;
@@ -330,8 +331,6 @@ static int cachefiles_ondemand_get_fd(struct cachefiles_req *req,
 		ret = -EEXIST;
 		goto err_put_file;
 	}
-
-	anon_file->file->f_mode |= FMODE_PWRITE | FMODE_LSEEK;
 
 	load = (void *)req->msg.data;
 	load->fd = anon_file->fd;
@@ -735,8 +734,7 @@ int cachefiles_ondemand_init_obj_info(struct cachefiles_object *object,
 	if (!cachefiles_in_ondemand_mode(volume->cache))
 		return 0;
 
-	object->ondemand = kzalloc(sizeof(struct cachefiles_ondemand_info),
-					GFP_KERNEL);
+	object->ondemand = kzalloc_obj(struct cachefiles_ondemand_info);
 	if (!object->ondemand)
 		return -ENOMEM;
 

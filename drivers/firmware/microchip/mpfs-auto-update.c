@@ -158,9 +158,9 @@ static int mpfs_auto_update_verify_image(struct fw_upload *fw_uploader)
 	u32 *response_msg __free(kfree) =
 		kzalloc(AUTO_UPDATE_FEATURE_RESP_SIZE * sizeof(*response_msg), GFP_KERNEL);
 	struct mpfs_mss_response *response __free(kfree) =
-		kzalloc(sizeof(struct mpfs_mss_response), GFP_KERNEL);
+		kzalloc_obj(struct mpfs_mss_response);
 	struct mpfs_mss_msg *message __free(kfree) =
-		kzalloc(sizeof(struct mpfs_mss_msg), GFP_KERNEL);
+		kzalloc_obj(struct mpfs_mss_msg);
 	int ret;
 
 	if (!response_msg || !response || !message)
@@ -360,9 +360,9 @@ static int mpfs_auto_update_available(struct mpfs_auto_update_priv *priv)
 	u32 *response_msg __free(kfree) =
 		kzalloc(AUTO_UPDATE_FEATURE_RESP_SIZE * sizeof(*response_msg), GFP_KERNEL);
 	struct mpfs_mss_response *response __free(kfree) =
-		kzalloc(sizeof(struct mpfs_mss_response), GFP_KERNEL);
+		kzalloc_obj(struct mpfs_mss_response);
 	struct mpfs_mss_msg *message __free(kfree) =
-		kzalloc(sizeof(struct mpfs_mss_msg), GFP_KERNEL);
+		kzalloc_obj(struct mpfs_mss_msg);
 	int ret;
 
 	if (!response_msg || !response || !message)
@@ -398,10 +398,10 @@ static int mpfs_auto_update_available(struct mpfs_auto_update_priv *priv)
 		return -EIO;
 
 	/*
-	 * Bit 5 of byte 1 is "UL_Auto Update" & if it is set, Auto Update is
+	 * Bit 5 of byte 1 is "UL_IAP" & if it is set, Auto Update is
 	 * not possible.
 	 */
-	if (response_msg[1] & AUTO_UPDATE_FEATURE_ENABLED)
+	if ((((u8 *)response_msg)[1] & AUTO_UPDATE_FEATURE_ENABLED))
 		return -EPERM;
 
 	return 0;
@@ -460,7 +460,7 @@ static struct platform_driver mpfs_auto_update_driver = {
 		.name = "mpfs-auto-update",
 	},
 	.probe = mpfs_auto_update_probe,
-	.remove_new = mpfs_auto_update_remove,
+	.remove = mpfs_auto_update_remove,
 };
 module_platform_driver(mpfs_auto_update_driver);
 

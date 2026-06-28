@@ -158,7 +158,7 @@ static int uacce_fops_open(struct inode *inode, struct file *filep)
 	if (!uacce)
 		return -ENODEV;
 
-	q = kzalloc(sizeof(struct uacce_queue), GFP_KERNEL);
+	q = kzalloc_obj(struct uacce_queue);
 	if (!q)
 		return -ENOMEM;
 
@@ -251,7 +251,7 @@ static int uacce_fops_mmap(struct file *filep, struct vm_area_struct *vma)
 	else
 		return -EINVAL;
 
-	qfr = kzalloc(sizeof(*qfr), GFP_KERNEL);
+	qfr = kzalloc_obj(*qfr);
 	if (!qfr)
 		return -ENOMEM;
 
@@ -491,40 +491,6 @@ static void uacce_release(struct device *dev)
 	kfree(uacce);
 }
 
-static unsigned int uacce_enable_sva(struct device *parent, unsigned int flags)
-{
-	int ret;
-
-	if (!(flags & UACCE_DEV_SVA))
-		return flags;
-
-	flags &= ~UACCE_DEV_SVA;
-
-	ret = iommu_dev_enable_feature(parent, IOMMU_DEV_FEAT_IOPF);
-	if (ret) {
-		dev_err(parent, "failed to enable IOPF feature! ret = %pe\n", ERR_PTR(ret));
-		return flags;
-	}
-
-	ret = iommu_dev_enable_feature(parent, IOMMU_DEV_FEAT_SVA);
-	if (ret) {
-		dev_err(parent, "failed to enable SVA feature! ret = %pe\n", ERR_PTR(ret));
-		iommu_dev_disable_feature(parent, IOMMU_DEV_FEAT_IOPF);
-		return flags;
-	}
-
-	return flags | UACCE_DEV_SVA;
-}
-
-static void uacce_disable_sva(struct uacce_device *uacce)
-{
-	if (!(uacce->flags & UACCE_DEV_SVA))
-		return;
-
-	iommu_dev_disable_feature(uacce->parent, IOMMU_DEV_FEAT_SVA);
-	iommu_dev_disable_feature(uacce->parent, IOMMU_DEV_FEAT_IOPF);
-}
-
 /**
  * uacce_alloc() - alloc an accelerator
  * @parent: pointer of uacce parent device
@@ -540,11 +506,9 @@ struct uacce_device *uacce_alloc(struct device *parent,
 	struct uacce_device *uacce;
 	int ret;
 
-	uacce = kzalloc(sizeof(struct uacce_device), GFP_KERNEL);
+	uacce = kzalloc_obj(struct uacce_device);
 	if (!uacce)
 		return ERR_PTR(-ENOMEM);
-
-	flags = uacce_enable_sva(parent, flags);
 
 	uacce->parent = parent;
 	uacce->flags = flags;
@@ -568,7 +532,6 @@ struct uacce_device *uacce_alloc(struct device *parent,
 	return uacce;
 
 err_with_uacce:
-	uacce_disable_sva(uacce);
 	kfree(uacce);
 	return ERR_PTR(ret);
 }
@@ -636,9 +599,6 @@ void uacce_remove(struct uacce_device *uacce)
 		 */
 		unmap_mapping_range(q->mapping, 0, 0, 1);
 	}
-
-	/* disable sva now since no opened queues */
-	uacce_disable_sva(uacce);
 
 	if (uacce->cdev)
 		cdev_device_del(uacce->cdev, &uacce->dev);

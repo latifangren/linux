@@ -59,11 +59,7 @@ static int brcmf_fcmode;
 module_param_named(fcmode, brcmf_fcmode, int, 0);
 MODULE_PARM_DESC(fcmode, "Mode of firmware signalled flow control");
 
-#if defined(CONFIG_ARCH_BCM2835)
-static int brcmf_roamoff = 1;
-#else
 static int brcmf_roamoff;
-#endif
 module_param_named(roamoff, brcmf_roamoff, int, 0400);
 MODULE_PARM_DESC(roamoff, "Do not use internal roaming engine");
 
@@ -136,8 +132,7 @@ static int brcmf_c_download_blob(struct brcmf_if *ifp,
 
 	brcmf_dbg(TRACE, "Enter\n");
 
-	chunk_buf = kzalloc(struct_size(chunk_buf, data, MAX_CHUNK_LEN),
-			    GFP_KERNEL);
+	chunk_buf = kzalloc_flex(*chunk_buf, data, MAX_CHUNK_LEN);
 	if (!chunk_buf) {
 		err = -ENOMEM;
 		return -ENOMEM;
@@ -495,6 +490,7 @@ void __brcmf_dbg(u32 level, const char *func, const char *fmt, ...)
 	trace_brcmf_dbg(level, func, &vaf);
 	va_end(args);
 }
+BRCMF_EXPORT_SYMBOL_GPL(__brcmf_dbg);
 #endif
 
 static void brcmf_mp_attach(void)
@@ -524,11 +520,11 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
 
 	brcmf_dbg(INFO, "Enter, bus=%d, chip=%d, rev=%d\n", bus_type, chip,
 		  chiprev);
-	settings = kzalloc(sizeof(*settings), GFP_ATOMIC);
+	settings = kzalloc_obj(*settings, GFP_ATOMIC);
 	if (!settings)
 		return NULL;
 
-	/* start by using the module paramaters */
+	/* start by using the module parameters */
 	settings->p2p_enable = !!brcmf_p2p_enable;
 	settings->feature_disable = brcmf_feature_disable;
 	settings->fcmode = brcmf_fcmode;
@@ -565,8 +561,10 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
 	if (!found) {
 		/* No platform data for this device, try OF and DMI data */
 		brcmf_dmi_probe(settings, chip, chiprev);
-		if (brcmf_of_probe(dev, bus_type, settings) == -EPROBE_DEFER)
+		if (brcmf_of_probe(dev, bus_type, settings) == -EPROBE_DEFER) {
+			kfree(settings);
 			return ERR_PTR(-EPROBE_DEFER);
+		}
 		brcmf_acpi_probe(dev, bus_type, settings);
 	}
 	return settings;
@@ -598,7 +596,7 @@ static void brcmf_common_pd_remove(struct platform_device *pdev)
 }
 
 static struct platform_driver brcmf_pd = {
-	.remove_new	= brcmf_common_pd_remove,
+	.remove		= brcmf_common_pd_remove,
 	.driver		= {
 		.name	= BRCMFMAC_PDATA_NAME,
 	}
@@ -613,7 +611,7 @@ static int __init brcmfmac_module_init(void)
 	if (err == -ENODEV)
 		brcmf_dbg(INFO, "No platform data available.\n");
 
-	/* Initialize global module paramaters */
+	/* Initialize global module parameters */
 	brcmf_mp_attach();
 
 	/* Continue the initialization by registering the different busses */

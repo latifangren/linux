@@ -6,10 +6,8 @@
  *   Jan Glauber <jang@linux.vnet.ibm.com>
  */
 
-#define KMSG_COMPONENT "zpci"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+#define pr_fmt(fmt) "zpci: " fmt
 
-#include <linux/compat.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
@@ -20,6 +18,7 @@
 #include <asm/asm-extable.h>
 #include <asm/pci_debug.h>
 #include <asm/pci_clp.h>
+#include <asm/asm.h>
 #include <asm/clp.h>
 #include <uapi/asm/clp.h>
 
@@ -52,18 +51,20 @@ static inline void zpci_err_clp(unsigned int rsp, int rc)
 static inline int clp_get_ilp(unsigned long *ilp)
 {
 	unsigned long mask;
-	int cc = 3;
+	int cc, exception;
 
-	asm volatile (
+	exception = 1;
+	asm_inline volatile (
 		"	.insn	rrf,0xb9a00000,%[mask],%[cmd],8,0\n"
-		"0:	ipm	%[cc]\n"
-		"	srl	%[cc],28\n"
+		"0:	lhi	%[exc],0\n"
 		"1:\n"
+		CC_IPM(cc)
 		EX_TABLE(0b, 1b)
-		: [cc] "+d" (cc), [mask] "=d" (mask) : [cmd] "a" (1)
-		: "cc");
+		: CC_OUT(cc, cc), [mask] "=d" (mask), [exc] "+d" (exception)
+		: [cmd] "a" (1)
+		: CC_CLOBBER);
 	*ilp = mask;
-	return cc;
+	return exception ? 3 : CC_TRANSFORM(cc);
 }
 
 /*
@@ -72,19 +73,20 @@ static inline int clp_get_ilp(unsigned long *ilp)
 static __always_inline int clp_req(void *data, unsigned int lps)
 {
 	struct { u8 _[CLP_BLK_SIZE]; } *req = data;
+	int cc, exception;
 	u64 ignored;
-	int cc = 3;
 
-	asm volatile (
+	exception = 1;
+	asm_inline volatile (
 		"	.insn	rrf,0xb9a00000,%[ign],%[req],0,%[lps]\n"
-		"0:	ipm	%[cc]\n"
-		"	srl	%[cc],28\n"
+		"0:	lhi	%[exc],0\n"
 		"1:\n"
+		CC_IPM(cc)
 		EX_TABLE(0b, 1b)
-		: [cc] "+d" (cc), [ign] "=d" (ignored), "+m" (*req)
+		: CC_OUT(cc, cc), [ign] "=d" (ignored), "+m" (*req), [exc] "+d" (exception)
 		: [req] "a" (req), [lps] "i" (lps)
-		: "cc");
-	return cc;
+		: CC_CLOBBER);
+	return exception ? 3 : CC_TRANSFORM(cc);
 }
 
 static void *clp_alloc_block(gfp_t gfp_mask)
@@ -108,6 +110,7 @@ static void clp_store_query_pci_fngrp(struct zpci_dev *zdev,
 	zdev->version = response->version;
 	zdev->maxstbl = response->maxstbl;
 	zdev->dtsm = response->dtsm;
+	zdev->rtr_avail = response->rtr;
 
 	switch (response->version) {
 	case 1:
@@ -162,6 +165,7 @@ static int clp_store_query_pci_fn(struct zpci_dev *zdev,
 	zdev->pft = response->pft;
 	zdev->vfn = response->vfn;
 	zdev->port = response->port;
+	zdev->fidparm = response->fidparm;
 	zdev->uid = response->uid;
 	zdev->fmb_length = sizeof(u32) * response->fmb_len;
 	zdev->is_physfn = response->is_physfn;
@@ -645,7 +649,7 @@ static long clp_misc_ioctl(struct file *filp, unsigned int cmd,
 	if (cmd != CLP_SYNC)
 		return -EINVAL;
 
-	argp = is_compat_task() ? compat_ptr(arg) : (void __user *) arg;
+	argp = (void __user *)arg;
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
 	if (req.r != 0)
@@ -663,7 +667,6 @@ static const struct file_operations clp_misc_fops = {
 	.open = nonseekable_open,
 	.release = clp_misc_release,
 	.unlocked_ioctl = clp_misc_ioctl,
-	.compat_ioctl = clp_misc_ioctl,
 };
 
 static struct miscdevice clp_misc_device = {

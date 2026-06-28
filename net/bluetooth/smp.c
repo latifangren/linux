@@ -55,7 +55,7 @@
 /* Keys which are not distributed with Secure Connections */
 #define SMP_SC_NO_DIST (SMP_DIST_ENC_KEY | SMP_DIST_LINK_KEY)
 
-#define SMP_TIMEOUT	msecs_to_jiffies(30000)
+#define SMP_TIMEOUT	secs_to_jiffies(30)
 
 #define ID_ADDR_TIMEOUT	msecs_to_jiffies(200)
 
@@ -374,7 +374,7 @@ static int smp_h7(struct crypto_shash *tfm_cmac, const u8 w[16],
 
 static int smp_e(const u8 *k, u8 *r)
 {
-	struct crypto_aes_ctx ctx;
+	struct aes_enckey aes;
 	uint8_t tmp[16], data[16];
 	int err;
 
@@ -383,7 +383,7 @@ static int smp_e(const u8 *k, u8 *r)
 	/* The most significant octet of key corresponds to k[0] */
 	swap_buf(k, tmp, 16);
 
-	err = aes_expandkey(&ctx, tmp, 16);
+	err = aes_prepareenckey(&aes, tmp, 16);
 	if (err) {
 		BT_ERR("cipher setkey failed: %d", err);
 		return err;
@@ -392,14 +392,14 @@ static int smp_e(const u8 *k, u8 *r)
 	/* Most significant octet of plaintextData corresponds to data[0] */
 	swap_buf(r, data, 16);
 
-	aes_encrypt(&ctx, data, data);
+	aes_encrypt(&aes, data, data);
 
 	/* Most significant octet of encryptedData corresponds to data[0] */
 	swap_buf(data, r, 16);
 
 	SMP_DBG("r %16phN", r);
 
-	memzero_explicit(&ctx, sizeof(ctx));
+	memzero_explicit(&aes, sizeof(aes));
 	return err;
 }
 
@@ -608,7 +608,7 @@ static void smp_send_cmd(struct l2cap_conn *conn, u8 code, u16 len, void *data)
 
 	iov_iter_kvec(&msg.msg_iter, ITER_SOURCE, iv, 2, 1 + len);
 
-	l2cap_chan_send(chan, &msg, 1 + len);
+	l2cap_chan_send(chan, &msg, 1 + len, NULL);
 
 	if (!chan->data)
 		return;
@@ -1341,7 +1341,7 @@ static void smp_distribute_keys(struct smp_chan *smp)
 		/* Generate a new random key */
 		get_random_bytes(sign.csrk, sizeof(sign.csrk));
 
-		csrk = kzalloc(sizeof(*csrk), GFP_KERNEL);
+		csrk = kzalloc_obj(*csrk);
 		if (csrk) {
 			if (hcon->sec_level > BT_SECURITY_MEDIUM)
 				csrk->type = MGMT_CSRK_LOCAL_AUTHENTICATED;
@@ -1385,7 +1385,7 @@ static struct smp_chan *smp_chan_create(struct l2cap_conn *conn)
 	struct l2cap_chan *chan = conn->smp;
 	struct smp_chan *smp;
 
-	smp = kzalloc(sizeof(*smp), GFP_ATOMIC);
+	smp = kzalloc_obj(*smp, GFP_ATOMIC);
 	if (!smp)
 		return NULL;
 
@@ -2665,7 +2665,7 @@ static int smp_cmd_sign_info(struct l2cap_conn *conn, struct sk_buff *skb)
 
 	skb_pull(skb, sizeof(*rp));
 
-	csrk = kzalloc(sizeof(*csrk), GFP_KERNEL);
+	csrk = kzalloc_obj(*csrk);
 	if (csrk) {
 		if (conn->hcon->sec_level > BT_SECURITY_MEDIUM)
 			csrk->type = MGMT_CSRK_REMOTE_AUTHENTICATED;
@@ -3173,7 +3173,7 @@ static void smp_ready_cb(struct l2cap_chan *chan)
 	/* No need to call l2cap_chan_hold() here since we already own
 	 * the reference taken in smp_new_conn_cb(). This is just the
 	 * first time that we tie it to a specific pointer. The code in
-	 * l2cap_core.c ensures that there's no risk this function wont
+	 * l2cap_core.c ensures that there's no risk this function won't
 	 * get called if smp_new_conn_cb was previously called.
 	 */
 	conn->smp = chan;
@@ -3294,7 +3294,7 @@ static struct l2cap_chan *smp_add_cid(struct hci_dev *hdev, u16 cid)
 		goto create_chan;
 	}
 
-	smp = kzalloc(sizeof(*smp), GFP_KERNEL);
+	smp = kzalloc_obj(*smp);
 	if (!smp)
 		return ERR_PTR(-ENOMEM);
 

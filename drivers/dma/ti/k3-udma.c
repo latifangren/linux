@@ -3241,7 +3241,7 @@ udma_prep_slave_sg_pkt(struct udma_chan *uc, struct scatterlist *sgl,
 	unsigned int i;
 	u64 asel;
 
-	d = kzalloc(struct_size(d, hwdesc, sglen), GFP_NOWAIT);
+	d = kzalloc_flex(*d, hwdesc, sglen, GFP_NOWAIT);
 	if (!d)
 		return NULL;
 
@@ -3588,7 +3588,7 @@ udma_prep_dma_cyclic_pkt(struct udma_chan *uc, dma_addr_t buf_addr,
 	if (period_len >= SZ_4M)
 		return NULL;
 
-	d = kzalloc(struct_size(d, hwdesc, periods), GFP_NOWAIT);
+	d = kzalloc_flex(*d, hwdesc, periods, GFP_NOWAIT);
 	if (!d)
 		return NULL;
 
@@ -4410,6 +4410,18 @@ static struct udma_match_data j721s2_bcdma_csi_data = {
 	.soc_data = &j721s2_bcdma_csi_soc_data,
 };
 
+static struct udma_match_data j722s_bcdma_csi_data = {
+	.type = DMA_TYPE_BCDMA,
+	.psil_base = 0x3100,
+	.enable_memcpy_support = false,
+	.burst_size = {
+		TI_SCI_RM_UDMAP_CHAN_BURST_SIZE_64_BYTES, /* Normal Channels */
+		0, /* No H Channels */
+		0, /* No UH Channels */
+	},
+	.soc_data = &j721s2_bcdma_csi_soc_data,
+};
+
 static const struct of_device_id udma_of_match[] = {
 	{
 		.compatible = "ti,am654-navss-main-udmap",
@@ -4440,6 +4452,10 @@ static const struct of_device_id udma_of_match[] = {
 	{
 		.compatible = "ti,j721s2-dmss-bcdma-csi",
 		.data = &j721s2_bcdma_csi_data,
+	},
+	{
+		.compatible = "ti,j722s-dmss-bcdma-csi",
+		.data = &j722s_bcdma_csi_data,
 	},
 	{ /* Sentinel */ },
 };
@@ -4670,7 +4686,7 @@ static int udma_setup_resources(struct udma_dev *ud)
 		irq_res.sets += rm_res->sets;
 	}
 
-	irq_res.desc = kcalloc(irq_res.sets, sizeof(*irq_res.desc), GFP_KERNEL);
+	irq_res.desc = kzalloc_objs(*irq_res.desc, irq_res.sets);
 	if (!irq_res.desc)
 		return -ENOMEM;
 	rm_res = tisci_rm->rm_ranges[RM_RANGE_TCHAN];
@@ -4862,7 +4878,7 @@ static int bcdma_setup_resources(struct udma_dev *ud)
 		}
 	}
 
-	irq_res.desc = kcalloc(irq_res.sets, sizeof(*irq_res.desc), GFP_KERNEL);
+	irq_res.desc = kzalloc_objs(*irq_res.desc, irq_res.sets);
 	if (!irq_res.desc)
 		return -ENOMEM;
 	if (ud->bchan_cnt) {
@@ -5064,7 +5080,7 @@ static int pktdma_setup_resources(struct udma_dev *ud)
 		irq_res.sets += rm_res->sets;
 	}
 
-	irq_res.desc = kcalloc(irq_res.sets, sizeof(*irq_res.desc), GFP_KERNEL);
+	irq_res.desc = kzalloc_objs(*irq_res.desc, irq_res.sets);
 	if (!irq_res.desc)
 		return -ENOMEM;
 	rm_res = tisci_rm->rm_ranges[RM_RANGE_TFLOW];

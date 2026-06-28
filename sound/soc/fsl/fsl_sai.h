@@ -9,6 +9,7 @@
 #include <linux/dma/imx-dma.h>
 #include <sound/dmaengine_pcm.h>
 
+#define FAL_SAI_NUM_RATES  20
 #define FSL_SAI_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
 			 SNDRV_PCM_FMTBIT_S20_3LE |\
 			 SNDRV_PCM_FMTBIT_S24_LE |\
@@ -195,9 +196,13 @@
 #define FSL_SAI_MDIV_MASK	    0xFFFFF
 
 /* SAI timestamp and bitcounter */
+#define FSL_SAI_xTCTL_TSEN_SHIFT   0
 #define FSL_SAI_xTCTL_TSEN         BIT(0)
+#define FSL_SAI_xTCTL_TSINC_SHIFT  1
 #define FSL_SAI_xTCTL_TSINC        BIT(1)
+#define FSL_SAI_xTCTL_RTSC_SHIFT   8
 #define FSL_SAI_xTCTL_RTSC         BIT(8)
+#define FSL_SAI_xTCTL_RBC_SHIFT    9
 #define FSL_SAI_xTCTL_RBC          BIT(9)
 
 /* SAI type */
@@ -228,6 +233,10 @@
 #define FSL_SAI_DL_DEFAULT	(0)
 #define FSL_SAI_DL_I2S		BIT(0)
 #define FSL_SAI_DL_PDM		BIT(1)
+
+#define FSL_SAI_AMIX_BYPASS	0
+#define FSL_SAI_AMIX_AUDMIX	1
+#define FSL_SAI_AMIX_NONE	2
 
 struct fsl_sai_soc_data {
 	bool use_imx_pcm;
@@ -285,7 +294,7 @@ struct fsl_sai {
 
 	bool is_consumer_mode[2];
 	bool is_lsb_first;
-	bool is_dsp_mode;
+	bool is_dsp_mode[2];
 	bool is_pdm_mode;
 	bool is_multi_fifo_dma;
 	bool synchronous[2];
@@ -295,8 +304,8 @@ struct fsl_sai {
 
 	unsigned int mclk_id[2];
 	unsigned int mclk_streams;
-	unsigned int slots;
-	unsigned int slot_width;
+	unsigned int slots[2];
+	unsigned int slot_width[2];
 	unsigned int bclk_ratio;
 
 	const struct fsl_sai_soc_data *soc_data;
@@ -309,6 +318,8 @@ struct fsl_sai {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *pins_state;
 	struct sdma_peripheral_config audio_config[2];
+	struct snd_pcm_hw_constraint_list constraint_rates;
+	unsigned int constraint_rates_list[FAL_SAI_NUM_RATES];
 };
 
 #define TX 1

@@ -314,7 +314,7 @@ mlx5_chains_create_chain(struct mlx5_fs_chains *chains, u32 chain)
 	struct fs_chain *chain_s = NULL;
 	int err;
 
-	chain_s = kvzalloc(sizeof(*chain_s), GFP_KERNEL);
+	chain_s = kvzalloc_obj(*chain_s);
 	if (!chain_s)
 		return ERR_PTR(-ENOMEM);
 
@@ -481,7 +481,7 @@ mlx5_chains_create_prio(struct mlx5_fs_chains *chains,
 	if (IS_ERR(chain_s))
 		return ERR_CAST(chain_s);
 
-	prio_s = kvzalloc(sizeof(*prio_s), GFP_KERNEL);
+	prio_s = kvzalloc_obj(*prio_s);
 	flow_group_in = kvzalloc(inlen, GFP_KERNEL);
 	if (!prio_s || !flow_group_in) {
 		err = -ENOMEM;
@@ -705,7 +705,7 @@ mlx5_chains_create_global_table(struct mlx5_fs_chains *chains)
 		goto err_ignore;
 	}
 
-	chain = mlx5_chains_get_chain_range(chains),
+	chain = mlx5_chains_get_chain_range(chains);
 	prio = mlx5_chains_get_prio_range(chains);
 	level = mlx5_chains_get_level_range(chains);
 
@@ -728,7 +728,7 @@ mlx5_chains_init(struct mlx5_core_dev *dev, struct mlx5_chains_attr *attr)
 	struct mlx5_fs_chains *chains;
 	int err;
 
-	chains = kzalloc(sizeof(*chains), GFP_KERNEL);
+	chains = kzalloc_obj(*chains);
 	if (!chains)
 		return ERR_PTR(-ENOMEM);
 

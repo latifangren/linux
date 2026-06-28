@@ -586,16 +586,14 @@ static int util_probe(struct hv_device *dev,
 		(struct hv_util_service *)dev_id->driver_data;
 	int ret;
 
-	srv->recv_buffer = kmalloc(HV_HYP_PAGE_SIZE * 4, GFP_KERNEL);
+	srv->recv_buffer = kmalloc_array(4, HV_HYP_PAGE_SIZE, GFP_KERNEL);
 	if (!srv->recv_buffer)
 		return -ENOMEM;
 	srv->channel = dev->channel;
 	if (srv->util_init) {
 		ret = srv->util_init(srv);
-		if (ret) {
-			ret = -ENODEV;
+		if (ret)
 			goto error1;
-		}
 	}
 
 	/*

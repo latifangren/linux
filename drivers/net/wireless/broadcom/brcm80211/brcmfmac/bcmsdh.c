@@ -455,6 +455,11 @@ static int brcmf_sdiod_sglist_rw(struct brcmf_sdio_dev *sdiodev,
 			if (sg_data_sz > max_req_sz - req_sz)
 				sg_data_sz = max_req_sz - req_sz;
 
+			if (!sgl) {
+				/* out of (pre-allocated) scatterlist entries */
+				ret = -ENOMEM;
+				goto exit;
+			}
 			sg_set_buf(sgl, pkt_data, sg_data_sz);
 			sg_cnt++;
 
@@ -789,7 +794,7 @@ static int brcmf_sdiod_freezer_attach(struct brcmf_sdio_dev *sdiodev)
 	if (!IS_ENABLED(CONFIG_PM_SLEEP))
 		return 0;
 
-	sdiodev->freezer = kzalloc(sizeof(*sdiodev->freezer), GFP_KERNEL);
+	sdiodev->freezer = kzalloc_obj(*sdiodev->freezer);
 	if (!sdiodev->freezer)
 		return -ENOMEM;
 	atomic_set(&sdiodev->freezer->thread_count, 0);
@@ -946,11 +951,10 @@ int brcmf_sdiod_probe(struct brcmf_sdio_dev *sdiodev)
 		goto out;
 
 	/* try to attach to the target device */
-	sdiodev->bus = brcmf_sdio_probe(sdiodev);
-	if (IS_ERR(sdiodev->bus)) {
-		ret = PTR_ERR(sdiodev->bus);
+	ret = brcmf_sdio_probe(sdiodev);
+	if (ret)
 		goto out;
-	}
+
 	brcmf_sdiod_host_fixup(sdiodev->func2->card->host);
 out:
 	if (ret)
@@ -991,9 +995,10 @@ static const struct sdio_device_id brcmf_sdmmc_ids[] = {
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_4354, WCC),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_4356, WCC),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_4359, WCC),
+	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_43751, WCC),
+	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_43752, WCC),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_CYPRESS_4373, CYW),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_CYPRESS_43012, CYW),
-	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_CYPRESS_43752, CYW),
 	BRCMF_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_CYPRESS_89359, CYW),
 	CYW_SDIO_DEVICE(SDIO_DEVICE_ID_BROADCOM_CYPRESS_43439, CYW),
 	{ /* end: all zeroes */ }
@@ -1061,10 +1066,10 @@ static int brcmf_ops_sdio_probe(struct sdio_func *func,
 	if (func->num != 2)
 		return -ENODEV;
 
-	bus_if = kzalloc(sizeof(*bus_if), GFP_KERNEL);
+	bus_if = kzalloc_obj(*bus_if);
 	if (!bus_if)
 		return -ENOMEM;
-	sdiodev = kzalloc(sizeof(*sdiodev), GFP_KERNEL);
+	sdiodev = kzalloc_obj(*sdiodev);
 	if (!sdiodev) {
 		kfree(bus_if);
 		return -ENOMEM;

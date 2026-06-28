@@ -14,22 +14,8 @@
 static inline int _soc_dai_ret(const struct snd_soc_dai *dai,
 			       const char *func, int ret)
 {
-	/* Positive, Zero values are not errors */
-	if (ret >= 0)
-		return ret;
-
-	/* Negative values might be errors */
-	switch (ret) {
-	case -EPROBE_DEFER:
-	case -ENOTSUPP:
-		break;
-	default:
-		dev_err(dai->dev,
-			"ASoC: error at %s on %s: %d\n",
-			func, dai->name, ret);
-	}
-
-	return ret;
+	return snd_soc_ret(dai->dev, ret,
+			   "at %s() on %s\n", func, dai->name);
 }
 
 /*
@@ -37,7 +23,7 @@ static inline int _soc_dai_ret(const struct snd_soc_dai *dai,
  * In such case, we can update these macros.
  */
 #define soc_dai_mark_push(dai, substream, tgt)	((dai)->mark_##tgt = substream)
-#define soc_dai_mark_pop(dai, substream, tgt)	((dai)->mark_##tgt = NULL)
+#define soc_dai_mark_pop(dai, tgt)	((dai)->mark_##tgt = NULL)
 #define soc_dai_mark_match(dai, substream, tgt)	((dai)->mark_##tgt == substream)
 
 /**
@@ -191,8 +177,9 @@ u64 snd_soc_dai_get_fmt(const struct snd_soc_dai *dai, int priority)
 	if (max < until)
 		until = max;
 
-	for (i = 0; i < until; i++)
-		fmt |= ops->auto_selectable_formats[i];
+	if (ops && ops->auto_selectable_formats)
+		for (i = 0; i < until; i++)
+			fmt |= ops->auto_selectable_formats[i];
 
 	return fmt;
 }
@@ -296,6 +283,46 @@ err:
 EXPORT_SYMBOL_GPL(snd_soc_dai_set_tdm_slot);
 
 /**
+ * snd_soc_dai_set_tdm_idle() - Configure a DAI's TDM idle mode
+ * @dai: The DAI to configure
+ * @tx_mask: bitmask representing idle TX slots.
+ * @rx_mask: bitmask representing idle RX slots.
+ * @tx_mode: idle mode to set for TX slots.
+ * @rx_mode: idle mode to set for RX slots.
+ *
+ * This function configures the DAI to handle idle TDM slots in the
+ * specified manner. @tx_mode and @rx_mode can be one of
+ * SND_SOC_DAI_TDM_IDLE_NONE, SND_SOC_DAI_TDM_IDLE_ZERO,
+ * SND_SOC_DAI_TDM_IDLE_PULLDOWN, or SND_SOC_DAI_TDM_IDLE_HIZ.
+ * SND_SOC_TDM_IDLE_NONE represents the DAI's default/unset idle slot
+ * handling state and could be any of the other modes depending on the
+ * hardware behind the DAI. It is therefore undefined behaviour when set
+ * explicitly.
+ *
+ * Mode and mask can be set independently for both the TX and RX direction.
+ * Some hardware may ignore both TX and RX masks depending on its
+ * capabilities.
+ */
+int snd_soc_dai_set_tdm_idle(struct snd_soc_dai *dai,
+			     unsigned int tx_mask, unsigned int rx_mask,
+			     int tx_mode, int rx_mode)
+{
+	int ret = -EOPNOTSUPP;
+
+	/* You can't write to the RX line */
+	if (rx_mode == SND_SOC_DAI_TDM_IDLE_ZERO)
+		return soc_dai_ret(dai, -EINVAL);
+
+	if (dai->driver->ops &&
+	    dai->driver->ops->set_tdm_idle)
+		ret = dai->driver->ops->set_tdm_idle(dai, tx_mask, rx_mask,
+						     tx_mode, rx_mode);
+
+	return soc_dai_ret(dai, ret);
+}
+EXPORT_SYMBOL_GPL(snd_soc_dai_set_tdm_idle);
+
+/**
  * snd_soc_dai_set_channel_map - configure DAI audio channel map
  * @dai: DAI
  * @tx_num: how many TX channels
@@ -380,6 +407,14 @@ int snd_soc_dai_prepare(struct snd_soc_dai *dai,
 }
 EXPORT_SYMBOL_GPL(snd_soc_dai_prepare);
 
+int snd_soc_dai_mute_is_ctrled_at_trigger(struct snd_soc_dai *dai)
+{
+	if (dai->driver->ops)
+		return dai->driver->ops->mute_unmute_on_trigger;
+
+	return 0;
+}
+
 /**
  * snd_soc_dai_digital_mute - configure DAI system or master clock.
  * @dai: DAI
@@ -436,7 +471,7 @@ void snd_soc_dai_hw_free(struct snd_soc_dai *dai,
 		dai->driver->ops->hw_free(substream, dai);
 
 	/* remove marked substream */
-	soc_dai_mark_pop(dai, substream, hw_params);
+	soc_dai_mark_pop(dai, hw_params);
 }
 
 int snd_soc_dai_startup(struct snd_soc_dai *dai,
@@ -473,7 +508,7 @@ void snd_soc_dai_shutdown(struct snd_soc_dai *dai,
 		dai->driver->ops->shutdown(substream, dai);
 
 	/* remove marked substream */
-	soc_dai_mark_pop(dai, substream, startup);
+	soc_dai_mark_pop(dai, startup);
 }
 
 int snd_soc_dai_compress_new(struct snd_soc_dai *dai,
@@ -636,7 +671,7 @@ int snd_soc_pcm_dai_trigger(struct snd_pcm_substream *substream,
 			if (ret < 0)
 				break;
 
-			if (dai->driver->ops && dai->driver->ops->mute_unmute_on_trigger)
+			if (snd_soc_dai_mute_is_ctrled_at_trigger(dai))
 				snd_soc_dai_digital_mute(dai, 0, substream->stream);
 
 			soc_dai_mark_push(dai, substream, trigger);
@@ -649,13 +684,13 @@ int snd_soc_pcm_dai_trigger(struct snd_pcm_substream *substream,
 			if (rollback && !soc_dai_mark_match(dai, substream, trigger))
 				continue;
 
-			if (dai->driver->ops && dai->driver->ops->mute_unmute_on_trigger)
+			if (snd_soc_dai_mute_is_ctrled_at_trigger(dai))
 				snd_soc_dai_digital_mute(dai, 1, substream->stream);
 
 			r = soc_dai_trigger(dai, substream, cmd);
 			if (r < 0)
 				ret = r; /* use last ret */
-			soc_dai_mark_pop(dai, substream, trigger);
+			soc_dai_mark_pop(dai, trigger);
 		}
 	}
 
@@ -719,7 +754,7 @@ void snd_soc_dai_compr_shutdown(struct snd_soc_dai *dai,
 		dai->driver->cops->shutdown(cstream, dai);
 
 	/* remove marked cstream */
-	soc_dai_mark_pop(dai, cstream, compr_startup);
+	soc_dai_mark_pop(dai, compr_startup);
 }
 EXPORT_SYMBOL_GPL(snd_soc_dai_compr_shutdown);
 
@@ -780,7 +815,7 @@ EXPORT_SYMBOL_GPL(snd_soc_dai_compr_ack);
 
 int snd_soc_dai_compr_pointer(struct snd_soc_dai *dai,
 			      struct snd_compr_stream *cstream,
-			      struct snd_compr_tstamp *tstamp)
+			      struct snd_compr_tstamp64 *tstamp)
 {
 	int ret = 0;
 

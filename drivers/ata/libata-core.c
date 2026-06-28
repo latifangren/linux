@@ -65,8 +65,8 @@
 #include "libata-transport.h"
 
 const struct ata_port_operations ata_base_port_ops = {
-	.prereset		= ata_std_prereset,
-	.postreset		= ata_std_postreset,
+	.reset.prereset		= ata_std_prereset,
+	.reset.postreset	= ata_std_postreset,
 	.error_handler		= ata_std_error_handler,
 	.sched_eh		= ata_std_sched_eh,
 	.end_eh			= ata_std_end_eh,
@@ -76,18 +76,20 @@ static unsigned int ata_dev_init_params(struct ata_device *dev,
 					u16 heads, u16 sectors);
 static unsigned int ata_dev_set_xfermode(struct ata_device *dev);
 static void ata_dev_xfermask(struct ata_device *dev);
-static unsigned int ata_dev_quirks(const struct ata_device *dev);
+static u64 ata_dev_quirks(const struct ata_device *dev);
+static u64 ata_dev_get_quirk_value(struct ata_device *dev, u64 quirk);
 
 static DEFINE_IDA(ata_ida);
 
 #ifdef CONFIG_ATA_FORCE
 struct ata_force_param {
 	const char	*name;
+	u64		value;
 	u8		cbl;
 	u8		spd_limit;
 	unsigned int	xfer_mask;
-	unsigned int	quirk_on;
-	unsigned int	quirk_off;
+	u64		quirk_on;
+	u64		quirk_off;
 	unsigned int	pflags_on;
 	u16		lflags_on;
 	u16		lflags_off;
@@ -473,6 +475,33 @@ static void ata_force_xfermask(struct ata_device *dev)
 	}
 }
 
+static const struct ata_force_ent *
+ata_force_get_fe_for_dev(struct ata_device *dev)
+{
+	const struct ata_force_ent *fe;
+	int devno = dev->link->pmp + dev->devno;
+	int alt_devno = devno;
+	int i;
+
+	/* allow n.15/16 for devices attached to host port */
+	if (ata_is_host_link(dev->link))
+		alt_devno += 15;
+
+	for (i = 0; i < ata_force_tbl_size; i++) {
+		fe = &ata_force_tbl[i];
+		if (fe->port != -1 && fe->port != dev->link->ap->print_id)
+			continue;
+
+		if (fe->device != -1 && fe->device != devno &&
+		    fe->device != alt_devno)
+			continue;
+
+		return fe;
+	}
+
+	return NULL;
+}
+
 /**
  *	ata_force_quirks - force quirks according to libata.force
  *	@dev: ATA device of interest
@@ -486,34 +515,19 @@ static void ata_force_xfermask(struct ata_device *dev)
  */
 static void ata_force_quirks(struct ata_device *dev)
 {
-	int devno = dev->link->pmp + dev->devno;
-	int alt_devno = devno;
-	int i;
+	const struct ata_force_ent *fe = ata_force_get_fe_for_dev(dev);
 
-	/* allow n.15/16 for devices attached to host port */
-	if (ata_is_host_link(dev->link))
-		alt_devno += 15;
+	if (!fe)
+		return;
 
-	for (i = 0; i < ata_force_tbl_size; i++) {
-		const struct ata_force_ent *fe = &ata_force_tbl[i];
+	if (!(~dev->quirks & fe->param.quirk_on) &&
+	    !(dev->quirks & fe->param.quirk_off))
+		return;
 
-		if (fe->port != -1 && fe->port != dev->link->ap->print_id)
-			continue;
+	dev->quirks |= fe->param.quirk_on;
+	dev->quirks &= ~fe->param.quirk_off;
 
-		if (fe->device != -1 && fe->device != devno &&
-		    fe->device != alt_devno)
-			continue;
-
-		if (!(~dev->quirks & fe->param.quirk_on) &&
-		    !(dev->quirks & fe->param.quirk_off))
-			continue;
-
-		dev->quirks |= fe->param.quirk_on;
-		dev->quirks &= ~fe->param.quirk_off;
-
-		ata_dev_notice(dev, "FORCE: modified (%s)\n",
-			       fe->param.name);
-	}
+	ata_dev_notice(dev, "FORCE: modified (%s)\n", fe->param.name);
 }
 #else
 static inline void ata_force_pflags(struct ata_port *ap) { }
@@ -702,17 +716,6 @@ static inline void ata_set_tf_cdl(struct ata_queued_cmd *qc, int cdl)
 	 */
 	qc->flags |= ATA_QCFLAG_HAS_CDL | ATA_QCFLAG_RESULT_TF;
 }
-
-#ifdef CONFIG_ATA_LEDS
-#define LIBATA_BLINK_DELAY 20 /* ms */
-static inline void ata_led_act(struct ata_port *ap)
-{
-	if (unlikely(!ap->ledtrig))
-		return;
-
-	led_trigger_blink_oneshot(ap->ledtrig, LIBATA_BLINK_DELAY, LIBATA_BLINK_DELAY, 0);
-}
-#endif
 
 /**
  *	ata_build_rw_tf - Build ATA taskfile for given read/write request
@@ -2165,14 +2168,43 @@ retry:
 	return err_mask;
 }
 
+static inline void ata_clear_log_directory(struct ata_device *dev)
+{
+	memset(dev->gp_log_dir, 0, ATA_SECT_SIZE);
+}
+
+static int ata_read_log_directory(struct ata_device *dev)
+{
+	u16 version;
+
+	/* If the log page is already cached, do nothing. */
+	version = get_unaligned_le16(&dev->gp_log_dir[0]);
+	if (version == 0x0001)
+		return 0;
+
+	if (ata_read_log_page(dev, ATA_LOG_DIRECTORY, 0, dev->gp_log_dir, 1)) {
+		ata_clear_log_directory(dev);
+		return -EIO;
+	}
+
+	version = get_unaligned_le16(&dev->gp_log_dir[0]);
+	if (version != 0x0001)
+		ata_dev_warn_once(dev,
+				  "Invalid log directory version 0x%04x\n",
+				  version);
+
+	return 0;
+}
+
 static int ata_log_supported(struct ata_device *dev, u8 log)
 {
 	if (dev->quirks & ATA_QUIRK_NO_LOG_DIR)
 		return 0;
 
-	if (ata_read_log_page(dev, ATA_LOG_DIRECTORY, 0, dev->sector_buf, 1))
+	if (ata_read_log_directory(dev))
 		return 0;
-	return get_unaligned_le16(&dev->sector_buf[log * 2]);
+
+	return get_unaligned_le16(&dev->gp_log_dir[log * 2]);
 }
 
 static bool ata_identify_page_supported(struct ata_device *dev, u8 page)
@@ -2285,7 +2317,7 @@ static void ata_dev_config_ncq_non_data(struct ata_device *dev)
 
 	if (!ata_log_supported(dev, ATA_LOG_NCQ_NON_DATA)) {
 		ata_dev_warn(dev,
-			     "NCQ Send/Recv Log not supported\n");
+			     "NCQ Non-Data Log not supported\n");
 		return;
 	}
 	err_mask = ata_read_log_page(dev, ATA_LOG_NCQ_NON_DATA,
@@ -2513,7 +2545,7 @@ static void ata_dev_config_trusted(struct ata_device *dev)
 		dev->flags |= ATA_DFLAG_TRUSTED;
 }
 
-void ata_dev_cleanup_cdl_resources(struct ata_device *dev)
+static void ata_dev_cleanup_cdl_resources(struct ata_device *dev)
 {
 	kfree(dev->cdl);
 	dev->cdl = NULL;
@@ -2525,7 +2557,7 @@ static int ata_dev_init_cdl_resources(struct ata_device *dev)
 	unsigned int err_mask;
 
 	if (!cdl) {
-		cdl = kzalloc(sizeof(*cdl), GFP_KERNEL);
+		cdl = kzalloc_obj(*cdl);
 		if (!cdl)
 			return -ENOMEM;
 		dev->cdl = cdl;
@@ -2800,7 +2832,7 @@ static void ata_dev_config_cpr(struct ata_device *dev)
 	if (!nr_cpr)
 		goto out;
 
-	cpr_log = kzalloc(struct_size(cpr_log, cpr, nr_cpr), GFP_KERNEL);
+	cpr_log = kzalloc_flex(*cpr_log, cpr, nr_cpr);
 	if (!cpr_log)
 		goto out;
 
@@ -2827,6 +2859,33 @@ static void ata_dev_config_lpm(struct ata_device *dev)
 	struct ata_port *ap = dev->link->ap;
 	unsigned int err_mask;
 
+	if (ap->flags & ATA_FLAG_NO_LPM) {
+		/*
+		 * When the port does not support LPM, we cannot support it on
+		 * the device either.
+		 */
+		dev->quirks |= ATA_QUIRK_NOLPM;
+	} else {
+		/*
+		 * Some WD SATA-1 drives have issues with LPM, turn on NOLPM for
+		 * them.
+		 */
+		if ((dev->quirks & ATA_QUIRK_WD_BROKEN_LPM) &&
+		    (dev->id[ATA_ID_SATA_CAPABILITY] & 0xe) == 0x2)
+			dev->quirks |= ATA_QUIRK_NOLPM;
+
+		/* ATI specific quirk */
+		if ((dev->quirks & ATA_QUIRK_NO_LPM_ON_ATI) &&
+		    ata_dev_check_adapter(dev, PCI_VENDOR_ID_ATI))
+			dev->quirks |= ATA_QUIRK_NOLPM;
+	}
+
+	if (dev->quirks & ATA_QUIRK_NOLPM &&
+	    ap->target_lpm_policy != ATA_LPM_MAX_POWER) {
+		ata_dev_warn(dev, "LPM support broken, forcing max_power\n");
+		ap->target_lpm_policy = ATA_LPM_MAX_POWER;
+	}
+
 	/*
 	 * Device Initiated Power Management (DIPM) is normally disabled by
 	 * default on a device. However, DIPM may have been enabled and that
@@ -2845,15 +2904,18 @@ static void ata_dev_config_lpm(struct ata_device *dev)
 
 static void ata_dev_print_features(struct ata_device *dev)
 {
-	if (!(dev->flags & ATA_DFLAG_FEATURES_MASK) && !dev->cpr_log)
+	if (!(dev->flags & ATA_DFLAG_FEATURES_MASK) && !dev->cpr_log &&
+	    !ata_id_has_hipm(dev->id) && !ata_id_has_dipm(dev->id))
 		return;
 
 	ata_dev_info(dev,
-		     "Features:%s%s%s%s%s%s%s%s\n",
+		     "Features:%s%s%s%s%s%s%s%s%s%s\n",
 		     dev->flags & ATA_DFLAG_FUA ? " FUA" : "",
 		     dev->flags & ATA_DFLAG_TRUSTED ? " Trust" : "",
 		     dev->flags & ATA_DFLAG_DA ? " Dev-Attention" : "",
 		     dev->flags & ATA_DFLAG_DEVSLP ? " Dev-Sleep" : "",
+		     ata_id_has_hipm(dev->id) ? " HIPM" : "",
+		     ata_id_has_dipm(dev->id) ? " DIPM" : "",
 		     dev->flags & ATA_DFLAG_NCQ_SEND_RECV ? " NCQ-sndrcv" : "",
 		     dev->flags & ATA_DFLAG_NCQ_PRIO ? " NCQ-prio" : "",
 		     dev->flags & ATA_DFLAG_CDL ? " CDL" : "",
@@ -2890,6 +2952,9 @@ int ata_dev_configure(struct ata_device *dev)
 		return 0;
 	}
 
+	/* Clear the general purpose log directory cache. */
+	ata_clear_log_directory(dev);
+
 	/* Set quirks */
 	dev->quirks |= ata_dev_quirks(dev);
 	ata_force_quirks(dev);
@@ -2912,23 +2977,6 @@ int ata_dev_configure(struct ata_device *dev)
 	rc = ata_do_link_spd_quirk(dev);
 	if (rc)
 		return rc;
-
-	/* some WD SATA-1 drives have issues with LPM, turn on NOLPM for them */
-	if ((dev->quirks & ATA_QUIRK_WD_BROKEN_LPM) &&
-	    (id[ATA_ID_SATA_CAPABILITY] & 0xe) == 0x2)
-		dev->quirks |= ATA_QUIRK_NOLPM;
-
-	if (dev->quirks & ATA_QUIRK_NO_LPM_ON_ATI &&
-	    ata_dev_check_adapter(dev, PCI_VENDOR_ID_ATI))
-		dev->quirks |= ATA_QUIRK_NOLPM;
-
-	if (ap->flags & ATA_FLAG_NO_LPM)
-		dev->quirks |= ATA_QUIRK_NOLPM;
-
-	if (dev->quirks & ATA_QUIRK_NOLPM) {
-		ata_dev_warn(dev, "LPM support broken, forcing max_power\n");
-		dev->link->ap->target_lpm_policy = ATA_LPM_MAX_POWER;
-	}
 
 	/* let ACPI work its magic */
 	rc = ata_acpi_on_devcfg(dev);
@@ -2991,6 +3039,16 @@ int ata_dev_configure(struct ata_device *dev)
 		}
 
 		dev->n_sectors = ata_id_n_sectors(id);
+		if (ata_id_is_locked(id)) {
+			/*
+			 * If Security locked, set capacity to zero to prevent
+			 * any I/O, e.g. partition scanning, as any I/O to a
+			 * locked drive will result in user visible errors.
+			 */
+			ata_dev_info(dev,
+				"Security locked, setting capacity to zero\n");
+			dev->n_sectors = 0;
+		}
 
 		/* get current R/W Multiple count setting */
 		if ((dev->id[47] >> 8) == 0x80 && (dev->id[59] & 0x100)) {
@@ -3118,13 +3176,10 @@ int ata_dev_configure(struct ata_device *dev)
 		dev->quirks |= ATA_QUIRK_STUCK_ERR;
 	}
 
-	if (dev->quirks & ATA_QUIRK_MAX_SEC_128)
-		dev->max_sectors = min_t(unsigned int, ATA_MAX_SECTORS_128,
-					 dev->max_sectors);
-
-	if (dev->quirks & ATA_QUIRK_MAX_SEC_1024)
-		dev->max_sectors = min_t(unsigned int, ATA_MAX_SECTORS_1024,
-					 dev->max_sectors);
+	if (dev->quirks & ATA_QUIRK_MAX_SEC)
+		dev->max_sectors = min_t(unsigned int, dev->max_sectors,
+					 ata_dev_get_quirk_value(dev,
+							 ATA_QUIRK_MAX_SEC));
 
 	if (dev->quirks & ATA_QUIRK_MAX_SEC_LBA48)
 		dev->max_sectors = ATA_MAX_SECTORS_LBA48;
@@ -3497,7 +3552,7 @@ static int ata_dev_set_mode(struct ata_device *dev)
 }
 
 /**
- *	ata_do_set_mode - Program timings and issue SET FEATURES - XFER
+ *	ata_set_mode - Program timings and issue SET FEATURES - XFER
  *	@link: link on which timings will be programmed
  *	@r_failed_dev: out parameter for failed device
  *
@@ -3513,7 +3568,7 @@ static int ata_dev_set_mode(struct ata_device *dev)
  *	0 on success, negative errno otherwise
  */
 
-int ata_do_set_mode(struct ata_link *link, struct ata_device **r_failed_dev)
+int ata_set_mode(struct ata_link *link, struct ata_device **r_failed_dev)
 {
 	struct ata_port *ap = link->ap;
 	struct ata_device *dev;
@@ -3594,7 +3649,7 @@ int ata_do_set_mode(struct ata_link *link, struct ata_device **r_failed_dev)
 		*r_failed_dev = dev;
 	return rc;
 }
-EXPORT_SYMBOL_GPL(ata_do_set_mode);
+EXPORT_SYMBOL_GPL(ata_set_mode);
 
 /**
  *	ata_wait_ready - wait for link to become ready
@@ -3956,7 +4011,6 @@ static const char * const ata_quirk_names[] = {
 	[__ATA_QUIRK_DIAGNOSTIC]	= "diagnostic",
 	[__ATA_QUIRK_NODMA]		= "nodma",
 	[__ATA_QUIRK_NONCQ]		= "noncq",
-	[__ATA_QUIRK_MAX_SEC_128]	= "maxsec128",
 	[__ATA_QUIRK_BROKEN_HPA]	= "brokenhpa",
 	[__ATA_QUIRK_DISABLE]		= "disable",
 	[__ATA_QUIRK_HPA_SIZE]		= "hpasize",
@@ -3977,7 +4031,7 @@ static const char * const ata_quirk_names[] = {
 	[__ATA_QUIRK_ZERO_AFTER_TRIM]	= "zeroaftertrim",
 	[__ATA_QUIRK_NO_DMA_LOG]	= "nodmalog",
 	[__ATA_QUIRK_NOTRIM]		= "notrim",
-	[__ATA_QUIRK_MAX_SEC_1024]	= "maxsec1024",
+	[__ATA_QUIRK_MAX_SEC]		= "maxsec",
 	[__ATA_QUIRK_MAX_TRIM_128M]	= "maxtrim128m",
 	[__ATA_QUIRK_NO_NCQ_ON_ATI]	= "noncqonati",
 	[__ATA_QUIRK_NO_LPM_ON_ATI]	= "nolpmonati",
@@ -4022,10 +4076,26 @@ static void ata_dev_print_quirks(const struct ata_device *dev,
 	kfree(str);
 }
 
+struct ata_dev_quirk_value {
+	const char	*model_num;
+	const char	*model_rev;
+	u64		val;
+};
+
+static const struct ata_dev_quirk_value __ata_dev_max_sec_quirks[] = {
+	{ "TORiSAN DVD-ROM DRD-N216",	NULL,		128 },
+	{ "ST380013AS",			"3.20",		1024 },
+	{ "LITEON CX1-JB*-HP",		NULL,		1024 },
+	{ "LITEON EP1-*",		NULL,		1024 },
+	{ "DELLBOSS VD",		"MV.R00-0",	8191 },
+	{ "INTEL SSDSC2KG480G8",	"XCV10120",	8191 },
+	{ },
+};
+
 struct ata_dev_quirks_entry {
 	const char *model_num;
 	const char *model_rev;
-	unsigned int quirks;
+	u64 quirks;
 };
 
 static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
@@ -4066,7 +4136,7 @@ static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
 	{ "ASMT109x- Config",	NULL,		ATA_QUIRK_DISABLE },
 
 	/* Weird ATAPI devices */
-	{ "TORiSAN DVD-ROM DRD-N216", NULL,	ATA_QUIRK_MAX_SEC_128 },
+	{ "TORiSAN DVD-ROM DRD-N216", NULL,	ATA_QUIRK_MAX_SEC },
 	{ "QUANTUM DAT    DAT72-000", NULL,	ATA_QUIRK_ATAPI_MOD16_DMA },
 	{ "Slimtype DVD A  DS8A8SH", NULL,	ATA_QUIRK_MAX_SEC_LBA48 },
 	{ "Slimtype DVD A  DS8A9SH", NULL,	ATA_QUIRK_MAX_SEC_LBA48 },
@@ -4075,14 +4145,20 @@ static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
 	 * Causes silent data corruption with higher max sects.
 	 * http://lkml.kernel.org/g/x49wpy40ysk.fsf@segfault.boston.devel.redhat.com
 	 */
-	{ "ST380013AS",		"3.20",		ATA_QUIRK_MAX_SEC_1024 },
+	{ "ST380013AS",		"3.20",		ATA_QUIRK_MAX_SEC },
 
 	/*
 	 * These devices time out with higher max sects.
 	 * https://bugzilla.kernel.org/show_bug.cgi?id=121671
 	 */
-	{ "LITEON CX1-JB*-HP",	NULL,		ATA_QUIRK_MAX_SEC_1024 },
-	{ "LITEON EP1-*",	NULL,		ATA_QUIRK_MAX_SEC_1024 },
+	{ "LITEON CX1-JB*-HP",	NULL,		ATA_QUIRK_MAX_SEC },
+	{ "LITEON EP1-*",	NULL,		ATA_QUIRK_MAX_SEC },
+
+	/*
+	 * These devices time out with higher max sects.
+	 * https://bugzilla.kernel.org/show_bug.cgi?id=220693
+	 */
+	{ "DELLBOSS VD",	"MV.R00-0",	ATA_QUIRK_MAX_SEC },
 
 	/* Devices we expect to fail diagnostics */
 
@@ -4204,6 +4280,10 @@ static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
 	/* Apacer models with LPM issues */
 	{ "Apacer AS340*",		NULL,	ATA_QUIRK_NOLPM },
 
+	/* Silicon Motion models with LPM issues */
+	{ "MD619HXCLDE3TC",		"TCVAID", ATA_QUIRK_NOLPM },
+	{ "MD619GXCLDE3TC",		"TCV35D", ATA_QUIRK_NOLPM },
+
 	/* These specific Samsung models/firmware-revs do not handle LPM well */
 	{ "SAMSUNG MZMPC128HBFU-000MV", "CXM14M1Q", ATA_QUIRK_NOLPM },
 	{ "SAMSUNG SSD PM830 mSATA *",  "CXM13D1Q", ATA_QUIRK_NOLPM },
@@ -4271,6 +4351,8 @@ static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
 
 	{ "Micron*",			NULL,	ATA_QUIRK_ZERO_AFTER_TRIM },
 	{ "Crucial*",			NULL,	ATA_QUIRK_ZERO_AFTER_TRIM },
+	{ "INTEL SSDSC2KG480G8", "XCV10120",	ATA_QUIRK_ZERO_AFTER_TRIM |
+						ATA_QUIRK_MAX_SEC },
 	{ "INTEL*SSD*",			NULL,	ATA_QUIRK_ZERO_AFTER_TRIM },
 	{ "SSD*INTEL*",			NULL,	ATA_QUIRK_ZERO_AFTER_TRIM },
 	{ "Samsung*SSD*",		NULL,	ATA_QUIRK_ZERO_AFTER_TRIM },
@@ -4312,14 +4394,14 @@ static const struct ata_dev_quirks_entry __ata_dev_quirks[] = {
 	{ }
 };
 
-static unsigned int ata_dev_quirks(const struct ata_device *dev)
+static u64 ata_dev_quirks(const struct ata_device *dev)
 {
 	unsigned char model_num[ATA_ID_PROD_LEN + 1];
 	unsigned char model_rev[ATA_ID_FW_REV_LEN + 1];
 	const struct ata_dev_quirks_entry *ad = __ata_dev_quirks;
 
-	/* dev->quirks is an unsigned int. */
-	BUILD_BUG_ON(__ATA_QUIRK_MAX > 32);
+	/* dev->quirks is an u64. */
+	BUILD_BUG_ON(__ATA_QUIRK_MAX > 64);
 
 	ata_id_c_string(dev->id, model_num, ATA_ID_PROD, sizeof(model_num));
 	ata_id_c_string(dev->id, model_rev, ATA_ID_FW_REV, sizeof(model_rev));
@@ -4333,6 +4415,48 @@ static unsigned int ata_dev_quirks(const struct ata_device *dev)
 		}
 		ad++;
 	}
+	return 0;
+}
+
+static u64 ata_dev_get_max_sec_quirk_value(struct ata_device *dev)
+{
+	unsigned char model_num[ATA_ID_PROD_LEN + 1];
+	unsigned char model_rev[ATA_ID_FW_REV_LEN + 1];
+	const struct ata_dev_quirk_value *ad = __ata_dev_max_sec_quirks;
+	u64 val = 0;
+
+#ifdef CONFIG_ATA_FORCE
+	const struct ata_force_ent *fe = ata_force_get_fe_for_dev(dev);
+	if (fe && (fe->param.quirk_on & ATA_QUIRK_MAX_SEC) && fe->param.value)
+		val = fe->param.value;
+#endif
+	if (val)
+		goto out;
+
+	ata_id_c_string(dev->id, model_num, ATA_ID_PROD, sizeof(model_num));
+	ata_id_c_string(dev->id, model_rev, ATA_ID_FW_REV, sizeof(model_rev));
+
+	while (ad->model_num) {
+		if (glob_match(ad->model_num, model_num) &&
+		    (!ad->model_rev || glob_match(ad->model_rev, model_rev))) {
+			val = ad->val;
+			break;
+		}
+		ad++;
+	}
+
+out:
+	ata_dev_warn(dev, "%s quirk is using value: %llu\n",
+		     ata_quirk_names[__ATA_QUIRK_MAX_SEC], val);
+
+	return val;
+}
+
+static u64 ata_dev_get_quirk_value(struct ata_device *dev, u64 quirk)
+{
+	if (quirk == ATA_QUIRK_MAX_SEC)
+		return ata_dev_get_max_sec_quirk_value(dev);
+
 	return 0;
 }
 
@@ -4597,7 +4721,7 @@ static unsigned int ata_dev_init_params(struct ata_device *dev,
 		return AC_ERR_INVALID;
 
 	/* set up init dev params taskfile */
-	ata_dev_dbg(dev, "init dev params \n");
+	ata_dev_dbg(dev, "init dev params\n");
 
 	ata_tf_init(dev, &tf);
 	tf.command = ATA_CMD_INIT_DEV_PARAMS;
@@ -4639,7 +4763,7 @@ int atapi_check_dma(struct ata_queued_cmd *qc)
 	 */
 	if (!(qc->dev->quirks & ATA_QUIRK_ATAPI_MOD16_DMA) &&
 	    unlikely(qc->nbytes & 15))
-		return 1;
+		return -EOPNOTSUPP;
 
 	if (ap->ops->check_atapi_dma)
 		return ap->ops->check_atapi_dma(qc);
@@ -4823,9 +4947,6 @@ void __ata_qc_complete(struct ata_queued_cmd *qc)
 		link->active_tag = ATA_TAG_POISON;
 		ap->nr_active_links--;
 	}
-#ifdef CONFIG_ATA_LEDS
-	ata_led_act(ap);
-#endif
 
 	/* clear exclusive status */
 	if (unlikely(qc->flags & ATA_QCFLAG_CLEAR_EXCL &&
@@ -5030,8 +5151,13 @@ void ata_qc_issue(struct ata_queued_cmd *qc)
 	struct ata_link *link = qc->dev->link;
 	u8 prot = qc->tf.protocol;
 
-	/* Make sure only one non-NCQ command is outstanding. */
-	WARN_ON_ONCE(ata_tag_valid(link->active_tag));
+	/*
+	 * Make sure we have a valid tag and that only one non-NCQ command is
+	 * outstanding.
+	 */
+	if (WARN_ON_ONCE(!ata_tag_valid(qc->tag)) ||
+	    WARN_ON_ONCE(ata_tag_valid(link->active_tag)))
+		goto sys_err;
 
 	if (ata_is_ncq(prot)) {
 		WARN_ON_ONCE(link->sactive & (1 << qc->hw_tag));
@@ -5458,6 +5584,7 @@ void ata_link_init(struct ata_port *ap, struct ata_link *link, int pmp)
 	link->pmp = pmp;
 	link->active_tag = ATA_TAG_POISON;
 	link->hw_sata_spd_limit = UINT_MAX;
+	INIT_WORK(&link->deferred_qc_work, ata_scsi_deferred_qc_work);
 
 	/* can't use iterator, ap isn't initialized yet */
 	for (i = 0; i < ATA_MAX_DEVICES; i++) {
@@ -5522,7 +5649,7 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 	struct ata_port *ap;
 	int id;
 
-	ap = kzalloc(sizeof(*ap), GFP_KERNEL);
+	ap = kzalloc_obj(*ap);
 	if (!ap)
 		return NULL;
 
@@ -5540,7 +5667,6 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 	mutex_init(&ap->scsi_scan_mutex);
 	INIT_DELAYED_WORK(&ap->hotplug_task, ata_scsi_hotplug);
 	INIT_DELAYED_WORK(&ap->scsi_rescan_task, ata_scsi_dev_rescan);
-	INIT_WORK(&ap->deferred_qc_work, ata_scsi_deferred_qc_work);
 	INIT_LIST_HEAD(&ap->eh_done_q);
 	init_waitqueue_head(&ap->eh_wait_q);
 	init_completion(&ap->park_req_pending);
@@ -5554,9 +5680,6 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 #ifdef ATA_IRQ_TRAP
 	ap->stats.unhandled_irq = 1;
 	ap->stats.idle_irq = 1;
-#endif
-#ifdef CONFIG_ATA_LEDS
-	ap->ledtrig = kzalloc(sizeof(struct led_trigger), GFP_KERNEL);
 #endif
 	ata_sff_port_init(ap);
 
@@ -5574,12 +5697,6 @@ void ata_port_free(struct ata_port *ap)
 	kfree(ap->pmp_link);
 	kfree(ap->slave_link);
 	ida_free(&ata_ida, ap->print_id);
-#ifdef CONFIG_ATA_LEDS
-	if (ap->ledtrig) {
-		led_trigger_unregister(ap->ledtrig);
-		kfree(ap->ledtrig);
-	};
-#endif
 	kfree(ap);
 }
 EXPORT_SYMBOL_GPL(ata_port_free);
@@ -5918,6 +6035,8 @@ void ata_port_probe(struct ata_port *ap)
 	struct ata_eh_info *ehi = &ap->link.eh_info;
 	unsigned long flags;
 
+	ata_acpi_port_power_on(ap);
+
 	/* kick EH for boot probing */
 	spin_lock_irqsave(ap->lock, flags);
 
@@ -5984,23 +6103,7 @@ int ata_host_register(struct ata_host *host, const struct scsi_host_template *sh
 		WARN_ON(1);
 		return -EINVAL;
 	}
-#ifdef CONFIG_ATA_LEDS
-	for (i = 0; i < host->n_ports; i++) {
-		if (unlikely(!host->ports[i]->ledtrig))
-			continue;
 
-		snprintf(host->ports[i]->ledtrig_name,
-			sizeof(host->ports[i]->ledtrig_name), "ata%u",
-			host->ports[i]->print_id);
-
-		host->ports[i]->ledtrig->name = host->ports[i]->ledtrig_name;
-
-		if (led_trigger_register(host->ports[i]->ledtrig)) {
-			kfree(host->ports[i]->ledtrig);
-			host->ports[i]->ledtrig = NULL;
-		}
-	}
-#endif
 	/* Create associated sysfs transport objects  */
 	for (i = 0; i < host->n_ports; i++) {
 		rc = ata_tport_add(host->dev,host->ports[i]);
@@ -6188,11 +6291,14 @@ static void ata_port_detach(struct ata_port *ap)
 
 	/* It better be dead now and not have any remaining deferred qc. */
 	WARN_ON(!(ap->pflags & ATA_PFLAG_UNLOADED));
-	WARN_ON(ap->deferred_qc);
 
-	cancel_work_sync(&ap->deferred_qc_work);
 	cancel_delayed_work_sync(&ap->hotplug_task);
 	cancel_delayed_work_sync(&ap->scsi_rescan_task);
+
+	ata_for_each_link(link, ap, PMP_FIRST) {
+		WARN_ON(link->deferred_qc);
+		cancel_work_sync(&link->deferred_qc_work);
+	}
 
 	/* Delete port multiplier link transport devices */
 	if (ap->pmp_link) {
@@ -6404,10 +6510,21 @@ EXPORT_SYMBOL_GPL(ata_platform_remove_one);
 #define force_quirk_on(name, flag)			\
 	{ #name,	.quirk_on	= (flag) }
 
+#define force_quirk_val(name, flag, val)		\
+	{ #name,	.quirk_on	= (flag),	\
+			.value		= (val) }
+
 #define force_quirk_onoff(name, flag)			\
 	{ "no" #name,	.quirk_on	= (flag) },	\
 	{ #name,	.quirk_off	= (flag) }
 
+/*
+ * If the ata_force_param struct member 'name' ends with '=', then the value
+ * after the equal sign will be parsed as an u64, and will be saved in the
+ * ata_force_param struct member 'value'. This works because each libata.force
+ * entry (struct ata_force_ent) is separated by commas, so each entry represents
+ * a single quirk, and can thus only have a single value.
+ */
 static const struct ata_force_param force_tbl[] __initconst = {
 	force_cbl(40c,			ATA_CBL_PATA40),
 	force_cbl(80c,			ATA_CBL_PATA80),
@@ -6478,8 +6595,9 @@ static const struct ata_force_param force_tbl[] __initconst = {
 	force_quirk_onoff(iddevlog,	ATA_QUIRK_NO_ID_DEV_LOG),
 	force_quirk_onoff(logdir,	ATA_QUIRK_NO_LOG_DIR),
 
-	force_quirk_on(max_sec_128,	ATA_QUIRK_MAX_SEC_128),
-	force_quirk_on(max_sec_1024,	ATA_QUIRK_MAX_SEC_1024),
+	force_quirk_val(max_sec_128,	ATA_QUIRK_MAX_SEC,	128),
+	force_quirk_val(max_sec_1024,	ATA_QUIRK_MAX_SEC,	1024),
+	force_quirk_on(max_sec=,	ATA_QUIRK_MAX_SEC),
 	force_quirk_on(max_sec_lba48,	ATA_QUIRK_MAX_SEC_LBA48),
 
 	force_quirk_onoff(lpm,		ATA_QUIRK_NOLPM),
@@ -6495,8 +6613,9 @@ static int __init ata_parse_force_one(char **cur,
 				      const char **reason)
 {
 	char *start = *cur, *p = *cur;
-	char *id, *val, *endp;
+	char *id, *val, *endp, *equalsign, *char_after_equalsign;
 	const struct ata_force_param *match_fp = NULL;
+	u64 val_after_equalsign;
 	int nr_matches = 0, i;
 
 	/* find where this param ends and update *cur */
@@ -6539,10 +6658,36 @@ static int __init ata_parse_force_one(char **cur,
 	}
 
  parse_val:
-	/* parse val, allow shortcuts so that both 1.5 and 1.5Gbps work */
+	equalsign = strchr(val, '=');
+	if (equalsign) {
+		char_after_equalsign = equalsign + 1;
+		if (!strlen(char_after_equalsign) ||
+		    kstrtoull(char_after_equalsign, 10, &val_after_equalsign)) {
+			*reason = "invalid value after equal sign";
+			return -EINVAL;
+		}
+	}
+
+	/* Parse the parameter value. */
 	for (i = 0; i < ARRAY_SIZE(force_tbl); i++) {
 		const struct ata_force_param *fp = &force_tbl[i];
 
+		/*
+		 * If val contains equal sign, match has to be exact, i.e.
+		 * shortcuts are not supported.
+		 */
+		if (equalsign &&
+		    (strncasecmp(val, fp->name,
+				 char_after_equalsign - val) == 0)) {
+			force_ent->param = *fp;
+			force_ent->param.value = val_after_equalsign;
+			return 0;
+		}
+
+		/*
+		 * If val does not contain equal sign, allow shortcuts so that
+		 * both 1.5 and 1.5Gbps work.
+		 */
 		if (strncasecmp(val, fp->name, strlen(val)))
 			continue;
 
@@ -6580,7 +6725,7 @@ static void __init ata_parse_force_param(void)
 		if (*p == ',')
 			size++;
 
-	ata_force_tbl = kcalloc(size, sizeof(ata_force_tbl[0]), GFP_KERNEL);
+	ata_force_tbl = kzalloc_objs(ata_force_tbl[0], size);
 	if (!ata_force_tbl) {
 		printk(KERN_WARNING "ata: failed to extend force table, "
 		       "libata.force ignored\n");
@@ -6636,23 +6781,14 @@ static int __init ata_init(void)
 	}
 
 	libata_transport_init();
-	ata_scsi_transport_template = ata_attach_transport();
-	if (!ata_scsi_transport_template) {
-		ata_sff_exit();
-		rc = -ENOMEM;
-		goto err_out;
-	}
 
 	printk(KERN_DEBUG "libata version " DRV_VERSION " loaded.\n");
-	return 0;
 
-err_out:
-	return rc;
+	return 0;
 }
 
 static void __exit ata_exit(void)
 {
-	ata_release_transport(ata_scsi_transport_template);
 	libata_transport_exit();
 	ata_sff_exit();
 	ata_free_force_param();
@@ -6774,12 +6910,6 @@ const struct ata_port_info ata_dummy_port_info = {
 	.port_ops		= &ata_dummy_port_ops,
 };
 EXPORT_SYMBOL_GPL(ata_dummy_port_info);
-
-void ata_print_version(const struct device *dev, const char *version)
-{
-	dev_printk(KERN_DEBUG, dev, "version %s\n", version);
-}
-EXPORT_SYMBOL(ata_print_version);
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(ata_tf_load);
 EXPORT_TRACEPOINT_SYMBOL_GPL(ata_exec_command);

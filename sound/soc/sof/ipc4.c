@@ -238,6 +238,26 @@ static void sof_ipc4_log_header(struct device *dev, u8 *text, struct sof_ipc4_ms
 				msg->extension, str);
 	}
 }
+
+const char *sof_ipc4_pipeline_state_str(enum sof_ipc4_pipeline_state state)
+{
+	switch (state) {
+	case SOF_IPC4_PIPE_INVALID_STATE:
+		return " (INVALID_STATE)";
+	case SOF_IPC4_PIPE_UNINITIALIZED:
+		return " (UNINITIALIZED)";
+	case SOF_IPC4_PIPE_RESET:
+		return " (RESET)";
+	case SOF_IPC4_PIPE_PAUSED:
+		return " (PAUSED)";
+	case SOF_IPC4_PIPE_RUNNING:
+		return " (RUNNING)";
+	case SOF_IPC4_PIPE_EOS:
+		return " (EOS)";
+	default:
+		return " (<unknown>)";
+	}
+}
 #else /* CONFIG_SND_SOC_SOF_DEBUG_VERBOSE_IPC */
 static void sof_ipc4_log_header(struct device *dev, u8 *text, struct sof_ipc4_msg *msg,
 				bool data_size_valid)
@@ -254,6 +274,11 @@ static void sof_ipc4_log_header(struct device *dev, u8 *text, struct sof_ipc4_ms
 			msg->primary, msg->extension, msg->data_size);
 	else
 		dev_dbg(dev, "%s: %#x|%#x\n", text, msg->primary, msg->extension);
+}
+
+const char *sof_ipc4_pipeline_state_str(enum sof_ipc4_pipeline_state state)
+{
+	return "";
 }
 #endif
 
@@ -387,7 +412,7 @@ static int sof_ipc4_tx_msg(struct snd_sof_dev *sdev, void *msg_data, size_t msg_
 	}
 
 	/* Serialise IPC TX */
-	mutex_lock(&ipc->tx_mutex);
+	guard(mutex)(&ipc->tx_mutex);
 
 	ret = ipc4_tx_msg_unlocked(ipc, msg_data, msg_bytes, reply_data, reply_bytes);
 
@@ -404,8 +429,6 @@ static int sof_ipc4_tx_msg(struct snd_sof_dev *sdev, void *msg_data, size_t msg_
 			sof_ipc4_dump_payload(sdev, msg->data_ptr, msg->data_size);
 	}
 
-	mutex_unlock(&ipc->tx_mutex);
-
 	return ret;
 }
 
@@ -420,6 +443,7 @@ static bool sof_ipc4_tx_payload_for_get_data(struct sof_ipc4_msg *tx)
 	switch (tx->extension & SOF_IPC4_MOD_EXT_MSG_PARAM_ID_MASK) {
 	case SOF_IPC4_MOD_EXT_MSG_PARAM_ID(SOF_IPC4_SWITCH_CONTROL_PARAM_ID):
 	case SOF_IPC4_MOD_EXT_MSG_PARAM_ID(SOF_IPC4_ENUM_CONTROL_PARAM_ID):
+	case SOF_IPC4_MOD_EXT_MSG_PARAM_ID(SOF_IPC4_BYTES_CONTROL_PARAM_ID):
 		return true;
 	default:
 		return false;
@@ -480,7 +504,7 @@ static int sof_ipc4_set_get_data(struct snd_sof_dev *sdev, void *data,
 	}
 
 	/* Serialise IPC TX */
-	mutex_lock(&sdev->ipc->tx_mutex);
+	guard(mutex)(&sdev->ipc->tx_mutex);
 
 	do {
 		size_t tx_size, rx_size;
@@ -564,8 +588,6 @@ out:
 	if (sof_debug_check_flag(SOF_DBG_DUMP_IPC_MESSAGE_PAYLOAD))
 		sof_ipc4_dump_payload(sdev, ipc4_msg->data_ptr, ipc4_msg->data_size);
 
-	mutex_unlock(&sdev->ipc->tx_mutex);
-
 	kfree(tx_payload_for_get);
 
 	return ret;
@@ -616,9 +638,19 @@ EXPORT_SYMBOL(sof_ipc4_find_debug_slot_offset_by_type);
 
 static int ipc4_fw_ready(struct snd_sof_dev *sdev, struct sof_ipc4_msg *ipc4_msg)
 {
-	/* no need to re-check version/ABI for subsequent boots */
-	if (!sdev->first_boot)
+	if (!sdev->first_boot) {
+		struct sof_ipc4_fw_data *ipc4_data = sdev->private;
+
+		/*
+		 * After the initial boot only check if the libraries have been
+		 * restored when full context save is not enabled
+		 */
+		if (!ipc4_data->fw_context_save)
+			ipc4_data->libraries_restored = !!(ipc4_msg->primary &
+							   SOF_IPC4_FW_READY_LIB_RESTORED);
+
 		return 0;
+	}
 
 	sof_ipc4_create_exception_debugfs_node(sdev);
 
@@ -865,8 +897,14 @@ static void sof_ipc4_exit(struct snd_sof_dev *sdev)
 
 static int sof_ipc4_post_boot(struct snd_sof_dev *sdev)
 {
-	if (sdev->first_boot)
+	if (sdev->first_boot) {
+		int  ret = sof_ipc4_complete_split_release(sdev);
+
+		if (ret)
+			return ret;
+
 		return sof_ipc4_query_fw_configuration(sdev);
+	}
 
 	return sof_ipc4_reload_fw_libraries(sdev);
 }
@@ -885,3 +923,34 @@ const struct sof_ipc_ops ipc4_ops = {
 	.pcm = &ipc4_pcm_ops,
 	.fw_tracing = &ipc4_mtrace_ops,
 };
+
+void sof_ipc4_mic_privacy_state_change(struct snd_sof_dev *sdev, bool state)
+{
+	struct sof_ipc4_msg msg;
+	u32 data = state;
+
+	/*
+	 * The mic privacy change notification's role is to notify the running
+	 * firmware that there is a change in mic privacy state from whatever
+	 * the state was before - since the firmware booted up or since the
+	 * previous change during runtime.
+	 *
+	 * If the firmware has not been booted up, there is no need to send
+	 * change notification (the firmware is not booted up).
+	 * The firmware checks the current state during its boot.
+	 */
+	if (sdev->fw_state != SOF_FW_BOOT_COMPLETE)
+		return;
+
+	msg.primary = SOF_IPC4_MSG_TARGET(SOF_IPC4_MODULE_MSG);
+	msg.primary |= SOF_IPC4_MSG_DIR(SOF_IPC4_MSG_REQUEST);
+	msg.primary |= SOF_IPC4_MOD_ID(SOF_IPC4_MOD_INIT_BASEFW_MOD_ID);
+	msg.primary |= SOF_IPC4_MOD_INSTANCE(SOF_IPC4_MOD_INIT_BASEFW_INSTANCE_ID);
+	msg.extension = SOF_IPC4_MOD_EXT_MSG_PARAM_ID(SOF_IPC4_FW_PARAM_MIC_PRIVACY_STATE_CHANGE);
+
+	msg.data_size = sizeof(data);
+	msg.data_ptr = &data;
+
+	sof_ipc4_set_get_data(sdev, &msg, msg.data_size, true);
+}
+EXPORT_SYMBOL(sof_ipc4_mic_privacy_state_change);

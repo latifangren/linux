@@ -416,7 +416,7 @@ static int ps3disk_probe(struct ps3_system_bus_device *_dev)
 	__set_bit(devidx, &ps3disk_mask);
 	mutex_unlock(&ps3disk_mask_mutex);
 
-	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	priv = kzalloc_obj(*priv);
 	if (!priv) {
 		error = -ENOMEM;
 		goto fail;
@@ -438,8 +438,7 @@ static int ps3disk_probe(struct ps3_system_bus_device *_dev)
 
 	ps3disk_identify(dev);
 
-	error = blk_mq_alloc_sq_tag_set(&priv->tag_set, &ps3disk_mq_ops, 1,
-					BLK_MQ_F_SHOULD_MERGE);
+	error = blk_mq_alloc_sq_tag_set(&priv->tag_set, &ps3disk_mq_ops, 1, 0);
 	if (error)
 		goto fail_teardown;
 

@@ -42,6 +42,7 @@
 
 #include <rdma/uverbs_types.h>
 #include <rdma/uverbs_std_types.h>
+#include <rdma/ib_ucaps.h>
 #include "rdma_core.h"
 
 #include "uverbs.h"
@@ -82,28 +83,16 @@ static int uverbs_response(struct uverbs_attr_bundle *attrs, const void *resp,
 	return 0;
 }
 
-/*
- * Copy a request from userspace. If the provided 'req' is larger than the
- * user buffer then the user buffer is zero extended into the 'req'. If 'req'
- * is smaller than the user buffer then the uncopied bytes in the user buffer
- * must be zero.
- */
 static int uverbs_request(struct uverbs_attr_bundle *attrs, void *req,
 			  size_t req_len)
 {
-	if (copy_from_user(req, attrs->ucore.inbuf,
-			   min(attrs->ucore.inlen, req_len)))
-		return -EFAULT;
+	int ret;
 
-	if (attrs->ucore.inlen < req_len) {
-		memset(req + attrs->ucore.inlen, 0,
-		       req_len - attrs->ucore.inlen);
-	} else if (attrs->ucore.inlen > req_len) {
-		if (!ib_is_buffer_cleared(attrs->ucore.inbuf + req_len,
-					  attrs->ucore.inlen - req_len))
-			return -EOPNOTSUPP;
-	}
-	return 0;
+	ret = copy_struct_from_user(req, req_len, attrs->ucore.inbuf,
+				    attrs->ucore.inlen);
+	if (ret == -E2BIG)
+		ret = -EOPNOTSUPP;
+	return ret;
 }
 
 /*
@@ -192,7 +181,7 @@ _ib_uverbs_lookup_comp_file(s32 fd, struct uverbs_attr_bundle *attrs)
 					       fd, attrs);
 
 	if (IS_ERR(uobj))
-		return (void *)uobj;
+		return ERR_CAST(uobj);
 
 	uverbs_uobject_get(uobj);
 	uobj_put_read(uobj);
@@ -232,6 +221,8 @@ int ib_init_ucontext(struct uverbs_attr_bundle *attrs)
 {
 	struct ib_ucontext *ucontext = attrs->context;
 	struct ib_uverbs_file *file = attrs->ufile;
+	int *fd_array;
+	int fd_count;
 	int ret;
 
 	if (!down_read_trylock(&file->hw_destroy_rwsem))
@@ -246,6 +237,22 @@ int ib_init_ucontext(struct uverbs_attr_bundle *attrs)
 				   RDMACG_RESOURCE_HCA_HANDLE);
 	if (ret)
 		goto err;
+
+	if (uverbs_attr_is_valid(attrs, UVERBS_ATTR_GET_CONTEXT_FD_ARR)) {
+		fd_count = uverbs_attr_ptr_get_array_size(attrs,
+							  UVERBS_ATTR_GET_CONTEXT_FD_ARR,
+							  sizeof(int));
+		if (fd_count < 0) {
+			ret = fd_count;
+			goto err_uncharge;
+		}
+
+		fd_array = uverbs_attr_get_alloced_ptr(attrs,
+						       UVERBS_ATTR_GET_CONTEXT_FD_ARR);
+		ret = ib_get_ucaps(fd_array, fd_count, &ucontext->enabled_caps);
+		if (ret)
+			goto err_uncharge;
+	}
 
 	ret = ucontext->device->ops.alloc_ucontext(ucontext,
 						   &attrs->driver_udata);
@@ -491,7 +498,7 @@ static int xrcd_table_insert(struct ib_uverbs_device *dev,
 	struct rb_node **p = &dev->xrcd_tree.rb_node;
 	struct rb_node *parent = NULL;
 
-	entry = kmalloc(sizeof *entry, GFP_KERNEL);
+	entry = kmalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -584,7 +591,7 @@ static int ib_uverbs_open_xrcd(struct uverbs_attr_bundle *attrs)
 	if (cmd.fd != -1) {
 		/* search for file descriptor */
 		f = fdget(cmd.fd);
-		if (!fd_file(f)) {
+		if (fd_empty(f)) {
 			ret = -EBADF;
 			goto err_tree_mutex_unlock;
 		}
@@ -632,8 +639,7 @@ static int ib_uverbs_open_xrcd(struct uverbs_attr_bundle *attrs)
 		atomic_inc(&xrcd->usecnt);
 	}
 
-	if (fd_file(f))
-		fdput(f);
+	fdput(f);
 
 	mutex_unlock(&ibudev->xrcd_tree_mutex);
 	uobj_finalize_uobj_create(&obj->uobject, attrs);
@@ -648,8 +654,7 @@ err:
 	uobj_alloc_abort(&obj->uobject, attrs);
 
 err_tree_mutex_unlock:
-	if (fd_file(f))
-		fdput(f);
+	fdput(f);
 
 	mutex_unlock(&ibudev->xrcd_tree_mutex);
 
@@ -724,7 +729,7 @@ static int ib_uverbs_reg_mr(struct uverbs_attr_bundle *attrs)
 	}
 
 	mr = pd->device->ops.reg_user_mr(pd, cmd.start, cmd.length, cmd.hca_va,
-					 cmd.access_flags,
+					 cmd.access_flags, NULL,
 					 &attrs->driver_udata);
 	if (IS_ERR(mr)) {
 		ret = PTR_ERR(mr);
@@ -773,6 +778,7 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 	struct ib_pd *orig_pd;
 	struct ib_pd *new_pd;
 	struct ib_mr *new_mr;
+	u32 lkey, rkey;
 
 	ret = uverbs_request(attrs, &cmd, sizeof(cmd));
 	if (ret)
@@ -841,6 +847,8 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 		new_mr->uobject = uobj;
 		atomic_inc(&new_pd->usecnt);
 		new_uobj->object = new_mr;
+		lkey = new_mr->lkey;
+		rkey = new_mr->rkey;
 
 		rdma_restrack_new(&new_mr->res, RDMA_RESTRACK_MR);
 		rdma_restrack_set_name(&new_mr->res, NULL);
@@ -866,11 +874,13 @@ static int ib_uverbs_rereg_mr(struct uverbs_attr_bundle *attrs)
 			mr->iova = cmd.hca_va;
 			mr->length = cmd.length;
 		}
+		lkey = mr->lkey;
+		rkey = mr->rkey;
 	}
 
 	memset(&resp, 0, sizeof(resp));
-	resp.lkey      = mr->lkey;
-	resp.rkey      = mr->rkey;
+	resp.lkey = lkey;
+	resp.rkey = rkey;
 
 	ret = uverbs_response(attrs, &resp, sizeof(resp));
 
@@ -1015,6 +1025,9 @@ static int create_cq(struct uverbs_attr_bundle *attrs,
 	if (cmd->comp_vector >= attrs->ufile->device->num_comp_vectors)
 		return -EINVAL;
 
+	if (!cmd->cqe)
+		return -EINVAL;
+
 	obj = (struct ib_ucq_object *)uobj_alloc(UVERBS_OBJECT_CQ, attrs,
 						 &ib_dev);
 	if (IS_ERR(obj))
@@ -1051,7 +1064,10 @@ static int create_cq(struct uverbs_attr_bundle *attrs,
 	rdma_restrack_new(&cq->res, RDMA_RESTRACK_CQ);
 	rdma_restrack_set_name(&cq->res, NULL);
 
-	ret = ib_dev->ops.create_cq(cq, &attr, attrs);
+	if (ib_dev->ops.create_user_cq)
+		ret = ib_dev->ops.create_user_cq(cq, &attr, attrs);
+	else
+		ret = ib_dev->ops.create_cq(cq, &attr, attrs);
 	if (ret)
 		goto err_free;
 	rdma_restrack_add(&cq->res);
@@ -1068,6 +1084,7 @@ static int create_cq(struct uverbs_attr_bundle *attrs,
 	return uverbs_response(attrs, &resp, sizeof(resp));
 
 err_free:
+	ib_umem_release(cq->umem);
 	rdma_restrack_put(&cq->res);
 	kfree(cq);
 err_file:
@@ -1126,11 +1143,14 @@ static int ib_uverbs_resize_cq(struct uverbs_attr_bundle *attrs)
 	if (ret)
 		return ret;
 
+	if (!cmd.cqe)
+		return -EINVAL;
+
 	cq = uobj_get_obj_read(cq, UVERBS_OBJECT_CQ, cmd.cq_handle, attrs);
 	if (IS_ERR(cq))
 		return PTR_ERR(cq);
 
-	ret = cq->device->ops.resize_cq(cq, cmd.cqe, &attrs->driver_udata);
+	ret = cq->device->ops.resize_user_cq(cq, cmd.cqe, &attrs->driver_udata);
 	if (ret)
 		goto out;
 
@@ -1295,9 +1315,9 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 
 	switch (cmd->qp_type) {
 	case IB_QPT_RAW_PACKET:
-		if (!capable(CAP_NET_RAW))
+		if (!rdma_uattrs_has_raw_cap(attrs))
 			return -EPERM;
-		break;
+		fallthrough;
 	case IB_QPT_RC:
 	case IB_QPT_UC:
 	case IB_QPT_UD:
@@ -1434,7 +1454,7 @@ static int create_qp(struct uverbs_attr_bundle *attrs,
 	}
 
 	if (attr.create_flags & IB_QP_CREATE_SOURCE_QPN) {
-		if (!capable(CAP_NET_RAW)) {
+		if (!rdma_uattrs_has_raw_cap(attrs)) {
 			ret = -EPERM;
 			goto err_put;
 		}
@@ -1655,8 +1675,8 @@ static int ib_uverbs_query_qp(struct uverbs_attr_bundle *attrs)
 	if (ret)
 		return ret;
 
-	attr      = kmalloc(sizeof *attr, GFP_KERNEL);
-	init_attr = kmalloc(sizeof *init_attr, GFP_KERNEL);
+	attr = kmalloc_obj(*attr);
+	init_attr = kmalloc_obj(*init_attr);
 	if (!attr || !init_attr) {
 		ret = -ENOMEM;
 		goto out;
@@ -1763,7 +1783,7 @@ static int modify_qp(struct uverbs_attr_bundle *attrs,
 	struct ib_qp *qp;
 	int ret;
 
-	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
+	attr = kzalloc_obj(*attr);
 	if (!attr)
 		return -ENOMEM;
 
@@ -1860,7 +1880,8 @@ static int modify_qp(struct uverbs_attr_bundle *attrs,
 		attr->path_mig_state = cmd->base.path_mig_state;
 	if (cmd->base.attr_mask & IB_QP_QKEY) {
 		if (cmd->base.qkey & IB_QP_SET_QKEY &&
-		    !rdma_nl_get_privileged_qkey()) {
+		    !(rdma_nl_get_privileged_qkey() ||
+		      rdma_uattrs_has_raw_cap(attrs))) {
 			ret = -EPERM;
 			goto release_qp;
 		}
@@ -2507,7 +2528,7 @@ static int ib_uverbs_attach_mcast(struct uverbs_attr_bundle *attrs)
 			goto out_put;
 		}
 
-	mcast = kmalloc(sizeof *mcast, GFP_KERNEL);
+	mcast = kmalloc_obj(*mcast);
 	if (!mcast) {
 		ret = -ENOMEM;
 		goto out_put;
@@ -2577,7 +2598,7 @@ struct ib_uflow_resources *flow_resources_alloc(size_t num_specs)
 {
 	struct ib_uflow_resources *resources;
 
-	resources = kzalloc(sizeof(*resources), GFP_KERNEL);
+	resources = kzalloc_obj(*resources);
 
 	if (!resources)
 		return NULL;
@@ -2586,9 +2607,9 @@ struct ib_uflow_resources *flow_resources_alloc(size_t num_specs)
 		goto out;
 
 	resources->counters =
-		kcalloc(num_specs, sizeof(*resources->counters), GFP_KERNEL);
+		kzalloc_objs(*resources->counters, num_specs);
 	resources->collection =
-		kcalloc(num_specs, sizeof(*resources->collection), GFP_KERNEL);
+		kzalloc_objs(*resources->collection, num_specs);
 
 	if (!resources->counters || !resources->collection)
 		goto err;
@@ -3098,7 +3119,7 @@ static int ib_uverbs_ex_create_rwq_ind_table(struct uverbs_attr_bundle *attrs)
 	if (err)
 		goto err_free;
 
-	wqs = kcalloc(num_wq_handles, sizeof(*wqs), GFP_KERNEL);
+	wqs = kzalloc_objs(*wqs, num_wq_handles);
 	if (!wqs) {
 		err = -ENOMEM;
 		goto  err_free;
@@ -3211,7 +3232,7 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 	if (cmd.comp_mask)
 		return -EINVAL;
 
-	if (!capable(CAP_NET_RAW))
+	if (!rdma_uattrs_has_raw_cap(attrs))
 		return -EPERM;
 
 	if (cmd.flow_attr.flags >= IB_FLOW_ATTR_FLAGS_RESERVED)
@@ -3274,8 +3295,7 @@ static int ib_uverbs_ex_create_flow(struct uverbs_attr_bundle *attrs)
 		goto err_put;
 	}
 
-	flow_attr = kzalloc(struct_size(flow_attr, flows,
-				cmd.flow_attr.num_of_specs), GFP_KERNEL);
+	flow_attr = kzalloc_flex(*flow_attr, flows, cmd.flow_attr.num_of_specs);
 	if (!flow_attr) {
 		err = -ENOMEM;
 		goto err_put;
@@ -3789,7 +3809,7 @@ const struct uapi_definition uverbs_def_write_intf[] = {
 				     UAPI_DEF_WRITE_UDATA_IO(
 					     struct ib_uverbs_resize_cq,
 					     struct ib_uverbs_resize_cq_resp),
-				     UAPI_DEF_METHOD_NEEDS_FN(resize_cq)),
+				     UAPI_DEF_METHOD_NEEDS_FN(resize_user_cq)),
 		DECLARE_UVERBS_WRITE_EX(
 			IB_USER_VERBS_EX_CMD_CREATE_CQ,
 			ib_uverbs_ex_create_cq,

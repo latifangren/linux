@@ -17,7 +17,9 @@
 #include <uapi/linux/io_uring.h>
 
 #include "io_uring.h"
+#include "tctx.h"
 #include "napi.h"
+#include "cancel.h"
 #include "sqpoll.h"
 
 #define IORING_SQPOLL_CAP_ENTRIES_VALUE 8
@@ -41,6 +43,7 @@ void io_sq_thread_unpark(struct io_sq_data *sqd)
 	if (atomic_dec_return(&sqd->park_pending))
 		set_bit(IO_SQ_THREAD_SHOULD_PARK, &sqd->state);
 	mutex_unlock(&sqd->lock);
+	wake_up(&sqd->wait);
 }
 
 void io_sq_thread_park(struct io_sq_data *sqd)
@@ -115,29 +118,21 @@ static struct io_sq_data *io_attach_sq_data(struct io_uring_params *p)
 {
 	struct io_ring_ctx *ctx_attach;
 	struct io_sq_data *sqd;
-	struct fd f;
+	CLASS(fd, f)(p->wq_fd);
 
-	f = fdget(p->wq_fd);
-	if (!fd_file(f))
+	if (fd_empty(f))
 		return ERR_PTR(-ENXIO);
-	if (!io_is_uring_fops(fd_file(f))) {
-		fdput(f);
+	if (!io_is_uring_fops(fd_file(f)))
 		return ERR_PTR(-EINVAL);
-	}
 
 	ctx_attach = fd_file(f)->private_data;
 	sqd = ctx_attach->sq_data;
-	if (!sqd) {
-		fdput(f);
+	if (!sqd)
 		return ERR_PTR(-EINVAL);
-	}
-	if (sqd->task_tgid != current->tgid) {
-		fdput(f);
+	if (sqd->task_tgid != current->tgid)
 		return ERR_PTR(-EPERM);
-	}
 
 	refcount_inc(&sqd->refs);
-	fdput(f);
 	return sqd;
 }
 
@@ -158,7 +153,7 @@ static struct io_sq_data *io_get_sq_data(struct io_uring_params *p,
 			return sqd;
 	}
 
-	sqd = kzalloc(sizeof(*sqd), GFP_KERNEL);
+	sqd = kzalloc_obj(*sqd);
 	if (!sqd)
 		return ERR_PTR(-ENOMEM);
 
@@ -217,7 +212,7 @@ static int __io_sq_thread(struct io_ring_ctx *ctx, struct io_sq_data *sqd,
 	if (cap_entries && to_submit > IORING_SQPOLL_CAP_ENTRIES_VALUE)
 		to_submit = IORING_SQPOLL_CAP_ENTRIES_VALUE;
 
-	if (to_submit || !wq_list_empty(&ctx->iopoll_list)) {
+	if (to_submit || !list_empty(&ctx->iopoll_list)) {
 		const struct cred *creds = NULL;
 
 		io_sq_start_worktime(ist);
@@ -226,7 +221,7 @@ static int __io_sq_thread(struct io_ring_ctx *ctx, struct io_sq_data *sqd,
 			creds = override_creds(ctx->sq_creds);
 
 		mutex_lock(&ctx->uring_lock);
-		if (!wq_list_empty(&ctx->iopoll_list))
+		if (!list_empty(&ctx->iopoll_list))
 			io_do_iopoll(ctx, true);
 
 		/*
@@ -257,7 +252,7 @@ static bool io_sqd_handle_event(struct io_sq_data *sqd)
 		mutex_unlock(&sqd->lock);
 		if (signal_pending(current))
 			did_sig = get_signal(&ksig);
-		cond_resched();
+		wait_event(sqd->wait, !atomic_read(&sqd->park_pending));
 		mutex_lock(&sqd->lock);
 		sqd->sq_cpu = raw_smp_processor_id();
 	}
@@ -301,7 +296,7 @@ static int io_sq_thread(void *data)
 	struct io_sq_data *sqd = data;
 	struct io_ring_ctx *ctx;
 	unsigned long timeout = 0;
-	char buf[TASK_COMM_LEN];
+	char buf[TASK_COMM_LEN] = {};
 	DEFINE_WAIT(wait);
 
 	/* offload context creation failed, just exit */
@@ -349,7 +344,7 @@ static int io_sq_thread(void *data)
 		list_for_each_entry(ctx, &sqd->ctx_list, sqd_list) {
 			int ret = __io_sq_thread(ctx, sqd, cap_entries, &ist);
 
-			if (!sqt_spin && (ret > 0 || !wq_list_empty(&ctx->iopoll_list)))
+			if (!sqt_spin && (ret > 0 || !list_empty(&ctx->iopoll_list)))
 				sqt_spin = true;
 		}
 		if (io_sq_tw(&retry_list, IORING_TW_CAP_ENTRIES_VALUE))
@@ -384,7 +379,7 @@ static int io_sq_thread(void *data)
 				atomic_or(IORING_SQ_NEED_WAKEUP,
 						&ctx->rings->sq_flags);
 				if ((ctx->flags & IORING_SETUP_IOPOLL) &&
-				    !wq_list_empty(&ctx->iopoll_list)) {
+				    !list_empty(&ctx->iopoll_list)) {
 					needs_sched = false;
 					break;
 				}
@@ -456,18 +451,14 @@ __cold int io_sq_offload_create(struct io_ring_ctx *ctx,
 	/* Retain compatibility with failing for an invalid attach attempt */
 	if ((ctx->flags & (IORING_SETUP_ATTACH_WQ | IORING_SETUP_SQPOLL)) ==
 				IORING_SETUP_ATTACH_WQ) {
-		struct fd f;
-
-		f = fdget(p->wq_fd);
-		if (!fd_file(f))
+		CLASS(fd, f)(p->wq_fd);
+		if (fd_empty(f))
 			return -ENXIO;
-		if (!io_is_uring_fops(fd_file(f))) {
-			fdput(f);
+		if (!io_is_uring_fops(fd_file(f)))
 			return -EINVAL;
-		}
-		fdput(f);
 	}
 	if (ctx->flags & IORING_SETUP_SQPOLL) {
+		struct io_uring_task *tctx;
 		struct task_struct *tsk;
 		struct io_sq_data *sqd;
 		bool attached;
@@ -534,8 +525,13 @@ __cold int io_sq_offload_create(struct io_ring_ctx *ctx,
 		rcu_assign_pointer(sqd->thread, tsk);
 		mutex_unlock(&sqd->lock);
 
+		ret = 0;
 		get_task_struct(tsk);
-		ret = io_uring_alloc_task_context(tsk, ctx);
+		tctx = io_uring_alloc_task_context(tsk, ctx);
+		if (!IS_ERR(tctx))
+			tsk->io_uring = tctx;
+		else
+			ret = PTR_ERR(tctx);
 		wake_up_new_task(tsk);
 		if (ret)
 			goto err;

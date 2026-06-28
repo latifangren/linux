@@ -538,11 +538,11 @@ static bool myrs_enable_mmio_mbox(struct myrs_hba *cs,
 		cs->fwstat_buf = NULL;
 		goto out_free;
 	}
-	cs->ctlr_info = kzalloc(sizeof(struct myrs_ctlr_info), GFP_KERNEL);
+	cs->ctlr_info = kzalloc_obj(struct myrs_ctlr_info);
 	if (!cs->ctlr_info)
 		goto out_free;
 
-	cs->event_buf = kzalloc(sizeof(struct myrs_event), GFP_KERNEL);
+	cs->event_buf = kzalloc_obj(struct myrs_event);
 	if (!cs->event_buf)
 		goto out_free;
 
@@ -1581,8 +1581,8 @@ static void myrs_mode_sense(struct myrs_hba *cs, struct scsi_cmnd *scmd,
 	scsi_sg_copy_from_buffer(scmd, modes, mode_len);
 }
 
-static int myrs_queuecommand(struct Scsi_Host *shost,
-		struct scsi_cmnd *scmd)
+static enum scsi_qc_status myrs_queuecommand(struct Scsi_Host *shost,
+					     struct scsi_cmnd *scmd)
 {
 	struct request *rq = scsi_cmd_to_rq(scmd);
 	struct myrs_hba *cs = shost_priv(shost);
@@ -1786,7 +1786,7 @@ static unsigned short myrs_translate_ldev(struct myrs_hba *cs,
 	return ldev_num;
 }
 
-static int myrs_slave_alloc(struct scsi_device *sdev)
+static int myrs_sdev_init(struct scsi_device *sdev)
 {
 	struct myrs_hba *cs = shost_priv(sdev->host);
 	unsigned char status;
@@ -1803,7 +1803,7 @@ static int myrs_slave_alloc(struct scsi_device *sdev)
 
 		ldev_num = myrs_translate_ldev(cs, sdev);
 
-		ldev_info = kzalloc(sizeof(*ldev_info), GFP_KERNEL);
+		ldev_info = kzalloc_obj(*ldev_info);
 		if (!ldev_info)
 			return -ENOMEM;
 
@@ -1865,7 +1865,7 @@ static int myrs_slave_alloc(struct scsi_device *sdev)
 	} else {
 		struct myrs_pdev_info *pdev_info;
 
-		pdev_info = kzalloc(sizeof(*pdev_info), GFP_KERNEL);
+		pdev_info = kzalloc_obj(*pdev_info);
 		if (!pdev_info)
 			return -ENOMEM;
 
@@ -1882,7 +1882,8 @@ static int myrs_slave_alloc(struct scsi_device *sdev)
 	return 0;
 }
 
-static int myrs_slave_configure(struct scsi_device *sdev)
+static int myrs_sdev_configure(struct scsi_device *sdev,
+			       struct queue_limits *lim)
 {
 	struct myrs_hba *cs = shost_priv(sdev->host);
 	struct myrs_ldev_info *ldev_info;
@@ -1910,7 +1911,7 @@ static int myrs_slave_configure(struct scsi_device *sdev)
 	return 0;
 }
 
-static void myrs_slave_destroy(struct scsi_device *sdev)
+static void myrs_sdev_destroy(struct scsi_device *sdev)
 {
 	kfree(sdev->hostdata);
 }
@@ -1921,9 +1922,9 @@ static const struct scsi_host_template myrs_template = {
 	.proc_name		= "myrs",
 	.queuecommand		= myrs_queuecommand,
 	.eh_host_reset_handler	= myrs_host_reset,
-	.slave_alloc		= myrs_slave_alloc,
-	.slave_configure	= myrs_slave_configure,
-	.slave_destroy		= myrs_slave_destroy,
+	.sdev_init		= myrs_sdev_init,
+	.sdev_configure		= myrs_sdev_configure,
+	.sdev_destroy		= myrs_sdev_destroy,
 	.cmd_size		= sizeof(struct myrs_cmdblk),
 	.shost_groups		= myrs_shost_groups,
 	.sdev_groups		= myrs_sdev_groups,

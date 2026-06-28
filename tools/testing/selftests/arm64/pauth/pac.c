@@ -10,10 +10,10 @@
 #include <setjmp.h>
 #include <sched.h>
 
-#include "../../kselftest_harness.h"
+#include "kselftest_harness.h"
 #include "helper.h"
 
-#define PAC_COLLISION_ATTEMPTS 10
+#define PAC_COLLISION_ATTEMPTS 1000
 /*
  * The kernel sets TBID by default. So bits 55 and above should remain
  * untouched no matter what.

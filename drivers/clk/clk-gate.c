@@ -9,14 +9,13 @@
 #include <linux/clk-provider.h>
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/err.h>
 #include <linux/string.h>
 
 /**
- * DOC: basic gatable clock which can gate and ungate its output
+ * DOC: basic gateable clock which can gate and ungate its output
  *
  * Traits of this clock:
  * prepare - clk_(un)prepare only ensures parent is (un)prepared
@@ -125,42 +124,11 @@ const struct clk_ops clk_gate_ops = {
 };
 EXPORT_SYMBOL_GPL(clk_gate_ops);
 
-static int clk_gate_regmap_setclrbit(struct clk_hw *hw, bool enable)
-{
-	struct clk_gate *gate = to_clk_gate(hw);
-	bool set = gate->flags & CLK_GATE_SET_TO_DISABLE;
-
-	set ^= enable;
-
-	if (set)
-		return regmap_set_bits(gate->regmap, gate->regmap_offs,
-				       BIT(gate->bit_idx));
-	else
-		return regmap_clear_bits(gate->regmap, gate->regmap_offs,
-					 BIT(gate->bit_idx));
-}
-
-static int clk_gate_regmap_prepare(struct clk_hw *hw)
-{
-	return clk_gate_regmap_setclrbit(hw, true);
-}
-
-static void clk_gate_regmap_unprepare(struct clk_hw *hw)
-{
-	clk_gate_regmap_setclrbit(hw, false);
-}
-
-const struct clk_ops clk_gate_regmap_ops = {
-	.prepare = clk_gate_regmap_prepare,
-	.unprepare = clk_gate_regmap_unprepare,
-};
-
 struct clk_hw *__clk_hw_register_gate(struct device *dev,
 		struct device_node *np, const char *name,
 		const char *parent_name, const struct clk_hw *parent_hw,
 		const struct clk_parent_data *parent_data,
 		unsigned long flags,
-		struct regmap *regmap, unsigned int regmap_offs,
 		void __iomem *reg, u8 bit_idx,
 		u8 clk_gate_flags, spinlock_t *lock)
 {
@@ -177,15 +145,12 @@ struct clk_hw *__clk_hw_register_gate(struct device *dev,
 	}
 
 	/* allocate the gate */
-	gate = kzalloc(sizeof(*gate), GFP_KERNEL);
+	gate = kzalloc_obj(*gate);
 	if (!gate)
 		return ERR_PTR(-ENOMEM);
 
 	init.name = name;
-	if (regmap)
-		init.ops = &clk_gate_regmap_ops;
-	else
-		init.ops = &clk_gate_ops;
+	init.ops = &clk_gate_ops;
 	init.flags = flags;
 	init.parent_names = parent_name ? &parent_name : NULL;
 	init.parent_hws = parent_hw ? &parent_hw : NULL;
@@ -197,8 +162,6 @@ struct clk_hw *__clk_hw_register_gate(struct device *dev,
 
 	/* struct clk_gate assignments */
 	gate->reg = reg;
-	gate->regmap = regmap;
-	gate->regmap_offs = regmap_offs;
 	gate->bit_idx = bit_idx;
 	gate->flags = clk_gate_flags;
 	gate->lock = lock;
@@ -233,22 +196,6 @@ struct clk *clk_register_gate(struct device *dev, const char *name,
 	return hw->clk;
 }
 EXPORT_SYMBOL_GPL(clk_register_gate);
-
-struct clk *clk_register_regmap_gate(struct device *dev, const char *name,
-		const char *parent_name, unsigned long flags,
-		struct regmap *regmap, unsigned int regmap_offs,
-		u8 bit_idx, u8 clk_gate_flags)
-{
-	struct clk_hw *hw;
-
-	hw = clk_hw_register_regmap_gate(dev, name, parent_name, flags, regmap,
-					 regmap_offs, bit_idx, clk_gate_flags);
-
-	if (IS_ERR(hw))
-		return ERR_CAST(hw);
-	return hw->clk;
-}
-EXPORT_SYMBOL_GPL(clk_register_regmap_gate);
 
 void clk_unregister_gate(struct clk *clk)
 {
@@ -287,7 +234,6 @@ struct clk_hw *__devm_clk_hw_register_gate(struct device *dev,
 		const char *parent_name, const struct clk_hw *parent_hw,
 		const struct clk_parent_data *parent_data,
 		unsigned long flags,
-		struct regmap *regmap, unsigned int regmap_offs,
 		void __iomem *reg, u8 bit_idx,
 		u8 clk_gate_flags, spinlock_t *lock)
 {
@@ -298,8 +244,8 @@ struct clk_hw *__devm_clk_hw_register_gate(struct device *dev,
 		return ERR_PTR(-ENOMEM);
 
 	hw = __clk_hw_register_gate(dev, np, name, parent_name, parent_hw,
-				    parent_data, flags, regmap, regmap_offs,
-				    reg, bit_idx, clk_gate_flags, lock);
+				    parent_data, flags, reg, bit_idx,
+				    clk_gate_flags, lock);
 
 	if (!IS_ERR(hw)) {
 		*ptr = hw;

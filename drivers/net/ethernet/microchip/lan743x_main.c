@@ -28,9 +28,15 @@
 
 #define RFE_RD_FIFO_TH_3_DWORDS	0x3
 
+static bool pci11x1x_is_a0(struct lan743x_adapter *adapter)
+{
+	u32 dev_rev = adapter->csr.id_rev & ID_REV_CHIP_REV_MASK_;
+	return dev_rev == ID_REV_CHIP_REV_PCI11X1X_A0_;
+}
+
 static void pci11x1x_strap_get_status(struct lan743x_adapter *adapter)
 {
-	u32 chip_rev;
+	u32 fpga_rev;
 	u32 cfg_load;
 	u32 hw_cfg;
 	u32 strap;
@@ -47,18 +53,19 @@ static void pci11x1x_strap_get_status(struct lan743x_adapter *adapter)
 	cfg_load = lan743x_csr_read(adapter, ETH_SYS_CONFIG_LOAD_STARTED_REG);
 	lan743x_hs_syslock_release(adapter);
 	hw_cfg = lan743x_csr_read(adapter, HW_CFG);
-
-	if (cfg_load & GEN_SYS_LOAD_STARTED_REG_ETH_ ||
-	    hw_cfg & HW_CFG_RST_PROTECT_) {
-		strap = lan743x_csr_read(adapter, STRAP_READ);
+	strap = lan743x_csr_read(adapter, STRAP_READ);
+	if ((pci11x1x_is_a0(adapter) &&
+	     (cfg_load & GEN_SYS_LOAD_STARTED_REG_ETH_ ||
+	      hw_cfg & HW_CFG_RST_PROTECT_)) ||
+	    (strap & STRAP_READ_USE_SGMII_EN_)) {
 		if (strap & STRAP_READ_SGMII_EN_)
 			adapter->is_sgmii_en = true;
 		else
 			adapter->is_sgmii_en = false;
 	} else {
-		chip_rev = lan743x_csr_read(adapter, FPGA_REV);
-		if (chip_rev) {
-			if (chip_rev & FPGA_SGMII_OP)
+		fpga_rev = lan743x_csr_read(adapter, FPGA_REV);
+		if (fpga_rev) {
+			if (fpga_rev & FPGA_SGMII_OP)
 				adapter->is_sgmii_en = true;
 			else
 				adapter->is_sgmii_en = false;
@@ -1212,6 +1219,36 @@ static void lan743x_mac_set_address(struct lan743x_adapter *adapter,
 		   "MAC address set to %pM\n", addr);
 }
 
+static void lan743x_mac_rx_enable_fse(struct lan743x_adapter *adapter)
+{
+	u32 mac_rx;
+	bool rxen;
+
+	mac_rx = lan743x_csr_read(adapter, MAC_RX);
+	if (mac_rx & MAC_RX_FSE_)
+		return;
+
+	rxen = mac_rx & MAC_RX_RXEN_;
+	if (rxen) {
+		mac_rx &= ~MAC_RX_RXEN_;
+		lan743x_csr_write(adapter, MAC_RX, mac_rx);
+		lan743x_csr_wait_for_bit(adapter, MAC_RX, MAC_RX_RXD_,
+					 1, 1000, 20000, 100);
+	}
+
+	/* Per AN2948, hardware prevents modification of the FSE bit while the
+	 * MAC receiver is enabled (RXEN bit set). Use separate register write
+	 * to assert the FSE bit before enabling the RXEN bit in MAC_RX
+	 */
+	mac_rx |= MAC_RX_FSE_;
+	lan743x_csr_write(adapter, MAC_RX, mac_rx);
+
+	if (rxen) {
+		mac_rx |= MAC_RX_RXEN_;
+		lan743x_csr_write(adapter, MAC_RX, mac_rx);
+	}
+}
+
 static int lan743x_mac_init(struct lan743x_adapter *adapter)
 {
 	bool mac_address_valid = true;
@@ -1250,6 +1287,8 @@ static int lan743x_mac_init(struct lan743x_adapter *adapter)
 	}
 	lan743x_mac_set_address(adapter, adapter->mac_address);
 	eth_hw_addr_set(netdev, adapter->mac_address);
+
+	lan743x_mac_rx_enable_fse(adapter);
 
 	return 0;
 }
@@ -1724,6 +1763,7 @@ int lan743x_rx_set_tstamp_mode(struct lan743x_adapter *adapter,
 	default:
 			return -ERANGE;
 	}
+	adapter->rx_tstamp_filter = rx_filter;
 	return 0;
 }
 
@@ -2140,7 +2180,7 @@ static int lan743x_tx_ring_init(struct lan743x_tx *tx)
 	tx->ring_cpu_ptr = (struct lan743x_tx_descriptor *)cpu_ptr;
 	tx->ring_dma_ptr = dma_ptr;
 
-	cpu_ptr = kcalloc(tx->ring_size, sizeof(*tx->buffer_info), GFP_KERNEL);
+	cpu_ptr = kzalloc_objs(*tx->buffer_info, tx->ring_size);
 	if (!cpu_ptr) {
 		ret = -ENOMEM;
 		goto cleanup;
@@ -2685,8 +2725,7 @@ static int lan743x_rx_ring_init(struct lan743x_rx *rx)
 	rx->ring_cpu_ptr = (struct lan743x_rx_descriptor *)cpu_ptr;
 	rx->ring_dma_ptr = dma_ptr;
 
-	cpu_ptr = kcalloc(rx->ring_size, sizeof(*rx->buffer_info),
-			  GFP_KERNEL);
+	cpu_ptr = kzalloc_objs(*rx->buffer_info, rx->ring_size);
 	if (!cpu_ptr) {
 		ret = -ENOMEM;
 		goto cleanup;
@@ -2964,7 +3003,7 @@ static int lan743x_phylink_2500basex_config(struct lan743x_adapter *adapter)
 	return lan743x_pcs_power_reset(adapter);
 }
 
-void lan743x_mac_eee_enable(struct lan743x_adapter *adapter, bool enable)
+static void lan743x_mac_eee_enable(struct lan743x_adapter *adapter, bool enable)
 {
 	u32 mac_cr;
 
@@ -3025,10 +3064,8 @@ static void lan743x_phylink_mac_link_down(struct phylink_config *config,
 					  phy_interface_t interface)
 {
 	struct net_device *netdev = to_net_dev(config->dev);
-	struct lan743x_adapter *adapter = netdev_priv(netdev);
 
-	netif_tx_stop_all_queues(to_net_dev(config->dev));
-	lan743x_mac_eee_enable(adapter, false);
+	netif_tx_stop_all_queues(netdev);
 }
 
 static void lan743x_phylink_mac_link_up(struct phylink_config *config,
@@ -3075,16 +3112,40 @@ static void lan743x_phylink_mac_link_up(struct phylink_config *config,
 					  cap & FLOW_CTRL_TX,
 					  cap & FLOW_CTRL_RX);
 
-	if (phydev)
-		lan743x_mac_eee_enable(adapter, phydev->enable_tx_lpi);
-
 	netif_tx_wake_all_queues(netdev);
+}
+
+static void lan743x_mac_disable_tx_lpi(struct phylink_config *config)
+{
+	struct net_device *netdev = to_net_dev(config->dev);
+	struct lan743x_adapter *adapter = netdev_priv(netdev);
+
+	lan743x_mac_eee_enable(adapter, false);
+}
+
+static int lan743x_mac_enable_tx_lpi(struct phylink_config *config, u32 timer,
+				     bool tx_clk_stop)
+{
+	struct net_device *netdev = to_net_dev(config->dev);
+	struct lan743x_adapter *adapter = netdev_priv(netdev);
+
+	/* Software should only change this field when Energy Efficient
+	 * Ethernet Enable (EEEEN) is cleared. We ensure that by clearing
+	 * EEEEN during probe, and phylink itself guarantees that
+	 * mac_disable_tx_lpi() will have been previously called.
+	 */
+	lan743x_csr_write(adapter, MAC_EEE_TX_LPI_REQ_DLY_CNT, timer);
+	lan743x_mac_eee_enable(adapter, true);
+
+	return 0;
 }
 
 static const struct phylink_mac_ops lan743x_phylink_mac_ops = {
 	.mac_config = lan743x_phylink_mac_config,
 	.mac_link_down = lan743x_phylink_mac_link_down,
 	.mac_link_up = lan743x_phylink_mac_link_up,
+	.mac_disable_tx_lpi = lan743x_mac_disable_tx_lpi,
+	.mac_enable_tx_lpi = lan743x_mac_enable_tx_lpi,
 };
 
 static int lan743x_phylink_create(struct lan743x_adapter *adapter)
@@ -3098,6 +3159,9 @@ static int lan743x_phylink_create(struct lan743x_adapter *adapter)
 
 	adapter->phylink_config.mac_capabilities = MAC_ASYM_PAUSE |
 		MAC_SYM_PAUSE | MAC_10 | MAC_100 | MAC_1000FD;
+	adapter->phylink_config.lpi_capabilities = MAC_100FD | MAC_1000FD;
+	adapter->phylink_config.lpi_timer_default =
+		lan743x_csr_read(adapter, MAC_EEE_TX_LPI_REQ_DLY_CNT);
 
 	lan743x_phy_interface_select(adapter);
 
@@ -3122,6 +3186,10 @@ static int lan743x_phylink_create(struct lan743x_adapter *adapter)
 	default:
 		phy_interface_set_rgmii(adapter->phylink_config.supported_interfaces);
 	}
+
+	memcpy(adapter->phylink_config.lpi_interfaces,
+	       adapter->phylink_config.supported_interfaces,
+	       sizeof(adapter->phylink_config.lpi_interfaces));
 
 	pl = phylink_create(&adapter->phylink_config, NULL,
 			    adapter->phy_interface, &lan743x_phylink_mac_ops);
@@ -3322,8 +3390,6 @@ static int lan743x_netdev_ioctl(struct net_device *netdev,
 
 	if (!netif_running(netdev))
 		return -EINVAL;
-	if (cmd == SIOCSHWTSTAMP)
-		return lan743x_ptp_ioctl(netdev, ifr, cmd);
 
 	return phylink_mii_ioctl(adapter->phylink, ifr, cmd);
 }
@@ -3418,6 +3484,8 @@ static const struct net_device_ops lan743x_netdev_ops = {
 	.ndo_change_mtu		= lan743x_netdev_change_mtu,
 	.ndo_get_stats64	= lan743x_netdev_get_stats64,
 	.ndo_set_mac_address	= lan743x_netdev_set_mac_address,
+	.ndo_hwtstamp_get	= lan743x_ptp_hwtstamp_get,
+	.ndo_hwtstamp_set	= lan743x_ptp_hwtstamp_set,
 };
 
 static void lan743x_hardware_cleanup(struct lan743x_adapter *adapter)
@@ -3525,6 +3593,9 @@ static int lan743x_hardware_init(struct lan743x_adapter *adapter,
 		tx->channel_number = index;
 		spin_lock_init(&tx->ring_lock);
 	}
+
+	/* Ensure EEEEN is clear */
+	lan743x_mac_eee_enable(adapter, false);
 
 	return 0;
 }
@@ -3887,7 +3958,6 @@ static int lan743x_pm_resume(struct device *dev)
 
 	pci_set_power_state(pdev, PCI_D0);
 	pci_restore_state(pdev);
-	pci_save_state(pdev);
 
 	/* Restore HW_CFG that was saved during pm suspend */
 	if (adapter->is_pci11x1x)

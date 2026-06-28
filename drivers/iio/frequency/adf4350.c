@@ -152,10 +152,10 @@ static int adf4350_set_freq(struct adf4350_state *st, unsigned long long freq)
 	st->r4_rf_div_sel = 0;
 
 	/*
-	 * !\TODO: The below computation is making sure we get a power of 2
-	 * shift (st->r4_rf_div_sel) so that freq becomes higher or equal to
-	 * ADF4350_MIN_VCO_FREQ. This might be simplified with fls()/fls_long()
-	 * and friends.
+	 * NOTE: This iteratively shifts freq by a power of 2
+	 * (st->r4_rf_div_sel) to meet or exceed ADF4350_MIN_VCO_FREQ.
+	 * A constant-time approach using fls_long() was attempted but
+	 * deemed more complex without meaningful benefit for init code.
 	 */
 	while (freq < ADF4350_MIN_VCO_FREQ) {
 		freq <<= 1;
@@ -379,7 +379,7 @@ static const struct iio_chan_spec_ext_info adf4350_ext_info[] = {
 	_ADF4350_EXT_INFO("frequency_resolution", ADF4350_FREQ_RESOLUTION),
 	_ADF4350_EXT_INFO("refin_frequency", ADF4350_FREQ_REFIN),
 	_ADF4350_EXT_INFO("powerdown", ADF4350_PWRDOWN),
-	{ },
+	{ }
 };
 
 static const struct iio_chan_spec adf4350_chan = {
@@ -607,9 +607,9 @@ static int adf4350_probe(struct spi_device *spi)
 	if (dev_fwnode(&spi->dev)) {
 		pdata = adf4350_parse_dt(&spi->dev);
 		if (pdata == NULL)
-			return -EINVAL;
+			return -ENOMEM;
 	} else {
-		pdata = spi->dev.platform_data;
+		pdata = dev_get_platdata(&spi->dev);
 	}
 
 	if (!pdata) {
@@ -679,8 +679,7 @@ static int adf4350_probe(struct spi_device *spi)
 
 	ret = devm_add_action_or_reset(&spi->dev, adf4350_power_down, indio_dev);
 	if (ret)
-		return dev_err_probe(&spi->dev, ret,
-				     "Failed to add action to managed power down\n");
+		return ret;
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
 }
@@ -688,14 +687,14 @@ static int adf4350_probe(struct spi_device *spi)
 static const struct of_device_id adf4350_of_match[] = {
 	{ .compatible = "adi,adf4350", },
 	{ .compatible = "adi,adf4351", },
-	{ /* sentinel */ },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, adf4350_of_match);
 
 static const struct spi_device_id adf4350_id[] = {
 	{"adf4350", 4350},
 	{"adf4351", 4351},
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, adf4350_id);
 

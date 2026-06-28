@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/etherdevice.h>
+#include <linux/string_choices.h>
 
 #include <linux/usb/gadget.h>
 
@@ -390,8 +391,7 @@ static void ecm_do_notify(struct f_ecm *ecm)
 		event->wLength = 0;
 		req->length = sizeof *event;
 
-		DBG(cdev, "notify connect %s\n",
-				ecm->is_open ? "true" : "false");
+		DBG(cdev, "notify connect %s\n", str_true_false(ecm->is_open));
 		ecm->notify_state = ECM_NOTIFY_SPEED;
 		break;
 
@@ -851,7 +851,7 @@ static struct usb_function_instance *ecm_alloc_inst(void)
 {
 	struct f_ecm_opts *opts;
 
-	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
+	opts = kzalloc_obj(*opts);
 	if (!opts)
 		return ERR_PTR(-ENOMEM);
 	mutex_init(&opts->lock);
@@ -938,7 +938,7 @@ static struct usb_function *ecm_alloc(struct usb_function_instance *fi)
 	int status;
 
 	/* allocate and initialize one new instance */
-	ecm = kzalloc(sizeof(*ecm), GFP_KERNEL);
+	ecm = kzalloc_obj(*ecm);
 	if (!ecm)
 		return ERR_PTR(-ENOMEM);
 

@@ -4,20 +4,19 @@
 #include "rk3568-radxa-cm3i.dtsi"
 
 / {
-	model = "Radxa E25";
+	model = "Radxa E25 Carrier Board";
 	compatible = "radxa,e25", "radxa,cm3i", "rockchip,rk3568";
 
 	aliases {
-		mmc0 = &sdmmc0;
-		mmc1 = &sdhci;
+		mmc1 = &sdmmc0;
 	};
 
-	/*
 	pwm-leds {
 		compatible = "pwm-leds-multicolor";
 
 		multi-led {
 			color = <LED_COLOR_ID_RGB>;
+			function = LED_FUNCTION_STATUS;
 			max-brightness = <255>;
 
 			led-red {
@@ -36,34 +35,8 @@
 			};
 		};
 	};
-	*/
 
-	gpio_leds: gpio-leds {
-		led_surround_red: led-surround-red {
-			gpios = <&gpio0 RK_PC0 GPIO_ACTIVE_HIGH>;
-			label = "surround:red";
-			pinctrl-0 = <&led_surround_red_en>;
-			pinctrl-names = "led_surround_red";
-		};
-
-		led_surround_green: led-surround-green {
-			gpios = <&gpio0 RK_PC1 GPIO_ACTIVE_HIGH>;
-			label = "surround:green";
-			linux,default-trigger = "default-on";
-			default-state = "on";
-			pinctrl-0 = <&led_surround_green_en>;
-			pinctrl-names = "led_surround_green";
-		};
-
-		led_surround_blue: led-surround-blue {
-			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
-			label = "surround:blue";
-			pinctrl-0 = <&led_surround_blue_en>;
-			pinctrl-names = "led_surround_blue";
-		};
-	};
-
-	vbus_typec: vbus-typec-regulator {
+	vbus_typec: regulator-vbus-typec {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>;
@@ -78,7 +51,7 @@
 	/* actually fed by vcc5v0_sys, dependent
 	 * on pi6c clock generator
 	 */
-	vcc3v3_minipcie: vcc3v3-minipcie-regulator {
+	vcc3v3_minipcie: regulator-vcc3v3-minipcie {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio3 RK_PA7 GPIO_ACTIVE_HIGH>;
@@ -90,7 +63,7 @@
 		vin-supply = <&vcc3v3_pi6c_05>;
 	};
 
-	vcc3v3_ngff: vcc3v3-ngff-regulator {
+	vcc3v3_ngff: regulator-vcc3v3-ngff {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio0 RK_PD6 GPIO_ACTIVE_HIGH>;
@@ -102,7 +75,7 @@
 		vin-supply = <&vcc5v0_sys>;
 	};
 
-	vcc3v3_pcie30x1: vcc3v3-pcie30x1-regulator {
+	vcc3v3_pcie30x1: regulator-vcc3v3-pcie30x1 {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
@@ -114,7 +87,7 @@
 		vin-supply = <&vcc5v0_sys>;
 	};
 
-	vcc3v3_pi6c_05: vcc3v3-pi6c-05-regulator {
+	vcc3v3_pi6c_05: regulator-vcc3v3-pi6c-05 {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpios = <&gpio0 RK_PC7 GPIO_ACTIVE_HIGH>;
@@ -131,48 +104,16 @@
 	phy-supply = <&vcc3v3_pcie30x1>;
 };
 
-&led_user {
-	linux,default-trigger = "none";
-	default-state = "off";
+&display_subsystem {
+	status = "disabled";
 };
 
-/* rtl8125b eth1 */
 &pcie2x1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie20_reset_h>;
 	reset-gpios = <&gpio1 RK_PB2 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pi6c_05>;
 	status = "okay";
-
-	pcie@0,0 {
-		reg = <0x00000000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-
-		bus-range = <0x00 0x0f>;
-		device_type = "pci";
-		ranges;
-
-		rtl8125_2: pcie-eth@0,0 {
-			compatible = "pci10ec,8125";
-			label = "eth1";
-			reg = <0x010000 0 0 0 0>;
-
-			/* G+: LED0
-			 * G-: LED1
-			 * Y+: 3v3
-			 * Y-: LED2
-			 */
-			// LED0: active high, link on all speed
-			r8125,led0 = <0x102b>;
-
-			// LED1: active low, act on all speed
-			r8125,led1 = <0x0200>;
-
-			// LED2: active low, link on 100 + 1000 + 2500
-			r8125,led2 = <0x002a>;
-		};
-	};
 };
 
 &pcie30phy {
@@ -180,17 +121,15 @@
 	status = "okay";
 };
 
-/* mini pcie */
 &pcie3x1 {
 	num-lanes = <1>;
 	pinctrl-names = "default";
-	pinctrl-0 = <&pcie30x1m0_pins>;
+	pinctrl-0 = <&pcie30x1_reset_h>;
 	reset-gpios = <&gpio0 RK_PC3 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_minipcie>;
 	status = "okay";
 };
 
-/* rtl8125b eth0 */
 &pcie3x2 {
 	num-lanes = <1>;
 	pinctrl-names = "default";
@@ -198,53 +137,9 @@
 	reset-gpios = <&gpio2 RK_PD6 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pi6c_05>;
 	status = "okay";
-
-	pcie@0,0 {
-		reg = <0x00200000 0 0 0 0>;
-		#address-cells = <3>;
-		#size-cells = <2>;
-
-		bus-range = <0x20 0x2f>;
-		device_type = "pci";
-		ranges;
-
-		rtl8125_1: pcie-eth@0,0 {
-			compatible = "pci10ec,8125";
-			label = "eth0";
-			reg = <0x210000 0 0 0 0>;
-
-			/* G+: LED0
-			 * G-: LED1
-			 * Y+: 3v3
-			 * Y-: LED2
-			 */
-			// LED0: active high, link on all speed
-			r8125,led0 = <0x102b>;
-
-			// LED1: active low, act on all speed
-			r8125,led1 = <0x0200>;
-
-			// LED2: active low, link on 100 + 1000 + 2500
-			r8125,led2 = <0x002a>;
-		};
-	};
 };
 
 &pinctrl {
-	leds {
-		led_surround_red_en: led-surround-red-en {
-			rockchip,pins = <0 RK_PC0 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-
-		led_surround_green_en: led-surround-green-en {
-			rockchip,pins = <0 RK_PC1 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-
-		led_surround_blue_en: led-surround-blue-en {
-			rockchip,pins = <4 RK_PC5 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-	};
-
 	pcie {
 		pcie20_reset_h: pcie20-reset-h {
 			rockchip,pins = <1 RK_PB2 RK_FUNC_GPIO &pcfg_pull_none>;
@@ -252,6 +147,10 @@
 
 		pcie30x1_enable_h: pcie30x1-enable-h {
 			rockchip,pins = <0 RK_PC5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		pcie30x1_reset_h: pcie30x1-reset-h {
+			rockchip,pins = <0 RK_PC3 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 
 		pcie30x2_reset_h: pcie30x2-reset-h {
@@ -279,17 +178,17 @@
 };
 
 &pwm1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &pwm2 {
-	status = "disabled";
+	status = "okay";
 };
 
 &pwm12 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pwm12m1_pins>;
-	status = "disabled";
+	status = "okay";
 };
 
 &sata1 {
@@ -297,7 +196,6 @@
 };
 
 &sdmmc0 {
-	max-frequency = <50000000>;
 	bus-width = <4>;
 	cap-sd-highspeed;
 	cd-gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_LOW>;
@@ -305,6 +203,7 @@
 	disable-wp;
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc0_bus4 &sdmmc0_clk &sdmmc0_cmd>;
+	sd-uhs-sdr104;
 	vmmc-supply = <&vcc3v3_sd>;
 	vqmmc-supply = <&vccio_sd>;
 	status = "okay";

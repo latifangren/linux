@@ -109,7 +109,7 @@ static void do_setup(struct net_device *netdev)
 	netdev->rtnl_link_ops = &internal_dev_link_ops;
 
 	netdev->features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA |
-			   NETIF_F_HW_CSUM | NETIF_F_GSO_SOFTWARE_ALL |
+			   NETIF_F_HW_CSUM | NETIF_F_GSO_SOFTWARE |
 			   NETIF_F_GSO_ENCAP_ALL;
 
 	netdev->vlan_features = netdev->features;
@@ -149,7 +149,7 @@ static struct vport *internal_dev_create(const struct vport_parms *parms)
 
 	/* Restrict bridge port to current netns. */
 	if (vport->port_no == OVSP_LOCAL)
-		vport->dev->netns_local = true;
+		vport->dev->netns_immutable = true;
 
 	rtnl_lock();
 	err = register_netdevice(vport->dev);
@@ -195,7 +195,6 @@ static int internal_dev_recv(struct sk_buff *skb)
 
 	skb_dst_drop(skb);
 	nf_reset_ct(skb);
-	secpath_reset(skb);
 
 	skb->pkt_type = PACKET_HOST;
 	skb->protocol = eth_type_trans(skb, netdev);

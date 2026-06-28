@@ -79,10 +79,10 @@ static void of_get_regulator_prot_limits(struct device_node *np,
 
 static int of_get_regulation_constraints(struct device *dev,
 					struct device_node *np,
-					struct regulator_init_data **init_data,
+					struct regulator_init_data *init_data,
 					const struct regulator_desc *desc)
 {
-	struct regulation_constraints *constraints = &(*init_data)->constraints;
+	struct regulation_constraints *constraints = &init_data->constraints;
 	struct regulator_state *suspend_state;
 	struct device_node *suspend_np;
 	unsigned int mode;
@@ -124,6 +124,9 @@ static int of_get_regulation_constraints(struct device *dev,
 	/* Current change possible? */
 	if (constraints->min_uA != constraints->max_uA)
 		constraints->valid_ops_mask |= REGULATOR_CHANGE_CURRENT;
+
+	if (!of_property_read_u32(np, "regulator-power-budget-milliwatt", &pval))
+		constraints->pw_budget_mW = pval;
 
 	constraints->boot_on = of_property_read_bool(np, "regulator-boot-on");
 	constraints->always_on = of_property_read_bool(np, "regulator-always-on");
@@ -175,7 +178,7 @@ static int of_get_regulation_constraints(struct device *dev,
 	if (!ret)
 		constraints->enable_time = pval;
 
-	ret = of_property_read_u32(np, "regulator-uv-survival-time-ms", &pval);
+	ret = of_property_read_u32(np, "regulator-uv-less-critical-window-ms", &pval);
 	if (!ret)
 		constraints->uv_less_critical_window_ms = pval;
 	else
@@ -356,7 +359,7 @@ struct regulator_init_data *of_get_regulator_init_data(struct device *dev,
 	if (!init_data)
 		return NULL; /* Out of memory? */
 
-	if (of_get_regulation_constraints(dev, node, &init_data, desc))
+	if (of_get_regulation_constraints(dev, node, init_data, desc))
 		return NULL;
 
 	return init_data;
@@ -970,9 +973,7 @@ restart:
 	}
 	if (num_consumers == 0)
 		return 0;
-	_consumers = kmalloc_array(num_consumers,
-				   sizeof(struct regulator_bulk_data),
-				   GFP_KERNEL);
+	_consumers = kmalloc_objs(struct regulator_bulk_data, num_consumers);
 	if (!_consumers)
 		return -ENOMEM;
 	goto restart;

@@ -18,6 +18,7 @@
 #include <linux/sched/mm.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/string_choices.h>
 #include <linux/kcov.h>
 #include <linux/ioctl.h>
 #include <linux/usb.h>
@@ -27,6 +28,7 @@
 #include <linux/usb/otg.h>
 #include <linux/usb/quirks.h>
 #include <linux/workqueue.h>
+#include <linux/minmax.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
 #include <linux/pm_qos.h>
@@ -39,6 +41,7 @@
 #include "hub.h"
 #include "phy.h"
 #include "otg_productlist.h"
+#include "trace.h"
 
 #define USB_VENDOR_GENESYS_LOGIC		0x05e3
 #define USB_VENDOR_SMSC				0x0424
@@ -276,10 +279,7 @@ static void usb_set_lpm_pel(struct usb_device *udev,
 	 * device and the parent hub into U0.  The exit latency is the bigger of
 	 * the device exit latency or the hub exit latency.
 	 */
-	if (udev_exit_latency > hub_exit_latency)
-		first_link_pel = udev_exit_latency * 1000;
-	else
-		first_link_pel = hub_exit_latency * 1000;
+	first_link_pel = max(udev_exit_latency, hub_exit_latency) * 1000;
 
 	/*
 	 * When the hub starts to receive the LFPS, there is a slight delay for
@@ -293,10 +293,7 @@ static void usb_set_lpm_pel(struct usb_device *udev,
 	 * According to figure C-7 in the USB 3.0 spec, the PEL for this device
 	 * is the greater of the two exit latencies.
 	 */
-	if (first_link_pel > hub_pel)
-		udev_lpm_params->pel = first_link_pel;
-	else
-		udev_lpm_params->pel = hub_pel;
+	udev_lpm_params->pel = max(first_link_pel, hub_pel);
 }
 
 /*
@@ -702,7 +699,7 @@ static void hub_resubmit_irq_urb(struct usb_hub *hub)
 
 static void hub_retry_irq_urb(struct timer_list *t)
 {
-	struct usb_hub *hub = from_timer(hub, t, irq_urb_retry);
+	struct usb_hub *hub = timer_container_of(hub, t, irq_urb_retry);
 
 	hub_resubmit_irq_urb(hub);
 }
@@ -932,7 +929,7 @@ int usb_hub_clear_tt_buffer(struct urb *urb)
 	 * since each TT has "at least two" buffers that can need it (and
 	 * there can be many TTs per hub).  even if they're uncommon.
 	 */
-	clear = kmalloc(sizeof *clear, GFP_ATOMIC);
+	clear = kmalloc_obj(*clear, GFP_ATOMIC);
 	if (clear == NULL) {
 		dev_err(&udev->dev, "can't save CLEAR_TT_BUFFER state\n");
 		/* FIXME recover somehow ... RESET_TT? */
@@ -1410,7 +1407,7 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	}
 
 	/* Stop hub_wq and related activity */
-	del_timer_sync(&hub->irq_urb_retry);
+	timer_delete_sync(&hub->irq_urb_retry);
 	flush_delayed_work(&hub->post_resume_work);
 	usb_kill_urb(hub->urb);
 	if (hub->has_indicators)
@@ -1464,20 +1461,20 @@ static int hub_configure(struct usb_hub *hub,
 	unsigned full_load;
 	unsigned maxchild;
 
-	hub->buffer = kmalloc(sizeof(*hub->buffer), GFP_KERNEL);
+	hub->buffer = kmalloc_obj(*hub->buffer);
 	if (!hub->buffer) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	hub->status = kmalloc(sizeof(*hub->status), GFP_KERNEL);
+	hub->status = kmalloc_obj(*hub->status);
 	if (!hub->status) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 	mutex_init(&hub->status_mutex);
 
-	hub->descriptor = kzalloc(sizeof(*hub->descriptor), GFP_KERNEL);
+	hub->descriptor = kzalloc_obj(*hub->descriptor);
 	if (!hub->descriptor) {
 		ret = -ENOMEM;
 		goto fail;
@@ -1523,9 +1520,9 @@ static int hub_configure(struct usb_hub *hub,
 
 	maxchild = hub->descriptor->bNbrPorts;
 	dev_info(hub_dev, "%d port%s detected\n", maxchild,
-			(maxchild == 1) ? "" : "s");
+			str_plural(maxchild));
 
-	hub->ports = kcalloc(maxchild, sizeof(struct usb_port *), GFP_KERNEL);
+	hub->ports = kzalloc_objs(struct usb_port *, maxchild);
 	if (!hub->ports) {
 		ret = -ENOMEM;
 		goto fail;
@@ -1961,7 +1958,7 @@ static int hub_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	/* We found a hub */
 	dev_info(&intf->dev, "USB hub found\n");
 
-	hub = kzalloc(sizeof(*hub), GFP_KERNEL);
+	hub = kzalloc_obj(*hub);
 	if (!hub)
 		return -ENOMEM;
 
@@ -2146,6 +2143,21 @@ static void update_port_device_state(struct usb_device *udev)
 	}
 }
 
+static void update_usb_device_state(struct usb_device *udev,
+				    enum usb_device_state new_state)
+{
+	if (udev->state == USB_STATE_SUSPENDED &&
+	    new_state != USB_STATE_SUSPENDED)
+		udev->active_duration -= jiffies;
+	else if (new_state == USB_STATE_SUSPENDED &&
+		 udev->state != USB_STATE_SUSPENDED)
+		udev->active_duration += jiffies;
+
+	udev->state = new_state;
+	update_port_device_state(udev);
+	trace_usb_set_device_state(udev);
+}
+
 static void recursively_mark_NOTATTACHED(struct usb_device *udev)
 {
 	struct usb_hub *hub = usb_hub_to_struct_hub(udev);
@@ -2155,10 +2167,7 @@ static void recursively_mark_NOTATTACHED(struct usb_device *udev)
 		if (hub->ports[i]->child)
 			recursively_mark_NOTATTACHED(hub->ports[i]->child);
 	}
-	if (udev->state == USB_STATE_SUSPENDED)
-		udev->active_duration -= jiffies;
-	udev->state = USB_STATE_NOTATTACHED;
-	update_port_device_state(udev);
+	update_usb_device_state(udev, USB_STATE_NOTATTACHED);
 }
 
 /**
@@ -2208,14 +2217,7 @@ void usb_set_device_state(struct usb_device *udev,
 			else
 				wakeup = 0;
 		}
-		if (udev->state == USB_STATE_SUSPENDED &&
-			new_state != USB_STATE_SUSPENDED)
-			udev->active_duration -= jiffies;
-		else if (new_state == USB_STATE_SUSPENDED &&
-				udev->state != USB_STATE_SUSPENDED)
-			udev->active_duration += jiffies;
-		udev->state = new_state;
-		update_port_device_state(udev);
+		update_usb_device_state(udev, new_state);
 	} else
 		recursively_mark_NOTATTACHED(udev);
 	spin_unlock_irqrestore(&device_state_lock, flags);
@@ -4140,7 +4142,7 @@ static int usb_req_set_sel(struct usb_device *udev)
 	 * which may be initiated by an error path of a mass storage driver.
 	 * Therefore, use GFP_NOIO.
 	 */
-	sel_values = kmalloc(sizeof *(sel_values), GFP_NOIO);
+	sel_values = kmalloc_obj(*(sel_values), GFP_NOIO);
 	if (!sel_values)
 		return -ENOMEM;
 
@@ -4181,16 +4183,16 @@ static int usb_set_device_initiated_lpm(struct usb_device *udev,
 		break;
 	default:
 		dev_warn(&udev->dev, "%s: Can't %s non-U1 or U2 state.\n",
-				__func__, enable ? "enable" : "disable");
+				__func__, str_enable_disable(enable));
 		return -EINVAL;
 	}
 
 	if (udev->state != USB_STATE_CONFIGURED) {
 		dev_dbg(&udev->dev, "%s: Can't %s %s state "
 				"for unconfigured device.\n",
-				__func__, enable ? "enable" : "disable",
+				__func__, str_enable_disable(enable),
 				usb3_lpm_names[state]);
-		return 0;
+		return -EINVAL;
 	}
 
 	if (enable) {
@@ -4214,8 +4216,7 @@ static int usb_set_device_initiated_lpm(struct usb_device *udev,
 	}
 	if (ret < 0) {
 		dev_warn(&udev->dev, "%s of device-initiated %s failed.\n",
-				enable ? "Enable" : "Disable",
-				usb3_lpm_names[state]);
+			 str_enable_disable(enable), usb3_lpm_names[state]);
 		return -EBUSY;
 	}
 	return 0;
@@ -4265,9 +4266,9 @@ static int usb_set_lpm_timeout(struct usb_device *udev,
 }
 
 /*
- * Don't allow device intiated U1/U2 if the system exit latency + one bus
- * interval is greater than the minimum service interval of any active
- * periodic endpoint. See USB 3.2 section 9.4.9
+ * Don't allow device intiated U1/U2 if device isn't in the configured state,
+ * or the system exit latency + one bus interval is greater than the minimum
+ * service interval of any active periodic endpoint. See USB 3.2 section 9.4.9
  */
 static bool usb_device_may_initiate_lpm(struct usb_device *udev,
 					enum usb3_link_state state)
@@ -4275,7 +4276,7 @@ static bool usb_device_may_initiate_lpm(struct usb_device *udev,
 	unsigned int sel;		/* us */
 	int i, j;
 
-	if (!udev->lpm_devinit_allow)
+	if (!udev->lpm_devinit_allow || !udev->actconfig)
 		return false;
 
 	if (state == USB3_LPM_U1)
@@ -4323,7 +4324,7 @@ static bool usb_device_may_initiate_lpm(struct usb_device *udev,
  * driver know about it.  If that call fails, it should be harmless, and just
  * take up more slightly more bus bandwidth for unnecessary U1/U2 exit latency.
  */
-static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
+static int usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 		enum usb3_link_state state)
 {
 	int timeout;
@@ -4332,7 +4333,7 @@ static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 
 	/* Skip if the device BOS descriptor couldn't be read */
 	if (!udev->bos)
-		return;
+		return -EINVAL;
 
 	u1_mel = udev->bos->ss_cap->bU1devExitLat;
 	u2_mel = udev->bos->ss_cap->bU2DevExitLat;
@@ -4343,7 +4344,7 @@ static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 	 */
 	if ((state == USB3_LPM_U1 && u1_mel == 0) ||
 			(state == USB3_LPM_U2 && u2_mel == 0))
-		return;
+		return -EINVAL;
 
 	/* We allow the host controller to set the U1/U2 timeout internally
 	 * first, so that it can change its schedule to account for the
@@ -4354,13 +4355,13 @@ static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 
 	/* xHCI host controller doesn't want to enable this LPM state. */
 	if (timeout == 0)
-		return;
+		return -EINVAL;
 
 	if (timeout < 0) {
 		dev_warn(&udev->dev, "Could not enable %s link state, "
 				"xHCI error %i.\n", usb3_lpm_names[state],
 				timeout);
-		return;
+		return timeout;
 	}
 
 	if (usb_set_lpm_timeout(udev, state, timeout)) {
@@ -4369,29 +4370,15 @@ static void usb_enable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 		 * host know that this link state won't be enabled.
 		 */
 		hcd->driver->disable_usb3_lpm_timeout(hcd, udev, state);
-		return;
-	}
-
-	/* Only a configured device will accept the Set Feature
-	 * U1/U2_ENABLE
-	 */
-	if (udev->actconfig &&
-	    usb_device_may_initiate_lpm(udev, state)) {
-		if (usb_set_device_initiated_lpm(udev, state, true)) {
-			/*
-			 * Request to enable device initiated U1/U2 failed,
-			 * better to turn off lpm in this case.
-			 */
-			usb_set_lpm_timeout(udev, state, 0);
-			hcd->driver->disable_usb3_lpm_timeout(hcd, udev, state);
-			return;
-		}
+		return -EBUSY;
 	}
 
 	if (state == USB3_LPM_U1)
 		udev->usb3_lpm_u1_enabled = 1;
 	else if (state == USB3_LPM_U2)
 		udev->usb3_lpm_u2_enabled = 1;
+
+	return 0;
 }
 /*
  * Disable the hub-initiated U1/U2 idle timeouts, and disable device-initiated
@@ -4424,8 +4411,6 @@ static int usb_disable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 	if (usb_set_lpm_timeout(udev, state, 0))
 		return -EBUSY;
 
-	usb_set_device_initiated_lpm(udev, state, false);
-
 	if (hcd->driver->disable_usb3_lpm_timeout(hcd, udev, state))
 		dev_warn(&udev->dev, "Could not disable xHCI %s timeout, "
 				"bus schedule bandwidth may be impacted.\n",
@@ -4455,6 +4440,7 @@ static int usb_disable_link_state(struct usb_hcd *hcd, struct usb_device *udev,
 int usb_disable_lpm(struct usb_device *udev)
 {
 	struct usb_hcd *hcd;
+	int err;
 
 	if (!udev || !udev->parent ||
 			udev->speed < USB_SPEED_SUPER ||
@@ -4472,14 +4458,19 @@ int usb_disable_lpm(struct usb_device *udev)
 
 	/* If LPM is enabled, attempt to disable it. */
 	if (usb_disable_link_state(hcd, udev, USB3_LPM_U1))
-		goto enable_lpm;
+		goto disable_failed;
 	if (usb_disable_link_state(hcd, udev, USB3_LPM_U2))
-		goto enable_lpm;
+		goto disable_failed;
+
+	err = usb_set_device_initiated_lpm(udev, USB3_LPM_U1, false);
+	if (!err)
+		usb_set_device_initiated_lpm(udev, USB3_LPM_U2, false);
 
 	return 0;
 
-enable_lpm:
-	usb_enable_lpm(udev);
+disable_failed:
+	udev->lpm_disable_count--;
+
 	return -EBUSY;
 }
 EXPORT_SYMBOL_GPL(usb_disable_lpm);
@@ -4540,10 +4531,24 @@ void usb_enable_lpm(struct usb_device *udev)
 	port_dev = hub->ports[udev->portnum - 1];
 
 	if (port_dev->usb3_lpm_u1_permit)
-		usb_enable_link_state(hcd, udev, USB3_LPM_U1);
+		if (usb_enable_link_state(hcd, udev, USB3_LPM_U1))
+			return;
 
 	if (port_dev->usb3_lpm_u2_permit)
-		usb_enable_link_state(hcd, udev, USB3_LPM_U2);
+		if (usb_enable_link_state(hcd, udev, USB3_LPM_U2))
+			return;
+
+	/*
+	 * Enable device initiated U1/U2 with a SetFeature(U1/U2_ENABLE) request
+	 * if system exit latency is short enough and device is configured
+	 */
+	if (usb_device_may_initiate_lpm(udev, USB3_LPM_U1)) {
+		if (usb_set_device_initiated_lpm(udev, USB3_LPM_U1, true))
+			return;
+
+		if (usb_device_may_initiate_lpm(udev, USB3_LPM_U2))
+			usb_set_device_initiated_lpm(udev, USB3_LPM_U2, true);
+	}
 }
 EXPORT_SYMBOL_GPL(usb_enable_lpm);
 
@@ -4739,8 +4744,6 @@ void usb_ep0_reinit(struct usb_device *udev)
 }
 EXPORT_SYMBOL_GPL(usb_ep0_reinit);
 
-#define usb_sndaddr0pipe()	(PIPE_CONTROL << 30)
-
 static int hub_set_address(struct usb_device *udev, int devnum)
 {
 	int retval;
@@ -4764,7 +4767,7 @@ static int hub_set_address(struct usb_device *udev, int devnum)
 	if (hcd->driver->address_device)
 		retval = hcd->driver->address_device(hcd, udev, timeout_ms);
 	else
-		retval = usb_control_msg(udev, usb_sndaddr0pipe(),
+		retval = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
 				USB_REQ_SET_ADDRESS, 0, devnum, 0,
 				NULL, 0, timeout_ms);
 	if (retval == 0) {
@@ -5233,7 +5236,7 @@ check_highspeed(struct usb_hub *hub, struct usb_device *udev, int port1)
 	if (udev->quirks & USB_QUIRK_DEVICE_QUALIFIER)
 		return;
 
-	qual = kmalloc(sizeof *qual, GFP_KERNEL);
+	qual = kmalloc_obj(*qual);
 	if (qual == NULL)
 		return;
 
@@ -6075,7 +6078,7 @@ int usb_hub_init(void)
 	 * device was gone before the EHCI controller had handed its port
 	 * over to the companion full-speed controller.
 	 */
-	hub_wq = alloc_workqueue("usb_hub_wq", WQ_FREEZABLE, 0);
+	hub_wq = alloc_workqueue("usb_hub_wq", WQ_FREEZABLE | WQ_PERCPU, 0);
 	if (hub_wq)
 		return 0;
 

@@ -5,8 +5,7 @@
  * Copyright IBM Corp. 2013, 2018
  * Author(s): Hendrik Brueckner <brueckner@linux.vnet.ibm.com>
  */
-#define KMSG_COMPONENT	"cpum_sf"
-#define pr_fmt(fmt)	KMSG_COMPONENT ": " fmt
+#define pr_fmt(fmt) "cpum_sf: " fmt
 
 #include <linux/kernel.h>
 #include <linux/kernel_stat.h>
@@ -14,7 +13,6 @@
 #include <linux/percpu.h>
 #include <linux/pid.h>
 #include <linux/notifier.h>
-#include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/moduleparam.h>
@@ -180,39 +178,27 @@ static int sf_buffer_available(struct cpu_hw_sf *cpuhw)
  */
 static void free_sampling_buffer(struct sf_buffer *sfb)
 {
-	unsigned long *sdbt, *curr;
-
-	if (!sfb->sdbt)
-		return;
+	unsigned long *sdbt, *curr, *head;
 
 	sdbt = sfb->sdbt;
-	curr = sdbt;
-
+	if (!sdbt)
+		return;
+	sfb->sdbt = NULL;
 	/* Free the SDBT after all SDBs are processed... */
-	while (1) {
-		if (!*curr || !sdbt)
-			break;
-
-		/* Process table-link entries */
+	head = sdbt;
+	curr = sdbt;
+	do {
 		if (is_link_entry(curr)) {
+			/* Process table-link entries */
 			curr = get_next_sdbt(curr);
-			if (sdbt)
-				free_page((unsigned long)sdbt);
-
-			/* If the origin is reached, sampling buffer is freed */
-			if (curr == sfb->sdbt)
-				break;
-			else
-				sdbt = curr;
+			free_page((unsigned long)sdbt);
+			sdbt = curr;
 		} else {
 			/* Process SDB pointer */
-			if (*curr) {
-				free_page((unsigned long)phys_to_virt(*curr));
-				curr++;
-			}
+			free_page((unsigned long)phys_to_virt(*curr));
+			curr++;
 		}
-	}
-
+	} while (curr != head);
 	memset(sfb, 0, sizeof(*sfb));
 }
 
@@ -404,7 +390,7 @@ static void sfb_init_allocs(unsigned long num, struct hw_perf_event *hwc)
 
 static void deallocate_buffers(struct cpu_hw_sf *cpuhw)
 {
-	if (cpuhw->sfb.sdbt)
+	if (sf_buffer_available(cpuhw))
 		free_sampling_buffer(&cpuhw->sfb);
 }
 
@@ -559,16 +545,15 @@ static void setup_pmc_cpu(void *flags)
 {
 	struct cpu_hw_sf *cpuhw = this_cpu_ptr(&cpu_hw_sf);
 
+	sf_disable();
 	switch (*((int *)flags)) {
 	case PMC_INIT:
 		memset(cpuhw, 0, sizeof(*cpuhw));
 		qsi(&cpuhw->qsi);
 		cpuhw->flags |= PMU_F_RESERVED;
-		sf_disable();
 		break;
 	case PMC_RELEASE:
 		cpuhw->flags &= ~PMU_F_RESERVED;
-		sf_disable();
 		deallocate_buffers(cpuhw);
 		break;
 	}
@@ -817,7 +802,7 @@ static int __hw_perf_event_init(struct perf_event *event)
 
 	/* Use AUX buffer. No need to allocate it by ourself */
 	if (attr->config == PERF_EVENT_CPUM_SF_DIAG)
-		return 0;
+		goto out;
 
 	/* Allocate the per-CPU sampling buffer using the CPU information
 	 * from the event.  If the event is not pinned to a particular
@@ -907,10 +892,14 @@ static void cpumsf_pmu_enable(struct pmu *pmu)
 	struct hw_perf_event *hwc;
 	int err;
 
-	if (cpuhw->flags & PMU_F_ENABLED)
-		return;
-
-	if (cpuhw->flags & PMU_F_ERR_MASK)
+	/*
+	 * Event must be
+	 * - added/started on this CPU (PMU_F_IN_USE set)
+	 * - and CPU must be available (PMU_F_RESERVED set)
+	 * - and not already enabled (PMU_F_ENABLED not set)
+	 * - and not in error condition (PMU_F_ERR_MASK not set)
+	 */
+	if (cpuhw->flags != (PMU_F_IN_USE | PMU_F_RESERVED))
 		return;
 
 	/* Check whether to extent the sampling buffer.
@@ -924,33 +913,27 @@ static void cpumsf_pmu_enable(struct pmu *pmu)
 	 * facility, but it can be fully re-enabled using sampling controls that
 	 * have been saved in cpumsf_pmu_disable().
 	 */
-	if (cpuhw->event) {
-		hwc = &cpuhw->event->hw;
-		if (!(SAMPL_DIAG_MODE(hwc))) {
-			/*
-			 * Account number of overflow-designated
-			 * buffer extents
-			 */
-			sfb_account_overflows(cpuhw, hwc);
-			extend_sampling_buffer(&cpuhw->sfb, hwc);
-		}
-		/* Rate may be adjusted with ioctl() */
-		cpuhw->lsctl.interval = SAMPL_RATE(hwc);
+	hwc = &cpuhw->event->hw;
+	if (!(SAMPL_DIAG_MODE(hwc))) {
+		/*
+		 * Account number of overflow-designated buffer extents
+		 */
+		sfb_account_overflows(cpuhw, hwc);
+		extend_sampling_buffer(&cpuhw->sfb, hwc);
 	}
+	/* Rate may be adjusted with ioctl() */
+	cpuhw->lsctl.interval = SAMPL_RATE(hwc);
 
 	/* (Re)enable the PMU and sampling facility */
-	cpuhw->flags |= PMU_F_ENABLED;
-	barrier();
-
 	err = lsctl(&cpuhw->lsctl);
 	if (err) {
-		cpuhw->flags &= ~PMU_F_ENABLED;
 		pr_err("Loading sampling controls failed: op 1 err %i\n", err);
 		return;
 	}
 
 	/* Load current program parameter */
 	lpp(&get_lowcore()->lpp);
+	cpuhw->flags |= PMU_F_ENABLED;
 }
 
 static void cpumsf_pmu_disable(struct pmu *pmu)
@@ -993,7 +976,7 @@ static void cpumsf_pmu_disable(struct pmu *pmu)
 	cpuhw->flags &= ~PMU_F_ENABLED;
 }
 
-/* perf_exclude_event() - Filter event
+/* perf_event_exclude() - Filter event
  * @event:	The perf event
  * @regs:	pt_regs structure
  * @sde_regs:	Sample-data-entry (sde) regs structure
@@ -1002,7 +985,7 @@ static void cpumsf_pmu_disable(struct pmu *pmu)
  *
  * Return non-zero if the event shall be excluded.
  */
-static int perf_exclude_event(struct perf_event *event, struct pt_regs *regs,
+static int perf_event_exclude(struct perf_event *event, struct pt_regs *regs,
 			      struct perf_sf_sde_regs *sde_regs)
 {
 	if (event->attr.exclude_user && user_mode(regs))
@@ -1085,12 +1068,9 @@ static int perf_push_sample(struct perf_event *event,
 	data.tid_entry.pid = basic->hpp & LPP_PID_MASK;
 
 	overflow = 0;
-	if (perf_exclude_event(event, &regs, sde_regs))
+	if (perf_event_exclude(event, &regs, sde_regs))
 		goto out;
-	if (perf_event_overflow(event, &data, &regs)) {
-		overflow = 1;
-		event->pmu->stop(event, 0);
-	}
+	overflow = perf_event_overflow(event, &data, &regs);
 	perf_event_update_userpage(event);
 out:
 	return overflow;
@@ -1112,7 +1092,7 @@ static void perf_event_count_update(struct perf_event *event, u64 count)
  * combined-sampling data entry consists of a basic- and a diagnostic-sampling
  * data entry.	The sampling function is determined by the flags in the perf
  * event hardware structure.  The function always works with a combined-sampling
- * data entry but ignores the the diagnostic portion if it is not available.
+ * data entry but ignores the diagnostic portion if it is not available.
  *
  * Note that the implementation focuses on basic-sampling data entries and, if
  * such an entry is not valid, the entire combined-sampling data entry is
@@ -1633,7 +1613,7 @@ static void *aux_buffer_setup(struct perf_event *event, void **pages,
 	}
 
 	/* Allocate aux_buffer struct for the event */
-	aux = kzalloc(sizeof(struct aux_buffer), GFP_KERNEL);
+	aux = kzalloc_obj(struct aux_buffer);
 	if (!aux)
 		goto no_aux;
 	sfb = &aux->sfb;
@@ -1792,7 +1772,7 @@ static int cpumsf_pmu_add(struct perf_event *event, int flags)
 	if (cpuhw->flags & PMU_F_IN_USE)
 		return -EAGAIN;
 
-	if (!SAMPL_DIAG_MODE(&event->hw) && !cpuhw->sfb.sdbt)
+	if (!SAMPL_DIAG_MODE(&event->hw) && !sf_buffer_available(cpuhw))
 		return -EINVAL;
 
 	perf_pmu_disable(event->pmu);
@@ -1954,13 +1934,12 @@ static void cpumf_measurement_alert(struct ext_code ext_code,
 
 	/* Program alert request */
 	if (alert & CPU_MF_INT_SF_PRA) {
-		if (cpuhw->flags & PMU_F_IN_USE)
+		if (cpuhw->flags & PMU_F_IN_USE) {
 			if (SAMPL_DIAG_MODE(&cpuhw->event->hw))
 				hw_collect_aux(cpuhw);
 			else
 				hw_perf_event_update(cpuhw->event, 0);
-		else
-			WARN_ON_ONCE(!(cpuhw->flags & PMU_F_IN_USE));
+		}
 	}
 
 	/* Report measurement alerts only for non-PRA codes */
@@ -1981,7 +1960,7 @@ static void cpumf_measurement_alert(struct ext_code ext_code,
 
 	/* Invalid sampling buffer entry */
 	if (alert & (CPU_MF_INT_SF_IAE|CPU_MF_INT_SF_ISE)) {
-		pr_err("A sampling buffer entry is incorrect (alert=0x%x)\n",
+		pr_err("A sampling buffer entry is incorrect (alert=%#x)\n",
 		       alert);
 		cpuhw->flags |= PMU_F_ERR_IBE;
 		sf_disable();
@@ -2094,7 +2073,7 @@ static int __init init_cpum_sampling_pmu(void)
 			CPUMF_EVENT_PTR(SF, SF_CYCLES_BASIC_DIAG);
 	}
 
-	sfdbg = debug_register(KMSG_COMPONENT, 2, 1, 80);
+	sfdbg = debug_register("cpum_sf", 2, 1, 80);
 	if (!sfdbg) {
 		pr_err("Registering for s390dbf failed\n");
 		return -ENOMEM;

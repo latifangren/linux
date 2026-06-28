@@ -1382,7 +1382,7 @@ il4965_hdl_stats(struct il_priv *il, struct il_rx_buf *rxb)
 	 * we get a thermal update even if the uCode doesn't give us one
 	 */
 	mod_timer(&il->stats_periodic,
-		  jiffies + msecs_to_jiffies(recalib_seconds * 1000));
+		  jiffies + secs_to_jiffies(recalib_seconds));
 
 	if (unlikely(!test_bit(S_SCANNING, &il->status)) &&
 	    (pkt->hdr.cmd == N_STATS)) {
@@ -3027,7 +3027,7 @@ il4965_sta_alloc_lq(struct il_priv *il, u8 sta_id)
 	u32 rate_flags = 0;
 	__le32 rate_n_flags;
 
-	link_cmd = kzalloc(sizeof(struct il_link_quality_cmd), GFP_KERNEL);
+	link_cmd = kzalloc_obj(struct il_link_quality_cmd);
 	if (!link_cmd) {
 		IL_ERR("Unable to allocate memory for LQ cmd.\n");
 		return NULL;
@@ -3709,7 +3709,7 @@ il4965_get_free_frame(struct il_priv *il)
 	struct il_frame *frame;
 	struct list_head *element;
 	if (list_empty(&il->free_frames)) {
-		frame = kzalloc(sizeof(*frame), GFP_KERNEL);
+		frame = kzalloc_obj(*frame);
 		if (!frame) {
 			IL_ERR("Could not allocate frame!\n");
 			return NULL;
@@ -4054,7 +4054,7 @@ il4965_hdl_alive(struct il_priv *il, struct il_rx_buf *rxb)
 static void
 il4965_bg_stats_periodic(struct timer_list *t)
 {
-	struct il_priv *il = from_timer(il, t, stats_periodic);
+	struct il_priv *il = timer_container_of(il, t, stats_periodic);
 
 	if (test_bit(S_EXIT_PENDING, &il->status))
 		return;
@@ -4076,7 +4076,7 @@ il4965_hdl_beacon(struct il_priv *il, struct il_rx_buf *rxb)
 	u8 rate = il4965_hw_get_rate(beacon->beacon_notify_hdr.rate_n_flags);
 
 	D_RX("beacon status %x retries %d iss %d tsf:0x%.8x%.8x rate %d\n",
-	     le32_to_cpu(beacon->beacon_notify_hdr.u.status) & TX_STATUS_MSK,
+	     le32_to_cpu(beacon->beacon_tx_status) & TX_STATUS_MSK,
 	     beacon->beacon_notify_hdr.failure_frame,
 	     le32_to_cpu(beacon->ibss_mgr_status),
 	     le32_to_cpu(beacon->high_tsf), le32_to_cpu(beacon->low_tsf), rate);
@@ -5355,7 +5355,7 @@ __il4965_down(struct il_priv *il)
 
 	/* Stop TX queues watchdog. We need to have S_EXIT_PENDING bit set
 	 * to prevent rearm timer */
-	del_timer_sync(&il->watchdog);
+	timer_delete_sync(&il->watchdog);
 
 	il_clear_ucode_stations(il);
 
@@ -6248,7 +6248,7 @@ il4965_cancel_deferred_work(struct il_priv *il)
 
 	il_cancel_scan_deferred_work(il);
 
-	del_timer_sync(&il->stats_periodic);
+	timer_delete_sync(&il->stats_periodic);
 }
 
 static void

@@ -292,15 +292,9 @@ static const int inflate_threshold = 50;
 static const int halve_threshold_root = 15;
 static const int inflate_threshold_root = 30;
 
-static void __alias_free_mem(struct rcu_head *head)
-{
-	struct fib_alias *fa = container_of(head, struct fib_alias, rcu);
-	kmem_cache_free(fn_alias_kmem, fa);
-}
-
 static inline void alias_free_mem_rcu(struct fib_alias *fa)
 {
-	call_rcu(&fa->rcu, __alias_free_mem);
+	kfree_rcu(fa, rcu);
 }
 
 #define TNODE_VMALLOC_MAX \
@@ -2763,7 +2757,6 @@ static const char *const rtn_type_names[__RTN_MAX] = {
 	[RTN_THROW] = "THROW",
 	[RTN_NAT] = "NAT",
 	[RTN_XRESOLVE] = "XRESOLVE",
-	[RTN_POLICY_FAILED] = "POLICY_FAILED",
 };
 
 static inline const char *rtn_type(char *buf, size_t len, unsigned int t)
@@ -2985,7 +2978,7 @@ static int fib_route_seq_show(struct seq_file *seq, void *v)
 
 			seq_printf(seq,
 				   "%s\t%08X\t%08X\t%04X\t%d\t%u\t"
-				   "%d\t%08X\t%d\t%u\t%u",
+				   "%u\t%08X\t%d\t%u\t%u",
 				   nhc->nhc_dev ? nhc->nhc_dev->name : "*",
 				   prefix, gw, flags, 0, 0,
 				   fi->fib_priority,
@@ -2997,7 +2990,7 @@ static int fib_route_seq_show(struct seq_file *seq, void *v)
 		} else {
 			seq_printf(seq,
 				   "*\t%08X\t%08X\t%04X\t%d\t%u\t"
-				   "%d\t%08X\t%d\t%u\t%u",
+				   "%u\t%08X\t%d\t%u\t%u",
 				   prefix, 0, flags, 0, 0, 0,
 				   mask, 0, 0, 0);
 		}

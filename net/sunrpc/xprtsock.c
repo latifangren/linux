@@ -1299,6 +1299,7 @@ static void xs_reset_transport(struct sock_xprt *transport)
 	transport->file = NULL;
 
 	sk->sk_user_data = NULL;
+	sk->sk_sndtimeo = 0;
 
 	xs_restore_old_callbacks(transport, sk);
 	xprt_clear_connected(xprt);
@@ -1844,8 +1845,8 @@ static int xs_bind(struct sock_xprt *transport, struct socket *sock)
 	memcpy(&myaddr, &transport->srcaddr, transport->xprt.addrlen);
 	do {
 		rpc_set_port((struct sockaddr *)&myaddr, port);
-		err = kernel_bind(sock, (struct sockaddr *)&myaddr,
-				transport->xprt.addrlen);
+		err = kernel_bind(sock, (struct sockaddr_unsized *)&myaddr,
+				  transport->xprt.addrlen);
 		if (err == 0) {
 			if (transport->xprt.reuseport)
 				transport->srcport = port;
@@ -2004,7 +2005,7 @@ static int xs_local_finish_connecting(struct rpc_xprt *xprt,
 
 	xs_stream_start_connect(transport);
 
-	return kernel_connect(sock, xs_addr(xprt), xprt->addrlen, 0);
+	return kernel_connect(sock, (struct sockaddr_unsized *)xs_addr(xprt), xprt->addrlen, 0);
 }
 
 /**
@@ -2404,7 +2405,8 @@ static int xs_tcp_finish_connecting(struct rpc_xprt *xprt, struct socket *sock)
 
 	/* Tell the socket layer to start connecting... */
 	set_bit(XPRT_SOCK_CONNECTING, &transport->sock_state);
-	return kernel_connect(sock, xs_addr(xprt), xprt->addrlen, O_NONBLOCK);
+	return kernel_connect(sock, (struct sockaddr_unsized *)xs_addr(xprt),
+			      xprt->addrlen, O_NONBLOCK);
 }
 
 /**
@@ -2745,18 +2747,7 @@ static void xs_tcp_tls_setup_socket(struct work_struct *work)
 	if (status)
 		goto out_close;
 	xprt_release_write(lower_xprt, NULL);
-
 	trace_rpc_socket_connect(upper_xprt, upper_transport->sock, 0);
-	if (!xprt_test_and_set_connected(upper_xprt)) {
-		upper_xprt->connect_cookie++;
-		clear_bit(XPRT_SOCK_CONNECTING, &upper_transport->sock_state);
-		xprt_clear_connecting(upper_xprt);
-
-		upper_xprt->stat.connect_count++;
-		upper_xprt->stat.connect_time += (long)jiffies -
-					   upper_xprt->stat.connect_start;
-		xs_run_error_worker(upper_transport, XPRT_SOCK_WAKE_PENDING);
-	}
 	rpc_shutdown_client(lower_clnt);
 
 	/* Check for ingress data that arrived before the socket's

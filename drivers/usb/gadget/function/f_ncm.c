@@ -18,6 +18,7 @@
 #include <linux/device.h>
 #include <linux/etherdevice.h>
 #include <linux/crc32.h>
+#include <linux/string_choices.h>
 
 #include <linux/usb/cdc.h>
 #include <linux/usb/gadget.h>
@@ -560,7 +561,7 @@ static void ncm_do_notify(struct f_ncm *ncm)
 		req->length = sizeof *event;
 
 		DBG(cdev, "notify connect %s\n",
-				ncm->is_open ? "true" : "false");
+				str_true_false(ncm->is_open));
 		ncm->notify_state = NCM_NOTIFY_NONE;
 		break;
 
@@ -1555,8 +1556,7 @@ static int ncm_bind(struct usb_configuration *c, struct usb_function *f)
 	ncm->port.open = ncm_open;
 	ncm->port.close = ncm_close;
 
-	hrtimer_init(&ncm->task_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
-	ncm->task_timer.function = ncm_tx_timeout;
+	hrtimer_setup(&ncm->task_timer, ncm_tx_timeout, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
 
 	if (cdev->use_os_string) {
 		os_desc_table[0].os_desc = &ncm_opts->ncm_os_desc;
@@ -1675,7 +1675,7 @@ static struct usb_function_instance *ncm_alloc_inst(void)
 	char *names[1];
 	struct config_group *ncm_interf_group;
 
-	opts = kzalloc(sizeof(*opts), GFP_KERNEL);
+	opts = kzalloc_obj(*opts);
 	if (!opts)
 		return ERR_PTR(-ENOMEM);
 	opts->ncm_os_desc.ext_compat_id = opts->ncm_ext_compat_id;
