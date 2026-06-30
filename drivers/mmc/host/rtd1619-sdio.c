@@ -424,8 +424,6 @@ void rtk_sdhci_platform_init(void)
     writel(0x00000011, crt_membase + 0x010A34);
 
 #ifdef SD_INTERFACE_SDIO_1619
-    printk(KERN_INFO "%s: Before pad config: 0x4E004=0x%08x 0x4E008=0x%08x 0x4E048=0x%08x\n",
-           __func__, readl(crt_membase+0x4E004), readl(crt_membase+0x4E008), readl(crt_membase+0x4E048));
     writel(readl(crt_membase+0x4E004)&(~(0x1<<25)),crt_membase+0x4E004);
     writel((readl(crt_membase+0x4E020)&0xff0fffff)|0x00600000 ,crt_membase+0x4E020);
     mdelay(100);
@@ -587,7 +585,6 @@ static int rtk_sdhci_tuning_rx(struct sdhci_host *host)
     for (i = 0; i < TUNING_CNT; i++) {
         phase_map &= raw_phase_map[i];
     }
-    printk(KERN_ERR "%s RX phase_map = 0x%08x\n", __func__, phase_map);
 
     if (phase_map) {
         final_phase = rtk_sdhci_search_final_phase(phase_map);
@@ -652,7 +649,6 @@ static int rtk_sdhci_execute_tuning(struct sdhci_host *host, u32 opcode)
     unsigned int reg_tmp2 = 0;
     unsigned int reg_tuned3318 = 0;
 
-    printk(KERN_ERR "%s : Execute Clock Phase Tuning\n", __func__);
     reg_tmp2 = readl(crt_membase + 0x01A4);
     writel((reg_tmp2 & 0xFFFF1FFF), crt_membase + 0x01A4);
 
@@ -802,12 +798,6 @@ static int sdhci_rtk_probe(struct platform_device *pdev)
     host->mmc->ocr_avail = host->ocr_mask;
 
     G_host = host;
-    
-    printk(KERN_INFO "%s: SDHCI_CAPS=0x%08x CAPS1=0x%08x HOST_CTL2=0x%04x\n",
-           __func__,
-           readl(host->ioaddr + 0x40),
-           readl(host->ioaddr + 0x44),
-           readw(host->ioaddr + 0x3E));
 
     rc = sdhci_add_host(host);
     if (rc)
