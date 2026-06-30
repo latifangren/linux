@@ -30,7 +30,7 @@
 #include <soc/realtek/rtk_chip.h>
 #include "sdhci.h"
 #include "sdhci-pltfm.h"
-#include "sdhci-rtk.h"
+#include "rtd1619-sdio.h"
 
 #define SD_INTERFACE_SDIO_1619   /* pad config needed for SDIO pins on this board */
 
