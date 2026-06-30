@@ -1132,6 +1132,9 @@ u32 mmc_select_voltage(struct mmc_host *host, u32 ocr)
 		ocr &= ~0x7F;
 	}
 
+	dev_info(mmc_dev(host), "mmc_select_voltage: card_ocr=0x%08x host_ocr_avail=0x%08x\n",
+		 ocr, host->ocr_avail);
+
 	ocr &= host->ocr_avail;
 	if (!ocr) {
 		dev_warn(mmc_dev(host), "no support for card's volts\n");

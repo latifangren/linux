@@ -1,0 +1,9 @@
+menu "Realtek Soc Drivers"
+
+config REALTEK_CHIP
+	tristate "Realtek 1xxx chip info"
+	depends on ARCH_REALTEK
+	help
+	  This driver provides realtek chip info.
+
+endmenu

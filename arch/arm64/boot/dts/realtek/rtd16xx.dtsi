@@ -8,6 +8,10 @@
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/clock/rtk,clock-rtd1619.h>
+#include <dt-bindings/reset/rtk,reset-rtd1619.h>
+#include <dt-bindings/power/rtk,power-rtd1619.h>
+#include <dt-bindings/gpio/gpio.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -100,6 +104,16 @@
 		};
 	};
 
+	vcc_sd: regulator-vcc-sd {
+        compatible = "regulator-fixed";
+        regulator-name = "vcc_sd";
+        regulator-min-microvolt = <3300000>;
+        regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+        gpio = <&rtk_iso_gpio 30 GPIO_ACTIVE_HIGH>;
+        enable-active-high;
+    };
+
 	timer {
 		compatible = "arm,armv8-timer";
 		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
@@ -125,6 +139,41 @@
 		clock-frequency = <27000000>;
 		clock-output-names = "osc27M";
 		#clock-cells = <0>;
+	};
+
+	clk_en_2: clk-en@98000054 {
+		compatible = "realtek,clock-gate-controller";
+		reg = <0x98000054 0x4>;
+		#clock-cells = <1>;
+		has-write-en;
+		clock-output-names =
+			"",
+			"clk_en_cp",
+			"clk_en_md",
+			"clk_en_tp",
+			"clk_en_rsa",
+			"clk_en_nf",
+			"clk_en_emmc",
+			"clk_en_sd",
+			"clk_en_sdio_ip",
+			"clk_en_mipi",
+			"clk_en_emmc_ip",
+			"clk_en_sdio",
+			"clk_en_sd_ip",
+			"clk_en_cablerx",
+			"clk_en_tpb",
+			"clk_en_misc_sc1";
+		ignore-unused-clocks =
+			"clk_en_cp",
+			"clk_en_md",
+			"clk_en_tp";
+	};
+
+	rst2: soft-reset@98000004 {
+		compatible = "realtek,reset-controller";
+		reg = <0x98000004 0x4>;
+		#reset-cells = <1>;
+		has-write-en;
 	};
 
 	soc@0 {
@@ -210,7 +259,7 @@
 			};
 
 			pinctrl: pinctrl@4e000 {
-				compatible = "realtek,rtk16xx-pinctrl";
+				compatible = "realtek,rtk1619-pinctrl";
 				reg = <0x4e000 0x100>,
 					<0x4f000 0x100>;
 				#gpio-range-cells = <3>;
@@ -222,6 +271,12 @@
 					realtek,function = "sd";
 					realtek,pull_en = <1>;
 					realtek,pull_sel = <0>;
+				};
+
+				sdio_pins_1: sdio_pins_1 {
+					realtek,pins = "gpio_40", "gpio_41", "gpio_42",
+						"gpio_43", "gpio_44", "gpio_45", "sdio_loc";
+					realtek,function = "sdio_loc1";
 				};
 
 				scpu_ejtag_pins_disable: scpu_ejtag_pins_disable {
@@ -306,6 +361,33 @@
 					clksrc_div = <0x1>; //default OSD: from 0x0 to 0xf
 					duty_rate = <50>; //default duty_rate 0 ~ 100
 				};
+			};
+			
+			sdio: sdio@10c00 {
+				compatible = "realtek,rtk1619-sdio";
+				
+				reg = <0x10C00 0x200>,     /* Index 0: SDIO Host Base -> 0x98010C00 */
+				      <0x0     0x200000>;  /* Index 1: CRT Base -> 0x98000000 via bus ranges */				
+				reg-names = "sdhci", "crt";				
+				interrupts = <GIC_SPI 45 IRQ_TYPE_LEVEL_HIGH>;
+				
+				clocks = <&clk_en_2 CLK_EN_SDIO>, <&clk_en_2 CLK_EN_SDIO_IP>;
+				clock-names = "clk_en_sdio", "clk_en_sdio_ip";
+				resets = <&rst2 RSTN_SDIO>;
+				
+				pinctrl-names = "default";
+				pinctrl-0 = <&sdio_pins_1>;
+				gpios = <&rtk_iso_gpio 27 GPIO_ACTIVE_HIGH>;
+				vmmc-supply = <&vcc_sd>;
+				
+				non-removable;
+				cap-sdio-irq;
+				keep-power-in-suspend;
+				
+				bus-width = <4>;
+				cap-sd-highspeed;
+				
+				status = "okay";
 			};
 		};
 

@@ -8,7 +8,7 @@
 #include "rtd1619.dtsi"
 
 / {
-	compatible = "realtek,mjolnir", "realtek,rtd1619";
+	compatible = "realtek,rtd1619", "realtek,rtd1619-a01";
 	model = "X1 PRIME C";
 
 	memory@200000 {
