@@ -240,9 +240,9 @@ void __fbnic_set_rx_mode(struct fbnic_dev *fbd,
 	fbnic_write_tce_tcam(fbd);
 }
 
-static int fbnic_set_rx_mode(struct net_device *netdev,
-			     struct netdev_hw_addr_list *uc,
-			     struct netdev_hw_addr_list *mc)
+static void fbnic_set_rx_mode(struct net_device *netdev,
+			      struct netdev_hw_addr_list *uc,
+			      struct netdev_hw_addr_list *mc)
 {
 	struct fbnic_net *fbn = netdev_priv(netdev);
 	struct fbnic_dev *fbd = fbn->fbd;
@@ -250,8 +250,6 @@ static int fbnic_set_rx_mode(struct net_device *netdev,
 	/* No need to update the hardware if we are not running */
 	if (netif_running(netdev))
 		__fbnic_set_rx_mode(fbd, uc, mc);
-
-	return 0;
 }
 
 static int fbnic_set_mac(struct net_device *netdev, void *p)
@@ -264,11 +262,8 @@ static int fbnic_set_mac(struct net_device *netdev, void *p)
 
 	eth_hw_addr_set(netdev, addr->sa_data);
 
-	if (netif_running(netdev)) {
-		netif_addr_lock_bh(netdev);
+	if (netif_running(netdev))
 		__fbnic_set_rx_mode(fbn->fbd, &netdev->uc, &netdev->mc);
-		netif_addr_unlock_bh(netdev);
-	}
 
 	return 0;
 }
@@ -313,10 +308,8 @@ void fbnic_clear_rx_mode(struct fbnic_dev *fbd)
 	/* Write updates to hardware */
 	fbnic_write_macda(fbd);
 
-	netif_addr_lock_bh(netdev);
 	__dev_uc_unsync(netdev, NULL);
 	__dev_mc_unsync(netdev, NULL);
-	netif_addr_unlock_bh(netdev);
 }
 
 static int fbnic_hwtstamp_get(struct net_device *netdev,
@@ -759,7 +752,7 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 	netdev->netdev_ops = &fbnic_netdev_ops;
 	netdev->stat_ops = &fbnic_stat_ops;
 	netdev->queue_mgmt_ops = &fbnic_queue_mgmt_ops;
-	netdev->netmem_tx = NETMEM_TX_DMA;
+	netdev->netmem_tx = true;
 
 	fbnic_set_ethtool_ops(netdev);
 

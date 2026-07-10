@@ -7,6 +7,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <sound/soc.h>
@@ -20,7 +21,7 @@ static int adau1372_i2c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id adau1372_i2c_ids[] = {
-	{ .name = "adau1372" },
+	{ "adau1372" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, adau1372_i2c_ids);

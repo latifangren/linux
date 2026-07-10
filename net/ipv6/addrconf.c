@@ -380,7 +380,7 @@ static struct inet6_dev *ipv6_add_dev(struct net_device *dev)
 	int err = -ENOMEM;
 
 	ASSERT_RTNL();
-	netdev_assert_locked_ops_compat(dev);
+	netdev_ops_assert_locked(dev);
 
 	if (dev->mtu < IPV6_MIN_MTU && dev != blackhole_netdev)
 		return ERR_PTR(-EINVAL);
@@ -913,7 +913,7 @@ static int addrconf_fixup_forwarding(const struct ctl_table *table, int *p, int 
 
 	if (newf)
 		rt6_purge_dflt_routers(net);
-	return 0;
+	return 1;
 }
 
 static void addrconf_linkdown_change(struct net *net, __s32 newf)
@@ -955,7 +955,11 @@ static int addrconf_fixup_linkdown(const struct ctl_table *table, int *p, int ne
 						     NETCONFA_IGNORE_ROUTES_WITH_LINKDOWN,
 						     NETCONFA_IFINDEX_DEFAULT,
 						     net->ipv6.devconf_dflt);
-	} else if (p == &net->ipv6.devconf_all->ignore_routes_with_linkdown) {
+		rtnl_net_unlock(net);
+		return 0;
+	}
+
+	if (p == &net->ipv6.devconf_all->ignore_routes_with_linkdown) {
 		WRITE_ONCE(net->ipv6.devconf_dflt->ignore_routes_with_linkdown, newf);
 		addrconf_linkdown_change(net, newf);
 		if ((!newf) ^ (!old))
@@ -964,21 +968,11 @@ static int addrconf_fixup_linkdown(const struct ctl_table *table, int *p, int ne
 						     NETCONFA_IGNORE_ROUTES_WITH_LINKDOWN,
 						     NETCONFA_IFINDEX_ALL,
 						     net->ipv6.devconf_all);
-	} else {
-		if (!newf ^ !old) {
-			struct inet6_dev *idev = table->extra1;
-
-			inet6_netconf_notify_devconf(net,
-						     RTM_NEWNETCONF,
-						     NETCONFA_IGNORE_ROUTES_WITH_LINKDOWN,
-						     idev->dev->ifindex,
-						     &idev->cnf);
-		}
 	}
 
 	rtnl_net_unlock(net);
 
-	return 0;
+	return 1;
 }
 
 #endif
@@ -1180,7 +1174,6 @@ ipv6_add_addr(struct inet6_dev *idev, struct ifa6_config *cfg,
 	ipv6_link_dev_addr(idev, ifa);
 
 	if (ifa->flags&IFA_F_TEMPORARY) {
-		/* manage_tempaddrs() relies on addresses being added to the head */
 		list_add(&ifa->tmp_list, &idev->tempaddr_list);
 		in6_ifa_hold(ifa);
 	}
@@ -2175,17 +2168,15 @@ void addrconf_dad_failure(struct sk_buff *skb, struct inet6_ifaddr *ifp)
 	struct net *net = dev_net(idev->dev);
 	int max_addresses;
 
-	spin_lock_bh(&ifp->lock);
-
-	if (ifp->state != INET6_IFADDR_STATE_DAD) {
-		spin_unlock_bh(&ifp->lock);
+	if (addrconf_dad_end(ifp)) {
 		in6_ifa_put(ifp);
 		return;
 	}
-	ifp->state = INET6_IFADDR_STATE_POSTDAD;
 
 	net_info_ratelimited("%s: IPv6 duplicate address %pI6c used by %pM detected!\n",
 			     ifp->idev->dev->name, &ifp->addr, eth_hdr(skb)->h_source);
+
+	spin_lock_bh(&ifp->lock);
 
 	if (ifp->flags & IFA_F_STABLE_PRIVACY) {
 		struct in6_addr new_addr;
@@ -2234,11 +2225,6 @@ void addrconf_dad_failure(struct sk_buff *skb, struct inet6_ifaddr *ifp)
 		in6_ifa_put(ifp2);
 lock_errdad:
 		spin_lock_bh(&ifp->lock);
-		if (ifp->state != INET6_IFADDR_STATE_POSTDAD) {
-			spin_unlock_bh(&ifp->lock);
-			in6_ifa_put(ifp);
-			return;
-		}
 	}
 
 errdad:
@@ -2611,10 +2597,8 @@ static void manage_tempaddrs(struct inet6_dev *idev,
 			     __u32 valid_lft, __u32 prefered_lft,
 			     bool create, unsigned long now)
 {
-	u32 orig_prefered_lft = prefered_lft;
-	struct inet6_ifaddr *ift;
-	bool reset_done = false;
 	u32 flags;
+	struct inet6_ifaddr *ift;
 
 	read_lock_bh(&idev->lock);
 	/* update all temporary addresses in the list */
@@ -2649,11 +2633,6 @@ static void manage_tempaddrs(struct inet6_dev *idev,
 			prefered_lft = max_prefered;
 
 		spin_lock(&ift->lock);
-		/* the first match is the most recent temp address */
-		if (!reset_done && orig_prefered_lft > 0) {
-			ift->regen_count = 0;
-			reset_done = true;
-		}
 		flags = ift->flags;
 		ift->valid_lft = valid_lft;
 		ift->prefered_lft = prefered_lft;
@@ -6376,8 +6355,6 @@ static int addrconf_sysctl_forward(const struct ctl_table *ctl, int write,
 	lctl.data = &val;
 
 	ret = proc_dointvec(&lctl, write, buffer, lenp, ppos);
-	if (ret)
-		return ret;
 
 	if (write)
 		ret = addrconf_fixup_forwarding(ctl, valp, val);
@@ -6475,8 +6452,6 @@ static int addrconf_sysctl_disable(const struct ctl_table *ctl, int write,
 	lctl.data = &val;
 
 	ret = proc_dointvec(&lctl, write, buffer, lenp, ppos);
-	if (ret)
-		return ret;
 
 	if (write)
 		ret = addrconf_disable_ipv6(ctl, valp, val);
@@ -6488,19 +6463,20 @@ static int addrconf_sysctl_disable(const struct ctl_table *ctl, int write,
 static int addrconf_sysctl_proxy_ndp(const struct ctl_table *ctl, int write,
 		void *buffer, size_t *lenp, loff_t *ppos)
 {
-	struct net *net = ctl->extra2;
 	int *valp = ctl->data;
-	int old, new;
 	int ret;
-
-	if (write && !rtnl_net_trylock(net))
-		return restart_syscall();
+	int old, new;
 
 	old = *valp;
 	ret = proc_dointvec(ctl, write, buffer, lenp, ppos);
 	new = *valp;
 
 	if (write && old != new) {
+		struct net *net = ctl->extra2;
+
+		if (!rtnl_net_trylock(net))
+			return restart_syscall();
+
 		if (valp == &net->ipv6.devconf_dflt->proxy_ndp) {
 			inet6_netconf_notify_devconf(net, RTM_NEWNETCONF,
 						     NETCONFA_PROXY_NEIGH,
@@ -6519,9 +6495,8 @@ static int addrconf_sysctl_proxy_ndp(const struct ctl_table *ctl, int write,
 						     idev->dev->ifindex,
 						     &idev->cnf);
 		}
-	}
-	if (write)
 		rtnl_net_unlock(net);
+	}
 
 	return ret;
 }
@@ -6679,8 +6654,6 @@ int addrconf_sysctl_ignore_routes_with_linkdown(const struct ctl_table *ctl,
 	lctl.data = &val;
 
 	ret = proc_dointvec(&lctl, write, buffer, lenp, ppos);
-	if (ret)
-		return ret;
 
 	if (write)
 		ret = addrconf_fixup_linkdown(ctl, valp, val);
@@ -6775,8 +6748,6 @@ static int addrconf_sysctl_disable_policy(const struct ctl_table *ctl, int write
 	lctl = *ctl;
 	lctl.data = &val;
 	ret = proc_dointvec(&lctl, write, buffer, lenp, ppos);
-	if (ret)
-		return ret;
 
 	if (write && (*valp != val))
 		ret = addrconf_disable_policy(ctl, valp, val);

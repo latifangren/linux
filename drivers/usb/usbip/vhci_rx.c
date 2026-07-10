@@ -261,9 +261,9 @@ int vhci_rx_loop(void *data)
 		if (usbip_event_happened(ud))
 			break;
 
-		kcov_remote_start_common(ud->kcov_handle);
+		usbip_kcov_remote_start(ud);
 		vhci_rx_pdu(ud);
-		kcov_remote_stop();
+		usbip_kcov_remote_stop();
 	}
 
 	return 0;

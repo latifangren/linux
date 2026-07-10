@@ -11,7 +11,6 @@
  */
 
 #include "kselftest_harness.h"
-#include "hugepage_settings.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -22,13 +21,12 @@
 #include <strings.h>
 #include <time.h>
 #include <pthread.h>
-#include <limits.h>
-#include <linux/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
+
 
 /*
  * This is a private UAPI to the kernel test module so it isn't exported
@@ -71,9 +69,6 @@ enum {
 #ifndef FOLL_LONGTERM
 #define FOLL_LONGTERM   0x100 /* mapping lifetime is indefinite */
 #endif
-
-HUGETLB_SETUP_DEFAULT_PAGES(1)
-
 FIXTURE(hmm)
 {
 	int		fd;
@@ -637,7 +632,7 @@ TEST_F(hmm, anon_write_child)
 			}
 
 			close(child_fd);
-			_exit(0);
+			exit(0);
 		}
 	}
 }
@@ -717,7 +712,7 @@ TEST_F(hmm, anon_write_child_shared)
 		ASSERT_EQ(ptr[i], -i);
 
 	close(child_fd);
-	_exit(0);
+	exit(0);
 }
 
 /*
@@ -789,8 +784,8 @@ TEST_F(hmm, anon_write_hugetlbfs)
 	int *ptr;
 	int ret;
 
-	if (!hugetlb_free_default_pages())
-		SKIP(return, "Not enough huge pages");
+	if (!default_hsize)
+		SKIP(return, "Huge page size could not be determined");
 
 	size = ALIGN(TWOMEG, default_hsize);
 	npages = size >> self->page_shift;
@@ -1604,8 +1599,8 @@ TEST_F(hmm2, snapshot)
 }
 
 /*
- * Test the hmm_range_fault() handling of large pages (PMD or PUD)
- * that should be mapped by a large page table entry.
+ * Test the hmm_range_fault() HMM_PFN_PMD flag for large pages that
+ * should be mapped by a large page table entry.
  */
 TEST_F(hmm, compound)
 {
@@ -1615,13 +1610,13 @@ TEST_F(hmm, compound)
 	unsigned long default_hsize = default_huge_page_size();
 	int *ptr;
 	unsigned char *m;
-	unsigned char prot;
 	int ret;
 	unsigned long i;
 
 	/* Skip test if we can't allocate a hugetlbfs page. */
-	if (!hugetlb_free_default_pages())
-		SKIP(return, "Not enough huge pages");
+
+	if (!default_hsize)
+		SKIP(return, "Huge page size could not be determined");
 
 	size = ALIGN(TWOMEG, default_hsize);
 	npages = size >> self->page_shift;
@@ -1651,20 +1646,11 @@ TEST_F(hmm, compound)
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(buffer->cpages, npages);
 
-	/*
-	 * Check what the device saw.  The region is backed by a single huge
-	 * page that the device reports either at PMD or at PUD level depending
-	 * on the configured default hugepage size.  Determine that level from
-	 * the first page and require every page in the range to match it
-	 * exactly, so that a fragmented mapping mixing levels (or a missing
-	 * large-page bit) is still caught and reported with its actual value.
-	 */
+	/* Check what the device saw. */
 	m = buffer->mirror;
-	prot = HMM_DMIRROR_PROT_WRITE |
-	       ((m[0] & HMM_DMIRROR_PROT_PUD) ? HMM_DMIRROR_PROT_PUD :
-						HMM_DMIRROR_PROT_PMD);
 	for (i = 0; i < npages; ++i)
-		ASSERT_EQ(m[i], prot);
+		ASSERT_EQ(m[i], HMM_DMIRROR_PROT_WRITE |
+				HMM_DMIRROR_PROT_PMD);
 
 	/* Make the region read-only. */
 	ret = mprotect(buffer->ptr, size, PROT_READ);
@@ -1675,17 +1661,11 @@ TEST_F(hmm, compound)
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(buffer->cpages, npages);
 
-	/*
-	 * Check what the device saw after mprotect(PROT_READ).  Same
-	 * approach as above: determine the mapping level from the first
-	 * page and require every page to match it exactly.
-	 */
+	/* Check what the device saw. */
 	m = buffer->mirror;
-	prot = HMM_DMIRROR_PROT_READ |
-	       ((m[0] & HMM_DMIRROR_PROT_PUD) ? HMM_DMIRROR_PROT_PUD :
-						HMM_DMIRROR_PROT_PMD);
 	for (i = 0; i < npages; ++i)
-		ASSERT_EQ(m[i], prot);
+		ASSERT_EQ(m[i], HMM_DMIRROR_PROT_READ |
+				HMM_DMIRROR_PROT_PMD);
 
 	munmap(buffer->ptr, buffer->size);
 	buffer->ptr = NULL;
@@ -1885,8 +1865,6 @@ TEST_F(hmm, exclusive_cow)
 	unsigned long i;
 	int *ptr;
 	int ret;
-	pid_t pid;
-	int status;
 
 	npages = ALIGN(HMM_BUFFER_SIZE, self->page_size) >> self->page_shift;
 	ASSERT_NE(npages, 0);
@@ -1915,37 +1893,14 @@ TEST_F(hmm, exclusive_cow)
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(buffer->cpages, npages);
 
-	pid = fork();
-	if (pid == -1)
-		ASSERT_EQ(pid, 0);
+	fork();
 
-	if (pid == 0) {
-		/*
-		 * Child verifies COW independently, then _exit(0)s so it does
-		 * not run the test teardown.  A failed ASSERT_* here makes the
-		 * harness abort() the child, so the parent sees
-		 * !WIFEXITED(status) below and fails in turn.
-		 */
-		for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
-			ASSERT_EQ(ptr[i]++, i);
-
-		for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
-			ASSERT_EQ(ptr[i], i + 1);
-
-		_exit(0);
-	}
-
-	/* Parent: also increment to verify COW works for both processes. */
+	/* Fault pages back to system memory and check them. */
 	for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
 		ASSERT_EQ(ptr[i]++, i);
 
 	for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
-		ASSERT_EQ(ptr[i], i + 1);
-
-	/* Parent: wait for child and then free the buffer. */
-	ASSERT_EQ(waitpid(pid, &status, 0), pid);
-	ASSERT_TRUE(WIFEXITED(status));
-	ASSERT_EQ(WEXITSTATUS(status), 0);
+		ASSERT_EQ(ptr[i], i+1);
 
 	hmm_buffer_free(buffer);
 }
@@ -2107,7 +2062,7 @@ TEST_F(hmm, hmm_cow_in_device)
 	if (pid == -1)
 		ASSERT_EQ(pid, 0);
 	if (!pid) {
-		/* Child process waits for SIGKILL from the parent. */
+		/* Child process waits for SIGTERM from the parent. */
 		while (1) {
 		}
 		/* Should not reach this */
@@ -2120,10 +2075,10 @@ TEST_F(hmm, hmm_cow_in_device)
 		ptr[i] = i;
 
 	/* Terminate child and wait */
-	EXPECT_EQ(0, kill(pid, SIGKILL));
+	EXPECT_EQ(0, kill(pid, SIGTERM));
 	EXPECT_EQ(pid, waitpid(pid, &status, 0));
 	EXPECT_NE(0, WIFSIGNALED(status));
-	EXPECT_EQ(SIGKILL, WTERMSIG(status));
+	EXPECT_EQ(SIGTERM, WTERMSIG(status));
 
 	/* Take snapshot to CPU pagetables */
 	ret = hmm_dmirror_cmd(self->fd, HMM_DMIRROR_SNAPSHOT, buffer, npages);
@@ -2319,11 +2274,8 @@ TEST_F(hmm, migrate_anon_huge_fault)
 	unsigned long npages;
 	unsigned long size;
 	unsigned long i;
-	unsigned char *m;
-	uint64_t entry;
 	void *old_ptr;
 	void *map;
-	int pagemap_fd;
 	int *ptr;
 	int ret;
 
@@ -2346,15 +2298,14 @@ TEST_F(hmm, migrate_anon_huge_fault)
 
 	npages = size >> self->page_shift;
 	map = (void *)ALIGN((uintptr_t)buffer->ptr, size);
+	ret = madvise(map, size, MADV_HUGEPAGE);
+	ASSERT_EQ(ret, 0);
 	old_ptr = buffer->ptr;
 	buffer->ptr = map;
 
 	/* Initialize buffer in system memory. */
 	for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
 		ptr[i] = i;
-
-	ret = madvise(map, size, MADV_COLLAPSE);
-	ASSERT_EQ(ret, 0);
 
 	/* Migrate memory to device. */
 	ret = hmm_migrate_sys_to_dev(self->fd, buffer, npages);
@@ -2364,32 +2315,6 @@ TEST_F(hmm, migrate_anon_huge_fault)
 	/* Check what the device read. */
 	for (i = 0, ptr = buffer->mirror; i < size / sizeof(*ptr); ++i)
 		ASSERT_EQ(ptr[i], i);
-
-	if (!hmm_is_coherent_type(variant->device_number)) {
-		ret = hmm_dmirror_cmd(self->fd, HMM_DMIRROR_SNAPSHOT,
-				      buffer, npages);
-		ASSERT_EQ(ret, 0);
-		ASSERT_EQ(buffer->cpages, npages);
-
-		m = buffer->mirror;
-		for (i = 0; i < npages; ++i)
-			ASSERT_EQ(m[i], HMM_DMIRROR_PROT_DEV_PRIVATE_LOCAL |
-					HMM_DMIRROR_PROT_WRITE |
-					HMM_DMIRROR_PROT_PMD);
-
-		pagemap_fd = open("/proc/self/pagemap", O_RDONLY);
-		ASSERT_GE(pagemap_fd, 0);
-
-		for (i = 0; i < npages; ++i) {
-			entry = pagemap_get_entry(pagemap_fd,
-					(char *)buffer->ptr + i * self->page_size);
-
-			ASSERT_NE(entry & PM_SWAP, 0);
-			ASSERT_FALSE(PAGEMAP_PRESENT(entry));
-		}
-
-		close(pagemap_fd);
-	}
 
 	/* Fault pages back to system memory and check them. */
 	for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
@@ -2407,21 +2332,12 @@ TEST_F(hmm, migrate_partial_unmap_fault)
 	struct hmm_buffer *buffer;
 	unsigned long npages;
 	unsigned long size = read_pmd_pagesize();
-	unsigned long unmap_size;
-	unsigned long offsets[3];
 	unsigned long i;
 	void *old_ptr;
 	void *map;
 	int *ptr;
 	int ret, j, use_thp;
-
-	if (!size)
-		size = TWOMEG;
-
-	unmap_size = size / 2;
-	offsets[0] = 0;
-	offsets[1] = size / 4;
-	offsets[2] = size / 2;
+	int offsets[] = { 0, 512 * ONEKB, ONEMEG };
 
 	for (use_thp = 0; use_thp < 2; ++use_thp) {
 		for (j = 0; j < ARRAY_SIZE(offsets); ++j) {
@@ -2463,12 +2379,12 @@ TEST_F(hmm, migrate_partial_unmap_fault)
 			for (i = 0, ptr = buffer->mirror; i < size / sizeof(*ptr); ++i)
 				ASSERT_EQ(ptr[i], i);
 
-			munmap(buffer->ptr + offsets[j], unmap_size);
+			munmap(buffer->ptr + offsets[j], ONEMEG);
 
 			/* Fault pages back to system memory and check them. */
 			for (i = 0, ptr = buffer->ptr; i < size / sizeof(*ptr); ++i)
 				if (i * sizeof(int) < offsets[j] ||
-				    i * sizeof(int) >= offsets[j] + unmap_size)
+				    i * sizeof(int) >= offsets[j] + ONEMEG)
 					ASSERT_EQ(ptr[i], i);
 
 			buffer->ptr = old_ptr;
@@ -2482,19 +2398,12 @@ TEST_F(hmm, migrate_remap_fault)
 	struct hmm_buffer *buffer;
 	unsigned long npages;
 	unsigned long size = read_pmd_pagesize();
-	unsigned long offsets[3];
 	unsigned long i;
 	void *old_ptr, *new_ptr = NULL;
 	void *map;
 	int *ptr;
 	int ret, j, use_thp, dont_unmap, before;
-
-	if (!size)
-		size = TWOMEG;
-
-	offsets[0] = 0;
-	offsets[1] = size / 4;
-	offsets[2] = size / 2;
+	int offsets[] = { 0, 512 * ONEKB, ONEMEG };
 
 	for (before = 0; before < 2; ++before) {
 		for (dont_unmap = 0; dont_unmap < 2; ++dont_unmap) {
@@ -2829,7 +2738,7 @@ static inline int run_migration_benchmark(int fd, int use_thp, size_t buffer_siz
 	buffer->ptr = mmap(NULL, buffer_size, PROT_READ | PROT_WRITE,
 			  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-	if (buffer->ptr == MAP_FAILED)
+	if (!buffer->ptr)
 		return -1;
 
 	/* Apply THP hint if requested */
@@ -2897,11 +2806,8 @@ static inline int run_migration_benchmark(int fd, int use_thp, size_t buffer_siz
 TEST_F_TIMEOUT(hmm, benchmark_thp_migration, 120)
 {
 	struct benchmark_results thp_results, regular_results;
-	size_t thp_size = read_pmd_pagesize();
+	size_t thp_size = 2 * 1024 * 1024; /* 2MB - typical THP size */
 	int iterations = 5;
-
-	if (!thp_size)
-		thp_size = TWOMEG;
 
 	printf("\nHMM THP Migration Benchmark\n");
 	printf("---------------------------\n");
@@ -2909,33 +2815,29 @@ TEST_F_TIMEOUT(hmm, benchmark_thp_migration, 120)
 
 	/* Test different buffer sizes */
 	size_t test_sizes[] = {
-		thp_size / 4,      /* quarter THP */
-		thp_size / 2,      /* half THP */
-		thp_size,          /* single THP */
-		thp_size * 2,      /* two THPs */
-		thp_size * 4,      /* four THPs */
-		thp_size * 8,      /* eight THPs */
-		thp_size * 128,    /* one twenty eight THPs */
+		thp_size / 4,      /* 512KB - smaller than THP */
+		thp_size / 2,      /* 1MB - half THP */
+		thp_size,          /* 2MB - single THP */
+		thp_size * 2,      /* 4MB - two THPs */
+		thp_size * 4,      /* 8MB - four THPs */
+		thp_size * 8,       /* 16MB - eight THPs */
+		thp_size * 128,       /* 256MB - one twenty eight THPs */
 	};
 
 	static const char *const test_names[] = {
-		"Small Buffer",
-		"Half THP Size",
-		"Single THP Size",
-		"Two THP Size",
-		"Four THP Size",
-		"Eight THP Size",
-		"One twenty eight THP Size"
+		"Small Buffer (512KB)",
+		"Half THP Size (1MB)",
+		"Single THP Size (2MB)",
+		"Two THP Size (4MB)",
+		"Four THP Size (8MB)",
+		"Eight THP Size (16MB)",
+		"One twenty eight THP Size (256MB)"
 	};
 
 	int num_tests = ARRAY_SIZE(test_sizes);
 
 	/* Run all tests */
 	for (int i = 0; i < num_tests; i++) {
-		/* Skip test sizes exceeding INT_MAX to avoid overflow */
-		if (test_sizes[i] > INT_MAX)
-			break;
-
 		/* Test with THP */
 		ASSERT_EQ(run_migration_benchmark(self->fd, 1, test_sizes[i],
 					iterations, &thp_results), 0);

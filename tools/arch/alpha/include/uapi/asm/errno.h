@@ -127,6 +127,4 @@
 
 #define EHWPOISON	139	/* Memory page has hardware error */
 
-#define EFTYPE		140	/* Wrong file type for the intended operation */
-
 #endif

@@ -18,6 +18,18 @@
 		},\
 }
 
+/* It is defined here as it is a mixed timestamp */
+#define SSP_CHAN_TIMESTAMP(_si) {					\
+	.type = IIO_TIMESTAMP,						\
+	.channel = -1,							\
+	.scan_index = _si,						\
+	.scan_type = {							\
+		.sign = 's',						\
+		.realbits = 64,						\
+		.storagebits = 64,					\
+		},							\
+}
+
 #define SSP_MS_PER_S			1000
 #define SSP_INVERTED_SCALING_FACTOR	1000000U
 

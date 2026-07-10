@@ -419,21 +419,11 @@ out:
 
 char *perf_exe(char *buf, int len)
 {
-	int n;
-
-	if (len <= 0)
-		return buf;
-
-	n = readlink("/proc/self/exe", buf, len - 1);
+	int n = readlink("/proc/self/exe", buf, len);
 	if (n > 0) {
 		buf[n] = 0;
 		return buf;
 	}
-	if (len < (int)sizeof("perf")) {
-		buf[0] = '\0';
-		return buf;
-	}
-
 	return strcpy(buf, "perf");
 }
 

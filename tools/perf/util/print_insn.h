@@ -5,13 +5,10 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include <linux/types.h>
-
-struct addr_location;
-struct machine;
-struct perf_insn;
 struct perf_sample;
 struct thread;
+struct machine;
+struct perf_insn;
 
 #define PRINT_INSN_IMM_HEX		(1<<0)
 

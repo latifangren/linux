@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
-#include "common.h"
-
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <linux/zalloc.h>
 #include <unistd.h>
-
-#include <dwarf-regs.h>
-
-#include "../util/debug.h"
+#include "common.h"
 #include "../util/env.h"
+#include "../util/debug.h"
+#include <linux/zalloc.h>
 
 static const char *const arc_triplets[] = {
 	"arc-linux-",
@@ -146,40 +141,11 @@ static int lookup_triplets(const char *const *triplets, const char *name)
 	return -1;
 }
 
-static bool is_native_compatible(struct perf_env *env, uint16_t target, uint16_t host)
-{
-	if (target != host) {
-		/* A 64-bit host can natively disassemble its 32-bit compat architecture */
-		if (host == EM_X86_64 && target == EM_386)
-			return true;
-		if (host == EM_AARCH64 && target == EM_ARM)
-			return true;
-		if (host == EM_PPC64 && target == EM_PPC)
-			return true;
-		if (host == EM_SPARCV9 && target == EM_SPARC)
-			return true;
-		return false;
-	}
-
-	/* target == host case */
-	if (target == EM_RISCV) {
-		bool target_is_64 = perf_env__kernel_is_64_bit(env);
-		bool host_is_64 = (sizeof(void *) == 8);
-
-		/* 32-bit host cannot natively disassemble 64-bit target */
-		if (!host_is_64 && target_is_64)
-			return false;
-	}
-
-	return true;
-}
-
 static int perf_env__lookup_binutils_path(struct perf_env *env,
 					  const char *name, char **path)
 {
 	int idx;
-	uint16_t e_machine = perf_env__e_machine(env, /*e_flags=*/NULL);
-	const char *cross_env;
+	const char *arch = perf_env__arch(env), *cross_env;
 	const char *const *path_list;
 	char *buf = NULL;
 
@@ -187,7 +153,7 @@ static int perf_env__lookup_binutils_path(struct perf_env *env,
 	 * We don't need to try to find objdump path for native system.
 	 * Just use default binutils path (e.g.: "objdump").
 	 */
-	if (is_native_compatible(env, e_machine, EM_HOST))
+	if (!strcmp(perf_env__arch(NULL), arch))
 		goto out;
 
 	cross_env = getenv("CROSS_COMPILE");
@@ -204,42 +170,30 @@ static int perf_env__lookup_binutils_path(struct perf_env *env,
 		zfree(&buf);
 	}
 
-	switch (e_machine) {
-	case EM_ARC:
+	if (!strcmp(arch, "arc"))
 		path_list = arc_triplets;
-		break;
-	case EM_ARM:
+	else if (!strcmp(arch, "arm"))
 		path_list = arm_triplets;
-		break;
-	case EM_AARCH64:
+	else if (!strcmp(arch, "arm64"))
 		path_list = arm64_triplets;
-		break;
-	case EM_PPC:
-	case EM_PPC64:
+	else if (!strcmp(arch, "powerpc"))
 		path_list = powerpc_triplets;
-		break;
-	case EM_RISCV:
-		path_list = perf_env__kernel_is_64_bit(env) ? riscv64_triplets : riscv32_triplets;
-		break;
-	case EM_SH:
+	else if (!strcmp(arch, "riscv32"))
+		path_list = riscv32_triplets;
+	else if (!strcmp(arch, "riscv64"))
+		path_list = riscv64_triplets;
+	else if (!strcmp(arch, "sh"))
 		path_list = sh_triplets;
-		break;
-	case EM_S390:
+	else if (!strcmp(arch, "s390"))
 		path_list = s390_triplets;
-		break;
-	case EM_SPARC:
-	case EM_SPARCV9:
+	else if (!strcmp(arch, "sparc"))
 		path_list = sparc_triplets;
-		break;
-	case EM_X86_64:
-	case EM_386:
+	else if (!strcmp(arch, "x86"))
 		path_list = x86_triplets;
-		break;
-	case EM_MIPS:
+	else if (!strcmp(arch, "mips"))
 		path_list = mips_triplets;
-		break;
-	default:
-		ui__error("binutils for %s not supported.\n", perf_env__arch(env));
+	else {
+		ui__error("binutils for %s not supported.\n", arch);
 		goto out_error;
 	}
 
@@ -248,7 +202,7 @@ static int perf_env__lookup_binutils_path(struct perf_env *env,
 		ui__error("Please install %s for %s.\n"
 			  "You can add it to PATH, set CROSS_COMPILE or "
 			  "override the default using --%s.\n",
-			  name, perf_env__arch(env), name);
+			  name, arch, name);
 		goto out_error;
 	}
 
@@ -283,7 +237,5 @@ int perf_env__lookup_objdump(struct perf_env *env, char **path)
  */
 bool perf_env__single_address_space(struct perf_env *env)
 {
-	uint16_t e_machine = perf_env__e_machine(env, /*e_flags=*/NULL);
-
-	return e_machine != EM_SPARC && e_machine != EM_SPARCV9 && e_machine != EM_S390;
+	return strcmp(perf_env__arch(env), "sparc");
 }

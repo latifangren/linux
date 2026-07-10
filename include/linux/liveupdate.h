@@ -12,7 +12,6 @@
 #include <linux/kho/abi/luo.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/refcount.h>
 #include <linux/rwsem.h>
 #include <linux/types.h>
 #include <uapi/linux/liveupdate.h>
@@ -176,7 +175,7 @@ struct liveupdate_flb_ops {
  * @retrieved: True once the FLB's retrieve() callback has run.
  */
 struct luo_flb_private_state {
-	refcount_t count;
+	long count;
 	u64 data;
 	void *obj;
 	struct mutex lock;
@@ -240,8 +239,6 @@ void liveupdate_unregister_flb(struct liveupdate_file_handler *fh,
 			       struct liveupdate_flb *flb);
 
 int liveupdate_flb_get_incoming(struct liveupdate_flb *flb, void **objp);
-void liveupdate_flb_put_incoming(struct liveupdate_flb *flb);
-
 int liveupdate_flb_get_outgoing(struct liveupdate_flb *flb, void **objp);
 
 #else /* CONFIG_LIVEUPDATE */
@@ -280,10 +277,6 @@ static inline int liveupdate_flb_get_incoming(struct liveupdate_flb *flb,
 					      void **objp)
 {
 	return -EOPNOTSUPP;
-}
-
-static inline void liveupdate_flb_put_incoming(struct liveupdate_flb *flb)
-{
 }
 
 static inline int liveupdate_flb_get_outgoing(struct liveupdate_flb *flb,

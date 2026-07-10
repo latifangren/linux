@@ -10,7 +10,6 @@
 #include <linux/fileattr.h>
 #include <linux/fsverity.h>
 
-#include <linux/slab.h>
 #define FUSE_VERITY_ENABLE_ARG_MAX_PAGES 256
 
 static ssize_t fuse_send_ioctl(struct fuse_mount *fm, struct fuse_args *args,
@@ -253,7 +252,7 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 
 	err = -ENOMEM;
 	ap.folios = fuse_folios_alloc(fm->fc->max_pages, GFP_KERNEL, &ap.descs);
-	iov_page = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	iov_page = (struct iovec *) __get_free_page(GFP_KERNEL);
 	if (!ap.folios || !iov_page)
 		goto out;
 
@@ -401,7 +400,7 @@ long fuse_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg,
 	}
 	err = 0;
  out:
-	kfree(iov_page);
+	free_page((unsigned long) iov_page);
 	while (ap.num_folios)
 		folio_put(ap.folios[--ap.num_folios]);
 	kfree(ap.folios);

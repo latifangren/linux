@@ -189,6 +189,7 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 			lruvec_stat_mod_folio(folio, NR_SHMEM_THPS, -nr);
 	} else if (folio_test_pmd_mappable(folio)) {
 		lruvec_stat_mod_folio(folio, NR_FILE_THPS, -nr);
+		filemap_nr_thps_dec(mapping);
 	}
 	if (test_bit(AS_KERNEL_FILE, &folio->mapping->flags))
 		mod_node_page_state(folio_pgdat(folio),
@@ -1807,8 +1808,9 @@ pgoff_t page_cache_next_miss(struct address_space *mapping,
 			     pgoff_t index, unsigned long max_scan)
 {
 	XA_STATE(xas, &mapping->i_pages, index);
+	unsigned long nr = max_scan;
 
-	while (max_scan--) {
+	while (nr--) {
 		void *entry = xas_next(&xas);
 		if (!entry || xa_is_value(entry))
 			return xas.xa_index;
@@ -1816,8 +1818,7 @@ pgoff_t page_cache_next_miss(struct address_space *mapping,
 			return 0;
 	}
 
-	/* Return end of the range + 1 when no hole is found */
-	return xas.xa_index + 1;
+	return index + max_scan;
 }
 EXPORT_SYMBOL(page_cache_next_miss);
 
@@ -1848,13 +1849,12 @@ pgoff_t page_cache_prev_miss(struct address_space *mapping,
 	while (max_scan--) {
 		void *entry = xas_prev(&xas);
 		if (!entry || xa_is_value(entry))
-			return xas.xa_index;
+			break;
 		if (xas.xa_index == ULONG_MAX)
-			return ULONG_MAX;
+			break;
 	}
 
-	/* Return start of the range - 1 when no hole is found */
-	return xas.xa_index - 1;
+	return xas.xa_index;
 }
 EXPORT_SYMBOL(page_cache_prev_miss);
 
@@ -2052,19 +2052,8 @@ no_page:
 	if (!folio)
 		return ERR_PTR(-ENOENT);
 	/* not an uncached lookup, clear uncached if set */
-	if (!(fgp_flags & FGP_DONTCACHE) && folio_test_clear_dropbehind(folio)) {
-		if (folio_test_dirty(folio) &&
-		    mapping_can_writeback(mapping)) {
-			struct inode *inode = mapping->host;
-			struct bdi_writeback *wb;
-			struct wb_lock_cookie cookie = {};
-			long nr = folio_nr_pages(folio);
-
-			wb = unlocked_inode_to_wb_begin(inode, &cookie);
-			wb_stat_mod(wb, WB_DONTCACHE_DIRTY, -nr);
-			unlocked_inode_to_wb_end(inode, &cookie);
-		}
-	}
+	if (folio_test_dropbehind(folio) && !(fgp_flags & FGP_DONTCACHE))
+		folio_clear_dropbehind(folio);
 	return folio;
 }
 EXPORT_SYMBOL(__filemap_get_folio_mpol);
@@ -2294,7 +2283,8 @@ unsigned filemap_get_folios_contig(struct address_space *mapping,
 			goto put_folio;
 
 		if (!folio_batch_add(fbatch, folio)) {
-			*start = folio_next_index(folio);
+			nr = folio_nr_pages(folio);
+			*start = folio->index + nr;
 			goto out;
 		}
 		xas_advance(&xas, folio_next_index(folio) - 1);
@@ -2354,7 +2344,8 @@ unsigned filemap_get_folios_tag(struct address_space *mapping, pgoff_t *start,
 		if (xa_is_value(folio))
 			continue;
 		if (!folio_batch_add(fbatch, folio)) {
-			*start = folio_next_index(folio);
+			unsigned long nr = folio_nr_pages(folio);
+			*start = folio->index + nr;
 			goto out;
 		}
 	}
@@ -2412,7 +2403,8 @@ unsigned filemap_get_folios_dirty(struct address_space *mapping, pgoff_t *start,
 			}
 		}
 		if (!folio_batch_add(fbatch, folio)) {
-			*start = folio_next_index(folio);
+			unsigned long nr = folio_nr_pages(folio);
+			*start = folio->index + nr;
 			goto out;
 		}
 	}
@@ -3320,24 +3312,12 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	struct file *fpin = NULL;
 	vm_flags_t vm_flags = vmf->vma->vm_flags;
 	bool force_thp_readahead = false;
-	unsigned int thp_order = 0;
 	unsigned short mmap_miss;
 
 	/* Use the readahead code, even if readahead is disabled */
-	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) && (vm_flags & VM_HUGEPAGE)) {
-		/*
-		 * Cap max THP order at 2MB: this is the common PMD-sized
-		 * hugepage size, and it avoids memory pressure from very
-		 * large forced readahead when mapping_max_folio_order() is
-		 * high (for example, 128MB with 64K base pages on arm64).
-		 */
-		if (mapping_large_folio_support(mapping)) {
-			force_thp_readahead = true;
-			thp_order = min_t(unsigned int,
-					  mapping_max_folio_order(mapping),
-					  get_order(SZ_2M));
-		}
-	}
+	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
+	    (vm_flags & VM_HUGEPAGE) && HPAGE_PMD_ORDER <= MAX_PAGECACHE_ORDER)
+		force_thp_readahead = true;
 
 	if (!force_thp_readahead) {
 		/*
@@ -3357,7 +3337,7 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 		}
 	}
 
-	if (!(vm_flags & (VM_SEQ_READ | VM_EXEC))) {
+	if (!(vm_flags & VM_SEQ_READ)) {
 		/* Avoid banging the cache line if not needed */
 		mmap_miss = READ_ONCE(ra->mmap_miss);
 		if (mmap_miss < MMAP_LOTSAMISS * 10)
@@ -3372,19 +3352,17 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	}
 
 	if (force_thp_readahead) {
-		unsigned long folio_nr_pages = 1UL << thp_order;
-
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
-		ractl._index &= ~(folio_nr_pages - 1);
-		ra->size = folio_nr_pages;
+		ractl._index &= ~((unsigned long)HPAGE_PMD_NR - 1);
+		ra->size = HPAGE_PMD_NR;
 		/*
-		 * Fetch two folios so we get the chance to actually
+		 * Fetch two PMD folios, so we get the chance to actually
 		 * readahead, unless we've been told not to.
 		 */
 		if (!(vm_flags & VM_RAND_READ))
 			ra->size *= 2;
-		ra->async_size = folio_nr_pages;
-		ra->order = thp_order;
+		ra->async_size = HPAGE_PMD_NR;
+		ra->order = HPAGE_PMD_ORDER;
 		page_cache_ra_order(&ractl, ra);
 		return fpin;
 	}
@@ -3452,13 +3430,8 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 	 * Don't touch the mmap_miss counter to avoid decreasing it multiple
 	 * times for a single folio and break the balance with mmap_miss
 	 * increase in do_sync_mmap_readahead().
-	 *
-	 * VM_SEQ_READ and VM_EXEC mappings skip the mmap_miss increment in
-	 * do_sync_mmap_readahead(), so skip the decrement here as well to
-	 * keep the counter symmetric.
 	 */
-	if (likely(!folio_test_locked(folio)) &&
-	    !(vmf->vma->vm_flags & (VM_SEQ_READ | VM_EXEC))) {
+	if (likely(!folio_test_locked(folio))) {
 		mmap_miss = READ_ONCE(ra->mmap_miss);
 		if (mmap_miss)
 			WRITE_ONCE(ra->mmap_miss, --mmap_miss);
@@ -3774,7 +3747,8 @@ skip:
 static vm_fault_t filemap_map_folio_range(struct vm_fault *vmf,
 			struct folio *folio, unsigned long start,
 			unsigned long addr, unsigned int nr_pages,
-			unsigned long *rss, pgoff_t file_end)
+			unsigned long *rss, unsigned short *mmap_miss,
+			pgoff_t file_end)
 {
 	struct address_space *mapping = folio->mapping;
 	unsigned int ref_from_caller = 1;
@@ -3805,6 +3779,16 @@ static vm_fault_t filemap_map_folio_range(struct vm_fault *vmf,
 	do {
 		if (PageHWPoison(page + count))
 			goto skip;
+
+		/*
+		 * If there are too many folios that are recently evicted
+		 * in a file, they will probably continue to be evicted.
+		 * In such situation, read-ahead is only a waste of IO.
+		 * Don't decrease mmap_miss in this scenario to make sure
+		 * we can stop read-ahead.
+		 */
+		if (!folio_test_workingset(folio))
+			(*mmap_miss)++;
 
 		/*
 		 * NOTE: If there're PTE markers, we'll leave them to be
@@ -3852,13 +3836,17 @@ skip:
 
 static vm_fault_t filemap_map_order0_folio(struct vm_fault *vmf,
 		struct folio *folio, unsigned long addr,
-		unsigned long *rss)
+		unsigned long *rss, unsigned short *mmap_miss)
 {
 	vm_fault_t ret = 0;
 	struct page *page = &folio->page;
 
 	if (PageHWPoison(page))
 		goto out;
+
+	/* See comment of filemap_map_folio_range() */
+	if (!folio_test_workingset(folio))
+		(*mmap_miss)++;
 
 	/*
 	 * NOTE: If there're PTE markers, we'll leave them to be
@@ -3894,6 +3882,7 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	vm_fault_t ret = 0;
 	unsigned long rss = 0;
 	unsigned int nr_pages = 0, folio_type;
+	unsigned short mmap_miss = 0, mmap_miss_saved;
 
 	/*
 	 * Recalculate end_pgoff based on file_end before calling
@@ -3932,7 +3921,6 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	folio_type = mm_counter_file(folio);
 	do {
 		unsigned long end;
-		vm_fault_t map_ret;
 
 		addr += (xas.xa_index - last_pgoff) << PAGE_SHIFT;
 		vmf->pte += xas.xa_index - last_pgoff;
@@ -3940,40 +3928,13 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 		end = folio_next_index(folio) - 1;
 		nr_pages = min(end, end_pgoff) - xas.xa_index + 1;
 
-		if (!folio_test_large(folio)) {
-			map_ret = filemap_map_order0_folio(vmf, folio, addr,
-							   &rss);
-		} else {
-			unsigned long start = xas.xa_index - folio->index;
-
-			map_ret = filemap_map_folio_range(vmf, folio, start,
-							  addr, nr_pages, &rss,
-							  file_end);
-		}
-		ret |= map_ret;
-
-		/*
-		 * If there are too many folios that are recently evicted
-		 * in a file, they will probably continue to be evicted.
-		 * In such situation, read-ahead is only a waste of IO.
-		 * Don't decrease mmap_miss in this scenario to make sure
-		 * we can stop read-ahead.
-		 *
-		 * VM_SEQ_READ and VM_EXEC mappings skip the mmap_miss
-		 * increment in do_sync_mmap_readahead(), so skip the
-		 * decrement here as well to keep the counter symmetric.
-		 */
-		if ((map_ret & VM_FAULT_NOPAGE) &&
-		    !(vmf->flags & FAULT_FLAG_TRIED) &&
-		    !folio_test_workingset(folio) &&
-		    !(vma->vm_flags & (VM_SEQ_READ | VM_EXEC))) {
-			unsigned short mmap_miss;
-
-			mmap_miss = READ_ONCE(file->f_ra.mmap_miss);
-			if (mmap_miss)
-				WRITE_ONCE(file->f_ra.mmap_miss,
-					   mmap_miss - 1);
-		}
+		if (!folio_test_large(folio))
+			ret |= filemap_map_order0_folio(vmf,
+					folio, addr, &rss, &mmap_miss);
+		else
+			ret |= filemap_map_folio_range(vmf, folio,
+					xas.xa_index - folio->index, addr,
+					nr_pages, &rss, &mmap_miss, file_end);
 
 		folio_unlock(folio);
 	} while ((folio = next_uptodate_folio(&xas, mapping, end_pgoff)) != NULL);
@@ -3982,6 +3943,12 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	trace_mm_filemap_map_pages(mapping, start_pgoff, end_pgoff);
 out:
 	rcu_read_unlock();
+
+	mmap_miss_saved = READ_ONCE(file->f_ra.mmap_miss);
+	if (mmap_miss >= mmap_miss_saved)
+		WRITE_ONCE(file->f_ra.mmap_miss, 0);
+	else
+		WRITE_ONCE(file->f_ra.mmap_miss, mmap_miss_saved - mmap_miss);
 
 	return ret;
 }
@@ -4704,7 +4671,7 @@ static inline bool can_do_cachestat(struct file *f)
 {
 	if (f->f_mode & FMODE_WRITE)
 		return true;
-	if (file_owner_or_capable(f))
+	if (inode_owner_or_capable(file_mnt_idmap(f), file_inode(f)))
 		return true;
 	return file_permission(f, MAY_WRITE) == 0;
 }

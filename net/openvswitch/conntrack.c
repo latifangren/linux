@@ -883,8 +883,7 @@ static void ct_limit_set(const struct ovs_ct_limit_info *info,
 	struct hlist_head *head;
 
 	head = ct_limit_hash_bucket(info, new_ct_limit->zone);
-	hlist_for_each_entry_rcu(ct_limit, head, hlist_node,
-				 lockdep_ovsl_is_held()) {
+	hlist_for_each_entry_rcu(ct_limit, head, hlist_node) {
 		if (ct_limit->zone == new_ct_limit->zone) {
 			hlist_replace_rcu(&ct_limit->hlist_node,
 					  &new_ct_limit->hlist_node);
@@ -1798,10 +1797,10 @@ static int ovs_ct_limit_get_zone_limit(struct net *net,
 		} else {
 			rcu_read_lock();
 			limit = ct_limit_get(info, zone);
+			rcu_read_unlock();
 
 			err = __ovs_ct_limit_get_zone_limit(
 				net, info->data, zone, limit, reply);
-			rcu_read_unlock();
 			if (err)
 				return err;
 		}

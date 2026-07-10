@@ -8,6 +8,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -232,9 +233,7 @@ static int interrupt_cnt_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = devm_mutex_init(dev, &priv->lock);
-	if (ret)
-		return ret;
+	mutex_init(&priv->lock);
 
 	ret = devm_counter_add(dev, counter);
 	if (ret < 0)

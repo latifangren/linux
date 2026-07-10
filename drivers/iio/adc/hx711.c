@@ -7,6 +7,7 @@
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/slab.h>
@@ -27,20 +28,22 @@
 struct hx711_gain_to_scale {
 	int			gain;
 	int			gain_pulse;
+	int			scale;
 	int			channel;
 };
 
 /*
  * .scale depends on AVDD which in turn is known as soon as the regulator
- * is available; it is stored per device in hx711_data.gain_scale[]
+ * is available
+ * therefore we set .scale in hx711_probe()
  *
  * channel A in documentation is channel 0 in source code
  * channel B in documentation is channel 1 in source code
  */
-static const struct hx711_gain_to_scale hx711_gain_to_scale[HX711_GAIN_MAX] = {
-	{ 128, 1, 0 },
-	{  32, 2, 1 },
-	{  64, 3, 0 },
+static struct hx711_gain_to_scale hx711_gain_to_scale[HX711_GAIN_MAX] = {
+	{ 128, 1, 0, 0 },
+	{  32, 2, 0, 1 },
+	{  64, 3, 0, 0 }
 };
 
 static int hx711_get_gain_to_pulse(int gain)
@@ -53,22 +56,22 @@ static int hx711_get_gain_to_pulse(int gain)
 	return 1;
 }
 
-static int hx711_get_gain_to_scale(const int *gain_scale, int gain)
+static int hx711_get_gain_to_scale(int gain)
 {
 	int i;
 
 	for (i = 0; i < HX711_GAIN_MAX; i++)
 		if (hx711_gain_to_scale[i].gain == gain)
-			return gain_scale[i];
+			return hx711_gain_to_scale[i].scale;
 	return 0;
 }
 
-static int hx711_get_scale_to_gain(const int *gain_scale, int scale)
+static int hx711_get_scale_to_gain(int scale)
 {
 	int i;
 
 	for (i = 0; i < HX711_GAIN_MAX; i++)
-		if (gain_scale[i] == scale)
+		if (hx711_gain_to_scale[i].scale == scale)
 			return hx711_gain_to_scale[i].gain;
 	return -EINVAL;
 }
@@ -79,7 +82,6 @@ struct hx711_data {
 	struct gpio_desc	*gpiod_dout;
 	int			gain_set;	/* gain set on device */
 	int			gain_chan_a;	/* gain for channel A */
-	int			gain_scale[HX711_GAIN_MAX];
 	struct mutex		lock;
 	/*
 	 * triggered buffer
@@ -288,8 +290,7 @@ static int hx711_read_raw(struct iio_dev *indio_dev,
 		*val = 0;
 		mutex_lock(&hx711_data->lock);
 
-		*val2 = hx711_get_gain_to_scale(hx711_data->gain_scale,
-						hx711_data->gain_set);
+		*val2 = hx711_get_gain_to_scale(hx711_data->gain_set);
 
 		mutex_unlock(&hx711_data->lock);
 
@@ -320,7 +321,7 @@ static int hx711_write_raw(struct iio_dev *indio_dev,
 
 		mutex_lock(&hx711_data->lock);
 
-		gain = hx711_get_scale_to_gain(hx711_data->gain_scale, val2);
+		gain = hx711_get_scale_to_gain(val2);
 		if (gain < 0) {
 			mutex_unlock(&hx711_data->lock);
 			return gain;
@@ -385,7 +386,6 @@ static ssize_t hx711_scale_available_show(struct device *dev,
 				struct device_attribute *attr,
 				char *buf)
 {
-	struct hx711_data *hx711_data = iio_priv(dev_to_iio_dev(dev));
 	struct iio_dev_attr *iio_attr = to_iio_dev_attr(attr);
 	int channel = iio_attr->address;
 	int i, len = 0;
@@ -393,7 +393,7 @@ static ssize_t hx711_scale_available_show(struct device *dev,
 	for (i = 0; i < HX711_GAIN_MAX; i++)
 		if (hx711_gain_to_scale[i].channel == channel)
 			len += sprintf(buf + len, "0.%09d ",
-				       hx711_data->gain_scale[i]);
+					hx711_gain_to_scale[i].scale);
 
 	len += sprintf(buf + len, "\n");
 
@@ -511,7 +511,7 @@ static int hx711_probe(struct platform_device *pdev)
 	ret *= 100;
 
 	for (i = 0; i < HX711_GAIN_MAX; i++)
-		hx711_data->gain_scale[i] =
+		hx711_gain_to_scale[i].scale =
 			ret / hx711_gain_to_scale[i].gain / 1678;
 
 	hx711_data->gain_set = 128;

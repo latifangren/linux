@@ -3,6 +3,7 @@
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/pm.h>
 #include <linux/regmap.h>
 
@@ -32,8 +33,8 @@ static int bmi270_i2c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id bmi270_i2c_id[] = {
-	{ .name = "bmi260", .driver_data = (kernel_ulong_t)&bmi260_chip_info },
-	{ .name = "bmi270", .driver_data = (kernel_ulong_t)&bmi270_chip_info },
+	{ "bmi260", (kernel_ulong_t)&bmi260_chip_info },
+	{ "bmi270", (kernel_ulong_t)&bmi270_chip_info },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bmi270_i2c_id);

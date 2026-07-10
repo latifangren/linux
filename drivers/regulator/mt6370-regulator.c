@@ -4,6 +4,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -370,8 +371,8 @@ static int mt6370_regulator_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id mt6370_devid_table[] = {
-	{ .name = "mt6370-regulator" },
-	{ }
+	{ "mt6370-regulator", 0},
+	{}
 };
 MODULE_DEVICE_TABLE(platform, mt6370_devid_table);
 

@@ -8,6 +8,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 
@@ -29,7 +30,7 @@ static int bno055_i2c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id bno055_i2c_id[] = {
-	{ .name = "bno055" },
+	{ "bno055" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bno055_i2c_id);

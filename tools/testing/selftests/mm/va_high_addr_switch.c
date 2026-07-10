@@ -11,7 +11,6 @@
 
 #include "vm_util.h"
 #include "kselftest.h"
-#include "hugepage_settings.h"
 
 /*
  * The hint addr value is used to allocate addresses
@@ -258,35 +257,40 @@ void testcases_init(void)
 	switch_hint = addr_switch_hint;
 }
 
-static void run_test(struct testcase *test, int count)
+static int run_test(struct testcase *test, int count)
 {
 	void *p;
-	int i;
+	int i, ret = KSFT_PASS;
 
 	for (i = 0; i < count; i++) {
 		struct testcase *t = test + i;
 
 		p = mmap(t->addr, t->size, PROT_READ | PROT_WRITE, t->flags, -1, 0);
+
+		printf("%s: %p - ", t->msg, p);
+
 		if (p == MAP_FAILED) {
-			ksft_perror("MAP_FAILED");
-			ksft_test_result_fail("%s\n", t->msg);
+			printf("FAILED\n");
+			ret = KSFT_FAIL;
 			continue;
 		}
 
 		if (t->low_addr_required && p >= (void *)(switch_hint)) {
-			ksft_print_msg("%p not below switch hint\n", p);
-			ksft_test_result_fail("%s\n", t->msg);
+			printf("FAILED\n");
+			ret = KSFT_FAIL;
 		} else {
 			/*
 			 * Do a dereference of the address returned so that we catch
 			 * bugs in page fault handling
 			 */
 			memset(p, 0, t->size);
-			ksft_test_result_pass("%s\n", t->msg);
+			printf("OK\n");
 		}
 		if (!t->keep_mapped)
 			munmap(p, t->size);
 	}
+
+	return ret;
 }
 
 #ifdef __aarch64__
@@ -318,23 +322,19 @@ static int supported_arch(void)
 
 int main(int argc, char **argv)
 {
-	bool run_hugetlb = false;
-
-	ksft_print_header();
+	int ret, hugetlb_ret = KSFT_PASS;
 
 	if (!supported_arch())
-		ksft_exit_skip("Architecture not supported\n");
-
-	if (hugetlb_setup_default(6))
-		run_hugetlb = true;
+		return KSFT_SKIP;
 
 	testcases_init();
 
-	ksft_set_plan(sz_testcases + (run_hugetlb ? sz_hugetlb_testcases : 0));
+	ret = run_test(testcases, sz_testcases);
+	if (argc == 2 && !strcmp(argv[1], "--run-hugetlb"))
+		hugetlb_ret = run_test(hugetlb_testcases, sz_hugetlb_testcases);
 
-	run_test(testcases, sz_testcases);
-	if (run_hugetlb)
-		run_test(hugetlb_testcases, sz_hugetlb_testcases);
-
-	ksft_finished();
+	if (ret == KSFT_PASS && hugetlb_ret == KSFT_PASS)
+		return KSFT_PASS;
+	else
+		return KSFT_FAIL;
 }

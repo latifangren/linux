@@ -2548,7 +2548,7 @@ static int dlm_migrate_lockres(struct dlm_ctxt *dlm,
 
 	/* preallocate up front. if this fails, abort */
 	ret = -ENOMEM;
-	mres = kmalloc(PAGE_SIZE, GFP_NOFS);
+	mres = (struct dlm_migratable_lockres *) __get_free_page(GFP_NOFS);
 	if (!mres) {
 		mlog_errno(ret);
 		goto leave;
@@ -2725,7 +2725,8 @@ leave:
 	if (wake)
 		wake_up(&res->wq);
 
-	kfree(mres);
+	if (mres)
+		free_page((unsigned long)mres);
 
 	dlm_put(dlm);
 

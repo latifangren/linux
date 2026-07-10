@@ -8,7 +8,6 @@
 
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
-#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
@@ -116,53 +115,65 @@ static const int adxrs290_hpf_3db_freq_hz_table[][2] = {
 static int adxrs290_get_rate_data(struct iio_dev *indio_dev, const u8 cmd, int *val)
 {
 	struct adxrs290_state *st = iio_priv(indio_dev);
+	int ret = 0;
 	int temp;
 
-	guard(mutex)(&st->lock);
-
+	mutex_lock(&st->lock);
 	temp = spi_w8r16(st->spi, cmd);
-	if (temp < 0)
-		return temp;
+	if (temp < 0) {
+		ret = temp;
+		goto err_unlock;
+	}
 
 	*val = sign_extend32(temp, 15);
 
-	return 0;
+err_unlock:
+	mutex_unlock(&st->lock);
+	return ret;
 }
 
 static int adxrs290_get_temp_data(struct iio_dev *indio_dev, int *val)
 {
 	const u8 cmd = ADXRS290_READ_REG(ADXRS290_REG_TEMP0);
 	struct adxrs290_state *st = iio_priv(indio_dev);
+	int ret = 0;
 	int temp;
 
-	guard(mutex)(&st->lock);
-
+	mutex_lock(&st->lock);
 	temp = spi_w8r16(st->spi, cmd);
-	if (temp < 0)
-		return temp;
+	if (temp < 0) {
+		ret = temp;
+		goto err_unlock;
+	}
 
 	/* extract lower 12 bits temperature reading */
 	*val = sign_extend32(temp, 11);
 
-	return 0;
+err_unlock:
+	mutex_unlock(&st->lock);
+	return ret;
 }
 
 static int adxrs290_get_3db_freq(struct iio_dev *indio_dev, u8 *val, u8 *val2)
 {
 	const u8 cmd = ADXRS290_READ_REG(ADXRS290_REG_FILTER);
 	struct adxrs290_state *st = iio_priv(indio_dev);
+	int ret = 0;
 	short temp;
 
-	guard(mutex)(&st->lock);
-
+	mutex_lock(&st->lock);
 	temp = spi_w8r8(st->spi, cmd);
-	if (temp < 0)
-		return temp;
+	if (temp < 0) {
+		ret = temp;
+		goto err_unlock;
+	}
 
 	*val = FIELD_GET(ADXRS290_LPF_MASK, temp);
 	*val2 = FIELD_GET(ADXRS290_HPF_MASK, temp);
 
-	return 0;
+err_unlock:
+	mutex_unlock(&st->lock);
+	return ret;
 }
 
 static int adxrs290_spi_write_reg(struct spi_device *spi, const u8 reg,
@@ -209,11 +220,11 @@ static int adxrs290_set_mode(struct iio_dev *indio_dev, enum adxrs290_mode mode)
 	if (st->mode == mode)
 		return 0;
 
-	guard(mutex)(&st->lock);
+	mutex_lock(&st->lock);
 
 	ret = spi_w8r8(st->spi, ADXRS290_READ_REG(ADXRS290_REG_POWER_CTL));
 	if (ret < 0)
-		return ret;
+		goto out_unlock;
 
 	val = ret;
 
@@ -225,18 +236,21 @@ static int adxrs290_set_mode(struct iio_dev *indio_dev, enum adxrs290_mode mode)
 		val |= ADXRS290_MEASUREMENT;
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out_unlock;
 	}
 
 	ret = adxrs290_spi_write_reg(st->spi, ADXRS290_REG_POWER_CTL, val);
 	if (ret < 0) {
 		dev_err(&st->spi->dev, "unable to set mode: %d\n", ret);
-		return ret;
+		goto out_unlock;
 	}
 
 	/* update cached mode */
 	st->mode = mode;
 
+out_unlock:
+	mutex_unlock(&st->lock);
 	return ret;
 }
 
@@ -492,20 +506,19 @@ static irqreturn_t adxrs290_trigger_handler(int irq, void *p)
 	u8 tx = ADXRS290_READ_REG(ADXRS290_REG_DATAX0);
 	int ret;
 
-	do {
-		guard(mutex)(&st->lock);
+	mutex_lock(&st->lock);
 
-		/* exercise a bulk data capture starting from reg DATAX0... */
-		ret = spi_write_then_read(st->spi, &tx, sizeof(tx),
-					  st->buffer.channels,
-					  sizeof(st->buffer.channels));
-		if (ret < 0)
-			break;
+	/* exercise a bulk data capture starting from reg DATAX0... */
+	ret = spi_write_then_read(st->spi, &tx, sizeof(tx), st->buffer.channels,
+				  sizeof(st->buffer.channels));
+	if (ret < 0)
+		goto out_unlock_notify;
 
-		iio_push_to_buffers_with_timestamp(indio_dev, &st->buffer,
-						   pf->timestamp);
-	} while (0);
+	iio_push_to_buffers_with_timestamp(indio_dev, &st->buffer,
+					   pf->timestamp);
 
+out_unlock_notify:
+	mutex_unlock(&st->lock);
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Networking component for Mostcore
+ * net.c - Networking component for Mostcore
  *
  * Copyright (C) 2015, Microchip Technology Germany II GmbH & Co. KG
  */
@@ -80,6 +80,11 @@ static int skb_to_mamac(const struct sk_buff *skb, struct mbo *mbo)
 	unsigned int payload_len = skb->len - ETH_HLEN;
 	unsigned int mdp_len = payload_len + MDP_HDR_LEN;
 
+	if (mdp_len < skb->len) {
+		pr_err("drop: too large packet! (%u)\n", skb->len);
+		return -EINVAL;
+	}
+
 	if (mbo->buffer_length < mdp_len) {
 		pr_err("drop: too small buffer! (%d for %d)\n",
 		       mbo->buffer_length, mdp_len);
@@ -126,6 +131,11 @@ static int skb_to_mep(const struct sk_buff *skb, struct mbo *mbo)
 {
 	u8 *buff = mbo->virt_address;
 	unsigned int mep_len = skb->len + MEP_HDR_LEN;
+
+	if (mep_len < skb->len) {
+		pr_err("drop: too large packet! (%u)\n", skb->len);
+		return -EINVAL;
+	}
 
 	if (mbo->buffer_length < mep_len) {
 		pr_err("drop: too small buffer! (%d for %d)\n",
@@ -329,13 +339,13 @@ static int comp_probe_channel(struct most_interface *iface, int channel_idx,
 	} else {
 		ch = ccfg->direction == MOST_CH_TX ? &nd->tx : &nd->rx;
 		if (ch->linked) {
-			netdev_err(nd->dev, "direction is allocated\n");
+			pr_err("direction is allocated\n");
 			ret = -EINVAL;
 			goto unlock;
 		}
 
 		if (register_netdev(nd->dev)) {
-			netdev_err(nd->dev, "register_netdev() failed\n");
+			pr_err("register_netdev() failed\n");
 			ret = -EINVAL;
 			goto unlock;
 		}
@@ -454,7 +464,7 @@ static int comp_rx_data(struct mbo *mbo)
 
 	if (!skb) {
 		dev->stats.rx_dropped++;
-		netdev_err_once(dev, "drop packet: no memory for skb\n");
+		pr_err_once("drop packet: no memory for skb\n");
 		goto out;
 	}
 

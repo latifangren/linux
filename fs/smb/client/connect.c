@@ -6,7 +6,6 @@
  *
  */
 #include <linux/fs.h>
-#include <linux/fs_context.h>
 #include <linux/net.h>
 #include <linux/string.h>
 #include <linux/sched/mm.h>
@@ -457,8 +456,8 @@ static int __reconnect_target_locked(struct TCP_Server_Info *server,
 				server->hostname = hostname;
 				spin_unlock(&server->srv_lock);
 			} else {
-				cifs_dbg(FYI, "%s: couldn't extract hostname or address from dfs target: %pe\n",
-					 __func__, hostname);
+				cifs_dbg(FYI, "%s: couldn't extract hostname or address from dfs target: %ld\n",
+					 __func__, PTR_ERR(hostname));
 				cifs_dbg(FYI, "%s: default to last target server: %s\n", __func__,
 					 server->hostname);
 			}
@@ -1872,6 +1871,14 @@ smbd_connected:
 	 * this will succeed. No need for try_module_get().
 	 */
 	__module_get(THIS_MODULE);
+	tcp_ses->tsk = kthread_run(cifs_demultiplex_thread,
+				  tcp_ses, "cifsd");
+	if (IS_ERR(tcp_ses->tsk)) {
+		rc = PTR_ERR(tcp_ses->tsk);
+		cifs_dbg(VFS, "error %d create cifsd thread\n", rc);
+		module_put(THIS_MODULE);
+		goto out_err_crypto_release;
+	}
 	tcp_ses->min_offload = ctx->min_offload;
 	tcp_ses->retrans = ctx->retrans;
 	/*
@@ -1879,7 +1886,9 @@ smbd_connected:
 	 * to the struct since the kernel thread not created yet
 	 * no need to spinlock this update of tcpStatus
 	 */
+	spin_lock(&tcp_ses->srv_lock);
 	tcp_ses->tcpStatus = CifsNeedNegotiate;
+	spin_unlock(&tcp_ses->srv_lock);
 
 	if ((ctx->max_credits < 20) || (ctx->max_credits > 60000))
 		tcp_ses->max_credits = SMB2_MAX_CREDITS_AVAILABLE;
@@ -1888,28 +1897,13 @@ smbd_connected:
 
 	tcp_ses->nr_targets = 1;
 	tcp_ses->ignore_signature = ctx->ignore_signature;
-
-	tcp_ses->tsk = kthread_create(cifs_demultiplex_thread,
-				  tcp_ses, "cifsd");
-	if (IS_ERR(tcp_ses->tsk)) {
-		rc = PTR_ERR(tcp_ses->tsk);
-		cifs_dbg(VFS, "error %d create cifsd thread\n", rc);
-		module_put(THIS_MODULE);
-		goto out_err_crypto_release;
-	}
-	/* thread created, put it on the list */
+	/* thread spawned, put it on the list */
 	spin_lock(&cifs_tcp_ses_lock);
 	list_add(&tcp_ses->tcp_ses_list, &cifs_tcp_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
 
 	/* queue echo request delayed work */
 	queue_delayed_work(cifsiod_wq, &tcp_ses->echo, tcp_ses->echo_interval);
-
-	/*
-	 * Use split create/wake logic to ensure that tcp_ses is fully populated
-	 * and tcp_ses->tsk is valid
-	 */
-	wake_up_process(tcp_ses->tsk);
 
 	return tcp_ses;
 
@@ -2997,9 +2991,9 @@ static int match_prepath(struct super_block *sb,
 }
 
 int
-cifs_match_super(struct super_block *sb, struct fs_context *fc)
+cifs_match_super(struct super_block *sb, void *data)
 {
-	struct cifs_mnt_data *mnt_data = fc->sget_key;
+	struct cifs_mnt_data *mnt_data = data;
 	struct smb3_fs_context *ctx;
 	struct cifs_sb_info *cifs_sb;
 	struct TCP_Server_Info *tcp_srv;
@@ -4001,9 +3995,6 @@ cifs_umount(struct cifs_sb_info *cifs_sb)
 		spin_lock(&cifs_sb->tlink_tree_lock);
 	}
 	spin_unlock(&cifs_sb->tlink_tree_lock);
-
-	flush_workqueue(serverclose_wq);
-	flush_workqueue(fileinfo_put_wq);
 
 	kfree(cifs_sb->prepath);
 	call_rcu(&cifs_sb->rcu, delayed_free);

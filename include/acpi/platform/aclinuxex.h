@@ -3,7 +3,7 @@
  *
  * Name: aclinuxex.h - Extra OS specific defines, etc. for Linux
  *
- * Copyright (C) 2000 - 2026, Intel Corp.
+ * Copyright (C) 2000 - 2025, Intel Corp.
  *
  *****************************************************************************/
 
@@ -134,7 +134,6 @@ static inline void acpi_os_terminate_debugger(void)
 /*
  * OSL interfaces added by Linux
  */
-#define acpi_ut_safe_strncpy	strscpy_pad
 
 #endif				/* __KERNEL__ */
 

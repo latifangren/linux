@@ -10,6 +10,7 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 
 #include "coresight-etm-perf.h"
@@ -336,7 +337,6 @@ static void smb_sync_perf_buffer(struct smb_drv_data *drvdata,
 	unsigned long to_copy;
 	long pg_idx, pg_offset;
 
-	head %= (unsigned long)buf->nr_pages << PAGE_SHIFT;
 	pg_idx = head >> PAGE_SHIFT;
 	pg_offset = head & (PAGE_SIZE - 1);
 

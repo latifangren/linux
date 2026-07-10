@@ -7,9 +7,8 @@
 
 #define pr_format(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/acpi.h>
 #include <linux/bitfield.h>
-#include <linux/cleanup.h>
-#include <linux/compiler_attributes.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/device/driver.h>
@@ -100,11 +99,6 @@ enum dell_ddv_method {
 	DELL_DDV_THERMAL_SENSOR_INFORMATION	= 0x22,
 };
 
-struct dell_wmi_buffer {
-	__le32 raw_size;
-	u8 raw_data[];
-} __packed;
-
 struct fan_sensor_entry {
 	u8 type;
 	__le16 rpm;
@@ -132,7 +126,7 @@ struct dell_wmi_ddv_sensors {
 	bool active;
 	struct mutex lock;	/* protect caching */
 	unsigned long timestamp;
-	struct dell_wmi_buffer *buffer;
+	union acpi_object *obj;
 	u64 entries;
 };
 
@@ -164,96 +158,105 @@ static const char * const fan_dock_labels[] = {
 	"Docking Chipset Fan",
 };
 
-static int dell_wmi_ddv_query(struct wmi_device *wdev, enum dell_ddv_method method, u32 arg,
-			      struct wmi_buffer *output, size_t min_size)
+static int dell_wmi_ddv_query_type(struct wmi_device *wdev, enum dell_ddv_method method, u32 arg,
+				   union acpi_object **result, acpi_object_type type)
 {
-	__le32 arg2 = cpu_to_le32(arg);
-	const struct wmi_buffer input = {
-		.length = sizeof(arg2),
-		.data = &arg2,
+	struct acpi_buffer out = { ACPI_ALLOCATE_BUFFER, NULL };
+	const struct acpi_buffer in = {
+		.length = sizeof(arg),
+		.pointer = &arg,
 	};
+	union acpi_object *obj;
+	acpi_status ret;
 
-	return wmidev_invoke_method(wdev, 0x0, method, &input, output, min_size);
+	ret = wmidev_evaluate_method(wdev, 0x0, method, &in, &out);
+	if (ACPI_FAILURE(ret))
+		return -EIO;
+
+	obj = out.pointer;
+	if (!obj)
+		return -ENODATA;
+
+	if (obj->type != type) {
+		kfree(obj);
+		return -ENOMSG;
+	}
+
+	*result = obj;
+
+	return 0;
 }
 
 static int dell_wmi_ddv_query_integer(struct wmi_device *wdev, enum dell_ddv_method method,
 				      u32 arg, u32 *res)
 {
-	struct wmi_buffer output;
+	union acpi_object *obj;
 	int ret;
 
-	ret = dell_wmi_ddv_query(wdev, method, arg, &output, sizeof(__le32));
+	ret = dell_wmi_ddv_query_type(wdev, method, arg, &obj, ACPI_TYPE_INTEGER);
 	if (ret < 0)
 		return ret;
 
-	__le32 *argr __free(kfree) = output.data;
+	if (obj->integer.value <= U32_MAX)
+		*res = (u32)obj->integer.value;
+	else
+		ret = -ERANGE;
 
-	*res = le32_to_cpu(*argr);
+	kfree(obj);
 
-	return 0;
+	return ret;
 }
 
 static int dell_wmi_ddv_query_buffer(struct wmi_device *wdev, enum dell_ddv_method method,
-				     u32 arg, struct dell_wmi_buffer **result)
+				     u32 arg, union acpi_object **result)
 {
-	struct dell_wmi_buffer *buffer;
-	struct wmi_buffer output;
-	size_t buffer_size;
+	union acpi_object *obj;
+	u64 buffer_size;
 	int ret;
 
-	ret = dell_wmi_ddv_query(wdev, method, arg, &output, sizeof(*buffer));
+	ret = dell_wmi_ddv_query_type(wdev, method, arg, &obj, ACPI_TYPE_PACKAGE);
 	if (ret < 0)
 		return ret;
 
-	buffer = output.data;
-	if (!le32_to_cpu(buffer->raw_size)) {
+	if (obj->package.count != 2 ||
+	    obj->package.elements[0].type != ACPI_TYPE_INTEGER ||
+	    obj->package.elements[1].type != ACPI_TYPE_BUFFER) {
+		ret = -ENOMSG;
+
+		goto err_free;
+	}
+
+	buffer_size = obj->package.elements[0].integer.value;
+
+	if (!buffer_size) {
 		ret = -ENODATA;
 
 		goto err_free;
 	}
 
-	buffer_size = struct_size(buffer, raw_data, le32_to_cpu(buffer->raw_size));
-	if (buffer_size > output.length) {
+	if (buffer_size > obj->package.elements[1].buffer.length) {
 		dev_warn(&wdev->dev,
-			 FW_WARN "Dell WMI buffer size (%zu) exceeds WMI buffer size (%zu)\n",
-			 buffer_size, output.length);
+			 FW_WARN "WMI buffer size (%llu) exceeds ACPI buffer size (%d)\n",
+			 buffer_size, obj->package.elements[1].buffer.length);
 		ret = -EMSGSIZE;
 
 		goto err_free;
 	}
 
-	*result = buffer;
+	*result = obj;
 
 	return 0;
 
 err_free:
-	kfree(output.data);
+	kfree(obj);
 
 	return ret;
 }
 
-static ssize_t dell_wmi_ddv_query_string(struct wmi_device *wdev, enum dell_ddv_method method,
-					 u32 arg, char *buf, size_t length)
+static int dell_wmi_ddv_query_string(struct wmi_device *wdev, enum dell_ddv_method method,
+				     u32 arg, union acpi_object **result)
 {
-	struct wmi_buffer output;
-	size_t str_size;
-	int ret;
-
-	ret = dell_wmi_ddv_query(wdev, method, arg, &output, sizeof(struct wmi_string));
-	if (ret < 0)
-		return ret;
-
-	struct wmi_string *str __free(kfree) = output.data;
-
-	str_size = sizeof(*str) + le16_to_cpu(str->length);
-	if (str_size > output.length) {
-		dev_warn(&wdev->dev,
-			 FW_WARN "WMI string size (%zu) exceeds WMI buffer size (%zu)\n",
-			 str_size, output.length);
-		return -EMSGSIZE;
-	}
-
-	return wmi_string_to_utf8s(str, buf, length);
+	return dell_wmi_ddv_query_type(wdev, method, arg, result, ACPI_TYPE_STRING);
 }
 
 /*
@@ -262,26 +265,28 @@ static ssize_t dell_wmi_ddv_query_string(struct wmi_device *wdev, enum dell_ddv_
 static int dell_wmi_ddv_update_sensors(struct wmi_device *wdev, enum dell_ddv_method method,
 				       struct dell_wmi_ddv_sensors *sensors, size_t entry_size)
 {
-	struct dell_wmi_buffer *buffer;
 	u64 buffer_size, rem, entries;
+	union acpi_object *obj;
+	u8 *buffer;
 	int ret;
 
-	if (sensors->buffer) {
+	if (sensors->obj) {
 		if (time_before(jiffies, sensors->timestamp + HZ))
 			return 0;
 
-		kfree(sensors->buffer);
-		sensors->buffer = NULL;
+		kfree(sensors->obj);
+		sensors->obj = NULL;
 	}
 
-	ret = dell_wmi_ddv_query_buffer(wdev, method, 0, &buffer);
+	ret = dell_wmi_ddv_query_buffer(wdev, method, 0, &obj);
 	if (ret < 0)
 		return ret;
 
 	/* buffer format sanity check */
-	buffer_size = le32_to_cpu(buffer->raw_size);
+	buffer_size = obj->package.elements[0].integer.value;
+	buffer = obj->package.elements[1].buffer.pointer;
 	entries = div64_u64_rem(buffer_size, entry_size, &rem);
-	if (rem != 1 || buffer->raw_data[buffer_size - 1] != 0xff) {
+	if (rem != 1 || buffer[buffer_size - 1] != 0xff) {
 		ret = -ENOMSG;
 		goto err_free;
 	}
@@ -291,14 +296,14 @@ static int dell_wmi_ddv_update_sensors(struct wmi_device *wdev, enum dell_ddv_me
 		goto err_free;
 	}
 
-	sensors->buffer = buffer;
+	sensors->obj = obj;
 	sensors->entries = entries;
 	sensors->timestamp = jiffies;
 
 	return 0;
 
 err_free:
-	kfree(buffer);
+	kfree(obj);
 
 	return ret;
 }
@@ -323,7 +328,7 @@ static int dell_wmi_ddv_fan_read_channel(struct dell_wmi_ddv_data *data, u32 att
 	if (channel >= data->fans.entries)
 		return -ENXIO;
 
-	entry = (struct fan_sensor_entry *)data->fans.buffer->raw_data;
+	entry = (struct fan_sensor_entry *)data->fans.obj->package.elements[1].buffer.pointer;
 	switch (attr) {
 	case hwmon_fan_input:
 		*val = get_unaligned_le16(&entry[channel].rpm);
@@ -349,7 +354,7 @@ static int dell_wmi_ddv_temp_read_channel(struct dell_wmi_ddv_data *data, u32 at
 	if (channel >= data->temps.entries)
 		return -ENXIO;
 
-	entry = (struct thermal_sensor_entry *)data->temps.buffer->raw_data;
+	entry = (struct thermal_sensor_entry *)data->temps.obj->package.elements[1].buffer.pointer;
 	switch (attr) {
 	case hwmon_temp_input:
 		*val = entry[channel].now * 1000;
@@ -406,7 +411,7 @@ static int dell_wmi_ddv_fan_read_string(struct dell_wmi_ddv_data *data, int chan
 	if (channel >= data->fans.entries)
 		return -ENXIO;
 
-	entry = (struct fan_sensor_entry *)data->fans.buffer->raw_data;
+	entry = (struct fan_sensor_entry *)data->fans.obj->package.elements[1].buffer.pointer;
 	type = entry[channel].type;
 	switch (type) {
 	case 0x00 ... 0x07:
@@ -437,7 +442,7 @@ static int dell_wmi_ddv_temp_read_string(struct dell_wmi_ddv_data *data, int cha
 	if (channel >= data->temps.entries)
 		return -ENXIO;
 
-	entry = (struct thermal_sensor_entry *)data->temps.buffer->raw_data;
+	entry = (struct thermal_sensor_entry *)data->temps.obj->package.elements[1].buffer.pointer;
 	switch (entry[channel].type) {
 	case 0x00:
 		*str = "CPU";
@@ -548,8 +553,8 @@ static void dell_wmi_ddv_hwmon_cache_invalidate(struct dell_wmi_ddv_sensors *sen
 		return;
 
 	mutex_lock(&sensors->lock);
-	kfree(sensors->buffer);
-	sensors->buffer = NULL;
+	kfree(sensors->obj);
+	sensors->obj = NULL;
 	mutex_unlock(&sensors->lock);
 }
 
@@ -559,7 +564,7 @@ static void dell_wmi_ddv_hwmon_cache_destroy(void *data)
 
 	sensors->active = false;
 	mutex_destroy(&sensors->lock);
-	kfree(sensors->buffer);
+	kfree(sensors->obj);
 }
 
 static struct hwmon_channel_info *dell_wmi_ddv_channel_init(struct wmi_device *wdev,
@@ -745,7 +750,7 @@ static void dell_wmi_battery_invalidate(struct dell_wmi_ddv_data *data,
 static ssize_t eppid_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct dell_wmi_ddv_data *data = container_of(attr, struct dell_wmi_ddv_data, eppid_attr);
-	ssize_t count;
+	union acpi_object *obj;
 	u32 index;
 	int ret;
 
@@ -753,19 +758,19 @@ static ssize_t eppid_show(struct device *dev, struct device_attribute *attr, cha
 	if (ret < 0)
 		return ret;
 
-	count = dell_wmi_ddv_query_string(data->wdev, DELL_DDV_BATTERY_EPPID, index, buf,
-					  PAGE_SIZE);
-	if (count < 0)
-		return count;
-
-	if (count != DELL_EPPID_LENGTH && count != DELL_EPPID_EXT_LENGTH)
-		dev_info_once(&data->wdev->dev, FW_INFO "Suspicious ePPID length (%zd)\n", count);
-
-	ret = sysfs_emit_at(buf, count, "\n");
+	ret = dell_wmi_ddv_query_string(data->wdev, DELL_DDV_BATTERY_EPPID, index, &obj);
 	if (ret < 0)
 		return ret;
 
-	return count + ret;
+	if (obj->string.length != DELL_EPPID_LENGTH && obj->string.length != DELL_EPPID_EXT_LENGTH)
+		dev_info_once(&data->wdev->dev, FW_INFO "Suspicious ePPID length (%d)\n",
+			      obj->string.length);
+
+	ret = sysfs_emit(buf, "%s\n", obj->string.pointer);
+
+	kfree(obj);
+
+	return ret;
 }
 
 static int dell_wmi_ddv_get_health(struct dell_wmi_ddv_data *data, u32 index,
@@ -989,15 +994,19 @@ static int dell_wmi_ddv_buffer_read(struct seq_file *seq, enum dell_ddv_method m
 {
 	struct device *dev = seq->private;
 	struct dell_wmi_ddv_data *data = dev_get_drvdata(dev);
-	struct dell_wmi_buffer *buffer;
+	union acpi_object *obj;
+	u64 size;
+	u8 *buf;
 	int ret;
 
-	ret = dell_wmi_ddv_query_buffer(data->wdev, method, 0, &buffer);
+	ret = dell_wmi_ddv_query_buffer(data->wdev, method, 0, &obj);
 	if (ret < 0)
 		return ret;
 
-	ret = seq_write(seq, buffer->raw_data, le32_to_cpu(buffer->raw_size));
-	kfree(buffer);
+	size = obj->package.elements[0].integer.value;
+	buf = obj->package.elements[1].buffer.pointer;
+	ret = seq_write(seq, buf, size);
+	kfree(obj);
 
 	return ret;
 }

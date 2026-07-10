@@ -19,6 +19,7 @@
 #include <linux/interrupt.h>
 #include <linux/irqreturn.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
 
@@ -1103,7 +1104,7 @@ static const struct of_device_id bd79124_of_match[] = {
 MODULE_DEVICE_TABLE(of, bd79124_of_match);
 
 static const struct i2c_device_id bd79124_id[] = {
-	{ .name = "bd79124" },
+	{ "bd79124" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bd79124_id);

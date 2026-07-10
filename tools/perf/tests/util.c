@@ -86,12 +86,7 @@ static int test_blake2s(void)
 	return 0;
 }
 
-static int test__blake2s_case(struct test_suite *t __maybe_unused, int subtest __maybe_unused)
-{
-	return test_blake2s();
-}
-
-static int test__strreplace(struct test_suite *t __maybe_unused, int subtest __maybe_unused)
+static int test__util(struct test_suite *t __maybe_unused, int subtest __maybe_unused)
 {
 	TEST_ASSERT_VAL("empty string", test_strreplace(' ', "", "123", ""));
 	TEST_ASSERT_VAL("no match", test_strreplace('5', "123", "4", "123"));
@@ -100,16 +95,7 @@ static int test__strreplace(struct test_suite *t __maybe_unused, int subtest __m
 	TEST_ASSERT_VAL("replace long", test_strreplace('a', "abcabc", "longlong",
 							"longlongbclonglongbc"));
 
-	return 0;
+	return test_blake2s();
 }
 
-static struct test_case tests__util[] = {
-	TEST_CASE("String replacement", strreplace),
-	TEST_CASE("BLAKE2s hash", blake2s_case),
-	{ .name = NULL, }
-};
-
-struct test_suite suite__util = {
-	.desc = "util",
-	.test_cases = tests__util,
-};
+DEFINE_SUITE("util", util);

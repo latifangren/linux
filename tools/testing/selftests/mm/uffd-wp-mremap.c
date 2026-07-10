@@ -8,27 +8,16 @@
 #include <linux/mman.h>
 #include <sys/mman.h>
 #include "kselftest.h"
-#include "hugepage_settings.h"
+#include "thp_settings.h"
 #include "uffd-common.h"
 
 static int pagemap_fd;
+static size_t pagesize;
 static int nr_pagesizes = 1;
-static unsigned long pagesize;
 static int nr_thpsizes;
 static size_t thpsizes[20];
 static int nr_hugetlbsizes;
-static unsigned long hugetlbsizes[10];
-
-static void check_uffd_wp_feature_supported(void)
-{
-	uint64_t features = 0;
-
-	if (uffd_get_features(&features))
-		ksft_exit_skip("failed to get available features (%d)\n", errno);
-
-	if (!(features & UFFD_FEATURE_PAGEFAULT_FLAG_WP))
-		ksft_exit_skip("uffd-wp feature not supported\n");
-}
+static size_t hugetlbsizes[10];
 
 static int detect_thp_sizes(size_t sizes[], int max)
 {
@@ -256,7 +245,7 @@ out:
 }
 
 struct testcase {
-	unsigned long *sizes;
+	size_t *sizes;
 	int *nr_sizes;
 	bool private;
 	bool swapout;
@@ -347,16 +336,14 @@ int main(int argc, char **argv)
 	struct thp_settings settings;
 	int i, j, plan = 0;
 
-	hugepage_save_settings(true, true);
-
-	check_uffd_wp_feature_supported();
-
 	pagesize = getpagesize();
 	nr_thpsizes = detect_thp_sizes(thpsizes, ARRAY_SIZE(thpsizes));
-	nr_hugetlbsizes = hugetlb_setup(1, hugetlbsizes, ARRAY_SIZE(hugetlbsizes));
+	nr_hugetlbsizes = detect_hugetlb_page_sizes(hugetlbsizes,
+						    ARRAY_SIZE(hugetlbsizes));
 
-	/* If THP is supported, initially disable THP. */
+	/* If THP is supported, save THP settings and initially disable THP. */
 	if (nr_thpsizes) {
+		thp_save_settings();
 		thp_read_settings(&settings);
 		for (i = 0; i < NR_ORDERS; i++) {
 			settings.hugepages[i].enabled = THP_NEVER;
@@ -380,6 +367,10 @@ int main(int argc, char **argv)
 			test_one_folio(&gopts, tc->sizes[j], tc->private,
 				       tc->swapout, tc->hugetlb);
 	}
+
+	/* If THP is supported, restore original THP settings. */
+	if (nr_thpsizes)
+		thp_restore_settings();
 
 	i = ksft_get_fail_cnt();
 	if (i)

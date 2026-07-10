@@ -87,10 +87,24 @@ static inline int copy_safe_from_sockptr(void *dst, size_t ksize,
 static inline int copy_struct_from_sockptr(void *dst, size_t ksize,
 		sockptr_t src, size_t usize)
 {
-	if (!sockptr_is_kernel(src))
-		return copy_struct_from_user(dst, ksize, src.user, usize);
+	size_t size = min(ksize, usize);
+	size_t rest = max(ksize, usize) - size;
 
-	return copy_struct_from_bounce_buffer(dst, ksize, src.kernel, usize);
+	if (!sockptr_is_kernel(src))
+		return copy_struct_from_user(dst, ksize, src.user, size);
+
+	if (usize < ksize) {
+		memset(dst + size, 0, rest);
+	} else if (usize > ksize) {
+		char *p = src.kernel;
+
+		while (rest--) {
+			if (*p++)
+				return -E2BIG;
+		}
+	}
+	memcpy(dst, src.kernel, size);
+	return 0;
 }
 
 static inline int copy_to_sockptr_offset(sockptr_t dst, size_t offset,
@@ -105,16 +119,6 @@ static inline int copy_to_sockptr_offset(sockptr_t dst, size_t offset,
 static inline int copy_to_sockptr(sockptr_t dst, const void *src, size_t size)
 {
 	return copy_to_sockptr_offset(dst, 0, src, size);
-}
-
-static inline int
-copy_struct_to_sockptr(sockptr_t dst, size_t usize, const void *src,
-		       size_t ksize, bool *ignored_trailing)
-{
-	if (!sockptr_is_kernel(dst))
-		return copy_struct_to_user(dst.user, usize, src, ksize, ignored_trailing);
-
-	return copy_struct_to_bounce_buffer(dst.kernel, usize, src, ksize, ignored_trailing);
 }
 
 static inline void *memdup_sockptr_noprof(sockptr_t src, size_t len)

@@ -1174,10 +1174,7 @@ read_boot:
 	rec->total = cpu_to_le32(sbi->record_size);
 	((struct ATTRIB *)Add2Ptr(rec, ao))->type = ATTR_END;
 
-	if (!sb_set_blocksize(sb, min_t(u32, sbi->cluster_size, PAGE_SIZE))) {
-		err = -EINVAL;
-		goto out;
-	}
+	sb_set_blocksize(sb, min_t(u32, sbi->cluster_size, PAGE_SIZE));
 
 	sbi->block_mask = sb->s_blocksize - 1;
 	sbi->blocks_per_cluster = sbi->cluster_size >> sb->s_blocksize_bits;
@@ -1228,8 +1225,7 @@ out:
 			/*
 			 * Try alternative boot (last sector)
 			 */
-			if (!sb_set_blocksize(sb, block_size))
-				return -EINVAL;
+			sb_set_blocksize(sb, block_size);
 			hint = "Alternative boot";
 			dev_size = dev_size0; /* restore original size. */
 			goto read_boot;

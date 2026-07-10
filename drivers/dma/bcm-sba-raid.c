@@ -40,7 +40,6 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/raid/pq.h>
-#include <linux/raid/pq_tables.h>
 
 #include "dmaengine.h"
 

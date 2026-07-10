@@ -11,6 +11,7 @@
 #include <linux/mfd/rohm-bd71828.h>
 #include <linux/mfd/rohm-bd72720.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
@@ -1690,9 +1691,9 @@ static int bd71828_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id bd71828_pmic_id[] = {
-	{ .name = "bd71828-pmic", .driver_data = ROHM_CHIP_TYPE_BD71828 },
-	{ .name = "bd72720-pmic", .driver_data = ROHM_CHIP_TYPE_BD72720 },
-	{ }
+	{ "bd71828-pmic", ROHM_CHIP_TYPE_BD71828 },
+	{ "bd72720-pmic", ROHM_CHIP_TYPE_BD72720 },
+	{ },
 };
 MODULE_DEVICE_TABLE(platform, bd71828_pmic_id);
 

@@ -2729,7 +2729,7 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 	struct ldtentry *d;
 	struct dtslot *t;
 	int d_namleft, len, outlen;
-	void *dirent_buf;
+	unsigned long dirent_buf;
 	char *name_ptr;
 	u32 dir_index;
 	int do_index = 0;
@@ -2884,7 +2884,7 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 		}
 	}
 
-	dirent_buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	dirent_buf = __get_free_page(GFP_KERNEL);
 	if (dirent_buf == 0) {
 		DT_PUTPAGE(mp);
 		jfs_warn("jfs_readdir: __get_free_page failed!");
@@ -2893,7 +2893,7 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	while (1) {
-		jfs_dirent = dirent_buf;
+		jfs_dirent = (struct jfs_dirent *) dirent_buf;
 		jfs_dirents = 0;
 		overflow = fix_page = 0;
 
@@ -2903,7 +2903,7 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 			if (stbl[i] < 0) {
 				jfs_err("JFS: Invalid stbl[%d] = %d for inode %ld, block = %lld",
 					i, stbl[i], (long)ip->i_ino, (long long)bn);
-				kfree(dirent_buf);
+				free_page(dirent_buf);
 				DT_PUTPAGE(mp);
 				return -EIO;
 			}
@@ -2911,7 +2911,7 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 			d = (struct ldtentry *) & p->slot[stbl[i]];
 
 			if (((long) jfs_dirent + d->namlen + 1) >
-			    ((long)dirent_buf + PAGE_SIZE)) {
+			    (dirent_buf + PAGE_SIZE)) {
 				/* DBCS codepages could overrun dirent_buf */
 				index = i;
 				overflow = 1;
@@ -3014,7 +3014,7 @@ skip_one:
 		/* unpin previous leaf page */
 		DT_PUTPAGE(mp);
 
-		jfs_dirent = dirent_buf;
+		jfs_dirent = (struct jfs_dirent *) dirent_buf;
 		while (jfs_dirents--) {
 			ctx->pos = jfs_dirent->position;
 			if (!dir_emit(ctx, jfs_dirent->name,
@@ -3037,13 +3037,13 @@ skip_one:
 
 		DT_GETPAGE(ip, bn, mp, PSIZE, p, rc);
 		if (rc) {
-			kfree(dirent_buf);
+			free_page(dirent_buf);
 			return rc;
 		}
 	}
 
       out:
-	kfree(dirent_buf);
+	free_page(dirent_buf);
 
 	return rc;
 }

@@ -713,7 +713,7 @@ static void cm36651_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id cm36651_id[] = {
-	{ .name = "cm36651" },
+	{ "cm36651" },
 	{ }
 };
 

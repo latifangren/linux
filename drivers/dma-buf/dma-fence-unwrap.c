@@ -97,9 +97,6 @@ int dma_fence_dedup_array(struct dma_fence **fences, int num_fences)
 {
 	int i, j;
 
-	if (!num_fences)
-		return 0;
-
 	sort(fences, num_fences, sizeof(*fences), fence_cmp, NULL);
 
 	/*
@@ -183,7 +180,8 @@ struct dma_fence *__dma_fence_unwrap_merge(unsigned int num_fences,
 
 	if (count > 1) {
 		result = dma_fence_array_create(count, array,
-						dma_fence_context_alloc(1), 1);
+						dma_fence_context_alloc(1),
+						1, false);
 		if (!result) {
 			for (i = 0; i < count; i++)
 				dma_fence_put(array[i]);

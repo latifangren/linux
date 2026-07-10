@@ -1871,8 +1871,10 @@ static int ad7768_probe(struct spi_device *spi)
 		return ret;
 
 	ret = ad7768_setup(indio_dev);
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "AD7768 setup failed\n");
+	if (ret < 0) {
+		dev_err(&spi->dev, "AD7768 setup failed\n");
+		return ret;
+	}
 
 	init_completion(&st->completion);
 	ret = devm_mutex_init(&spi->dev, &st->pga_lock);

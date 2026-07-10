@@ -14,6 +14,7 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
+#include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/power_supply.h>
@@ -299,8 +300,8 @@ static int max14656_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max14656_id[] = {
-	{ .name = "max14656" },
-	{ }
+	{ "max14656" },
+	{}
 };
 MODULE_DEVICE_TABLE(i2c, max14656_id);
 

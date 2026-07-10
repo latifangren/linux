@@ -241,12 +241,6 @@ static int __cifs_do_create(struct inode *dir, struct dentry *direntry,
 				goto cifs_create_get_file_info;
 			}
 
-			if ((oflags & __O_REGULAR) && !S_ISREG(newinode->i_mode)) {
-				CIFSSMBClose(xid, tcon, fid->netfid);
-				iput(newinode);
-				return -EFTYPE;
-			}
-
 			if (S_ISDIR(newinode->i_mode)) {
 				CIFSSMBClose(xid, tcon, fid->netfid);
 				iput(newinode);
@@ -464,15 +458,9 @@ cifs_create_set_dentry:
 		goto out_err;
 	}
 
-	if (newinode) {
-		if ((oflags & __O_REGULAR) && !S_ISREG(newinode->i_mode)) {
-			rc = -EFTYPE;
-			goto out_err;
-		}
-		if (S_ISDIR(newinode->i_mode)) {
-			rc = -EISDIR;
-			goto out_err;
-		}
+	if (newinode && S_ISDIR(newinode->i_mode)) {
+		rc = -EISDIR;
+		goto out_err;
 	}
 
 	*inode = newinode;

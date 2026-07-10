@@ -27,7 +27,6 @@
 #include <linux/module.h>
 #include <linux/jiffies.h>
 #include <linux/err.h>
-#include <linux/log2.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/blkdev.h>
@@ -41,6 +40,8 @@
 #include <scsi/scsi_transport_sas.h>
 
 #include "scsi_sas_internal.h"
+#include "scsi_priv.h"
+
 struct sas_host_attrs {
 	struct list_head rphy_list;
 	struct mutex lock;
@@ -221,45 +222,12 @@ static int sas_bsg_initialize(struct Scsi_Host *shost, struct sas_rphy *rphy)
  * SAS host attributes
  */
 
-/*
- * Set shost->opt_sectors from the DMA optimal mapping size, but only
- * when dma_opt_mapping_size() is strictly less than dma_max_mapping_size(),
- * indicating a genuine optimization hint from an IOMMU or DMA backend.
- * When the two are equal (e.g. IOMMU disabled / passthrough), no real
- * hint exists, so leave opt_sectors at 0 to avoid bogus optimal_io_size
- * values that break filesystem geometry (e.g. mkfs.xfs stripe alignment).
- */
-static void sas_dma_setup_opt_sectors(struct Scsi_Host *shost)
-{
-	struct device *dma_dev = shost->dma_dev;
-	size_t opt = dma_opt_mapping_size(dma_dev);
-	size_t max = dma_max_mapping_size(dma_dev);
-	unsigned int opt_sectors;
-
-	/* opt >= max means no real hint was provided by the DMA layer */
-	if (opt >= max)
-		return;
-
-	/* Clamp to max_sectors to avoid overflow in sector arithmetic */
-	opt_sectors = min_t(unsigned int, opt >> SECTOR_SHIFT,
-			    shost->max_sectors);
-
-	/* Guard against zero before rounddown_pow_of_two() */
-	if (!opt_sectors)
-		return;
-
-	/*
-	 * Round down to power-of-two so filesystem geometry calculations
-	 * (e.g. XFS stripe width/unit) always produce clean divisors.
-	 */
-	shost->opt_sectors = rounddown_pow_of_two(opt_sectors);
-}
-
 static int sas_host_setup(struct transport_container *tc, struct device *dev,
 			  struct device *cdev)
 {
 	struct Scsi_Host *shost = dev_to_shost(dev);
 	struct sas_host_attrs *sas_host = to_sas_host_attrs(shost);
+	struct device *dma_dev = shost->dma_dev;
 
 	INIT_LIST_HEAD(&sas_host->rphy_list);
 	mutex_init(&sas_host->lock);
@@ -271,7 +239,10 @@ static int sas_host_setup(struct transport_container *tc, struct device *dev,
 		dev_printk(KERN_ERR, dev, "fail to a bsg device %d\n",
 			   shost->host_no);
 
-	sas_dma_setup_opt_sectors(shost);
+	if (dma_dev->dma_mask) {
+		shost->opt_sectors = min_t(unsigned int, shost->max_sectors,
+				dma_opt_mapping_size(dma_dev) >> SECTOR_SHIFT);
+	}
 
 	return 0;
 }
@@ -1714,6 +1685,22 @@ int scsi_is_sas_rphy(const struct device *dev)
 }
 EXPORT_SYMBOL(scsi_is_sas_rphy);
 
+static void scan_channel_zero(struct Scsi_Host *shost, uint id, u64 lun)
+{
+	struct sas_host_attrs *sas_host = to_sas_host_attrs(shost);
+	struct sas_rphy *rphy;
+
+	list_for_each_entry(rphy, &sas_host->rphy_list, list) {
+		if (rphy->identify.device_type != SAS_END_DEVICE ||
+		    rphy->scsi_target_id == -1)
+			continue;
+
+		if (id == SCAN_WILD_CARD || id == rphy->scsi_target_id) {
+			scsi_scan_target(&rphy->dev, 0, rphy->scsi_target_id,
+					 lun, SCSI_SCAN_MANUAL);
+		}
+	}
+}
 
 /*
  * SCSI scan helper
@@ -1723,23 +1710,41 @@ static int sas_user_scan(struct Scsi_Host *shost, uint channel,
 		uint id, u64 lun)
 {
 	struct sas_host_attrs *sas_host = to_sas_host_attrs(shost);
-	struct sas_rphy *rphy;
+	int res = 0;
+	int i;
 
-	mutex_lock(&sas_host->lock);
-	list_for_each_entry(rphy, &sas_host->rphy_list, list) {
-		if (rphy->identify.device_type != SAS_END_DEVICE ||
-		    rphy->scsi_target_id == -1)
-			continue;
+	switch (channel) {
+	case 0:
+		mutex_lock(&sas_host->lock);
+		scan_channel_zero(shost, id, lun);
+		mutex_unlock(&sas_host->lock);
+		break;
 
-		if ((channel == SCAN_WILD_CARD || channel == 0) &&
-		    (id == SCAN_WILD_CARD || id == rphy->scsi_target_id)) {
-			scsi_scan_target(&rphy->dev, 0, rphy->scsi_target_id,
-					 lun, SCSI_SCAN_MANUAL);
+	case SCAN_WILD_CARD:
+		mutex_lock(&sas_host->lock);
+		scan_channel_zero(shost, id, lun);
+		mutex_unlock(&sas_host->lock);
+
+		for (i = 1; i <= shost->max_channel; i++) {
+			res = scsi_scan_host_selected(shost, i, id, lun,
+						      SCSI_SCAN_MANUAL);
+			if (res)
+				goto exit_scan;
 		}
-	}
-	mutex_unlock(&sas_host->lock);
+		break;
 
-	return 0;
+	default:
+		if (channel <= shost->max_channel) {
+			res = scsi_scan_host_selected(shost, channel, id, lun,
+						      SCSI_SCAN_MANUAL);
+		} else {
+			res = -EINVAL;
+		}
+		break;
+	}
+
+exit_scan:
+	return res;
 }
 
 

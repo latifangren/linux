@@ -750,7 +750,7 @@ static int iio_storage_bytes_for_si(struct iio_dev *indio_dev,
 	bytes = scan_type->storagebits / 8;
 
 	if (scan_type->repeat > 1)
-		bytes *= roundup_pow_of_two(scan_type->repeat);
+		bytes *= scan_type->repeat;
 
 	return bytes;
 }
@@ -764,9 +764,7 @@ static int iio_storage_bytes_for_timestamp(struct iio_dev *indio_dev)
 }
 
 static int iio_compute_scan_bytes(struct iio_dev *indio_dev,
-				  const unsigned long *mask, bool timestamp,
-				  unsigned int *scan_bytes,
-				  unsigned int *timestamp_offset)
+				  const unsigned long *mask, bool timestamp)
 {
 	unsigned int bytes = 0;
 	int length, i, largest = 0;
@@ -788,17 +786,12 @@ static int iio_compute_scan_bytes(struct iio_dev *indio_dev,
 			return length;
 
 		bytes = ALIGN(bytes, length);
-
-		if (timestamp_offset)
-			*timestamp_offset = bytes;
-
 		bytes += length;
 		largest = max(largest, length);
 	}
 
-	*scan_bytes = ALIGN(bytes, largest);
-
-	return 0;
+	bytes = ALIGN(bytes, largest);
+	return bytes;
 }
 
 static void iio_buffer_activate(struct iio_dev *indio_dev,
@@ -843,23 +836,18 @@ static int iio_buffer_disable(struct iio_buffer *buffer,
 	return buffer->access->disable(buffer, indio_dev);
 }
 
-static int iio_buffer_update_bytes_per_datum(struct iio_dev *indio_dev,
-					     struct iio_buffer *buffer)
+static void iio_buffer_update_bytes_per_datum(struct iio_dev *indio_dev,
+					      struct iio_buffer *buffer)
 {
 	unsigned int bytes;
-	int ret;
 
 	if (!buffer->access->set_bytes_per_datum)
-		return 0;
+		return;
 
-	ret = iio_compute_scan_bytes(indio_dev, buffer->scan_mask,
-				     buffer->scan_timestamp, &bytes, NULL);
-	if (ret)
-		return ret;
+	bytes = iio_compute_scan_bytes(indio_dev, buffer->scan_mask,
+				       buffer->scan_timestamp);
 
 	buffer->access->set_bytes_per_datum(buffer, bytes);
-
-	return 0;
 }
 
 static int iio_buffer_request_update(struct iio_dev *indio_dev,
@@ -867,10 +855,7 @@ static int iio_buffer_request_update(struct iio_dev *indio_dev,
 {
 	int ret;
 
-	ret = iio_buffer_update_bytes_per_datum(indio_dev, buffer);
-	if (ret)
-		return ret;
-
+	iio_buffer_update_bytes_per_datum(indio_dev, buffer);
 	if (buffer->access->request_update) {
 		ret = buffer->access->request_update(buffer);
 		if (ret) {
@@ -897,7 +882,6 @@ struct iio_device_config {
 	unsigned int watermark;
 	const unsigned long *scan_mask;
 	unsigned int scan_bytes;
-	unsigned int scan_timestamp_offset;
 	bool scan_timestamp;
 };
 
@@ -914,7 +898,6 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 	struct iio_buffer *buffer;
 	bool scan_timestamp;
 	unsigned int modes;
-	int ret;
 
 	if (insert_buffer &&
 	    bitmap_empty(insert_buffer->scan_mask, masklength)) {
@@ -1002,12 +985,8 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 		scan_mask = compound_mask;
 	}
 
-	ret = iio_compute_scan_bytes(indio_dev, scan_mask, scan_timestamp,
-				     &config->scan_bytes,
-				     &config->scan_timestamp_offset);
-	if (ret)
-		return ret;
-
+	config->scan_bytes = iio_compute_scan_bytes(indio_dev,
+						    scan_mask, scan_timestamp);
 	config->scan_mask = scan_mask;
 	config->scan_timestamp = scan_timestamp;
 
@@ -1162,7 +1141,6 @@ static int iio_enable_buffers(struct iio_dev *indio_dev,
 	indio_dev->active_scan_mask = config->scan_mask;
 	ACCESS_PRIVATE(indio_dev, scan_timestamp) = config->scan_timestamp;
 	indio_dev->scan_bytes = config->scan_bytes;
-	ACCESS_PRIVATE(indio_dev, scan_timestamp_offset) = config->scan_timestamp_offset;
 	iio_dev_opaque->currentmode = config->mode;
 
 	iio_update_demux(indio_dev);
@@ -2445,7 +2423,7 @@ EXPORT_SYMBOL_GPL(iio_push_to_buffers);
 int iio_push_to_buffers_with_ts_unaligned(struct iio_dev *indio_dev,
 					  const void *data,
 					  size_t data_sz,
-					  s64 timestamp)
+					  int64_t timestamp)
 {
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
 

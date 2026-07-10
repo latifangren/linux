@@ -124,6 +124,7 @@ static const struct software_node vendor_key_node = {
 };
 
 static const struct software_node *p50_swnodes[] = {
+	&gpiochip_node,
 	&gpio_leds_node,
 	&identify_led_node,
 	&gpio_keys_node,
@@ -423,13 +424,6 @@ MODULE_DEVICE_TABLE(dmi, dmi_ids);
 static int __init p50_module_init(void)
 {
 	struct resource res = DEFINE_RES_IO(P50_GPIO_IO_PORT_BASE, P50_PORT_CMD + 1);
-	struct platform_device_info pdevinfo = {
-		.name = DRIVER_NAME,
-		.id = PLATFORM_DEVID_NONE,
-		.res = &res,
-		.num_res = 1,
-		.swnode = &gpiochip_node,
-	};
 	int ret;
 
 	if (!dmi_first_match(dmi_ids))
@@ -439,7 +433,7 @@ static int __init p50_module_init(void)
 	if (ret)
 		return ret;
 
-	gpio_pdev = platform_device_register_full(&pdevinfo);
+	gpio_pdev = platform_device_register_simple(DRIVER_NAME, PLATFORM_DEVID_NONE, &res, 1);
 	if (IS_ERR(gpio_pdev)) {
 		pr_err("failed registering %s: %ld\n", DRIVER_NAME, PTR_ERR(gpio_pdev));
 		platform_driver_unregister(&p50_gpio_driver);

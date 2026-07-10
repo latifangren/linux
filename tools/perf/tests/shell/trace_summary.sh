@@ -14,7 +14,7 @@ OUTPUT=$(mktemp /tmp/perf_trace_test.XXXXX)
 
 test_perf_trace() {
     args=$1
-    workload="cat /dev/null"
+    workload="true"
     search="^\s*(open|read|close).*[0-9]+%$"
 
     echo "testing: perf trace ${args} -- ${workload}"

@@ -502,18 +502,6 @@ static void write_sb_page(struct bitmap *bitmap, unsigned long pg_index,
 static void md_bitmap_file_kick(struct bitmap *bitmap);
 
 #ifdef CONFIG_MD_BITMAP_FILE
-static void end_bitmap_write(struct bio *bio)
-{
-	struct buffer_head *bh;
-	bool uptodate = bio_endio_bh(bio, &bh);
-	struct bitmap *bitmap = bh->b_private;
-
-	if (!uptodate)
-		set_bit(BITMAP_WRITE_ERROR, &bitmap->flags);
-	if (atomic_dec_and_test(&bitmap->pending_writes))
-		wake_up(&bitmap->write_wait);
-}
-
 static void write_file_page(struct bitmap *bitmap, struct page *page, int wait)
 {
 	struct buffer_head *bh = page_buffers(page);
@@ -522,13 +510,23 @@ static void write_file_page(struct bitmap *bitmap, struct page *page, int wait)
 		atomic_inc(&bitmap->pending_writes);
 		set_buffer_locked(bh);
 		set_buffer_mapped(bh);
-		bh_submit(bh, REQ_OP_WRITE | REQ_SYNC, end_bitmap_write);
+		submit_bh(REQ_OP_WRITE | REQ_SYNC, bh);
 		bh = bh->b_this_page;
 	}
 
 	if (wait)
 		wait_event(bitmap->write_wait,
 			   atomic_read(&bitmap->pending_writes) == 0);
+}
+
+static void end_bitmap_write(struct buffer_head *bh, int uptodate)
+{
+	struct bitmap *bitmap = bh->b_private;
+
+	if (!uptodate)
+		set_bit(BITMAP_WRITE_ERROR, &bitmap->flags);
+	if (atomic_dec_and_test(&bitmap->pending_writes))
+		wake_up(&bitmap->write_wait);
 }
 
 static void free_buffers(struct page *page)
@@ -594,11 +592,12 @@ static int read_file_page(struct file *file, unsigned long index,
 			else
 				count -= blocksize;
 
+			bh->b_end_io = end_bitmap_write;
 			bh->b_private = bitmap;
 			atomic_inc(&bitmap->pending_writes);
 			set_buffer_locked(bh);
 			set_buffer_mapped(bh);
-			bh_submit(bh, REQ_OP_READ, end_bitmap_write);
+			submit_bh(REQ_OP_READ, bh);
 		}
 		blk_cur++;
 		bh = bh->b_this_page;
@@ -2064,23 +2063,18 @@ static void bitmap_end_behind_write(struct mddev *mddev)
 		 bitmap->mddev->bitmap_info.max_write_behind);
 }
 
-static bool bitmap_wait_behind_writes(struct mddev *mddev, bool nowait)
+static void bitmap_wait_behind_writes(struct mddev *mddev)
 {
 	struct bitmap *bitmap = mddev->bitmap;
 
 	/* wait for behind writes to complete */
 	if (bitmap && atomic_read(&bitmap->behind_writes) > 0) {
-		if (nowait)
-			return false;
-
 		pr_debug("md:%s: behind writes in progress - waiting to stop.\n",
 			 mdname(mddev));
 		/* need to kick something here to make sure I/O goes? */
 		wait_event(bitmap->behind_wait,
 			   atomic_read(&bitmap->behind_writes) == 0);
 	}
-
-	return true;
 }
 
 static void bitmap_destroy(struct mddev *mddev)
@@ -2090,7 +2084,7 @@ static void bitmap_destroy(struct mddev *mddev)
 	if (!bitmap) /* there was no bitmap */
 		return;
 
-	bitmap_wait_behind_writes(mddev, false);
+	bitmap_wait_behind_writes(mddev);
 	if (!test_bit(MD_SERIALIZE_POLICY, &mddev->flags))
 		mddev_destroy_serial_pool(mddev, NULL);
 

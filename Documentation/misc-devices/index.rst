@@ -13,6 +13,7 @@ fit into other categories.
 
    ad525x_dpot
    amd-sbi
+   apds990x
    bh1770glc
    c2port
    dw-xdata-pcie

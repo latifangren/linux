@@ -97,7 +97,7 @@ err:
 static int test__kallsyms_split(struct test_suite *test __maybe_unused,
 				int subtest __maybe_unused)
 {
-	struct machine m = { 0 };
+	struct machine m;
 	struct map *map = NULL;
 	int ret = TEST_FAIL;
 
@@ -113,10 +113,7 @@ static int test__kallsyms_split(struct test_suite *test __maybe_unused,
 	signal(SIGTERM, remove_proc_dir);
 
 	pr_debug("create kernel maps from the fake root directory\n");
-	if (machine__init(&m, root_dir, HOST_KERNEL_ID)) {
-		pr_debug("FAIL: failed to init machine\n");
-		goto out;
-	}
+	machine__init(&m, root_dir, HOST_KERNEL_ID);
 	if (machine__create_kernel_maps(&m) < 0) {
 		pr_debug("FAIL: failed to create kernel maps\n");
 		goto out;

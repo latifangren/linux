@@ -179,14 +179,10 @@ out:
 static int acpi_als_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct acpi_device *device;
+	struct acpi_device *device = ACPI_COMPANION(dev);
 	struct iio_dev *indio_dev;
 	struct acpi_als *als;
 	int ret;
-
-	device = ACPI_COMPANION(dev);
-	if (!device)
-		return -ENODEV;
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*als));
 	if (!indio_dev)

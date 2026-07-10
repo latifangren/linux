@@ -208,6 +208,7 @@ struct nvmet_port {
 	struct list_head		global_entry;
 	struct config_group		ana_groups_group;
 	struct nvmet_ana_group		ana_default_group;
+	enum nvme_ana_state		*ana_state;
 	struct key			*keyring;
 	void				*priv;
 	bool				enabled;
@@ -216,7 +217,6 @@ struct nvmet_port {
 	int				mdts;
 	const struct nvmet_fabrics_ops	*tr_ops;
 	bool				pi_enable;
-	enum nvme_ana_state		ana_state[];
 };
 
 static inline struct nvmet_port *to_nvmet_port(struct config_item *item)

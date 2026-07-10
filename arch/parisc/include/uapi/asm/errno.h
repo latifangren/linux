@@ -124,6 +124,4 @@
 
 #define EHWPOISON	257	/* Memory page has hardware error */
 
-#define EFTYPE		258	/* Wrong file type for the intended operation */
-
 #endif

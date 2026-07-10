@@ -43,7 +43,7 @@ static int get_range(char **str, int *pint, int n)
  *	When @pint is NULL the function can be used as a validator of
  *	the current option in the string.
  *
- *	Return:
+ *	Return values:
  *	0 - no int in string
  *	1 - int found, no subsequent comma
  *	2 - int found including a subsequent comma
@@ -145,52 +145,42 @@ EXPORT_SYMBOL(get_options);
  *
  *	Parses a string into a number.  The number stored at @ptr is
  *	potentially suffixed with K, M, G, T, P, E.
- *
- *	Return: The value as recognized by simple_strtoull() multiplied
- *	by the value as specified by suffix, if any.
  */
 
 unsigned long long memparse(const char *ptr, char **retptr)
 {
 	char *endptr;	/* local pointer to end of parsed string */
-	unsigned long long ret = simple_strtoull(ptr, &endptr, 0);
-	unsigned int shl = 0;
 
-	/* Consume valid suffix even in case of overflow. */
+	unsigned long long ret = simple_strtoull(ptr, &endptr, 0);
+
 	switch (*endptr) {
 	case 'E':
 	case 'e':
-		shl += 10;
+		ret <<= 10;
 		fallthrough;
 	case 'P':
 	case 'p':
-		shl += 10;
+		ret <<= 10;
 		fallthrough;
 	case 'T':
 	case 't':
-		shl += 10;
+		ret <<= 10;
 		fallthrough;
 	case 'G':
 	case 'g':
-		shl += 10;
+		ret <<= 10;
 		fallthrough;
 	case 'M':
 	case 'm':
-		shl += 10;
+		ret <<= 10;
 		fallthrough;
 	case 'K':
 	case 'k':
-		shl += 10;
+		ret <<= 10;
+		endptr++;
 		fallthrough;
 	default:
 		break;
-	}
-
-	if (shl && likely(ptr != endptr)) {
-		/* Have valid suffix with preceding number. */
-		if (unlikely(check_shl_overflow(ret, shl, &ret)))
-			ret = ULLONG_MAX;
-		endptr++;
 	}
 
 	if (retptr)
@@ -208,7 +198,7 @@ EXPORT_SYMBOL(memparse);
  *	This function parses a string containing a comma-separated list of
  *	strings like a=b,c.
  *
- *	Return: True if there's such option in the string or false otherwise.
+ *	Return true if there's such option in the string, or return false.
  */
 bool parse_option_str(const char *str, const char *option)
 {

@@ -37,7 +37,6 @@
 #include <linux/kfifo.h>
 #include <linux/platform_device.h>
 #include <linux/gfp.h>
-#include <linux/string.h>
 #include <linux/string_choices.h>
 
 #include <linux/uaccess.h>
@@ -1118,15 +1117,11 @@ static int sonypi_disable(void)
 #ifdef CONFIG_ACPI
 static int sonypi_acpi_probe(struct platform_device *pdev)
 {
-	struct acpi_device *device;
-
-	device = ACPI_COMPANION(&pdev->dev);
-	if (!device)
-		return -ENODEV;
+	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
 
 	sonypi_acpi_device = device;
-	strscpy(acpi_device_name(device), "Sony laptop hotkeys");
-	strscpy(acpi_device_class(device), "sony/hotkey");
+	strcpy(acpi_device_name(device), "Sony laptop hotkeys");
+	strcpy(acpi_device_class(device), "sony/hotkey");
 	return 0;
 }
 

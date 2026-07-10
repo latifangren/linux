@@ -106,18 +106,7 @@ static int adt7316_spi_probe(struct spi_device *spi_dev)
 		return -EINVAL;
 	}
 
-	/*
-	 * The device powers up in I2C mode. Switching to SPI mode
-	 * requires sending a sequence of SPI writes as described in
-	 * the datasheet "ADT7316/ADT7317/ADT7318", Rev. B,
-	 * in the "Serial Interface Selection" section.
-	 *
-	 * During this sequence, the device may still be in I2C mode,
-	 * so SPI transactions may not be recognized and can fail.
-	 * Such errors are therefore ignored.
-	 *
-	 * TL;DR: Do not change this!
-	 */
+	/* switch from default I2C protocol to SPI protocol */
 	adt7316_spi_write(spi_dev, 0, 0);
 	adt7316_spi_write(spi_dev, 0, 0);
 	adt7316_spi_write(spi_dev, 0, 0);

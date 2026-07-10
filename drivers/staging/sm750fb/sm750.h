@@ -13,9 +13,9 @@
 #endif
 
 enum sm750_pnltype {
-	SM750_24TFT = 0,	/* 24bit tft */
-	SM750_DUAL_TFT = 2,	/* dual 18 bit tft */
-	SM750_DOUBLE_TFT = 1,	/* 36 bit double pixel tft */
+	sm750_24TFT = 0,	/* 24bit tft */
+	sm750_dualTFT = 2,	/* dual 18 bit tft */
+	sm750_doubleTFT = 1,	/* 36 bit double pixel tft */
 };
 
 /* vga channel is not concerned  */
@@ -39,13 +39,13 @@ enum sm750_path {
 };
 
 struct init_status {
-	ushort power_mode;
+	ushort powerMode;
 	/* below three clocks are in unit of MHZ*/
 	ushort chip_clk;
 	ushort mem_clk;
 	ushort master_clk;
 	ushort setAllEngOff;
-	ushort reset_memory;
+	ushort resetMemory;
 };
 
 struct lynx_accel {
@@ -98,7 +98,7 @@ struct sm750_dev {
 	__u32 vidmem_size;
 	__u32 vidreg_size;
 	void __iomem *pvReg;
-	unsigned char __iomem *vmem;
+	unsigned char __iomem *pvMem;
 	/* locks*/
 	spinlock_t slock;
 

@@ -3,13 +3,10 @@
  * Copyright(C) 2015 Linaro Limited. All rights reserved.
  * Author: Mathieu Poirier <mathieu.poirier@linaro.org>
  */
-#include "../../../util/cs-etm.h"
 
-#include <errno.h>
-#include <stdlib.h>
-
-#include <linux/bitops.h>
+#include <api/fs/fs.h>
 #include <linux/bits.h>
+#include <linux/bitops.h>
 #include <linux/compiler.h>
 #include <linux/coresight-pmu.h>
 #include <linux/kernel.h>
@@ -17,24 +14,25 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/zalloc.h>
-#include <sys/stat.h>
 
-#include <api/fs/fs.h>
-#include <internal/lib.h> // page_size
-
+#include "cs-etm.h"
+#include "../../../util/debug.h"
+#include "../../../util/record.h"
 #include "../../../util/auxtrace.h"
 #include "../../../util/cpumap.h"
-#include "../../../util/debug.h"
 #include "../../../util/event.h"
 #include "../../../util/evlist.h"
 #include "../../../util/evsel.h"
-#include "../../../util/evsel_config.h"
 #include "../../../util/perf_api_probe.h"
-#include "../../../util/pmu.h"
+#include "../../../util/evsel_config.h"
 #include "../../../util/pmus.h"
-#include "../../../util/record.h"
+#include "../../../util/cs-etm.h"
+#include <internal/lib.h> // page_size
 #include "../../../util/session.h"
-#include "cs-etm.h"
+
+#include <errno.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 struct cs_etm_recording {
 	struct auxtrace_record	itr;

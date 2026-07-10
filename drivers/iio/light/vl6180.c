@@ -16,6 +16,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
 #include <linux/err.h>
@@ -749,7 +750,7 @@ static const struct of_device_id vl6180_of_match[] = {
 MODULE_DEVICE_TABLE(of, vl6180_of_match);
 
 static const struct i2c_device_id vl6180_id[] = {
-	{ .name = "vl6180" },
+	{ "vl6180" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, vl6180_id);

@@ -580,13 +580,16 @@ static void print_metricgroup_header_std(struct perf_stat_config *config,
 					 const char *metricgroup_name)
 {
 	struct outstate *os = ctx;
+	int n;
 
 	if (!metricgroup_name) {
 		__new_line_std(config, os);
 		return;
 	}
 
-	fprintf(config->output, " %*s", config->metric_only_len, metricgroup_name);
+	n = fprintf(config->output, " %*s", EVNAME_LEN, metricgroup_name);
+
+	fprintf(config->output, "%*s", MGROUP_LEN + config->unit_width + 2 - n, "");
 }
 
 static void print_metric_only(struct perf_stat_config *config,
@@ -596,20 +599,19 @@ static void print_metric_only(struct perf_stat_config *config,
 	struct outstate *os = ctx;
 	FILE *out = os->fh;
 	char str[1024];
-	unsigned mlen;
+	unsigned mlen = config->metric_only_len;
 	const char *color = metric_threshold_classify__color(thresh);
-	int olen;
 
-	if (!unit) {
-		os->first = false;
-		return;
-	}
+	if (!unit)
+		unit = "";
+	if (mlen < strlen(unit))
+		mlen = strlen(unit) + 1;
 
-	mlen = max_t(unsigned, strlen(unit), config->metric_only_len);
+	if (color)
+		mlen += strlen(color) + sizeof(PERF_COLOR_RESET) - 1;
 
-	olen = snprintf(str, sizeof(str), fmt ?: "", val);
 	color_snprintf(str, sizeof(str), color ?: "", fmt ?: "", val);
-	fprintf(out, "%*s%s", max_t(int, mlen - olen, 1), "", str);
+	fprintf(out, "%*s ", mlen, str);
 	os->first = false;
 }
 
@@ -821,9 +823,9 @@ static void printout(struct perf_stat_config *config, struct outstate *os,
 		ok = false;
 
 		if (counter->supported) {
-			if (!evlist__has_hybrid_pmus(counter->evlist) &&
-			    counter->pmu && counter->pmu->is_core)
+			if (!evlist__has_hybrid_pmus(counter->evlist)) {
 				config->print_free_counters_hint = 1;
+			}
 		}
 	}
 

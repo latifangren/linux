@@ -35,8 +35,4 @@ typedef struct pglist_data {
 
 } pg_data_t;
 
-enum migratetype {
-	MIGRATE_CMA,
-};
-
 #endif

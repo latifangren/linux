@@ -33,4 +33,9 @@ void sm750_enable_dma(unsigned int enable);
  */
 void sm750_enable_gpio(unsigned int enable);
 
+/*
+ * This function enable/disable the I2C Engine
+ */
+void sm750_enable_i2c(unsigned int enable);
+
 #endif

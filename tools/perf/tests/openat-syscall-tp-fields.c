@@ -118,12 +118,9 @@ static int test__syscall_openat_tp_fields(struct test_suite *test __maybe_unused
 					goto out_delete_evlist;
 				}
 
-				tp_flags = perf_sample__intval(&sample, "flags");
+				tp_flags = evsel__intval(evsel, &sample, "flags");
 				perf_sample__exit(&sample);
-				/* C library wrapper may set additional flags,
-				   access mode must be unchanged */
-				if ((tp_flags & O_ACCMODE) != (flags & O_ACCMODE) ||
-				    (tp_flags & flags) != flags) {
+				if (flags != tp_flags) {
 					pr_debug("%s: Expected flags=%#x, got %#x\n",
 						 __func__, flags, tp_flags);
 					goto out_delete_evlist;

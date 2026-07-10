@@ -255,7 +255,7 @@ static int amdgpu_ctx_init_entity(struct amdgpu_ctx *ctx, u32 hw_ip,
 	}
 
 	r = drm_sched_entity_init(&entity->entity, drm_prio, scheds, num_scheds,
-				  NULL);
+				  &ctx->guilty);
 	if (r)
 		goto error_free_entity;
 
@@ -326,6 +326,7 @@ static int amdgpu_ctx_init(struct amdgpu_ctx_mgr *mgr, int32_t priority,
 			   struct drm_file *filp, struct amdgpu_ctx *ctx)
 {
 	struct amdgpu_fpriv *fpriv = filp->driver_priv;
+	u32 current_stable_pstate;
 	int r;
 
 	r = amdgpu_ctx_priority_permit(filp, priority);
@@ -343,21 +344,36 @@ static int amdgpu_ctx_init(struct amdgpu_ctx_mgr *mgr, int32_t priority,
 	ctx->generation = amdgpu_vm_generation(mgr->adev, &fpriv->vm);
 	ctx->init_priority = priority;
 	ctx->override_priority = AMDGPU_CTX_PRIORITY_UNSET;
-	ctx->stable_pstate = AMDGPU_CTX_STABLE_PSTATE_NONE;
+
+	r = amdgpu_ctx_get_stable_pstate(ctx, &current_stable_pstate);
+	if (r)
+		return r;
+
+	if (mgr->adev->pm.stable_pstate_ctx)
+		ctx->stable_pstate = mgr->adev->pm.stable_pstate_ctx->stable_pstate;
+	else
+		ctx->stable_pstate = current_stable_pstate;
 
 	return 0;
 }
 
-static int __amdgpu_ctx_set_stable_pstate(struct amdgpu_ctx *ctx,
-					  u32 stable_pstate)
+static int amdgpu_ctx_set_stable_pstate(struct amdgpu_ctx *ctx,
+					u32 stable_pstate)
 {
 	struct amdgpu_device *adev = ctx->mgr->adev;
 	enum amd_dpm_forced_level level;
-	struct amdgpu_ctx *current_ctx;
 	u32 current_stable_pstate;
-	int r = 0;
+	int r;
 
-	lockdep_assert_held(&adev->pm.stable_pstate_ctx_lock);
+	mutex_lock(&adev->pm.stable_pstate_ctx_lock);
+	if (adev->pm.stable_pstate_ctx && adev->pm.stable_pstate_ctx != ctx) {
+		r = -EBUSY;
+		goto done;
+	}
+
+	r = amdgpu_ctx_get_stable_pstate(ctx, &current_stable_pstate);
+	if (r || (stable_pstate == current_stable_pstate))
+		goto done;
 
 	switch (stable_pstate) {
 	case AMDGPU_CTX_STABLE_PSTATE_NONE:
@@ -376,41 +392,17 @@ static int __amdgpu_ctx_set_stable_pstate(struct amdgpu_ctx *ctx,
 		level = AMD_DPM_FORCED_LEVEL_PROFILE_PEAK;
 		break;
 	default:
-		return -EINVAL;
+		r = -EINVAL;
+		goto done;
 	}
-
-	current_ctx = adev->pm.stable_pstate_ctx;
-	if (current_ctx && current_ctx != ctx)
-		return -EBUSY;
-
-	r = amdgpu_ctx_get_stable_pstate(ctx, &current_stable_pstate);
-	if (r || current_stable_pstate == stable_pstate)
-		return r;
 
 	r = amdgpu_dpm_force_performance_level(adev, level);
-	if (r)
-		return r;
 
-	if (!current_ctx) {
+	if (level == AMD_DPM_FORCED_LEVEL_AUTO)
+		adev->pm.stable_pstate_ctx = NULL;
+	else
 		adev->pm.stable_pstate_ctx = ctx;
-		/*
-		 * Serialized by context taking ownership for the first time
-		 * while holding adev->pm.stable_pstate_ctx_lock).
-		 */
-		WRITE_ONCE(ctx->stable_pstate, current_stable_pstate);
-	}
-
-	return 0;
-}
-
-static int amdgpu_ctx_set_stable_pstate(struct amdgpu_ctx *ctx,
-					u32 stable_pstate)
-{
-	struct amdgpu_device *adev = ctx->mgr->adev;
-	int r;
-
-	mutex_lock(&adev->pm.stable_pstate_ctx_lock);
-	r = __amdgpu_ctx_set_stable_pstate(ctx, stable_pstate);
+done:
 	mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
 
 	return r;
@@ -436,12 +428,7 @@ static void amdgpu_ctx_fini(struct kref *ref)
 	}
 
 	if (drm_dev_enter(adev_to_drm(adev), &idx)) {
-		mutex_lock(&adev->pm.stable_pstate_ctx_lock);
-		if (adev->pm.stable_pstate_ctx == ctx) {
-			__amdgpu_ctx_set_stable_pstate(ctx, ctx->stable_pstate);
-			adev->pm.stable_pstate_ctx = NULL;
-		}
-		mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
+		amdgpu_ctx_set_stable_pstate(ctx, ctx->stable_pstate);
 		drm_dev_exit(idx);
 	}
 
@@ -592,27 +579,6 @@ static int amdgpu_ctx_query(struct amdgpu_device *adev,
 
 #define AMDGPU_RAS_COUNTE_DELAY_MS 3000
 
-static bool amdgpu_ctx_guilty(struct amdgpu_ctx *ctx)
-{
-	int i, j, r;
-
-	for (i = 0; i < AMDGPU_HW_IP_NUM; ++i) {
-		for (j = 0; j < amdgpu_ctx_num_entities[i]; ++j) {
-			struct amdgpu_ctx_entity *ctx_entity;
-
-			ctx_entity = ctx->entities[i][j];
-			if (!ctx_entity)
-				continue;
-
-			r = drm_sched_entity_error(&ctx_entity->entity);
-			if (r == -ETIME)
-				return true;
-		}
-	}
-
-	return false;
-}
-
 static int amdgpu_ctx_query2(struct amdgpu_device *adev,
 			     struct amdgpu_fpriv *fpriv, uint32_t id,
 			     union drm_amdgpu_ctx_out *out)
@@ -641,7 +607,7 @@ static int amdgpu_ctx_query2(struct amdgpu_device *adev,
 	if (ctx->generation != amdgpu_vm_generation(adev, &fpriv->vm))
 		out->state.flags |= AMDGPU_CTX_QUERY2_FLAGS_VRAMLOST;
 
-	if (amdgpu_ctx_guilty(ctx))
+	if (atomic_read(&ctx->guilty))
 		out->state.flags |= AMDGPU_CTX_QUERY2_FLAGS_GUILTY;
 
 	if (amdgpu_in_reset(adev))

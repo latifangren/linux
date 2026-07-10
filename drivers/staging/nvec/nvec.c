@@ -494,8 +494,6 @@ static void nvec_tx_completed(struct nvec_chip *nvec)
 static void nvec_rx_completed(struct nvec_chip *nvec)
 {
 	if (nvec->rx->pos != nvec_msg_size(nvec->rx)) {
-		unsigned char msg_type = nvec->rx->data[0];
-
 		dev_err(nvec->dev, "RX incomplete: Expected %u bytes, got %u\n",
 			(uint)nvec_msg_size(nvec->rx),
 			(uint)nvec->rx->pos);
@@ -504,7 +502,7 @@ static void nvec_rx_completed(struct nvec_chip *nvec)
 		nvec->state = 0;
 
 		/* Battery quirk - Often incomplete, and likes to crash */
-		if (msg_type == NVEC_BAT)
+		if (nvec->rx->data[0] == NVEC_BAT)
 			complete(&nvec->ec_transfer);
 
 		return;
@@ -906,8 +904,8 @@ static void tegra_nvec_remove(struct platform_device *pdev)
 	nvec_unregister_notifier(nvec, &nvec->nvec_status_notifier);
 	cancel_work_sync(&nvec->rx_work);
 	cancel_work_sync(&nvec->tx_work);
-	if (pm_power_off == nvec_power_off)
-		pm_power_off = NULL;
+	/* FIXME: needs check whether nvec is responsible for power off */
+	pm_power_off = NULL;
 }
 
 #ifdef CONFIG_PM_SLEEP

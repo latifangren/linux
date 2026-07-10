@@ -636,16 +636,10 @@ build_compression_ctxt(struct smb2_compression_capabilities_context *pneg_ctxt)
 	pneg_ctxt->DataLength =
 		cpu_to_le16(sizeof(struct smb2_compression_capabilities_context)
 			  - sizeof(struct smb2_neg_context));
-	/*
-	 * Pattern_V1 is useful only as part of a chained transform. LZ77 remains
-	 * the preferred general-purpose algorithm selected by this client.
-	 */
-	pneg_ctxt->CompressionAlgorithmCount = cpu_to_le16(4);
-	pneg_ctxt->Flags = SMB2_COMPRESSION_CAPABILITIES_FLAG_CHAINED;
+	pneg_ctxt->CompressionAlgorithmCount = cpu_to_le16(3);
 	pneg_ctxt->CompressionAlgorithms[0] = SMB3_COMPRESS_LZ77;
 	pneg_ctxt->CompressionAlgorithms[1] = SMB3_COMPRESS_LZ77_HUFF;
 	pneg_ctxt->CompressionAlgorithms[2] = SMB3_COMPRESS_LZNT1;
-	pneg_ctxt->CompressionAlgorithms[3] = SMB3_COMPRESS_PATTERN;
 }
 
 static unsigned int
@@ -833,12 +827,9 @@ static void decode_compress_ctx(struct TCP_Server_Info *server,
 			 struct smb2_compression_capabilities_context *ctxt)
 {
 	unsigned int len = le16_to_cpu(ctxt->DataLength);
-	unsigned int count, i;
+	__le16 alg;
 
 	server->compression.enabled = false;
-	server->compression.chained = false;
-	server->compression.pattern = false;
-	server->compression.alg = SMB3_COMPRESS_NONE;
 
 	/*
 	 * Caller checked that DataLength remains within SMB boundary. We still
@@ -850,37 +841,20 @@ static void decode_compress_ctx(struct TCP_Server_Info *server,
 		return;
 	}
 
-	count = le16_to_cpu(ctxt->CompressionAlgorithmCount);
-	if (!count || count > ARRAY_SIZE(ctxt->CompressionAlgorithms) ||
-	    len < 8 + count * sizeof(__le16)) {
+	if (le16_to_cpu(ctxt->CompressionAlgorithmCount) != 1) {
 		pr_warn_once("invalid SMB3 compress algorithm count\n");
 		return;
 	}
 
-	if (ctxt->Flags != SMB2_COMPRESSION_CAPABILITIES_FLAG_NONE &&
-	    ctxt->Flags != SMB2_COMPRESSION_CAPABILITIES_FLAG_CHAINED) {
-		pr_warn_once("invalid SMB3 compression flags\n");
+	alg = ctxt->CompressionAlgorithms[0];
+
+	/* 'NONE' (0) compressor type is never negotiated */
+	if (alg == 0 || le16_to_cpu(alg) > 3) {
+		pr_warn_once("invalid compression algorithm '%u'\n", alg);
 		return;
 	}
 
-	for (i = 0; i < count; i++) {
-		/* Record the intersection supported by the shared SMB codec. */
-		if (ctxt->CompressionAlgorithms[i] == SMB3_COMPRESS_LZ77)
-			server->compression.alg = SMB3_COMPRESS_LZ77;
-		else if (ctxt->CompressionAlgorithms[i] == SMB3_COMPRESS_PATTERN)
-			server->compression.pattern = true;
-	}
-	if (server->compression.alg != SMB3_COMPRESS_LZ77)
-		return;
-
-	/*
-	 * Pattern_V1 cannot appear in an unchained transform even if a broken
-	 * peer lists it in the algorithm array.
-	 */
-	server->compression.chained =
-		ctxt->Flags == SMB2_COMPRESSION_CAPABILITIES_FLAG_CHAINED;
-	if (!server->compression.chained)
-		server->compression.pattern = false;
+	server->compression.alg = alg;
 	server->compression.enabled = true;
 }
 
@@ -2155,8 +2129,8 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 
 	unc_path_len = cifs_strtoUTF16(unc_path, tree, strlen(tree), cp);
 	if (unc_path_len <= 0) {
-		rc = -EINVAL;
-		goto free_unc_path;
+		kfree(unc_path);
+		return -EINVAL;
 	}
 	unc_path_len *= 2;
 
@@ -2165,8 +2139,10 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 	atomic_set(&tcon->num_remote_opens, 0);
 	rc = smb2_plain_req_init(SMB2_TREE_CONNECT, tcon, server,
 				 (void **) &req, &total_len);
-	if (rc)
-		goto free_unc_path;
+	if (rc) {
+		kfree(unc_path);
+		return rc;
+	}
 
 	if (smb3_encryption_required(tcon))
 		flags |= CIFS_TRANSFORM_REQ;
@@ -2257,7 +2233,6 @@ SMB2_tcon(const unsigned int xid, struct cifs_ses *ses, const char *tree,
 tcon_exit:
 
 	free_rsp_buf(resp_buftype, rsp);
-free_unc_path:
 	kfree(unc_path);
 	return rc;
 
@@ -2396,9 +2371,9 @@ parse_posix_ctxt(struct create_context *cc, struct smb2_file_all_info *info,
 
 	memset(posix, 0, sizeof(*posix));
 
-	posix->nlink = get_unaligned_le32(beg);
-	posix->reparse_tag = get_unaligned_le32(beg + 4);
-	posix->mode = get_unaligned_le32(beg + 8);
+	posix->nlink = le32_to_cpu(*(__le32 *)(beg + 0));
+	posix->reparse_tag = le32_to_cpu(*(__le32 *)(beg + 4));
+	posix->mode = le32_to_cpu(*(__le32 *)(beg + 8));
 
 	sid = beg + 12;
 	sid_len = posix_info_sid_size(sid, end);
@@ -3305,8 +3280,6 @@ SMB2_open(const unsigned int xid, struct cifs_open_parms *oparms, __le16 *path,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	server = cifs_pick_channel(ses);
 	oparms->replay = !!(retries);
@@ -3532,8 +3505,6 @@ SMB2_ioctl(const unsigned int xid, struct cifs_tcon *tcon, u64 persistent_fid,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	server = cifs_pick_channel(ses);
 
@@ -3655,14 +3626,14 @@ ioctl_exit:
 
 int
 SMB2_set_compression(const unsigned int xid, struct cifs_tcon *tcon,
-		     u64 persistent_fid, u64 volatile_fid,
-		     __u16 compression_state)
+		     u64 persistent_fid, u64 volatile_fid)
 {
 	int rc;
 	struct  compress_ioctl fsctl_input;
 	char *ret_data = NULL;
 
-	fsctl_input.CompressionState = cpu_to_le16(compression_state);
+	fsctl_input.CompressionState =
+			cpu_to_le16(COMPRESSION_FORMAT_DEFAULT);
 
 	rc = SMB2_ioctl(xid, tcon, persistent_fid, volatile_fid,
 			FSCTL_SET_COMPRESSION,
@@ -3728,8 +3699,6 @@ __SMB2_close(const unsigned int xid, struct cifs_tcon *tcon,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	query_attrs = false;
 	server = cifs_pick_channel(ses);
@@ -3942,8 +3911,6 @@ query_info(const unsigned int xid, struct cifs_tcon *tcon,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	allocated = false;
 	server = cifs_pick_channel(ses);
@@ -4116,8 +4083,6 @@ SMB2_change_notify(const unsigned int xid, struct cifs_tcon *tcon,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	server = cifs_pick_channel(ses);
 
@@ -4460,8 +4425,6 @@ SMB2_flush(const unsigned int xid, struct cifs_tcon *tcon, u64 persistent_fid,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	server = cifs_pick_channel(ses);
 
@@ -5405,7 +5368,7 @@ int posix_info_sid_size(const void *beg, const void *end)
 	size_t subauth;
 	int total;
 
-	if (beg + 2 > end)
+	if (beg + 1 > end)
 		return -1;
 
 	subauth = *(u8 *)(beg+1);
@@ -5673,8 +5636,6 @@ smb2_parse_query_directory(struct cifs_tcon *tcon,
 	if (srch_inf->ntwrk_buf_start) {
 		if (srch_inf->smallBuf)
 			cifs_small_buf_release(srch_inf->ntwrk_buf_start);
-		else if (srch_inf->is_dynamic_buf)
-			kfree(srch_inf->ntwrk_buf_start);
 		else
 			cifs_buf_release(srch_inf->ntwrk_buf_start);
 	}
@@ -5694,18 +5655,12 @@ smb2_parse_query_directory(struct cifs_tcon *tcon,
 	cifs_dbg(FYI, "num entries %d last_index %lld srch start %p srch end %p\n",
 		 srch_inf->entries_in_buffer, srch_inf->index_of_last_entry,
 		 srch_inf->srch_entries_start, srch_inf->last_entry);
-	if (resp_buftype == CIFS_LARGE_BUFFER) {
+	if (resp_buftype == CIFS_LARGE_BUFFER)
 		srch_inf->smallBuf = false;
-		srch_inf->is_dynamic_buf = false;
-	} else if (resp_buftype == CIFS_SMALL_BUFFER) {
+	else if (resp_buftype == CIFS_SMALL_BUFFER)
 		srch_inf->smallBuf = true;
-		srch_inf->is_dynamic_buf = false;
-	} else if (resp_buftype == CIFS_DYNAMIC_BUFFER) {
-		srch_inf->smallBuf = false;
-		srch_inf->is_dynamic_buf = true;
-	} else {
+	else
 		cifs_tcon_dbg(VFS, "Invalid search buffer type\n");
-	}
 
 	return 0;
 }
@@ -5728,8 +5683,6 @@ SMB2_query_directory(const unsigned int xid, struct cifs_tcon *tcon,
 
 replay_again:
 	/* reinitialize for possible replay */
-	resp_buftype = CIFS_NO_BUFFER;
-	memset(&rsp_iov, 0, sizeof(rsp_iov));
 	flags = 0;
 	server = cifs_pick_channel(ses);
 

@@ -13,18 +13,16 @@
  * TODO: wait time
  */
 
-#include <linux/cleanup.h>
-#include <linux/delay.h>
-#include <linux/i2c.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
+#include <linux/i2c.h>
+#include <linux/delay.h>
 #include <linux/pm.h>
 
-#include <linux/iio/buffer.h>
-#include <linux/iio/events.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
+#include <linux/iio/events.h>
 #include <linux/iio/trigger_consumer.h>
+#include <linux/iio/buffer.h>
 #include <linux/iio/triggered_buffer.h>
 
 #define TCS3472_DRV_NAME "tcs3472"
@@ -166,9 +164,8 @@ static int tcs3472_read_raw(struct iio_dev *indio_dev,
 		*val = 0;
 		*val2 = (256 - data->atime) * 2400;
 		return IIO_VAL_INT_PLUS_MICRO;
-	default:
-		return -EINVAL;
 	}
+	return -EINVAL;
 }
 
 static int tcs3472_write_raw(struct iio_dev *indio_dev,
@@ -205,9 +202,8 @@ static int tcs3472_write_raw(struct iio_dev *indio_dev,
 
 		}
 		return -EINVAL;
-	default:
-		return -EINVAL;
 	}
+	return -EINVAL;
 }
 
 /*
@@ -224,24 +220,32 @@ static int tcs3472_read_event(struct iio_dev *indio_dev,
 	int *val2)
 {
 	struct tcs3472_data *data = iio_priv(indio_dev);
+	int ret;
 	unsigned int period;
 
-	guard(mutex)(&data->lock);
+	mutex_lock(&data->lock);
 
 	switch (info) {
 	case IIO_EV_INFO_VALUE:
 		*val = (dir == IIO_EV_DIR_RISING) ?
 			data->high_thresh : data->low_thresh;
-		return IIO_VAL_INT;
+		ret = IIO_VAL_INT;
+		break;
 	case IIO_EV_INFO_PERIOD:
 		period = (256 - data->atime) * 2400 *
 			tcs3472_intr_pers[data->apers];
 		*val = period / USEC_PER_SEC;
 		*val2 = period % USEC_PER_SEC;
-		return IIO_VAL_INT_PLUS_MICRO;
+		ret = IIO_VAL_INT_PLUS_MICRO;
+		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		break;
 	}
+
+	mutex_unlock(&data->lock);
+
+	return ret;
 }
 
 static int tcs3472_write_event(struct iio_dev *indio_dev,
@@ -255,8 +259,7 @@ static int tcs3472_write_event(struct iio_dev *indio_dev,
 	int period;
 	int i;
 
-	guard(mutex)(&data->lock);
-
+	mutex_lock(&data->lock);
 	switch (info) {
 	case IIO_EV_INFO_VALUE:
 		switch (dir) {
@@ -267,18 +270,18 @@ static int tcs3472_write_event(struct iio_dev *indio_dev,
 			command = TCS3472_AILT;
 			break;
 		default:
-			return -EINVAL;
+			ret = -EINVAL;
+			goto error;
 		}
 		ret = i2c_smbus_write_word_data(data->client, command, val);
 		if (ret)
-			return ret;
+			goto error;
 
 		if (dir == IIO_EV_DIR_RISING)
 			data->high_thresh = val;
 		else
 			data->low_thresh = val;
-
-		return 0;
+		break;
 	case IIO_EV_INFO_PERIOD:
 		period = val * USEC_PER_SEC + val2;
 		for (i = 1; i < ARRAY_SIZE(tcs3472_intr_pers) - 1; i++) {
@@ -288,14 +291,18 @@ static int tcs3472_write_event(struct iio_dev *indio_dev,
 		}
 		ret = i2c_smbus_write_byte_data(data->client, TCS3472_PERS, i);
 		if (ret)
-			return ret;
+			goto error;
 
 		data->apers = i;
-
-		return 0;
+		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
+		break;
 	}
+error:
+	mutex_unlock(&data->lock);
+
+	return ret;
 }
 
 static int tcs3472_read_event_config(struct iio_dev *indio_dev,
@@ -303,10 +310,13 @@ static int tcs3472_read_event_config(struct iio_dev *indio_dev,
 	enum iio_event_direction dir)
 {
 	struct tcs3472_data *data = iio_priv(indio_dev);
+	int ret;
 
-	guard(mutex)(&data->lock);
+	mutex_lock(&data->lock);
+	ret = !!(data->enable & TCS3472_ENABLE_AIEN);
+	mutex_unlock(&data->lock);
 
-	return (data->enable & TCS3472_ENABLE_AIEN) ? 1 : 0;
+	return ret;
 }
 
 static int tcs3472_write_event_config(struct iio_dev *indio_dev,
@@ -317,7 +327,7 @@ static int tcs3472_write_event_config(struct iio_dev *indio_dev,
 	int ret = 0;
 	u8 enable_old;
 
-	guard(mutex)(&data->lock);
+	mutex_lock(&data->lock);
 
 	enable_old = data->enable;
 
@@ -329,13 +339,12 @@ static int tcs3472_write_event_config(struct iio_dev *indio_dev,
 	if (enable_old != data->enable) {
 		ret = i2c_smbus_write_byte_data(data->client, TCS3472_ENABLE,
 						data->enable);
-		if (ret) {
+		if (ret)
 			data->enable = enable_old;
-			return ret;
-		}
 	}
+	mutex_unlock(&data->lock);
 
-	return 0;
+	return ret;
 }
 
 static irqreturn_t tcs3472_event_handler(int irq, void *priv)
@@ -431,45 +440,20 @@ static const struct iio_info tcs3472_info = {
 	.attrs = &tcs3472_attribute_group,
 };
 
-static int tcs3472_powerdown(struct tcs3472_data *data)
-{
-	int ret;
-	u8 enable_mask = TCS3472_ENABLE_AEN | TCS3472_ENABLE_PON;
-
-	guard(mutex)(&data->lock);
-
-	ret = i2c_smbus_write_byte_data(data->client, TCS3472_ENABLE,
-					data->enable & ~enable_mask);
-	if (ret)
-		return ret;
-
-	data->enable &= ~enable_mask;
-
-	return 0;
-}
-
-static void tcs3472_powerdown_action(void *data)
-{
-	tcs3472_powerdown(data);
-}
-
 static int tcs3472_probe(struct i2c_client *client)
 {
-	struct device *dev = &client->dev;
 	struct tcs3472_data *data;
 	struct iio_dev *indio_dev;
 	int ret;
 
-	indio_dev = devm_iio_device_alloc(dev, sizeof(*data));
-	if (!indio_dev)
+	indio_dev = devm_iio_device_alloc(&client->dev, sizeof(*data));
+	if (indio_dev == NULL)
 		return -ENOMEM;
 
 	data = iio_priv(indio_dev);
 	i2c_set_clientdata(client, indio_dev);
 	data->client = client;
-	ret = devm_mutex_init(dev, &data->lock);
-	if (ret)
-		return ret;
+	mutex_init(&data->lock);
 
 	indio_dev->info = &tcs3472_info;
 	indio_dev->name = TCS3472_DRV_NAME;
@@ -482,9 +466,9 @@ static int tcs3472_probe(struct i2c_client *client)
 		return ret;
 
 	if (ret == 0x44)
-		dev_info(dev, "TCS34721/34725 found\n");
+		dev_info(&client->dev, "TCS34721/34725 found\n");
 	else if (ret == 0x4d)
-		dev_info(dev, "TCS34723/34727 found\n");
+		dev_info(&client->dev, "TCS34723/34727 found\n");
 	else
 		return -ENODEV;
 
@@ -526,27 +510,61 @@ static int tcs3472_probe(struct i2c_client *client)
 	if (ret < 0)
 		return ret;
 
-	ret = devm_add_action_or_reset(dev, tcs3472_powerdown_action, data);
-	if (ret)
-		return ret;
-
-	ret = devm_iio_triggered_buffer_setup(dev, indio_dev, NULL,
-					      tcs3472_trigger_handler, NULL);
+	ret = iio_triggered_buffer_setup(indio_dev, NULL,
+		tcs3472_trigger_handler, NULL);
 	if (ret < 0)
 		return ret;
 
 	if (client->irq) {
-		ret = devm_request_threaded_irq(dev, client->irq, NULL,
-						tcs3472_event_handler,
-						IRQF_TRIGGER_FALLING |
-						IRQF_SHARED |
-						IRQF_ONESHOT,
-						client->name, indio_dev);
+		ret = request_threaded_irq(client->irq, NULL,
+					   tcs3472_event_handler,
+					   IRQF_TRIGGER_FALLING | IRQF_SHARED |
+					   IRQF_ONESHOT,
+					   client->name, indio_dev);
 		if (ret)
-			return ret;
+			goto buffer_cleanup;
 	}
 
-	return devm_iio_device_register(dev, indio_dev);
+	ret = iio_device_register(indio_dev);
+	if (ret < 0)
+		goto free_irq;
+
+	return 0;
+
+free_irq:
+	if (client->irq)
+		free_irq(client->irq, indio_dev);
+buffer_cleanup:
+	iio_triggered_buffer_cleanup(indio_dev);
+	return ret;
+}
+
+static int tcs3472_powerdown(struct tcs3472_data *data)
+{
+	int ret;
+	u8 enable_mask = TCS3472_ENABLE_AEN | TCS3472_ENABLE_PON;
+
+	mutex_lock(&data->lock);
+
+	ret = i2c_smbus_write_byte_data(data->client, TCS3472_ENABLE,
+		data->enable & ~enable_mask);
+	if (!ret)
+		data->enable &= ~enable_mask;
+
+	mutex_unlock(&data->lock);
+
+	return ret;
+}
+
+static void tcs3472_remove(struct i2c_client *client)
+{
+	struct iio_dev *indio_dev = i2c_get_clientdata(client);
+
+	iio_device_unregister(indio_dev);
+	if (client->irq)
+		free_irq(client->irq, indio_dev);
+	iio_triggered_buffer_cleanup(indio_dev);
+	tcs3472_powerdown(iio_priv(indio_dev));
 }
 
 static int tcs3472_suspend(struct device *dev)
@@ -563,23 +581,23 @@ static int tcs3472_resume(struct device *dev)
 	int ret;
 	u8 enable_mask = TCS3472_ENABLE_AEN | TCS3472_ENABLE_PON;
 
-	guard(mutex)(&data->lock);
+	mutex_lock(&data->lock);
 
 	ret = i2c_smbus_write_byte_data(data->client, TCS3472_ENABLE,
 		data->enable | enable_mask);
-	if (ret)
-		return ret;
+	if (!ret)
+		data->enable |= enable_mask;
 
-	data->enable |= enable_mask;
+	mutex_unlock(&data->lock);
 
-	return 0;
+	return ret;
 }
 
 static DEFINE_SIMPLE_DEV_PM_OPS(tcs3472_pm_ops, tcs3472_suspend,
 				tcs3472_resume);
 
 static const struct i2c_device_id tcs3472_id[] = {
-	{ .name = "tcs3472" },
+	{ "tcs3472" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tcs3472_id);
@@ -590,6 +608,7 @@ static struct i2c_driver tcs3472_driver = {
 		.pm	= pm_sleep_ptr(&tcs3472_pm_ops),
 	},
 	.probe		= tcs3472_probe,
+	.remove		= tcs3472_remove,
 	.id_table	= tcs3472_id,
 };
 module_i2c_driver(tcs3472_driver);

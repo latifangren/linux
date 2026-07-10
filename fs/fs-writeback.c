@@ -432,10 +432,6 @@ static bool inode_do_switch_wbs(struct inode *inode,
 			long nr = folio_nr_pages(folio);
 			wb_stat_mod(old_wb, WB_RECLAIMABLE, -nr);
 			wb_stat_mod(new_wb, WB_RECLAIMABLE, nr);
-			if (folio_test_dropbehind(folio)) {
-				wb_stat_mod(old_wb, WB_DONTCACHE_DIRTY, -nr);
-				wb_stat_mod(new_wb, WB_DONTCACHE_DIRTY, nr);
-			}
 		}
 	}
 
@@ -501,23 +497,6 @@ skip_switch:
 	return switched;
 }
 
-static inline void cgroup_writeback_pin(struct super_block *sb)
-{
-	atomic_inc(&sb->s_isw_nr_in_flight);
-}
-
-static inline void cgroup_writeback_unpin(struct super_block *sb)
-{
-	if (atomic_dec_and_test(&sb->s_isw_nr_in_flight))
-		wake_up_var(&sb->s_isw_nr_in_flight);
-}
-
-static inline void cgroup_writeback_drain(struct super_block *sb)
-{
-	wait_var_event(&sb->s_isw_nr_in_flight,
-		       !atomic_read(&sb->s_isw_nr_in_flight));
-}
-
 static void process_inode_switch_wbs(struct bdi_writeback *new_wb,
 				     struct inode_switch_wbs_context *isw)
 {
@@ -575,12 +554,8 @@ relock:
 		wb_put_many(old_wb, nr_switched);
 	}
 
-	for (inodep = isw->inodes; *inodep; inodep++) {
-		struct super_block *sb = (*inodep)->i_sb;
-
+	for (inodep = isw->inodes; *inodep; inodep++)
 		iput(*inodep);
-		cgroup_writeback_unpin(sb);
-	}
 	wb_put(new_wb);
 	kfree(isw);
 	atomic_dec(&isw_nr_in_flight);
@@ -623,19 +598,16 @@ void inode_switch_wbs_work_fn(struct work_struct *work)
 static bool inode_prepare_wbs_switch(struct inode *inode,
 				     struct bdi_writeback *new_wb)
 {
-	/* Avoid the atomic_inc/smp_mb dance once SB_ACTIVE is gone. */
-	if (!(inode->i_sb->s_flags & SB_ACTIVE))
-		return false;
-
 	/*
-	 * Pairs with smp_mb() in cgroup_writeback_umount(): the umounter either
-	 * sees a non-zero counter and waits, or we see SB_ACTIVE clear below.
+	 * Paired with smp_mb() in cgroup_writeback_umount().
+	 * isw_nr_in_flight must be increased before checking SB_ACTIVE and
+	 * grabbing an inode, otherwise isw_nr_in_flight can be observed as 0
+	 * in cgroup_writeback_umount() and the isw_wq will be not flushed.
 	 */
-	cgroup_writeback_pin(inode->i_sb);
 	smp_mb();
 
 	if (IS_DAX(inode))
-		goto out_unpin;
+		return false;
 
 	/* while holding I_WB_SWITCH, no one else can update the association */
 	spin_lock(&inode->i_lock);
@@ -643,17 +615,13 @@ static bool inode_prepare_wbs_switch(struct inode *inode,
 	    inode_state_read(inode) & (I_WB_SWITCH | I_FREEING | I_WILL_FREE) ||
 	    inode_to_wb(inode) == new_wb) {
 		spin_unlock(&inode->i_lock);
-		goto out_unpin;
+		return false;
 	}
 	inode_state_set(inode, I_WB_SWITCH);
 	__iget(inode);
 	spin_unlock(&inode->i_lock);
 
 	return true;
-
-out_unpin:
-	cgroup_writeback_unpin(inode->i_sb);
-	return false;
 }
 
 static void wb_queue_isw(struct bdi_writeback *wb,
@@ -1230,27 +1198,36 @@ out_bdi_put:
 }
 
 /**
- * cgroup_writeback_umount - wait for in-flight inode wb switches on @sb
+ * cgroup_writeback_umount - flush inode wb switches for umount
  * @sb: target super_block
  *
- * Wait until every inode wb switch that already passed the SB_ACTIVE
- * check on this superblock has been completed by the worker.  Since
- * SB_ACTIVE is cleared before this is called, no new switches can start
- * for @sb, so s_isw_nr_in_flight will monotonically drop to zero.
+ * This function is called when a super_block is about to be destroyed and
+ * flushes in-flight inode wb switches.  An inode wb switch goes through
+ * RCU and then workqueue, so the two need to be flushed in order to ensure
+ * that all previously scheduled switches are finished.  As wb switches are
+ * rare occurrences and synchronize_rcu() can take a while, perform
+ * flushing iff wb switches are in flight.
  */
 void cgroup_writeback_umount(struct super_block *sb)
 {
+
 	if (!(sb->s_bdi->capabilities & BDI_CAP_WRITEBACK))
 		return;
 
 	/*
-	 * Pairs with smp_mb() in inode_prepare_wbs_switch(): we either observe
-	 * a non-zero counter and wait, or the switcher sees SB_ACTIVE clear
-	 * (cleared by generic_shutdown_super()) and bails before grabbing the
-	 * inode.
+	 * SB_ACTIVE should be reliably cleared before checking
+	 * isw_nr_in_flight, see generic_shutdown_super().
 	 */
 	smp_mb();
-	cgroup_writeback_drain(sb);
+
+	if (atomic_read(&isw_nr_in_flight)) {
+		/*
+		 * Use rcu_barrier() to wait for all pending callbacks to
+		 * ensure that all in-flight wb switches are in the workqueue.
+		 */
+		rcu_barrier();
+		flush_workqueue(isw_wq);
+	}
 }
 
 static int __init cgroup_writeback_init(void)
@@ -2396,27 +2373,6 @@ static long wb_check_start_all(struct bdi_writeback *wb)
 	return nr_pages;
 }
 
-static long wb_check_start_dontcache(struct bdi_writeback *wb)
-{
-	long nr_pages;
-
-	if (!test_and_clear_bit(WB_start_dontcache, &wb->state))
-		return 0;
-
-	nr_pages = wb_stat_sum(wb, WB_DONTCACHE_DIRTY);
-	if (nr_pages) {
-		struct wb_writeback_work work = {
-			.nr_pages	= nr_pages,
-			.sync_mode	= WB_SYNC_NONE,
-			.range_cyclic	= 1,
-			.reason		= WB_REASON_DONTCACHE,
-		};
-
-		nr_pages = wb_writeback(wb, &work);
-	}
-
-	return nr_pages;
-}
 
 /*
  * Retrieve work items and do the writeback they describe
@@ -2437,11 +2393,6 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 	 * Check for a flush-everything request
 	 */
 	wrote += wb_check_start_all(wb);
-
-	/*
-	 * Check for dontcache writeback request
-	 */
-	wrote += wb_check_start_dontcache(wb);
 
 	/*
 	 * Check for periodic writeback, kupdated() style
@@ -2516,43 +2467,6 @@ void wakeup_flusher_threads_bdi(struct backing_dev_info *bdi,
 	__wakeup_flusher_threads_bdi(bdi, reason);
 	rcu_read_unlock();
 }
-
-/**
- * filemap_dontcache_kick_writeback - kick flusher for IOCB_DONTCACHE writes
- * @mapping:	address_space that was just written to
- *
- * Kick the writeback flusher thread to expedite writeback of dontcache dirty
- * pages. Queue writeback for the inode's wb for as many pages as there are
- * dontcache pages, but don't restrict writeback to dontcache pages only.
- *
- * This significantly improves performance over either writing all wb's pages
- * or writing only dontcache pages.  Although it doesn't guarantee quick
- * writeback and reclaim of dontcache pages, it keeps the amount of dirty pages
- * in check. Over longer term dontcache pages get written and reclaimed by
- * background writeback even with this rough heuristic.
- */
-void filemap_dontcache_kick_writeback(struct address_space *mapping)
-{
-	struct inode *inode = mapping->host;
-	struct bdi_writeback *wb;
-	struct wb_lock_cookie cookie = {};
-	bool need_wakeup = false;
-
-	wb = unlocked_inode_to_wb_begin(inode, &cookie);
-	if (wb_has_dirty_io(wb) &&
-	    !test_bit(WB_start_dontcache, &wb->state) &&
-	    !test_and_set_bit(WB_start_dontcache, &wb->state)) {
-		wb_get(wb);
-		need_wakeup = true;
-	}
-	unlocked_inode_to_wb_end(inode, &cookie);
-
-	if (need_wakeup) {
-		wb_wakeup(wb);
-		wb_put(wb);
-	}
-}
-EXPORT_SYMBOL_GPL(filemap_dontcache_kick_writeback);
 
 /*
  * Wakeup the flusher threads to start writeback of all currently dirty pages

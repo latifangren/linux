@@ -2,7 +2,6 @@
 #ifndef S390_DWARF_REGS_TABLE_H
 #define S390_DWARF_REGS_TABLE_H
 
-#undef REG_DWARFNUM_NAME
 #define REG_DWARFNUM_NAME(reg, idx)	[idx] = "%" #reg
 
 /*

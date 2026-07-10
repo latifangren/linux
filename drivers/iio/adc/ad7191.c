@@ -11,6 +11,7 @@
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
@@ -153,18 +154,27 @@ static int ad7191_config_setup(struct iio_dev *indio_dev)
 	const u32 gain[4] = { 1, 8, 64, 128 };
 	static u32 scale_buffer[4][2];
 	int odr_value, odr_index = 0, pga_value, pga_index = 0, i, ret;
-	const char *propname;
 	u64 scale_uv;
 
 	st->samp_freq_index = 0;
 	st->scale_index = 0;
 
-	propname = "adi,odr-value";
-	if (device_property_present(dev, propname)) {
-		ret = device_property_read_u32(dev, propname, &odr_value);
-		if (ret)
-			return dev_err_probe(dev, ret, "Failed to get %s.\n", propname);
+	ret = device_property_read_u32(dev, "adi,odr-value", &odr_value);
+	if (ret && ret != -EINVAL)
+		return dev_err_probe(dev, ret, "Failed to get odr value.\n");
 
+	if (ret == -EINVAL) {
+		st->odr_gpios = devm_gpiod_get_array(dev, "odr", GPIOD_OUT_LOW);
+		if (IS_ERR(st->odr_gpios))
+			return dev_err_probe(dev, PTR_ERR(st->odr_gpios),
+					     "Failed to get odr gpios.\n");
+
+		if (st->odr_gpios->ndescs != 2)
+			return dev_err_probe(dev, -EINVAL, "Expected 2 odr gpio pins.\n");
+
+		st->samp_freq_avail = samp_freq;
+		st->samp_freq_avail_size = ARRAY_SIZE(samp_freq);
+	} else {
 		for (i = 0; i < ARRAY_SIZE(samp_freq); i++) {
 			if (odr_value != samp_freq[i])
 				continue;
@@ -176,17 +186,6 @@ static int ad7191_config_setup(struct iio_dev *indio_dev)
 		st->samp_freq_avail_size = 1;
 
 		st->odr_gpios = NULL;
-	} else {
-		st->odr_gpios = devm_gpiod_get_array(dev, "odr", GPIOD_OUT_LOW);
-		if (IS_ERR(st->odr_gpios))
-			return dev_err_probe(dev, PTR_ERR(st->odr_gpios),
-					     "Failed to get odr gpios.\n");
-
-		if (st->odr_gpios->ndescs != 2)
-			return dev_err_probe(dev, -EINVAL, "Expected 2 odr gpio pins.\n");
-
-		st->samp_freq_avail = samp_freq;
-		st->samp_freq_avail_size = ARRAY_SIZE(samp_freq);
 	}
 
 	mutex_lock(&st->lock);
@@ -201,12 +200,22 @@ static int ad7191_config_setup(struct iio_dev *indio_dev)
 
 	mutex_unlock(&st->lock);
 
-	propname = "adi,pga-value";
-	if (device_property_present(dev, propname)) {
-		ret = device_property_read_u32(dev, propname, &pga_value);
-		if (ret)
-			return dev_err_probe(dev, ret, "Failed to get %s.\n", propname);
+	ret = device_property_read_u32(dev, "adi,pga-value", &pga_value);
+	if (ret && ret != -EINVAL)
+		return dev_err_probe(dev, ret, "Failed to get pga value.\n");
 
+	if (ret == -EINVAL) {
+		st->pga_gpios = devm_gpiod_get_array(dev, "pga", GPIOD_OUT_LOW);
+		if (IS_ERR(st->pga_gpios))
+			return dev_err_probe(dev, PTR_ERR(st->pga_gpios),
+					     "Failed to get pga gpios.\n");
+
+		if (st->pga_gpios->ndescs != 2)
+			return dev_err_probe(dev, -EINVAL, "Expected 2 pga gpio pins.\n");
+
+		st->scale_avail = scale_buffer;
+		st->scale_avail_size = ARRAY_SIZE(scale_buffer);
+	} else {
 		for (i = 0; i < ARRAY_SIZE(gain); i++) {
 			if (pga_value != gain[i])
 				continue;
@@ -218,17 +227,6 @@ static int ad7191_config_setup(struct iio_dev *indio_dev)
 		st->scale_avail_size = 1;
 
 		st->pga_gpios = NULL;
-	} else {
-		st->pga_gpios = devm_gpiod_get_array(dev, "pga", GPIOD_OUT_LOW);
-		if (IS_ERR(st->pga_gpios))
-			return dev_err_probe(dev, PTR_ERR(st->pga_gpios),
-					     "Failed to get pga gpios.\n");
-
-		if (st->pga_gpios->ndescs != 2)
-			return dev_err_probe(dev, -EINVAL, "Expected 2 pga gpio pins.\n");
-
-		st->scale_avail = scale_buffer;
-		st->scale_avail_size = ARRAY_SIZE(scale_buffer);
 	}
 
 	st->temp_gpio = devm_gpiod_get(dev, "temp", GPIOD_OUT_LOW);

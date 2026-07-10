@@ -152,7 +152,7 @@ struct machines {
 	struct rb_root_cached guests;
 };
 
-int machines__init(struct machines *machines);
+void machines__init(struct machines *machines);
 void machines__exit(struct machines *machines);
 
 void machines__process_guests(struct machines *machines,
@@ -187,6 +187,7 @@ struct callchain_cursor;
 
 int __thread__resolve_callchain(struct thread *thread,
 				struct callchain_cursor *cursor,
+				struct evsel *evsel,
 				struct perf_sample *sample,
 				struct symbol **parent,
 				struct addr_location *root_al,
@@ -195,6 +196,7 @@ int __thread__resolve_callchain(struct thread *thread,
 
 static inline int thread__resolve_callchain(struct thread *thread,
 					    struct callchain_cursor *cursor,
+					    struct evsel *evsel,
 					    struct perf_sample *sample,
 					    struct symbol **parent,
 					    struct addr_location *root_al,
@@ -202,6 +204,7 @@ static inline int thread__resolve_callchain(struct thread *thread,
 {
 	return __thread__resolve_callchain(thread,
 					   cursor,
+					   evsel,
 					   sample,
 					   parent,
 					   root_al,
@@ -224,6 +227,8 @@ static inline bool machine__is_host(struct machine *machine)
 }
 
 bool machine__is_lock_function(struct machine *machine, u64 addr);
+bool machine__is(struct machine *machine, const char *arch);
+bool machine__normalized_is(struct machine *machine, const char *arch);
 int machine__nr_cpus_avail(struct machine *machine);
 
 struct thread *machine__findnew_thread(struct machine *machine, pid_t pid, pid_t tid);

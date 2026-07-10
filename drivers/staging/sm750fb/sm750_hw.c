@@ -1,6 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/errno.h>
+#include <linux/string.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/delay.h>
 #include <linux/fb.h>
+#include <linux/ioport.h>
+#include <linux/init.h>
 #include <linux/pci.h>
+#include <linux/vmalloc.h>
+#include <linux/pagemap.h>
+#include <linux/console.h>
+#ifdef CONFIG_MTRR
+#include <asm/mtrr.h>
+#endif
+#include <linux/platform_device.h>
+#include <linux/sizes.h>
 
 #include "sm750.h"
 #include "ddk750.h"
@@ -11,6 +28,8 @@ void __iomem *mmio750;
 int hw_sm750_map(struct sm750_dev *sm750_dev, struct pci_dev *pdev)
 {
 	int ret;
+
+	ret = 0;
 
 	sm750_dev->vidreg_start = pci_resource_start(pdev, 1);
 	sm750_dev->vidreg_size = SZ_2M;
@@ -47,9 +66,9 @@ int hw_sm750_map(struct sm750_dev *sm750_dev, struct pci_dev *pdev)
 	sm750_dev->vidmem_size = ddk750_get_vm_size();
 
 	/* reserve the vidmem space of smi adaptor */
-	sm750_dev->vmem =
+	sm750_dev->pvMem =
 		ioremap_wc(sm750_dev->vidmem_start, sm750_dev->vidmem_size);
-	if (!sm750_dev->vmem) {
+	if (!sm750_dev->pvMem) {
 		dev_err(&pdev->dev, "Map video memory failed\n");
 		ret = -EFAULT;
 		goto err_unmap_reg;
@@ -109,12 +128,12 @@ int hw_sm750_inithw(struct sm750_dev *sm750_dev, struct pci_dev *pdev)
 		      ~(PANEL_DISPLAY_CTRL_DUAL_DISPLAY |
 			PANEL_DISPLAY_CTRL_DOUBLE_PIXEL);
 		switch (sm750_dev->pnltype) {
-		case SM750_24TFT:
+		case sm750_24TFT:
 			break;
-		case SM750_DOUBLE_TFT:
+		case sm750_doubleTFT:
 			val |= PANEL_DISPLAY_CTRL_DOUBLE_PIXEL;
 			break;
-		case SM750_DUAL_TFT:
+		case sm750_dualTFT:
 			val |= PANEL_DISPLAY_CTRL_DUAL_DISPLAY;
 			break;
 		}
@@ -224,6 +243,7 @@ int hw_sm750_crtc_set_mode(struct lynxfb_crtc *crtc,
 	struct sm750_dev *sm750_dev;
 	struct lynxfb_par *par;
 
+	ret = 0;
 	par = container_of(crtc, struct lynxfb_par, crtc);
 	sm750_dev = par->dev;
 
@@ -481,8 +501,8 @@ int hw_sm750le_de_wait(void)
 		    (DE_STATE2_DE_FIFO_EMPTY | DE_STATE2_DE_MEM_FIFO_EMPTY))
 			return 0;
 	}
-
-	return -ETIMEDOUT;
+	/* timeout error */
+	return -1;
 }
 
 int hw_sm750_de_wait(void)
@@ -499,8 +519,8 @@ int hw_sm750_de_wait(void)
 		    (SYSTEM_CTRL_DE_FIFO_EMPTY | SYSTEM_CTRL_DE_MEM_FIFO_EMPTY))
 			return 0;
 	}
-
-	return -ETIMEDOUT;
+	/* timeout error */
+	return -1;
 }
 
 int hw_sm750_pan_display(struct lynxfb_crtc *crtc,

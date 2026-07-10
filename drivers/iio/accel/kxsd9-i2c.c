@@ -2,6 +2,7 @@
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/delay.h>
@@ -42,7 +43,7 @@ static const struct of_device_id kxsd9_of_match[] = {
 MODULE_DEVICE_TABLE(of, kxsd9_of_match);
 
 static const struct i2c_device_id kxsd9_i2c_id[] = {
-	{ .name = "kxsd9" },
+	{ "kxsd9" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, kxsd9_i2c_id);

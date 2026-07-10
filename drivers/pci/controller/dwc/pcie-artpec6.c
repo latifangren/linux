@@ -34,6 +34,7 @@ struct artpec6_pcie {
 	struct regmap		*regmap;	/* DT axis,syscon-pcie */
 	void __iomem		*phy_base;	/* DT phy */
 	enum artpec_pcie_variants variant;
+	enum dw_pcie_device_mode mode;
 };
 
 struct artpec_pcie_of_data {
@@ -99,7 +100,7 @@ static u64 artpec6_pcie_cpu_addr_fixup(struct dw_pcie *pci, u64 cpu_addr)
 	struct dw_pcie_rp *pp = &pci->pp;
 	struct dw_pcie_ep *ep = &pci->ep;
 
-	switch (artpec6_pcie->pci->mode) {
+	switch (artpec6_pcie->mode) {
 	case DW_PCIE_RC_TYPE:
 		return cpu_addr - pp->cfg0_base;
 	case DW_PCIE_EP_TYPE:
@@ -412,7 +413,7 @@ static int artpec6_pcie_probe(struct platform_device *pdev)
 
 	artpec6_pcie->pci = pci;
 	artpec6_pcie->variant = variant;
-	artpec6_pcie->pci->mode = mode;
+	artpec6_pcie->mode = mode;
 
 	artpec6_pcie->phy_base =
 		devm_platform_ioremap_resource_byname(pdev, "phy");
@@ -427,7 +428,7 @@ static int artpec6_pcie_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, artpec6_pcie);
 
-	switch (artpec6_pcie->pci->mode) {
+	switch (artpec6_pcie->mode) {
 	case DW_PCIE_RC_TYPE:
 		if (!IS_ENABLED(CONFIG_PCIE_ARTPEC6_HOST))
 			return -ENODEV;
@@ -463,7 +464,7 @@ static int artpec6_pcie_probe(struct platform_device *pdev)
 
 		break;
 	default:
-		dev_err(dev, "INVALID device type %d\n", artpec6_pcie->pci->mode);
+		dev_err(dev, "INVALID device type %d\n", artpec6_pcie->mode);
 	}
 
 	return 0;

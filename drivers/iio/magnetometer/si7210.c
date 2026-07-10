@@ -16,6 +16,7 @@
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
 #include <linux/math64.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -412,7 +413,7 @@ static int si7210_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id si7210_id[] = {
-	{ .name = "si7210" },
+	{ "si7210" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, si7210_id);

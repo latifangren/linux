@@ -104,10 +104,11 @@ struct net_device *cvm_oct_device[TOTAL_NUMBER_OF_PORTS];
 
 u64 cvm_oct_tx_poll_interval;
 
+static void cvm_oct_rx_refill_worker(struct work_struct *work);
+static DECLARE_DELAYED_WORK(cvm_oct_rx_refill_work, cvm_oct_rx_refill_worker);
+
 static void cvm_oct_rx_refill_worker(struct work_struct *work)
 {
-	struct octeon_ethernet_platform *plat = container_of(work,
-		struct octeon_ethernet_platform, rx_refill_work.work);
 	/*
 	 * FPA 0 may have been drained, try to refill it if we need
 	 * more than num_packet_buffers / 2, otherwise normal receive
@@ -115,10 +116,10 @@ static void cvm_oct_rx_refill_worker(struct work_struct *work)
 	 * could be received so cvm_oct_napi_poll would never be
 	 * invoked to do the refill.
 	 */
-	cvm_oct_rx_refill_pool(plat->pdev, num_packet_buffers / 2);
+	cvm_oct_rx_refill_pool(num_packet_buffers / 2);
 
 	if (!atomic_read(&cvm_oct_poll_queue_stopping))
-		schedule_delayed_work(&plat->rx_refill_work, HZ);
+		schedule_delayed_work(&cvm_oct_rx_refill_work, HZ);
 }
 
 static void cvm_oct_periodic_worker(struct work_struct *work)
@@ -137,16 +138,16 @@ static void cvm_oct_periodic_worker(struct work_struct *work)
 		schedule_delayed_work(&priv->port_periodic_work, HZ);
 }
 
-static void cvm_oct_configure_common_hw(struct platform_device *pdev)
+static void cvm_oct_configure_common_hw(void)
 {
 	/* Setup the FPA */
 	cvmx_fpa_enable();
-	cvm_oct_mem_fill_fpa(pdev, CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
+	cvm_oct_mem_fill_fpa(CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
 			     num_packet_buffers);
-	cvm_oct_mem_fill_fpa(pdev, CVMX_FPA_WQE_POOL, CVMX_FPA_WQE_POOL_SIZE,
+	cvm_oct_mem_fill_fpa(CVMX_FPA_WQE_POOL, CVMX_FPA_WQE_POOL_SIZE,
 			     num_packet_buffers);
 	if (CVMX_FPA_OUTPUT_BUFFER_POOL != CVMX_FPA_PACKET_POOL)
-		cvm_oct_mem_fill_fpa(pdev, CVMX_FPA_OUTPUT_BUFFER_POOL,
+		cvm_oct_mem_fill_fpa(CVMX_FPA_OUTPUT_BUFFER_POOL,
 				     CVMX_FPA_OUTPUT_BUFFER_POOL_SIZE, 1024);
 
 #ifdef __LITTLE_ENDIAN
@@ -200,8 +201,8 @@ EXPORT_SYMBOL(cvm_oct_free_work);
  */
 static struct net_device_stats *cvm_oct_common_get_stats(struct net_device *dev)
 {
-	struct cvmx_pip_port_status rx_status;
-	struct cvmx_pko_port_status tx_status;
+	cvmx_pip_port_status_t rx_status;
+	cvmx_pko_port_status_t tx_status;
 	struct octeon_ethernet *priv = netdev_priv(dev);
 
 	if (priv->port < CVMX_PIP_NUM_INPUT_PORTS) {
@@ -677,15 +678,6 @@ static int cvm_oct_probe(struct platform_device *pdev)
 	int qos;
 	struct device_node *pip;
 	int mtu_overhead = ETH_HLEN + ETH_FCS_LEN;
-	struct octeon_ethernet_platform *plat;
-
-	plat = devm_kzalloc(&pdev->dev, sizeof(*plat), GFP_KERNEL);
-	if (!plat)
-		return -ENOMEM;
-
-	plat->pdev = pdev;
-	INIT_DELAYED_WORK(&plat->rx_refill_work, cvm_oct_rx_refill_worker);
-	platform_set_drvdata(pdev, plat);
 
 #if IS_ENABLED(CONFIG_VLAN_8021Q)
 	mtu_overhead += VLAN_HLEN;
@@ -693,11 +685,11 @@ static int cvm_oct_probe(struct platform_device *pdev)
 
 	pip = pdev->dev.of_node;
 	if (!pip) {
-		dev_err(&pdev->dev, "No 'pip' in /aliases\n");
+		pr_err("Error: No 'pip' in /aliases\n");
 		return -EINVAL;
 	}
 
-	cvm_oct_configure_common_hw(pdev);
+	cvm_oct_configure_common_hw();
 
 	cvmx_helper_initialize_packet_io_global();
 
@@ -791,22 +783,22 @@ static int cvm_oct_probe(struct platform_device *pdev)
 			dev->max_mtu = OCTEON_MAX_MTU - mtu_overhead;
 
 			if (register_netdev(dev) < 0) {
-				netdev_err(dev, "Failed to register ethernet device for POW\n");
+				pr_err("Failed to register ethernet device for POW\n");
 				free_netdev(dev);
 			} else {
 				cvm_oct_device[CVMX_PIP_NUM_INPUT_PORTS] = dev;
-				netdev_info(dev, "POW send group %d, receive group %d\n",
-					    pow_send_group,
-					    pow_receive_group);
+				pr_info("%s: POW send group %d, receive group %d\n",
+					dev->name, pow_send_group,
+					pow_receive_group);
 			}
 		} else {
-			dev_err(&pdev->dev, "Failed to allocate ethernet device for POW\n");
+			pr_err("Failed to allocate ethernet device for POW\n");
 		}
 	}
 
 	num_interfaces = cvmx_helper_get_number_of_interfaces();
 	for (interface = 0; interface < num_interfaces; interface++) {
-		enum cvmx_helper_interface_mode imode =
+		cvmx_helper_interface_mode_t imode =
 		    cvmx_helper_interface_get_mode(interface);
 		int num_ports = cvmx_helper_ports_on_interface(interface);
 		int port;
@@ -820,8 +812,8 @@ static int cvm_oct_probe(struct platform_device *pdev)
 			struct net_device *dev =
 			    alloc_etherdev(sizeof(struct octeon_ethernet));
 			if (!dev) {
-				dev_err(&pdev->dev, "Failed to allocate ethernet device for port %d\n",
-					port);
+				pr_err("Failed to allocate ethernet device for port %d\n",
+				       port);
 				continue;
 			}
 
@@ -905,8 +897,8 @@ static int cvm_oct_probe(struct platform_device *pdev)
 			if (!dev->netdev_ops) {
 				free_netdev(dev);
 			} else if (register_netdev(dev) < 0) {
-				netdev_err(dev, "Failed to register ethernet device for interface %d, port %d\n",
-					   interface, priv->port);
+				pr_err("Failed to register ethernet device for interface %d, port %d\n",
+				       interface, priv->port);
 				free_netdev(dev);
 			} else {
 				cvm_oct_device[priv->port] = dev;
@@ -920,29 +912,28 @@ static int cvm_oct_probe(struct platform_device *pdev)
 	}
 
 	cvm_oct_tx_initialize();
-	cvm_oct_rx_initialize(pdev);
+	cvm_oct_rx_initialize();
 
 	/*
 	 * 150 uS: about 10 1500-byte packets at 1GE.
 	 */
 	cvm_oct_tx_poll_interval = 150 * (octeon_get_clock_rate() / 1000000);
 
-	schedule_delayed_work(&plat->rx_refill_work, HZ);
+	schedule_delayed_work(&cvm_oct_rx_refill_work, HZ);
 
 	return 0;
 }
 
 static void cvm_oct_remove(struct platform_device *pdev)
 {
-	struct octeon_ethernet_platform *plat = platform_get_drvdata(pdev);
 	int port;
 
 	cvmx_ipd_disable();
 
 	atomic_inc_return(&cvm_oct_poll_queue_stopping);
-	cancel_delayed_work_sync(&plat->rx_refill_work);
+	cancel_delayed_work_sync(&cvm_oct_rx_refill_work);
 
-	cvm_oct_rx_shutdown(pdev);
+	cvm_oct_rx_shutdown();
 	cvm_oct_tx_shutdown();
 
 	cvmx_pko_disable();
@@ -967,12 +958,12 @@ static void cvm_oct_remove(struct platform_device *pdev)
 	cvmx_ipd_free_ptr();
 
 	/* Free the HW pools */
-	cvm_oct_mem_empty_fpa(pdev, CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
+	cvm_oct_mem_empty_fpa(CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
 			      num_packet_buffers);
-	cvm_oct_mem_empty_fpa(pdev, CVMX_FPA_WQE_POOL, CVMX_FPA_WQE_POOL_SIZE,
+	cvm_oct_mem_empty_fpa(CVMX_FPA_WQE_POOL, CVMX_FPA_WQE_POOL_SIZE,
 			      num_packet_buffers);
 	if (CVMX_FPA_OUTPUT_BUFFER_POOL != CVMX_FPA_PACKET_POOL)
-		cvm_oct_mem_empty_fpa(pdev, CVMX_FPA_OUTPUT_BUFFER_POOL,
+		cvm_oct_mem_empty_fpa(CVMX_FPA_OUTPUT_BUFFER_POOL,
 				      CVMX_FPA_OUTPUT_BUFFER_POOL_SIZE, 128);
 }
 

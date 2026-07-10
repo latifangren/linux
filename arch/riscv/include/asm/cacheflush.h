@@ -41,17 +41,19 @@ do {							\
 } while (0)
 
 #ifdef CONFIG_64BIT
-/* This is accessed in assembly code. cpumask_var_t would be too complex. */
-extern DECLARE_BITMAP(new_valid_map_cpus, NR_CPUS);
+extern u64 new_vmalloc[NR_CPUS / sizeof(u64) + 1];
 extern char _end[];
 static inline void mark_new_valid_map(void)
 {
+	int i;
+
 	/*
 	 * We don't care if concurrently a cpu resets this value since
 	 * the only place this can happen is in handle_exception() where
 	 * an sfence.vma is emitted.
 	 */
-	bitmap_fill(new_valid_map_cpus, NR_CPUS);
+	for (i = 0; i < ARRAY_SIZE(new_vmalloc); ++i)
+		new_vmalloc[i] = -1ULL;
 }
 #define flush_cache_vmap flush_cache_vmap
 static inline void flush_cache_vmap(unsigned long start, unsigned long end)

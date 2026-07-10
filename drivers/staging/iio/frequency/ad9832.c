@@ -5,23 +5,20 @@
  * Copyright 2011 Analog Devices Inc.
  */
 
-#include <linux/array_size.h>
+#include <asm/div64.h>
+
 #include <linux/bitfield.h>
-#include <linux/bitops.h>
+#include <linux/bits.h>
 #include <linux/clk.h>
-#include <linux/dev_printk.h>
+#include <linux/device.h>
 #include <linux/err.h>
-#include <linux/kstrtox.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/regulator/consumer.h>
+#include <linux/slab.h>
 #include <linux/spi/spi.h>
 #include <linux/sysfs.h>
-#include <linux/types.h>
 #include <linux/unaligned.h>
-
-#include <asm/byteorder.h>
-#include <asm/div64.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -116,8 +113,8 @@ struct ad9832_state {
 
 static unsigned long ad9832_calc_freqreg(unsigned long mclk, unsigned long fout)
 {
-	u64 freqreg = (u64)fout << AD9832_FREQ_BITS;
-
+	unsigned long long freqreg = (u64)fout *
+				     (u64)((u64)1L << AD9832_FREQ_BITS);
 	do_div(freqreg, mclk);
 	return freqreg;
 }

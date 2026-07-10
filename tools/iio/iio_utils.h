@@ -32,7 +32,7 @@ extern const char *iio_dir;
  * @shift: amount of bits to shift right data before applying bit mask
  * @mask: a bit mask for the raw output
  * @be: flag if data is big endian
- * @format: format of the raw value
+ * @is_signed: is the raw value stored signed
  * @location: data offset for this channel inside the buffer (in bytes)
  **/
 struct iio_channel_info {
@@ -46,7 +46,7 @@ struct iio_channel_info {
 	unsigned shift;
 	uint64_t mask;
 	unsigned be;
-	char format;
+	unsigned is_signed;
 	unsigned location;
 };
 

@@ -102,7 +102,7 @@ TEST(watermark_signal)
 	}
 
 	p = mmap(NULL, 2 * page_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (p == MAP_FAILED) {
+	if (p == NULL) {
 		perror("mmap");
 		goto cleanup;
 	}

@@ -104,9 +104,6 @@ FEATURE_TESTS_BASIC :=                  \
 
 # FEATURE_TESTS_BASIC + FEATURE_TESTS_EXTRA is the complete list
 # of all feature tests
-
-LIBUNWIND_ARCHS:=aarch64 arm loongarch64 mips ppc32 ppc64 riscv s390x x86 x86_64
-
 FEATURE_TESTS_EXTRA :=                  \
          bionic                         \
          compile-32                     \
@@ -116,7 +113,7 @@ FEATURE_TESTS_EXTRA :=                  \
          gtk2                           \
          gtk2-infobar                   \
          hello                          \
-         babeltrace2-ctf-writer         \
+         libbabeltrace                  \
          libcapstone                    \
          libcheck                       \
          libbfd-liberty                 \
@@ -130,10 +127,7 @@ FEATURE_TESTS_EXTRA :=                  \
          libpfm4                        \
          libdebuginfod			\
          clang-bpf-co-re		\
-         bpftool-skeletons		\
-         libunwind			\
-         libunwind-debug-frame		\
-         $(foreach arch,$(LIBUNWIND_ARCHS),libunwind-$(arch) libunwind-debug-frame-$(arch))
+         bpftool-skeletons
 
 
 FEATURE_TESTS ?= $(FEATURE_TESTS_BASIC)
@@ -169,7 +163,6 @@ FEATURE_GROUP_MEMBERS-libbfd = libbfd-liberty libbfd-liberty-z
 # Declare list of feature dependency packages that provide pkg-config files.
 #
 FEATURE_PKG_CONFIG ?=           \
-	 babeltrace2-ctf-writer \
          libtraceevent          \
          libtracefs
 
@@ -218,11 +211,7 @@ ifeq ($(feature-all), 1)
   $(call feature_check,compile-32)
   $(call feature_check,compile-x32)
   $(call feature_check,bionic)
-  $(call feature_check,babeltrace2-ctf-writer)
-  $(call feature_check,libunwind)
-  $(call feature_check,libunwind-debug-frame)
-  $(foreach arch,$(LIBUNWIND_ARCHS),$(call feature_check,libunwind-$(arch)))
-  $(foreach arch,$(LIBUNWIND_ARCHS),$(call feature_check,libunwind-debug-frame-$(arch)))
+  $(call feature_check,libbabeltrace)
 else
   $(foreach feat,$(FEATURE_TESTS),$(call feature_check,$(feat)))
 endif

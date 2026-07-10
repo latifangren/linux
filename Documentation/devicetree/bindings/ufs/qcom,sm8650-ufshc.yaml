@@ -16,9 +16,7 @@ select:
       contains:
         enum:
           - qcom,eliza-ufshc
-          - qcom,hawi-ufshc
           - qcom,kaanapali-ufshc
-          - qcom,nord-ufshc
           - qcom,sm8650-ufshc
           - qcom,sm8750-ufshc
   required:
@@ -29,9 +27,7 @@ properties:
     items:
       - enum:
           - qcom,eliza-ufshc
-          - qcom,hawi-ufshc
           - qcom,kaanapali-ufshc
-          - qcom,nord-ufshc
           - qcom,sm8650-ufshc
           - qcom,sm8750-ufshc
       - const: qcom,ufshc
@@ -78,7 +74,6 @@ allOf:
           contains:
             enum:
               - qcom,eliza-ufshc
-              - qcom,nord-ufshc
     then:
       properties:
         reg:

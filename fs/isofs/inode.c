@@ -818,8 +818,7 @@ root_found:
 	 * entries.  By forcing the blocksize in this way, we ensure
 	 * that we will never be required to do this.
 	 */
-	if (!sb_set_blocksize(s, orig_zonesize))
-		goto out_freesbi;
+	sb_set_blocksize(s, orig_zonesize);
 
 	sbi->s_nls_iocharset = NULL;
 

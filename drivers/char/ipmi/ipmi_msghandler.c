@@ -1610,11 +1610,13 @@ int ipmi_set_gets_events(struct ipmi_user *user, bool val)
 {
 	struct ipmi_smi      *intf = user->intf;
 	struct ipmi_recv_msg *msg, *msg2;
-	LIST_HEAD(msgs);
+	struct list_head     msgs;
 
 	user = acquire_ipmi_user(user);
 	if (!user)
 		return -ENODEV;
+
+	INIT_LIST_HEAD(&msgs);
 
 	mutex_lock(&intf->events_mutex);
 	if (user->gets_events == val)
@@ -2345,10 +2347,6 @@ static int i_ipmi_request(struct ipmi_user     *user,
 		if (smi_msg == NULL) {
 			if (!supplied_recv)
 				ipmi_free_recv_msg(recv_msg);
-			else if (recv_msg->user) {
-				atomic_dec(&recv_msg->user->nr_msgs);
-				kref_put(&recv_msg->user->refcount, free_ipmi_user);
-			}
 			return -ENOMEM;
 		}
 	}
@@ -2422,10 +2420,6 @@ out_err:
 			ipmi_free_smi_msg(smi_msg);
 		if (!supplied_recv)
 			ipmi_free_recv_msg(recv_msg);
-		else if (recv_msg->user) {
-			atomic_dec(&recv_msg->user->nr_msgs);
-			kref_put(&recv_msg->user->refcount, free_ipmi_user);
-		}
 	}
 	return rv;
 }
@@ -3791,9 +3785,10 @@ static void cleanup_smi_msgs(struct ipmi_smi *intf)
 	struct seq_table *ent;
 	struct ipmi_smi_msg *msg;
 	struct list_head *entry;
-	LIST_HEAD(tmplist);
+	struct list_head tmplist;
 
 	/* Clear out our transmit queues and hold the messages. */
+	INIT_LIST_HEAD(&tmplist);
 	list_splice_tail(&intf->hp_xmit_msgs, &tmplist);
 	list_splice_tail(&intf->xmit_msgs, &tmplist);
 
@@ -4447,7 +4442,7 @@ static int handle_read_event_rsp(struct ipmi_smi *intf,
 				 struct ipmi_smi_msg *msg)
 {
 	struct ipmi_recv_msg *recv_msg, *recv_msg2;
-	LIST_HEAD(msgs);
+	struct list_head     msgs;
 	struct ipmi_user     *user;
 	int rv = 0, deliver_count = 0;
 
@@ -4461,6 +4456,8 @@ static int handle_read_event_rsp(struct ipmi_smi *intf,
 		/* An error getting the event, just ignore it. */
 		return 0;
 	}
+
+	INIT_LIST_HEAD(&msgs);
 
 	mutex_lock(&intf->events_mutex);
 
@@ -4480,8 +4477,10 @@ static int handle_read_event_rsp(struct ipmi_smi *intf,
 			mutex_unlock(&intf->users_mutex);
 			list_for_each_entry_safe(recv_msg, recv_msg2, &msgs,
 						 link) {
+				user = recv_msg->user;
 				list_del(&recv_msg->link);
 				ipmi_free_recv_msg(recv_msg);
+				kref_put(&user->refcount, free_ipmi_user);
 			}
 			/*
 			 * We couldn't allocate memory for the
@@ -5102,7 +5101,7 @@ static void check_msg_timeout(struct ipmi_smi *intf, struct seq_table *ent,
 static bool ipmi_timeout_handler(struct ipmi_smi *intf,
 				 unsigned long timeout_period)
 {
-	LIST_HEAD(timeouts);
+	struct list_head     timeouts;
 	struct ipmi_recv_msg *msg, *msg2;
 	unsigned long        flags;
 	int                  i;
@@ -5121,6 +5120,7 @@ static bool ipmi_timeout_handler(struct ipmi_smi *intf,
 	 * have timed out, putting them in the timeouts
 	 * list.
 	 */
+	INIT_LIST_HEAD(&timeouts);
 	mutex_lock(&intf->seq_lock);
 	if (intf->ipmb_maintenance_mode_timeout) {
 		if (intf->ipmb_maintenance_mode_timeout <= timeout_period)

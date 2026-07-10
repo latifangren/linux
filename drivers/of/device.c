@@ -8,6 +8,7 @@
 #include <linux/dma-direct.h> /* for bus_dma_region */
 #include <linux/dma-map-ops.h>
 #include <linux/init.h>
+#include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
 
@@ -25,7 +26,7 @@
 const struct of_device_id *of_match_device(const struct of_device_id *matches,
 					   const struct device *dev)
 {
-	if (!matches || !dev->of_node || dev_of_node_reused(dev))
+	if (!matches || !dev->of_node || dev->of_node_reused)
 		return NULL;
 	return of_match_node(matches, dev->of_node);
 }
@@ -191,7 +192,7 @@ ssize_t of_device_modalias(struct device *dev, char *str, ssize_t len)
 {
 	ssize_t sl;
 
-	if (!dev || !dev->of_node || dev_of_node_reused(dev))
+	if (!dev || !dev->of_node || dev->of_node_reused)
 		return -ENODEV;
 
 	sl = of_modalias(dev->of_node, str, len - 2);
@@ -253,7 +254,7 @@ int of_device_uevent_modalias(const struct device *dev, struct kobj_uevent_env *
 {
 	int sl;
 
-	if ((!dev) || (!dev->of_node) || dev_of_node_reused(dev))
+	if ((!dev) || (!dev->of_node) || dev->of_node_reused)
 		return -ENODEV;
 
 	/* Devicetree modalias is tricky, we add it in 2 steps */

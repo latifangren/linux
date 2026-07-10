@@ -10,11 +10,6 @@
 #include <elfutils/libdwfl.h>
 #include <elfutils/version.h>
 
-static inline const char *die_name(Dwarf_Die *die)
-{
-	return dwarf_diename(die) ?: "<unknown>";
-}
-
 struct strbuf;
 
 /* Find the realpath of the target file */

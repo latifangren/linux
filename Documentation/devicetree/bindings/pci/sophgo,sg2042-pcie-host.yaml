@@ -30,8 +30,6 @@ properties:
   device-id:
     const: 0x2042
 
-  dma-coherent: true
-
   msi-parent: true
 
 allOf:
@@ -62,6 +60,5 @@ examples:
       vendor-id = <0x1f1c>;
       device-id = <0x2042>;
       cdns,no-bar-match-nbits = <48>;
-      dma-coherent;
       msi-parent = <&msi>;
     };

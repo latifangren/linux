@@ -17,7 +17,6 @@
 #include <asm/vtimer.h>
 #include <asm/vtime.h>
 #include <asm/cpu_mf.h>
-#include <asm/idle.h>
 #include <asm/smp.h>
 
 #include "entry.h"
@@ -111,16 +110,6 @@ static void account_system_index_scaled(struct task_struct *p, u64 cputime,
 	account_system_index_time(p, cputime_to_nsecs(cputime), index);
 }
 
-static inline void vtime_reset_last_update(struct lowcore *lc)
-{
-	asm volatile(
-		"	stpt	%0\n"	/* Store current cpu timer value */
-		"	stckf	%1"	/* Store current tod clock value */
-		: "=Q" (lc->last_update_timer),
-		  "=Q" (lc->last_update_clock)
-		: : "cc");
-}
-
 /*
  * Update process times based on virtual cpu times stored by entry.S
  * to the lowcore fields user_timer, system_timer & steal_clock.
@@ -132,9 +121,12 @@ static int do_account_vtime(struct task_struct *tsk)
 
 	timer = lc->last_update_timer;
 	clock = lc->last_update_clock;
-
-	vtime_reset_last_update(lc);
-
+	asm volatile(
+		"	stpt	%0\n"	/* Store current cpu timer value */
+		"	stckf	%1"	/* Store current tod clock value */
+		: "=Q" (lc->last_update_timer),
+		  "=Q" (lc->last_update_clock)
+		: : "cc");
 	clock = lc->last_update_clock - clock;
 	timer -= lc->last_update_timer;
 

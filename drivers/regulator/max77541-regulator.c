@@ -5,6 +5,7 @@
  */
 
 #include <linux/mfd/max77541.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/driver.h>
@@ -132,8 +133,8 @@ static int max77541_regulator_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id max77541_regulator_platform_id[] = {
-	{ .name = "max77540-regulator" },
-	{ .name = "max77541-regulator" },
+	{ "max77540-regulator" },
+	{ "max77541-regulator" },
 	{ }
 };
 MODULE_DEVICE_TABLE(platform, max77541_regulator_platform_id);

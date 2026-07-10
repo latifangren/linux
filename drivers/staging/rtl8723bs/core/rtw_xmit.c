@@ -33,70 +33,21 @@ void _rtw_init_sta_xmit_priv(struct sta_xmit_priv *psta_xmitpriv)
 	INIT_LIST_HEAD(&psta_xmitpriv->apsd);
 }
 
-static s32 rtw_alloc_hwxmits(struct adapter *padapter)
-{
-	struct hw_xmit *hwxmits;
-	struct xmit_priv *pxmitpriv = &padapter->xmitpriv;
-
-	pxmitpriv->hwxmit_entry = HWXMIT_ENTRY;
-
-	pxmitpriv->hwxmits = NULL;
-
-	pxmitpriv->hwxmits = kzalloc_objs(*hwxmits, pxmitpriv->hwxmit_entry,
-					  GFP_ATOMIC);
-	if (!pxmitpriv->hwxmits)
-		return -ENOMEM;
-
-	hwxmits = pxmitpriv->hwxmits;
-
-	if (pxmitpriv->hwxmit_entry == 5) {
-		hwxmits[0] .sta_queue = &pxmitpriv->bm_pending;
-
-		hwxmits[1] .sta_queue = &pxmitpriv->vo_pending;
-
-		hwxmits[2] .sta_queue = &pxmitpriv->vi_pending;
-
-		hwxmits[3] .sta_queue = &pxmitpriv->bk_pending;
-
-		hwxmits[4] .sta_queue = &pxmitpriv->be_pending;
-	} else if (pxmitpriv->hwxmit_entry == 4) {
-		hwxmits[0] .sta_queue = &pxmitpriv->vo_pending;
-
-		hwxmits[1] .sta_queue = &pxmitpriv->vi_pending;
-
-		hwxmits[2] .sta_queue = &pxmitpriv->be_pending;
-
-		hwxmits[3] .sta_queue = &pxmitpriv->bk_pending;
-	} else {
-	}
-
-	return 0;
-}
-
-static int rtw_os_xmit_resource_alloc(struct adapter *padapter, struct xmit_buf *pxmitbuf, u32 alloc_sz, u8 flag)
-{
-	if (alloc_sz > 0) {
-		pxmitbuf->pallocated_buf = kzalloc(alloc_sz, GFP_KERNEL);
-		if (!pxmitbuf->pallocated_buf)
-			return -ENOMEM;
-
-		pxmitbuf->pbuf = (u8 *)N_BYTE_ALIGMENT((SIZE_PTR)(pxmitbuf->pallocated_buf), XMITBUF_ALIGN_SZ);
-	}
-
-	return 0;
-}
-
 s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 {
 	int i;
 	struct xmit_buf *pxmitbuf;
 	struct xmit_frame *pxframe;
-	int res;
+	signed int	res = _SUCCESS;
 
 	spin_lock_init(&pxmitpriv->lock);
 	spin_lock_init(&pxmitpriv->lock_sctx);
 	init_completion(&pxmitpriv->xmit_comp);
 	init_completion(&pxmitpriv->terminate_xmitthread_comp);
+
+	/*
+	 * Please insert all the queue initialization using _rtw_init_queue below
+	 */
 
 	pxmitpriv->adapter = padapter;
 
@@ -124,7 +75,8 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	if (!pxmitpriv->pallocated_frame_buf) {
 		pxmitpriv->pxmit_frame_buf = NULL;
-		return -ENOMEM;
+		res = _FAIL;
+		goto exit;
 	}
 	pxmitpriv->pxmit_frame_buf = (u8 *)N_BYTE_ALIGMENT((SIZE_PTR)(pxmitpriv->pallocated_frame_buf), 4);
 
@@ -159,8 +111,10 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	pxmitpriv->pallocated_xmitbuf = vzalloc(NR_XMITBUFF * sizeof(struct xmit_buf) + 4);
 
-	if (!pxmitpriv->pallocated_xmitbuf)
-		return -ENOMEM;
+	if (!pxmitpriv->pallocated_xmitbuf) {
+		res = _FAIL;
+		goto exit;
+	}
 
 	pxmitpriv->pxmitbuf = (u8 *)N_BYTE_ALIGMENT((SIZE_PTR)(pxmitpriv->pallocated_xmitbuf), 4);
 
@@ -175,11 +129,11 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 		/* Tx buf allocation may fail sometimes, so sleep and retry. */
 		res = rtw_os_xmit_resource_alloc(padapter, pxmitbuf, (MAX_XMITBUF_SZ + XMITBUF_ALIGN_SZ), true);
-		if (res) {
+		if (res == _FAIL) {
 			fsleep(10 * USEC_PER_MSEC);
 			res = rtw_os_xmit_resource_alloc(padapter, pxmitbuf, (MAX_XMITBUF_SZ + XMITBUF_ALIGN_SZ), true);
-			if (res)
-				return res;
+			if (res == _FAIL)
+				goto exit;
 		}
 
 		pxmitbuf->phead = pxmitbuf->pbuf;
@@ -191,6 +145,10 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 		list_add_tail(&pxmitbuf->list,
 			      &pxmitpriv->free_xmitbuf_queue.queue);
+		#ifdef DBG_XMIT_BUF
+		pxmitbuf->no = i;
+		#endif
+
 		pxmitbuf++;
 	}
 
@@ -204,7 +162,8 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	if (!pxmitpriv->xframe_ext_alloc_addr) {
 		pxmitpriv->xframe_ext = NULL;
-		return -ENOMEM;
+		res = _FAIL;
+		goto exit;
 	}
 	pxmitpriv->xframe_ext = (u8 *)N_BYTE_ALIGMENT((SIZE_PTR)(pxmitpriv->xframe_ext_alloc_addr), 4);
 	pxframe = (struct xmit_frame *)pxmitpriv->xframe_ext;
@@ -235,8 +194,10 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	pxmitpriv->pallocated_xmit_extbuf = vzalloc(NR_XMIT_EXTBUFF * sizeof(struct xmit_buf) + 4);
 
-	if (!pxmitpriv->pallocated_xmit_extbuf)
-		return -ENOMEM;
+	if (!pxmitpriv->pallocated_xmit_extbuf) {
+		res = _FAIL;
+		goto exit;
+	}
 
 	pxmitpriv->pxmit_extbuf = (u8 *)N_BYTE_ALIGMENT((SIZE_PTR)(pxmitpriv->pallocated_xmit_extbuf), 4);
 
@@ -250,8 +211,10 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 		pxmitbuf->buf_tag = XMITBUF_MGNT;
 
 		res = rtw_os_xmit_resource_alloc(padapter, pxmitbuf, MAX_XMIT_EXTBUF_SZ + XMITBUF_ALIGN_SZ, true);
-		if (res)
-			return res;
+		if (res == _FAIL) {
+			res = _FAIL;
+			goto exit;
+		}
 
 		pxmitbuf->phead = pxmitbuf->pbuf;
 		pxmitbuf->pend = pxmitbuf->pbuf + MAX_XMIT_EXTBUF_SZ;
@@ -260,6 +223,9 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 		list_add_tail(&pxmitbuf->list,
 			      &pxmitpriv->free_xmit_extbuf_queue.queue);
+		#ifdef DBG_XMIT_BUF_EXT
+		pxmitbuf->no = i;
+		#endif
 		pxmitbuf++;
 	}
 
@@ -277,8 +243,10 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 			res = rtw_os_xmit_resource_alloc(padapter, pxmitbuf,
 							 MAX_CMDBUF_SZ + XMITBUF_ALIGN_SZ,
 							 true);
-			if (res)
-				return res;
+			if (res == _FAIL) {
+				res = _FAIL;
+				goto exit;
+			}
 
 			pxmitbuf->phead = pxmitbuf->pbuf;
 			pxmitbuf->pend = pxmitbuf->pbuf + MAX_CMDBUF_SZ;
@@ -289,8 +257,8 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 	}
 
 	res = rtw_alloc_hwxmits(padapter);
-	if (res)
-		return res;
+	if (res == _FAIL)
+		goto exit;
 	rtw_init_hwxmits(pxmitpriv->hwxmits, pxmitpriv->hwxmit_entry);
 
 	for (i = 0; i < 4; i++)
@@ -302,7 +270,8 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	rtw_hal_init_xmit_priv(padapter);
 
-	return 0;
+exit:
+	return res;
 }
 
 void _rtw_free_xmit_priv(struct xmit_priv *pxmitpriv)
@@ -417,8 +386,7 @@ static void update_attrib_vcs_info(struct adapter *padapter, struct xmit_frame *
 	} else {
 		while (true) {
 			/* IOT action */
-			if ((pmlmeinfo->assoc_AP_vendor == HT_IOT_PEER_ATHEROS) &&
-			    pattrib->ampdu_en &&
+			if ((pmlmeinfo->assoc_AP_vendor == HT_IOT_PEER_ATHEROS) && (pattrib->ampdu_en == true) &&
 			    (padapter->securitypriv.dot11PrivacyAlgrthm == _AES_)) {
 				pattrib->vcs_mode = CTS_TO_SELF;
 				break;
@@ -454,7 +422,7 @@ static void update_attrib_vcs_info(struct adapter *padapter, struct xmit_frame *
 			/* to do list: check MIMO power save condition. */
 
 			/* check AMPDU aggregation for TXOP */
-			if (pattrib->ampdu_en) {
+			if (pattrib->ampdu_en == true) {
 				pattrib->vcs_mode = RTS_CTS;
 				break;
 			}
@@ -516,10 +484,10 @@ static s32 update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *p
 	memset(pattrib->dot11tkiptxmickey.skey,  0, 16);
 	pattrib->mac_id = psta->mac_id;
 
-	if (psta->ieee8021x_blocked) {
+	if (psta->ieee8021x_blocked == true) {
 		pattrib->encrypt = 0;
 
-		if ((pattrib->ether_type != 0x888e) && !check_fwstate(pmlmepriv, WIFI_MP_STATE)) {
+		if ((pattrib->ether_type != 0x888e) && (check_fwstate(pmlmepriv, WIFI_MP_STATE) == false)) {
 			res = _FAIL;
 			goto exit;
 		}
@@ -684,8 +652,8 @@ static s32 update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 	memcpy(pattrib->dst, &etherhdr.h_dest, ETH_ALEN);
 	memcpy(pattrib->src, &etherhdr.h_source, ETH_ALEN);
 
-	if (check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) ||
-	    check_fwstate(pmlmepriv, WIFI_ADHOC_MASTER_STATE)) {
+	if ((check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) == true) ||
+		(check_fwstate(pmlmepriv, WIFI_ADHOC_MASTER_STATE) == true)) {
 		memcpy(pattrib->ra, pattrib->dst, ETH_ALEN);
 		memcpy(pattrib->ta, pattrib->src, ETH_ALEN);
 	} else if (check_fwstate(pmlmepriv, WIFI_STATION_STATE)) {
@@ -720,7 +688,7 @@ static s32 update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 			}
 		}
 
-		/* for parsing ICMP packets */
+		/* for parsing ICMP pakcets */
 		{
 			struct iphdr *piphdr = (struct iphdr *)tmp;
 
@@ -751,7 +719,7 @@ static s32 update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 		if (!psta)	{ /*  if we cannot get psta => drop the pkt */
 			res = _FAIL;
 			goto exit;
-		} else if (check_fwstate(pmlmepriv, WIFI_AP_STATE) && !(psta->state & _FW_LINKED)) {
+		} else if ((check_fwstate(pmlmepriv, WIFI_AP_STATE) == true) && (!(psta->state & _FW_LINKED))) {
 			res = _FAIL;
 			goto exit;
 		}
@@ -933,7 +901,7 @@ s32 rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 	SetFrameSubType(fctrl, pattrib->subtype);
 
 	if (pattrib->subtype & WIFI_DATA_TYPE) {
-		if (check_fwstate(pmlmepriv, WIFI_STATION_STATE)) {
+		if (check_fwstate(pmlmepriv,  WIFI_STATION_STATE) == true) {
 			/* to_ds = 1, fr_ds = 0; */
 
 			{
@@ -947,7 +915,7 @@ s32 rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 
 			if (pqospriv->qos_option)
 				qos_option = true;
-		} else if (check_fwstate(pmlmepriv, WIFI_AP_STATE)) {
+		} else if (check_fwstate(pmlmepriv,  WIFI_AP_STATE) == true) {
 			/* to_ds = 0, fr_ds = 1; */
 			SetFrDs(fctrl);
 			memcpy(pwlanhdr->addr1, pattrib->dst, ETH_ALEN);
@@ -956,8 +924,8 @@ s32 rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 
 			if (pattrib->qos_en)
 				qos_option = true;
-		} else if (check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) ||
-			   check_fwstate(pmlmepriv, WIFI_ADHOC_MASTER_STATE)) {
+		} else if ((check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) == true) ||
+		(check_fwstate(pmlmepriv, WIFI_ADHOC_MASTER_STATE) == true)) {
 			memcpy(pwlanhdr->addr1, pattrib->dst, ETH_ALEN);
 			memcpy(pwlanhdr->addr2, pattrib->src, ETH_ALEN);
 			memcpy(pwlanhdr->addr3, get_bssid(pmlmepriv), ETH_ALEN);
@@ -1015,7 +983,7 @@ s32 rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 						pattrib->ampdu_en = true;
 
 				/* re-check if enable ampdu by BA_starting_seqctrl */
-				if (pattrib->ampdu_en) {
+				if (pattrib->ampdu_en == true) {
 					u16 tx_seq;
 
 					tx_seq = psta->BA_starting_seqctrl[pattrib->priority & 0x0f];
@@ -1172,7 +1140,7 @@ s32 rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct
 
 		frg_inx++;
 
-		if (bmcst || rtw_endofpktfile(&pktfile)) {
+		if (bmcst || (rtw_endofpktfile(&pktfile) == true)) {
 			pattrib->nr_frags = frg_inx;
 
 			pattrib->last_txcmdsz = pattrib->hdrlen + pattrib->iv_len +
@@ -1198,7 +1166,7 @@ s32 rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct
 
 	xmitframe_swencrypt(padapter, pxmitframe);
 
-	if (!bmcst)
+	if (bmcst == false)
 		update_attrib_vcs_info(padapter, pxmitframe);
 	else
 		pattrib->vcs_mode = NONE_VCS;
@@ -1352,7 +1320,7 @@ s32 rtw_mgmt_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, s
 			/* set final tx command size */
 			pattrib->last_txcmdsz = pattrib->pktlen;
 
-			/* set protected bit must be before SW encrypt */
+			/* set protected bit must be beofre SW encrypt */
 			SetPrivacy(mem_start);
 			/* software encrypt */
 			xmitframe_swencrypt(padapter, pxmitframe);
@@ -1814,49 +1782,12 @@ void rtw_free_xmitframe_queue(struct xmit_priv *pxmitpriv, struct __queue *pfram
 	spin_unlock_bh(&pframequeue->lock);
 }
 
-/*
- * Will enqueue pxmitframe to the proper queue,
- * and indicate it to xx_pending list.....
- */
-static int rtw_xmit_classifier(struct adapter *padapter, struct xmit_frame *pxmitframe)
+s32 rtw_xmitframe_enqueue(struct adapter *padapter, struct xmit_frame *pxmitframe)
 {
-	u8 ac_index;
-	struct sta_info *psta;
-	struct tx_servq	*ptxservq;
-	struct pkt_attrib	*pattrib = &pxmitframe->attrib;
-	struct hw_xmit	*phwxmits =  padapter->xmitpriv.hwxmits;
+	if (rtw_xmit_classifier(padapter, pxmitframe) == _FAIL)
+		return _FAIL;
 
-	psta = rtw_get_stainfo(&padapter->stapriv, pattrib->ra);
-	if (pattrib->psta != psta)
-		return -ENODEV;
-
-	if (!psta)
-		return -EINVAL;
-
-	if (!(psta->state & _FW_LINKED))
-		return -ENETDOWN;
-
-	ptxservq = rtw_get_sta_pending(padapter, psta, pattrib->priority, (u8 *)(&ac_index));
-
-	if (list_empty(&ptxservq->tx_pending))
-		list_add_tail(&ptxservq->tx_pending, get_list_head(phwxmits[ac_index].sta_queue));
-
-	list_add_tail(&pxmitframe->list, get_list_head(&ptxservq->sta_pending));
-	ptxservq->qcnt++;
-	phwxmits[ac_index].accnt++;
-
-	return 0;
-}
-
-int rtw_xmitframe_enqueue(struct adapter *padapter, struct xmit_frame *pxmitframe)
-{
-	int res;
-
-	res = rtw_xmit_classifier(padapter, pxmitframe);
-	if (res)
-		return res;
-
-	return 0;
+	return _SUCCESS;
 }
 
 struct tx_servq *rtw_get_sta_pending(struct adapter *padapter, struct sta_info *psta, signed int up, u8 *ac)
@@ -1891,6 +1822,85 @@ struct tx_servq *rtw_get_sta_pending(struct adapter *padapter, struct sta_info *
 	}
 
 	return ptxservq;
+}
+
+/*
+ * Will enqueue pxmitframe to the proper queue,
+ * and indicate it to xx_pending list.....
+ */
+s32 rtw_xmit_classifier(struct adapter *padapter, struct xmit_frame *pxmitframe)
+{
+	u8 ac_index;
+	struct sta_info *psta;
+	struct tx_servq	*ptxservq;
+	struct pkt_attrib	*pattrib = &pxmitframe->attrib;
+	struct hw_xmit	*phwxmits =  padapter->xmitpriv.hwxmits;
+	signed int res = _SUCCESS;
+
+	psta = rtw_get_stainfo(&padapter->stapriv, pattrib->ra);
+	if (pattrib->psta != psta)
+		return _FAIL;
+
+	if (!psta) {
+		res = _FAIL;
+		goto exit;
+	}
+
+	if (!(psta->state & _FW_LINKED))
+		return _FAIL;
+
+	ptxservq = rtw_get_sta_pending(padapter, psta, pattrib->priority, (u8 *)(&ac_index));
+
+	if (list_empty(&ptxservq->tx_pending))
+		list_add_tail(&ptxservq->tx_pending, get_list_head(phwxmits[ac_index].sta_queue));
+
+	list_add_tail(&pxmitframe->list, get_list_head(&ptxservq->sta_pending));
+	ptxservq->qcnt++;
+	phwxmits[ac_index].accnt++;
+
+exit:
+
+	return res;
+}
+
+s32 rtw_alloc_hwxmits(struct adapter *padapter)
+{
+	struct hw_xmit *hwxmits;
+	struct xmit_priv *pxmitpriv = &padapter->xmitpriv;
+
+	pxmitpriv->hwxmit_entry = HWXMIT_ENTRY;
+
+	pxmitpriv->hwxmits = NULL;
+
+	pxmitpriv->hwxmits = kzalloc_objs(*hwxmits, pxmitpriv->hwxmit_entry,
+					  GFP_ATOMIC);
+	if (!pxmitpriv->hwxmits)
+		return _FAIL;
+
+	hwxmits = pxmitpriv->hwxmits;
+
+	if (pxmitpriv->hwxmit_entry == 5) {
+		hwxmits[0] .sta_queue = &pxmitpriv->bm_pending;
+
+		hwxmits[1] .sta_queue = &pxmitpriv->vo_pending;
+
+		hwxmits[2] .sta_queue = &pxmitpriv->vi_pending;
+
+		hwxmits[3] .sta_queue = &pxmitpriv->bk_pending;
+
+		hwxmits[4] .sta_queue = &pxmitpriv->be_pending;
+	} else if (pxmitpriv->hwxmit_entry == 4) {
+		hwxmits[0] .sta_queue = &pxmitpriv->vo_pending;
+
+		hwxmits[1] .sta_queue = &pxmitpriv->vi_pending;
+
+		hwxmits[2] .sta_queue = &pxmitpriv->be_pending;
+
+		hwxmits[3] .sta_queue = &pxmitpriv->bk_pending;
+	} else {
+	}
+
+	return _SUCCESS;
 }
 
 void rtw_free_hwxmits(struct adapter *padapter)
@@ -1993,14 +2003,14 @@ s32 rtw_xmit(struct adapter *padapter, struct sk_buff **ppkt)
 	do_queue_select(padapter, &pxmitframe->attrib);
 
 	spin_lock_bh(&pxmitpriv->lock);
-	if (xmitframe_enqueue_for_sleeping_sta(padapter, pxmitframe)) {
+	if (xmitframe_enqueue_for_sleeping_sta(padapter, pxmitframe) == true) {
 		spin_unlock_bh(&pxmitpriv->lock);
 		return 1;
 	}
 	spin_unlock_bh(&pxmitpriv->lock);
 
 	/* pre_xmitframe */
-	if (!rtw_hal_xmit(padapter, pxmitframe))
+	if (rtw_hal_xmit(padapter, pxmitframe) == false)
 		return 1;
 
 	return 0;
@@ -2028,9 +2038,8 @@ inline bool xmitframe_hiq_filter(struct xmit_frame *xmitframe)
 	} else if (registry->hiq_filter == RTW_HIQ_FILTER_ALLOW_ALL)
 		allow = true;
 	else if (registry->hiq_filter == RTW_HIQ_FILTER_DENY_ALL) {
-	} else {
-		WARN_ON(1);
-	}
+	} else
+		rtw_warn_on(1);
 
 	return allow;
 }
@@ -2045,7 +2054,7 @@ signed int xmitframe_enqueue_for_sleeping_sta(struct adapter *padapter, struct x
 	signed int bmcst = is_multicast_ether_addr(pattrib->ra);
 	bool update_tim = false;
 
-	if (!check_fwstate(pmlmepriv, WIFI_AP_STATE))
+	if (check_fwstate(pmlmepriv, WIFI_AP_STATE) == false)
 		return ret;
 	psta = rtw_get_stainfo(&padapter->stapriv, pattrib->ra);
 	if (pattrib->psta != psta)

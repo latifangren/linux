@@ -163,7 +163,7 @@ static int keyctl_pkey_params_get_2(const struct keyctl_pkey_params __user *_par
 		params->out_len = info.max_sig_size;
 		break;
 	default:
-		return -EOPNOTSUPP;
+		BUG();
 	}
 
 	params->in_len  = uparams.in_len;
@@ -245,8 +245,7 @@ long keyctl_pkey_e_d_s(int op,
 		params.op = kernel_pkey_sign;
 		break;
 	default:
-		ret = -EOPNOTSUPP;
-		goto error_params;
+		BUG();
 	}
 
 	in = memdup_user(_in, params.in_len);

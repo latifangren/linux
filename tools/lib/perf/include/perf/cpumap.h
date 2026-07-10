@@ -6,13 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/**
- * struct perf_cpu - wrapper around a CPU number.
- * @cpu: CPU number, -1 for the "any CPU"/dummy value.
- *
- * int16_t limits this to 32767 CPUs.  Widening to int requires a libperf
- * ABI bump — see tools/lib/perf/TODO for the full scope.
- */
+/** A wrapper around a CPU to avoid confusion with the perf_cpu_map's map's indices. */
 struct perf_cpu {
 	int16_t cpu;
 };

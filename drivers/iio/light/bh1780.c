@@ -13,6 +13,7 @@
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/pm_runtime.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -254,7 +255,7 @@ static DEFINE_RUNTIME_DEV_PM_OPS(bh1780_dev_pm_ops, bh1780_runtime_suspend,
 				bh1780_runtime_resume, NULL);
 
 static const struct i2c_device_id bh1780_id[] = {
-	{ .name = "bh1780" },
+	{ "bh1780" },
 	{ }
 };
 

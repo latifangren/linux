@@ -4,6 +4,7 @@
  */
 
 #include <linux/bits.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/reboot.h>
@@ -69,8 +70,8 @@ static int spacemit_p1_reboot_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id spacemit_p1_reboot_id_table[] = {
-	{ .name = "spacemit-p1-reboot" },
-	{ /* sentinel */ }
+	{ "spacemit-p1-reboot", },
+	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(platform, spacemit_p1_reboot_id_table);
 

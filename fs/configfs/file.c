@@ -59,7 +59,7 @@ static int fill_read_buffer(struct file *file, struct configfs_buffer *buffer)
 	ssize_t count = -ENOENT;
 
 	if (!buffer->page)
-		buffer->page = kzalloc(PAGE_SIZE, GFP_KERNEL);
+		buffer->page = (char *) get_zeroed_page(GFP_KERNEL);
 	if (!buffer->page)
 		return -ENOMEM;
 
@@ -184,7 +184,7 @@ static int fill_write_buffer(struct configfs_buffer *buffer,
 	int copied;
 
 	if (!buffer->page)
-		buffer->page = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		buffer->page = (char *)__get_free_pages(GFP_KERNEL, 0);
 	if (!buffer->page)
 		return -ENOMEM;
 
@@ -381,7 +381,8 @@ static int configfs_release(struct inode *inode, struct file *filp)
 	struct configfs_buffer *buffer = filp->private_data;
 
 	module_put(buffer->owner);
-	kfree(buffer->page);
+	if (buffer->page)
+		free_page((unsigned long)buffer->page);
 	mutex_destroy(&buffer->mutex);
 	kfree(buffer);
 	return 0;

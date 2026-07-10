@@ -127,15 +127,8 @@ void afs_close_socket(struct afs_net *net)
 {
 	_enter("");
 
-	cancel_work_sync(&net->charge_preallocation_work);
-	cancel_work_sync(&net->rx_oob_work);
-	/* Future work items should now see ->live is false. */
-
 	kernel_listen(net->socket, 0);
-
-	/* Make sure work items are no longer running. */
 	flush_workqueue(afs_async_calls);
-	cancel_work_sync(&net->charge_preallocation_work);
 
 	if (net->spare_incoming_call) {
 		afs_put_call(net->spare_incoming_call);
@@ -149,7 +142,6 @@ void afs_close_socket(struct afs_net *net)
 
 	kernel_sock_shutdown(net->socket, SHUT_RDWR);
 	flush_workqueue(afs_async_calls);
-	cancel_work_sync(&net->rx_oob_work);
 	net->socket->sk->sk_user_data = NULL;
 	sock_release(net->socket);
 	key_put(net->fs_cm_token_key);
@@ -750,7 +742,7 @@ void afs_charge_preallocation(struct work_struct *work)
 		container_of(work, struct afs_net, charge_preallocation_work);
 	struct afs_call *call = net->spare_incoming_call;
 
-	while (READ_ONCE(net->live)) {
+	for (;;) {
 		if (!call) {
 			call = afs_alloc_call(net, &afs_RXCMxxxx, GFP_KERNEL);
 			if (!call)
@@ -800,8 +792,7 @@ static void afs_rx_new_call(struct sock *sk, struct rxrpc_call *rxcall,
 	if (!call->server)
 		trace_afs_cm_no_server(call, rxrpc_kernel_remote_srx(call->peer));
 
-	if (net->live)
-		queue_work(afs_wq, &net->charge_preallocation_work);
+	queue_work(afs_wq, &net->charge_preallocation_work);
 }
 
 /*
@@ -991,6 +982,5 @@ static void afs_rx_notify_oob(struct sock *sk, struct sk_buff *oob)
 {
 	struct afs_net *net = sk->sk_user_data;
 
-	if (READ_ONCE(net->live))
-		queue_work(afs_wq, &net->rx_oob_work);
+	schedule_work(&net->rx_oob_work);
 }

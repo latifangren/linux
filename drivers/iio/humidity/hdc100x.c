@@ -16,6 +16,7 @@
 #include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
 
@@ -379,12 +380,12 @@ static int hdc100x_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id hdc100x_id[] = {
-	{ .name = "hdc100x" },
-	{ .name = "hdc1000" },
-	{ .name = "hdc1008" },
-	{ .name = "hdc1010" },
-	{ .name = "hdc1050" },
-	{ .name = "hdc1080" },
+	{ "hdc100x" },
+	{ "hdc1000" },
+	{ "hdc1008" },
+	{ "hdc1010" },
+	{ "hdc1050" },
+	{ "hdc1080" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, hdc100x_id);

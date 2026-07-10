@@ -40,42 +40,49 @@ static int erofs_ishare_iget5_set(struct inode *inode, void *data)
 bool erofs_ishare_fill_inode(struct inode *inode)
 {
 	struct erofs_sb_info *sbi = EROFS_SB(inode->i_sb);
-	const struct address_space_operations *aops;
 	struct erofs_inode *vi = EROFS_I(inode);
+	const struct address_space_operations *aops;
 	struct erofs_inode_fingerprint fp;
-	struct inode *si;
+	struct inode *sharedinode;
+	unsigned long hash;
 
-	aops = erofs_get_aops(inode);
+	aops = erofs_get_aops(inode, true);
 	if (IS_ERR(aops))
 		return false;
 	if (erofs_xattr_fill_inode_fingerprint(&fp, inode, sbi->domain_id))
 		return false;
+	hash = xxh32(fp.opaque, fp.size, 0);
+	sharedinode = iget5_locked(erofs_ishare_mnt->mnt_sb, hash,
+				   erofs_ishare_iget5_eq, erofs_ishare_iget5_set,
+				   &fp);
+	if (!sharedinode) {
+		kfree(fp.opaque);
+		return false;
+	}
 
-	si = iget5_locked(erofs_ishare_mnt->mnt_sb,
-			  xxh32(fp.opaque, fp.size, 0),
-			  erofs_ishare_iget5_eq, erofs_ishare_iget5_set, &fp);
-	if (si && (inode_state_read_once(si) & I_NEW)) {
-		si->i_mapping->a_ops = aops;
-		si->i_size = inode->i_size;
-		unlock_new_inode(si);
+	if (inode_state_read_once(sharedinode) & I_NEW) {
+		sharedinode->i_mapping->a_ops = aops;
+		sharedinode->i_size = vi->vfs_inode.i_size;
+		unlock_new_inode(sharedinode);
 	} else {
 		kfree(fp.opaque);
-		if (!si || aops != si->i_mapping->a_ops) {
-			iput(si);
+		if (aops != sharedinode->i_mapping->a_ops) {
+			iput(sharedinode);
 			return false;
 		}
-		if (si->i_size != inode->i_size) {
-			erofs_warn(inode->i_sb, "i_size mismatch (%lld != %lld) for the same fingerprint",
-				   inode->i_size, si->i_size);
-			iput(si);
+		if (sharedinode->i_size != vi->vfs_inode.i_size) {
+			_erofs_printk(inode->i_sb, KERN_WARNING
+				"size(%lld:%lld) not matches for the same fingerprint\n",
+				vi->vfs_inode.i_size, sharedinode->i_size);
+			iput(sharedinode);
 			return false;
 		}
 	}
-	vi->sharedinode = si;
+	vi->sharedinode = sharedinode;
 	INIT_LIST_HEAD(&vi->ishare_list);
-	spin_lock(&EROFS_I(si)->ishare_lock);
-	list_add(&vi->ishare_list, &EROFS_I(si)->ishare_list);
-	spin_unlock(&EROFS_I(si)->ishare_lock);
+	spin_lock(&EROFS_I(sharedinode)->ishare_lock);
+	list_add(&vi->ishare_list, &EROFS_I(sharedinode)->ishare_list);
+	spin_unlock(&EROFS_I(sharedinode)->ishare_lock);
 	return true;
 }
 

@@ -244,20 +244,20 @@ int __init faux_bus_init(void)
 
 	ret = bus_register(&faux_bus_type);
 	if (ret)
-		goto err_deregister_root;
+		goto error_bus;
 
 	ret = driver_register(&faux_driver);
 	if (ret)
-		goto err_deregister_bus;
+		goto error_driver;
 
 	faux_bus_root = root;
 
-	return 0;
+	return ret;
 
-err_deregister_bus:
+error_driver:
 	bus_unregister(&faux_bus_type);
-err_deregister_root:
-	root_device_unregister(root);
 
+error_bus:
+	root_device_unregister(root);
 	return ret;
 }

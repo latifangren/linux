@@ -395,7 +395,8 @@ static bool coredump_parse(struct core_name *cn, struct coredump_params *cprm,
 							  cred->gid));
 				break;
 			case 'd':
-				err = cn_printf(cn, "%d", cprm->dumpable);
+				err = cn_printf(cn, "%d",
+					__get_dumpable(cprm->mm_flags));
 				break;
 			/* signal that caused the coredump */
 			case 's':
@@ -868,11 +869,11 @@ static inline void coredump_sock_shutdown(struct file *file) { }
 static inline bool coredump_socket(struct core_name *cn, struct coredump_params *cprm) { return false; }
 #endif
 
-/* cprm->dumpable is the snapshot of task dumpability at dump start. */
+/* cprm->mm_flags contains a stable snapshot of dumpability flags. */
 static inline bool coredump_force_suid_safe(const struct coredump_params *cprm)
 {
 	/* Require nonrelative corefile path and be extra careful. */
-	return cprm->dumpable == TASK_DUMPABLE_ROOT;
+	return __get_dumpable(cprm->mm_flags) == SUID_DUMP_ROOT;
 }
 
 static bool coredump_file(struct core_name *cn, struct coredump_params *cprm,
@@ -1084,7 +1085,7 @@ static inline bool coredump_skip(const struct coredump_params *cprm,
 		return true;
 	if (!binfmt->core_dump)
 		return true;
-	if (cprm->dumpable == TASK_DUMPABLE_OFF)
+	if (!__get_dumpable(cprm->mm_flags))
 		return true;
 	return false;
 }
@@ -1169,9 +1170,14 @@ void vfs_coredump(const kernel_siginfo_t *siginfo)
 	struct coredump_params cprm = {
 		.siginfo = siginfo,
 		.limit = rlimit(RLIMIT_CORE),
-		/* Snapshot MMF_DUMP_FILTER_* (unlocked) and dumpable for the dump. */
-		.mm_flags = __mm_flags_get_word(mm),
-		.dumpable = task_exec_state_get_dumpable(current),
+		/*
+		 * We must use the same mm->flags while dumping core to avoid
+		 * inconsistency of bit flags, since this flag is not protected
+		 * by any locks.
+		 *
+		 * Note that we only care about MMF_DUMP* flags.
+		 */
+		.mm_flags = __mm_flags_get_dumpable(mm),
 		.vma_meta = NULL,
 		.cpu = raw_smp_processor_id(),
 	};
@@ -1413,7 +1419,7 @@ EXPORT_SYMBOL(dump_align);
 
 void validate_coredump_safety(void)
 {
-	if (suid_dumpable == TASK_DUMPABLE_ROOT &&
+	if (suid_dumpable == SUID_DUMP_ROOT &&
 	    core_pattern[0] != '/' && core_pattern[0] != '|' && core_pattern[0] != '@') {
 
 		coredump_report_failure("Unsafe core_pattern used with fs.suid_dumpable=2: "
@@ -1482,8 +1488,7 @@ static int proc_dostring_coredump(const struct ctl_table *table, int write,
 		return -EINVAL;
 	}
 
-	if (strncmp(old_core_pattern, core_pattern, CORENAME_MAX_SIZE))
-		validate_coredump_safety();
+	validate_coredump_safety();
 	return error;
 }
 

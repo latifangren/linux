@@ -85,7 +85,8 @@ MODULE_LICENSE("GPL");
 #define GEM_MODULE_NAME	"gem"
 
 static const struct pci_device_id gem_pci_tbl[] = {
-	{ PCI_VDEVICE(SUN, PCI_DEVICE_ID_SUN_GEM) },
+	{ PCI_VENDOR_ID_SUN, PCI_DEVICE_ID_SUN_GEM,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
 
 	/* These models only differ from the original GEM in
 	 * that their tx/rx fifos are of a different size and
@@ -94,14 +95,21 @@ static const struct pci_device_id gem_pci_tbl[] = {
 	 * Apple's GMAC does support gigabit on machines with
 	 * the BCM54xx PHYs. -BenH
 	 */
-	{ PCI_VDEVICE(SUN, PCI_DEVICE_ID_SUN_RIO_GEM) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMAC) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMACP) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMAC2) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_K2_GMAC) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_SH_SUNGEM) },
-	{ PCI_VDEVICE(APPLE, PCI_DEVICE_ID_APPLE_IPID2_GMAC) },
-	{ }
+	{ PCI_VENDOR_ID_SUN, PCI_DEVICE_ID_SUN_RIO_GEM,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMAC,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMACP,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_UNI_N_GMAC2,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_K2_GMAC,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_SH_SUNGEM,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{ PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_IPID2_GMAC,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+	{0, }
 };
 
 MODULE_DEVICE_TABLE(pci, gem_pci_tbl);
@@ -2179,7 +2187,7 @@ static void gem_do_stop(struct net_device *dev, int wol)
 	 * if we did. This is not an issue however as the reset
 	 * task is synchronized vs. us (rtnl_lock) and will do
 	 * nothing if the device is down or suspended. We do
-	 * still clear reset_task_pending to avoid a spurious
+	 * still clear reset_task_pending to avoid a spurrious
 	 * reset later on in case we do resume before it gets
 	 * scheduled.
 	 */
@@ -2362,7 +2370,7 @@ static int __maybe_unused gem_resume(struct device *dev_d)
 	gem_do_start(dev);
 
 	/* If we had WOL enabled, the cell clock was never turned off during
-	 * sleep, so we end up being unbalanced. Fix that here
+	 * sleep, so we end up beeing unbalanced. Fix that here
 	 */
 	if (gp->asleep_wol)
 		gem_put_cell(gp);
@@ -2978,10 +2986,10 @@ static int gem_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	dev->max_mtu = GEM_MAX_MTU;
 
 	/* Register with kernel */
-	err = register_netdev(dev);
-	if (err) {
+	if (register_netdev(dev)) {
 		pr_err("Cannot register net device, aborting\n");
-		goto err_out_clear_drvdata;
+		err = -ENOMEM;
+		goto err_out_free_consistent;
 	}
 
 	/* Undo the get_cell with appropriate locking (we could use
@@ -2995,13 +3003,8 @@ static int gem_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		    dev->dev_addr);
 	return 0;
 
-err_out_clear_drvdata:
-	pci_set_drvdata(pdev, NULL);
-	netif_napi_del(&gp->napi);
-
 err_out_free_consistent:
-	dma_free_coherent(&pdev->dev, sizeof(struct gem_init_block),
-			  gp->init_block, gp->gblock_dvma);
+	gem_remove_one(pdev);
 err_out_iounmap:
 	gem_put_cell(gp);
 	iounmap(gp->regs);

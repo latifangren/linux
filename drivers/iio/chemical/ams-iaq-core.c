@@ -7,6 +7,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
@@ -162,7 +163,7 @@ static int ams_iaqcore_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id ams_iaqcore_id[] = {
-	{ .name = "ams-iaq-core" },
+	{ "ams-iaq-core" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ams_iaqcore_id);

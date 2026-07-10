@@ -29,10 +29,8 @@
 /*
  * IO end handler for temporary buffer_heads handling writes to the journal.
  */
-static void journal_end_buffer_io_sync(struct bio *bio)
+static void journal_end_buffer_io_sync(struct buffer_head *bh, int uptodate)
 {
-	struct buffer_head *bh;
-	bool uptodate = bio_endio_bh(bio, &bh);
 	struct buffer_head *orig_bh = bh->b_private;
 
 	BUFFER_TRACE(bh, "");
@@ -41,7 +39,9 @@ static void journal_end_buffer_io_sync(struct bio *bio)
 	else
 		clear_buffer_uptodate(bh);
 	if (orig_bh) {
-		clear_and_wake_up_bit(BH_Shadow, &orig_bh->b_state);
+		clear_bit_unlock(BH_Shadow, &orig_bh->b_state);
+		smp_mb__after_atomic();
+		wake_up_bit(&orig_bh->b_state, BH_Shadow);
 	}
 	unlock_buffer(bh);
 }
@@ -147,12 +147,13 @@ static int journal_submit_commit_record(journal_t *journal,
 	lock_buffer(bh);
 	clear_buffer_dirty(bh);
 	set_buffer_uptodate(bh);
+	bh->b_end_io = journal_end_buffer_io_sync;
 
 	if (journal->j_flags & JBD2_BARRIER &&
 	    !jbd2_has_feature_async_commit(journal))
 		write_flags |= REQ_PREFLUSH | REQ_FUA;
 
-	bh_submit(bh, write_flags, journal_end_buffer_io_sync);
+	submit_bh(write_flags, bh);
 	*cbh = bh;
 	return 0;
 }
@@ -512,8 +513,10 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 		 * leave undo-committed data.
 		 */
 		if (jh->b_committed_data) {
+			struct buffer_head *bh = jh2bh(jh);
+
 			spin_lock(&jh->b_state_lock);
-			kfree(jh->b_committed_data);
+			jbd2_free(jh->b_committed_data, bh->b_size);
 			jh->b_committed_data = NULL;
 			spin_unlock(&jh->b_state_lock);
 		}
@@ -748,9 +751,9 @@ start_journal_io:
 				lock_buffer(bh);
 				clear_buffer_dirty(bh);
 				set_buffer_uptodate(bh);
-				bh_submit(bh,
-					REQ_OP_WRITE | JBD2_JOURNAL_REQ_FLAGS,
-					journal_end_buffer_io_sync);
+				bh->b_end_io = journal_end_buffer_io_sync;
+				submit_bh(REQ_OP_WRITE | JBD2_JOURNAL_REQ_FLAGS,
+					  bh);
 			}
 			cond_resched();
 
@@ -974,7 +977,7 @@ restart_loop:
 		 * its triggers if they exist, so we can clear that too.
 		 */
 		if (jh->b_committed_data) {
-			kfree(jh->b_committed_data);
+			jbd2_free(jh->b_committed_data, bh->b_size);
 			jh->b_committed_data = NULL;
 			if (jh->b_frozen_data) {
 				jh->b_committed_data = jh->b_frozen_data;
@@ -982,7 +985,7 @@ restart_loop:
 				jh->b_frozen_triggers = NULL;
 			}
 		} else if (jh->b_frozen_data) {
-			kfree(jh->b_frozen_data);
+			jbd2_free(jh->b_frozen_data, bh->b_size);
 			jh->b_frozen_data = NULL;
 			jh->b_frozen_triggers = NULL;
 		}

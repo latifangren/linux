@@ -50,7 +50,6 @@
 #include <linux/auxiliary_bus.h>
 #include <linux/bitfield.h>
 #include <linux/debugfs.h>
-#include <linux/cleanup.h>
 #include <linux/delay.h>
 #include <linux/intel_tpmi.h>
 #include <linux/intel_vsec.h>
@@ -474,7 +473,7 @@ static ssize_t mem_write(struct file *file, const char __user *userbuf, size_t l
 	struct seq_file *m = file->private_data;
 	struct intel_tpmi_pm_feature *pfs = m->private;
 	u32 addr, value, punit, size;
-	u32 num_elems;
+	u32 num_elems, *array;
 	void __iomem *mem;
 	int ret;
 
@@ -482,14 +481,15 @@ static ssize_t mem_write(struct file *file, const char __user *userbuf, size_t l
 	if (!size)
 		return -EIO;
 
-	u32 *array __free(kfree) = NULL;
 	ret = parse_int_array_user(userbuf, len, (int **)&array);
 	if (ret < 0)
 		return ret;
 
 	num_elems = *array;
-	if (num_elems != 3)
-		return -EINVAL;
+	if (num_elems != 3) {
+		ret = -EINVAL;
+		goto exit_write;
+	}
 
 	punit = array[1];
 	addr = array[2];
@@ -498,23 +498,37 @@ static ssize_t mem_write(struct file *file, const char __user *userbuf, size_t l
 	if (!IS_ALIGNED(addr, sizeof(u32)))
 		return -EINVAL;
 
-	if (punit >= pfs->pfs_header.num_entries)
-		return -EINVAL;
+	if (punit >= pfs->pfs_header.num_entries) {
+		ret = -EINVAL;
+		goto exit_write;
+	}
 
-	if (addr >= size)
-		return -EINVAL;
+	if (addr >= size) {
+		ret = -EINVAL;
+		goto exit_write;
+	}
 
-	guard(mutex)(&tpmi_dev_lock);
+	mutex_lock(&tpmi_dev_lock);
 
 	mem = ioremap(pfs->vsec_offset + punit * size, size);
-	if (!mem)
-		return -ENOMEM;
+	if (!mem) {
+		ret = -ENOMEM;
+		goto unlock_mem_write;
+	}
 
 	writel(value, mem + addr);
 
 	iounmap(mem);
 
-	return len;
+	ret = len;
+
+unlock_mem_write:
+	mutex_unlock(&tpmi_dev_lock);
+
+exit_write:
+	kfree(array);
+
+	return ret;
 }
 
 static int mem_write_show(struct seq_file *s, void *unused)
@@ -627,12 +641,15 @@ static int tpmi_create_device(struct intel_tpmi_info *tpmi_info,
 	if (!name)
 		return -EOPNOTSUPP;
 
-	feature_vsec_dev = kzalloc_flex(*feature_vsec_dev, resource, pfs->pfs_header.num_entries);
-	if (!feature_vsec_dev)
+	res = kzalloc_objs(*res, pfs->pfs_header.num_entries);
+	if (!res)
 		return -ENOMEM;
 
-	feature_vsec_dev->num_resources = pfs->pfs_header.num_entries;
-	res = feature_vsec_dev->resource;
+	feature_vsec_dev = kzalloc_obj(*feature_vsec_dev);
+	if (!feature_vsec_dev) {
+		kfree(res);
+		return -ENOMEM;
+	}
 
 	snprintf(feature_id_name, sizeof(feature_id_name), "tpmi-%s", name);
 
@@ -645,6 +662,8 @@ static int tpmi_create_device(struct intel_tpmi_info *tpmi_info,
 	}
 
 	feature_vsec_dev->dev = vsec_dev->dev;
+	feature_vsec_dev->resource = res;
+	feature_vsec_dev->num_resources = pfs->pfs_header.num_entries;
 	feature_vsec_dev->priv_data = &tpmi_info->plat_info;
 	feature_vsec_dev->priv_data_size = sizeof(tpmi_info->plat_info);
 	feature_vsec_dev->ida = &intel_vsec_tpmi_ida;

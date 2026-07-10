@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: LGPL-2.1
-#include "trace/beauty/beauty.h"
-
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -29,8 +27,8 @@
 # define MSG_CMSG_CLOEXEC	0x40000000
 #endif
 
-size_t syscall_arg__scnprintf_msg_flags(char *bf, size_t size,
-					struct syscall_arg *arg)
+static size_t syscall_arg__scnprintf_msg_flags(char *bf, size_t size,
+					       struct syscall_arg *arg)
 {
 	bool show_prefix = arg->show_string_prefix;
 	const char *prefix = "MSG_";
@@ -74,3 +72,5 @@ size_t syscall_arg__scnprintf_msg_flags(char *bf, size_t size,
 
 	return printed;
 }
+
+#define SCA_MSG_FLAGS syscall_arg__scnprintf_msg_flags

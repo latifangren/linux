@@ -13,6 +13,7 @@
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/time.h>
@@ -1008,7 +1009,7 @@ static const struct of_device_id veml6046x00_of_match[] = {
 MODULE_DEVICE_TABLE(of, veml6046x00_of_match);
 
 static const struct i2c_device_id veml6046x00_id[] = {
-	{ .name = "veml6046x00" },
+	{ "veml6046x00" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, veml6046x00_id);

@@ -265,7 +265,8 @@ static ssize_t lane_detect_write(struct file *file, const char __user *buf,
 		return ret;
 
 	val = dw_pcie_readl_dbi(pci, rinfo->ras_cap_offset + SD_STATUS_L1LANE_REG);
-	FIELD_MODIFY(LANE_SELECT, &val, lane);
+	val &= ~(LANE_SELECT);
+	val |= FIELD_PREP(LANE_SELECT, lane);
 	dw_pcie_writel_dbi(pci, rinfo->ras_cap_offset + SD_STATUS_L1LANE_REG, val);
 
 	return count;
@@ -305,7 +306,6 @@ static ssize_t err_inj_write(struct file *file, const char __user *buf,
 	u32 val, counter, vc_num, err_group, type_mask;
 	int val_diff = 0;
 	char *kern_buf;
-	int ret;
 
 	err_group = err_inj_list[pdata->idx].err_inj_group;
 	type_mask = err_inj_type_mask[err_group];
@@ -327,10 +327,10 @@ static ssize_t err_inj_write(struct file *file, const char __user *buf,
 			return -EINVAL;
 		}
 	} else {
-		ret = kstrtou32(kern_buf, 0, &counter);
-		if (ret) {
+		val = kstrtou32(kern_buf, 0, &counter);
+		if (val) {
 			kfree(kern_buf);
-			return ret;
+			return val;
 		}
 	}
 
@@ -339,10 +339,14 @@ static ssize_t err_inj_write(struct file *file, const char __user *buf,
 	val |= ((err_inj_list[pdata->idx].err_inj_type << EINJ_TYPE_SHIFT) & type_mask);
 	val |= FIELD_PREP(EINJ_COUNT, counter);
 
-	if (err_group == 1 || err_group == 4)
-		FIELD_MODIFY(EINJ_VAL_DIFF, &val, val_diff);
-	if (err_group == 4)
-		FIELD_MODIFY(EINJ_VC_NUM, &val, vc_num);
+	if (err_group == 1 || err_group == 4) {
+		val &= ~(EINJ_VAL_DIFF);
+		val |= FIELD_PREP(EINJ_VAL_DIFF, val_diff);
+	}
+	if (err_group == 4) {
+		val &= ~(EINJ_VC_NUM);
+		val |= FIELD_PREP(EINJ_VC_NUM, vc_num);
+	}
 
 	dw_pcie_writel_dbi(pci, rinfo->ras_cap_offset + ERR_INJ0_OFF + (0x4 * err_group), val);
 	dw_pcie_writel_dbi(pci, rinfo->ras_cap_offset + ERR_INJ_ENABLE_REG, (0x1 << err_group));
@@ -358,8 +362,9 @@ static void set_event_number(struct dwc_pcie_rasdes_priv *pdata,
 
 	val = dw_pcie_readl_dbi(pci, rinfo->ras_cap_offset + RAS_DES_EVENT_COUNTER_CTRL_REG);
 	val &= ~EVENT_COUNTER_ENABLE;
-	FIELD_MODIFY(EVENT_COUNTER_GROUP_SELECT, &val, event_list[pdata->idx].group_no);
-	FIELD_MODIFY(EVENT_COUNTER_EVENT_SELECT, &val, event_list[pdata->idx].event_no);
+	val &= ~(EVENT_COUNTER_GROUP_SELECT | EVENT_COUNTER_EVENT_SELECT);
+	val |= FIELD_PREP(EVENT_COUNTER_GROUP_SELECT, event_list[pdata->idx].group_no);
+	val |= FIELD_PREP(EVENT_COUNTER_EVENT_SELECT, event_list[pdata->idx].event_no);
 	dw_pcie_writel_dbi(pci, rinfo->ras_cap_offset + RAS_DES_EVENT_COUNTER_CTRL_REG, val);
 }
 
@@ -464,7 +469,8 @@ static ssize_t counter_lane_write(struct file *file, const char __user *buf,
 	mutex_lock(&rinfo->reg_event_lock);
 	set_event_number(pdata, pci, rinfo);
 	val = dw_pcie_readl_dbi(pci, rinfo->ras_cap_offset + RAS_DES_EVENT_COUNTER_CTRL_REG);
-	FIELD_MODIFY(EVENT_COUNTER_LANE_SELECT, &val, lane);
+	val &= ~(EVENT_COUNTER_LANE_SELECT);
+	val |= FIELD_PREP(EVENT_COUNTER_LANE_SELECT, lane);
 	dw_pcie_writel_dbi(pci, rinfo->ras_cap_offset + RAS_DES_EVENT_COUNTER_CTRL_REG, val);
 	mutex_unlock(&rinfo->reg_event_lock);
 
@@ -499,6 +505,11 @@ static int ltssm_status_show(struct seq_file *s, void *v)
 	seq_printf(s, "%s (0x%02x)\n", dw_pcie_ltssm_status_string(val), val);
 
 	return 0;
+}
+
+static int ltssm_status_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ltssm_status_show, inode->i_private);
 }
 
 #define dwc_debugfs_create(name)			\
@@ -537,14 +548,14 @@ static const struct file_operations dwc_pcie_counter_value_ops = {
 	.read = counter_value_read,
 };
 
-DEFINE_SHOW_ATTRIBUTE(ltssm_status);
+static const struct file_operations dwc_pcie_ltssm_status_ops = {
+	.open = ltssm_status_open,
+	.read = seq_read,
+};
 
 static void dwc_pcie_rasdes_debugfs_deinit(struct dw_pcie *pci)
 {
 	struct dwc_pcie_rasdes_info *rinfo = pci->debugfs->rasdes_info;
-
-	if (!rinfo)
-		return;
 
 	mutex_destroy(&rinfo->reg_event_lock);
 }
@@ -631,7 +642,7 @@ err_deinit:
 static void dwc_pcie_ltssm_debugfs_init(struct dw_pcie *pci, struct dentry *dir)
 {
 	debugfs_create_file("ltssm_status", 0444, dir, pci,
-			    &ltssm_status_fops);
+			    &dwc_pcie_ltssm_status_ops);
 }
 
 static int dw_pcie_ptm_check_capability(void *drvdata)

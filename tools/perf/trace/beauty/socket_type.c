@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: LGPL-2.1
-#include "trace/beauty/beauty.h"
-
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -20,7 +18,7 @@
 #define SOCK_TYPE_MASK 0xf
 #endif
 
-size_t syscall_arg__scnprintf_socket_type(char *bf, size_t size, struct syscall_arg *arg)
+static size_t syscall_arg__scnprintf_socket_type(char *bf, size_t size, struct syscall_arg *arg)
 {
 	bool show_prefix = arg->show_string_prefix;
 	const char *prefix = "SOCK_";
@@ -61,3 +59,5 @@ size_t syscall_arg__scnprintf_socket_type(char *bf, size_t size, struct syscall_
 
 	return printed;
 }
+
+#define SCA_SK_TYPE syscall_arg__scnprintf_socket_type

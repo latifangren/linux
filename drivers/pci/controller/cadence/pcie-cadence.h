@@ -86,7 +86,6 @@ struct cdns_plat_pcie_of_data {
  * @ops: Platform-specific ops to control various inputs from Cadence PCIe
  *       wrapper
  * @cdns_pcie_reg_offsets: Register bank offsets for different SoC
- * @max_link_speed: Maximum supported link speed
  */
 struct cdns_pcie {
 	void __iomem		             *reg_base;
@@ -99,7 +98,6 @@ struct cdns_pcie {
 	struct device_link	             **link;
 	const  struct cdns_pcie_ops          *ops;
 	const  struct cdns_plat_pcie_of_data *cdns_pcie_reg_offsets;
-	int				     max_link_speed;
 };
 
 /**

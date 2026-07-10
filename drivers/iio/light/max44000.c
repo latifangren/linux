@@ -10,6 +10,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
@@ -597,7 +598,7 @@ static int max44000_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max44000_id[] = {
-	{ .name = "max44000" },
+	{ "max44000" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max44000_id);

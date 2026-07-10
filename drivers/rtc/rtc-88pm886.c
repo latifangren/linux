@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/limits.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/rtc.h>
 
@@ -77,7 +78,7 @@ static int pm886_rtc_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id pm886_rtc_id_table[] = {
-	{ .name = "88pm886-rtc" },
+	{ "88pm886-rtc", },
 	{ }
 };
 MODULE_DEVICE_TABLE(platform, pm886_rtc_id_table);

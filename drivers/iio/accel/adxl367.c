@@ -13,6 +13,7 @@
 #include <linux/iio/sysfs.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/mod_devicetable.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
@@ -1444,9 +1445,7 @@ int adxl367_probe(struct device *dev, const struct adxl367_ops *ops,
 	st->context = context;
 	st->ops = ops;
 
-	ret = devm_mutex_init(dev, &st->lock);
-	if (ret)
-		return ret;
+	mutex_init(&st->lock);
 
 	indio_dev->channels = adxl367_channels;
 	indio_dev->num_channels = ARRAY_SIZE(adxl367_channels);

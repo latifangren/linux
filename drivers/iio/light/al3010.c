@@ -18,6 +18,7 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
+#include <linux/mod_devicetable.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -110,8 +111,7 @@ static int al3010_read_raw(struct iio_dev *indio_dev,
 			   int *val2, long mask)
 {
 	struct al3010_data *data = iio_priv(indio_dev);
-	int ret, gain;
-	__le16 raw;
+	int ret, gain, raw;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
@@ -120,12 +120,11 @@ static int al3010_read_raw(struct iio_dev *indio_dev,
 		 * - low byte of output is stored at AL3010_REG_DATA_LOW
 		 * - high byte of output is stored at AL3010_REG_DATA_LOW + 1
 		 */
-		ret = regmap_bulk_read(data->regmap, AL3010_REG_DATA_LOW,
-				       &raw, sizeof(raw));
+		ret = regmap_read(data->regmap, AL3010_REG_DATA_LOW, &raw);
 		if (ret)
 			return ret;
 
-		*val = le16_to_cpu(raw);
+		*val = raw;
 
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
@@ -219,7 +218,7 @@ static int al3010_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(al3010_pm_ops, al3010_suspend, al3010_resume);
 
 static const struct i2c_device_id al3010_id[] = {
-	{ .name = "al3010" },
+	{"al3010", },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, al3010_id);

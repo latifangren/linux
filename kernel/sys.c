@@ -2565,14 +2565,14 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = put_user(me->pdeath_signal, (int __user *)arg2);
 		break;
 	case PR_GET_DUMPABLE:
-		error = task_exec_state_get_dumpable(me);
+		error = get_dumpable(me->mm);
 		break;
 	case PR_SET_DUMPABLE:
-		if (arg2 != TASK_DUMPABLE_OFF && arg2 != TASK_DUMPABLE_OWNER) {
+		if (arg2 != SUID_DUMP_DISABLE && arg2 != SUID_DUMP_USER) {
 			error = -EINVAL;
 			break;
 		}
-		task_exec_state_set_dumpable(arg2);
+		set_dumpable(me->mm, arg2);
 		break;
 
 	case PR_SET_UNALIGN:

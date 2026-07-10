@@ -257,10 +257,6 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 	__u32 new_dir_mask = FS_MOVED_TO;
 	__u32 rename_mask = FS_RENAME;
 	const struct qstr *new_name = &moved->d_name;
-	struct fsnotify_rename_data rd = {
-		.moved = moved,
-		.target = target,
-	};
 
 	if (isdir) {
 		old_dir_mask |= FS_ISDIR;
@@ -269,12 +265,12 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 	}
 
 	/* Event with information about both old and new parent+name */
-	fsnotify_name(rename_mask, &rd, FSNOTIFY_EVENT_RENAME,
+	fsnotify_name(rename_mask, moved, FSNOTIFY_EVENT_DENTRY,
 		      old_dir, old_name, 0);
 
 	fsnotify_name(old_dir_mask, source, FSNOTIFY_EVENT_INODE,
 		      old_dir, old_name, fs_cookie);
-	fsnotify_name(new_dir_mask, &rd, FSNOTIFY_EVENT_RENAME,
+	fsnotify_name(new_dir_mask, source, FSNOTIFY_EVENT_INODE,
 		      new_dir, new_name, fs_cookie);
 
 	if (target)

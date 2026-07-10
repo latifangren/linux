@@ -661,7 +661,8 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 				       extp->MajorVersion, extp->MinorVersion,
 				       extp->MajorVersion, extp->MinorVersion);
 				kfree(extp);
-				goto free_mtd;
+				kfree(mtd);
+				return NULL;
 			}
 
 			printk(KERN_INFO "  Amd/Fujitsu Extended Query version %c.%c.\n",
@@ -713,8 +714,10 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 		}
 		cfi_fixup(mtd, cfi_nopri_fixup_table);
 
-		if (!cfi->addr_unlock1 || !cfi->addr_unlock2)
-			goto free_mtd;
+		if (!cfi->addr_unlock1 || !cfi->addr_unlock2) {
+			kfree(mtd);
+			return NULL;
+		}
 
 	} /* CFI mode */
 	else if (cfi->cfi_mode == CFI_MODE_JEDEC) {
@@ -752,10 +755,6 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 	map->fldrv = &cfi_amdstd_chipdrv;
 
 	return cfi_amdstd_setup(mtd);
-
-free_mtd:
-	kfree(mtd);
-	return NULL;
 }
 struct mtd_info *cfi_cmdset_0006(struct map_info *map, int primary) __attribute__((alias("cfi_cmdset_0002")));
 struct mtd_info *cfi_cmdset_0701(struct map_info *map, int primary) __attribute__((alias("cfi_cmdset_0002")));

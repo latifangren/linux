@@ -11,6 +11,7 @@
 #include <linux/firewire.h>
 #include <linux/firewire-constants.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/string.h>
 #include <sound/control.h>
@@ -178,8 +179,7 @@ static void isight_packet(struct fw_iso_context *context, u32 cycle,
 	if (likely(length >= 16 &&
 		   payload->signature == cpu_to_be32(0x73676874/*"sght"*/))) {
 		count = be32_to_cpu(payload->sample_count);
-		if (likely(count <= (length - 16) / 4 &&
-			   count <= MAX_FRAMES_PER_PACKET)) {
+		if (likely(count <= (length - 16) / 4)) {
 			total = be32_to_cpu(payload->sample_total);
 			if (unlikely(total != isight->total_samples)) {
 				if (!isight->first_packet)

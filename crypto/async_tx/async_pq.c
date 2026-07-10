@@ -8,7 +8,6 @@
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/raid/pq.h>
-#include <linux/raid/pq_tables.h>
 #include <linux/async_tx.h>
 #include <linux/gfp.h>
 
@@ -120,7 +119,7 @@ do_sync_gen_syndrome(struct page **blocks, unsigned int *offsets, int disks,
 	for (i = 0; i < disks; i++) {
 		if (blocks[i] == NULL) {
 			BUG_ON(i > disks - 3); /* P or Q can't be zero */
-			srcs[i] = page_address(ZERO_PAGE(0));
+			srcs[i] = raid6_get_zero_page();
 		} else {
 			srcs[i] = page_address(blocks[i]) + offsets[i];
 
@@ -132,11 +131,11 @@ do_sync_gen_syndrome(struct page **blocks, unsigned int *offsets, int disks,
 		}
 	}
 	if (submit->flags & ASYNC_TX_PQ_XOR_DST) {
-		BUG_ON(!raid6_can_xor_syndrome());
+		BUG_ON(!raid6_call.xor_syndrome);
 		if (start >= 0)
-			raid6_xor_syndrome(disks, start, stop, len, srcs);
+			raid6_call.xor_syndrome(disks, start, stop, len, srcs);
 	} else
-		raid6_gen_syndrome(disks, len, srcs);
+		raid6_call.gen_syndrome(disks, len, srcs);
 	async_tx_sync_epilog(submit);
 }
 

@@ -10,6 +10,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/i2c.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
@@ -46,7 +47,7 @@ static const struct of_device_id bma220_i2c_match[] = {
 MODULE_DEVICE_TABLE(of, bma220_i2c_match);
 
 static const struct i2c_device_id bma220_i2c_id[] = {
-	{ .name = "bma220" },
+	{ "bma220" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, bma220_i2c_id);

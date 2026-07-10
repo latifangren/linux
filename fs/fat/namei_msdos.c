@@ -644,7 +644,6 @@ static const struct inode_operations msdos_dir_inode_operations = {
 	.rename		= msdos_rename,
 	.setattr	= fat_setattr,
 	.getattr	= fat_getattr,
-	.fileattr_get	= fat_fileattr_get,
 	.update_time	= fat_update_time,
 };
 

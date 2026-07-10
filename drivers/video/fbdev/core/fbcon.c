@@ -70,6 +70,7 @@
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/fb.h>
+#include <linux/fbcon.h>
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
 #include <linux/font.h>
@@ -768,7 +769,7 @@ static int fbcon_invalid_charcount(struct fb_info *info, unsigned charcount)
 	return 0;
 }
 
-#endif /* CONFIG_FB_TILEBLITTING */
+#endif /* CONFIG_MISC_TILEBLITTING */
 
 static void fbcon_release(struct fb_info *info)
 {
@@ -1273,7 +1274,6 @@ static void fbcon_deinit(struct vc_data *vc)
 	int idx;
 
 	fbcon_free_font(p);
-	p->mode = NULL;
 	idx = con2fb_map[vc->vc_num];
 
 	if (idx == -1)
@@ -1440,16 +1440,17 @@ static void fbcon_set_disp(struct fb_info *info, struct fb_var_screeninfo *var,
 	struct vc_data **default_mode, *vc;
 	struct vc_data *svc;
 	struct fbcon_par *par = info->fbcon_par;
-	int rows, cols, ret;
+	int rows, cols;
+	unsigned long ret = 0;
 
 	p = &fb_display[unit];
+
+	if (var_to_display(p, var, info))
+		return;
 
 	vc = vc_cons[unit].d;
 
 	if (!vc)
-		return;
-
-	if (var_to_display(p, var, info))
 		return;
 
 	default_mode = vc->vc_display_fg;
@@ -2608,9 +2609,8 @@ void fbcon_suspended(struct fb_info *info)
 		return;
 	vc = vc_cons[par->currcon].d;
 
-	/* Clear cursor, restore saved data when in text mode */
-	if ((vc->vc_mode == KD_TEXT) && con_is_visible(vc))
-		fbcon_cursor(vc, false);
+	/* Clear cursor, restore saved data */
+	fbcon_cursor(vc, false);
 }
 
 void fbcon_resumed(struct fb_info *info)
@@ -2622,9 +2622,7 @@ void fbcon_resumed(struct fb_info *info)
 		return;
 	vc = vc_cons[par->currcon].d;
 
-	/* Update screen when in text mode only */
-	if ((vc->vc_mode == KD_TEXT) && con_is_visible(vc))
-		update_screen(vc);
+	update_screen(vc);
 }
 
 static void fbcon_modechanged(struct fb_info *info)
@@ -2708,6 +2706,7 @@ void fbcon_update_vcs(struct fb_info *info, bool all)
 	else
 		fbcon_modechanged(info);
 }
+EXPORT_SYMBOL(fbcon_update_vcs);
 
 /* let fbcon check if it supports a new screen resolution */
 int fbcon_modechange_possible(struct fb_info *info, struct fb_var_screeninfo *var)
@@ -2735,6 +2734,7 @@ int fbcon_modechange_possible(struct fb_info *info, struct fb_var_screeninfo *va
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(fbcon_modechange_possible);
 
 int fbcon_mode_deleted(struct fb_info *info,
 		       struct fb_videomode *mode)

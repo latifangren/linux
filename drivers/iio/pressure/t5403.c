@@ -251,7 +251,7 @@ static int t5403_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id t5403_id[] = {
-	{ .name = "t5403" },
+	{ "t5403" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, t5403_id);

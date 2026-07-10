@@ -11,6 +11,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
@@ -394,7 +395,7 @@ static int hp206c_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id hp206c_id[] = {
-	{ .name = "hp206c" },
+	{"hp206c"},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, hp206c_id);

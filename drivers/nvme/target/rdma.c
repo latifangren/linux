@@ -666,8 +666,7 @@ static void nvmet_rdma_release_rsp(struct nvmet_rdma_rsp *rsp)
 	if (rsp->n_rdma)
 		nvmet_rdma_rw_ctx_destroy(rsp);
 
-	if (rsp->req.sg < rsp->cmd->inline_sg ||
-	    rsp->req.sg >= rsp->cmd->inline_sg + queue->dev->inline_page_count)
+	if (rsp->req.sg != rsp->cmd->inline_sg)
 		nvmet_req_free_sgls(&rsp->req);
 
 	if (unlikely(!list_empty_careful(&queue->rsp_wr_wait_list)))
@@ -822,25 +821,24 @@ static void nvmet_rdma_write_data_done(struct ib_cq *cq, struct ib_wc *wc)
 static void nvmet_rdma_use_inline_sg(struct nvmet_rdma_rsp *rsp, u32 len,
 		u64 off)
 {
-	u64 page_off = off % PAGE_SIZE;
-	u64 page_idx = off / PAGE_SIZE;
-	int sg_count = num_pages(page_off + len);
+	int sg_count = num_pages(len);
 	struct scatterlist *sg;
 	int i;
 
-	sg = &rsp->cmd->inline_sg[page_idx];
+	sg = rsp->cmd->inline_sg;
 	for (i = 0; i < sg_count; i++, sg++) {
 		if (i < sg_count - 1)
 			sg_unmark_end(sg);
 		else
 			sg_mark_end(sg);
-		sg->offset = page_off;
-		sg->length = min_t(u64, len, PAGE_SIZE - page_off);
+		sg->offset = off;
+		sg->length = min_t(int, len, PAGE_SIZE - off);
 		len -= sg->length;
-		page_off = 0;
+		if (!i)
+			off = 0;
 	}
 
-	rsp->req.sg = &rsp->cmd->inline_sg[page_idx];
+	rsp->req.sg = rsp->cmd->inline_sg;
 	rsp->req.sg_cnt = sg_count;
 }
 
@@ -1600,10 +1598,8 @@ static int nvmet_rdma_queue_connect(struct rdma_cm_id *cm_id,
 				pending++;
 		}
 		mutex_unlock(&nvmet_rdma_queue_mutex);
-		if (pending > NVMET_RDMA_BACKLOG) {
-			ret = NVME_SC_CONNECT_CTRL_BUSY;
-			goto put_device;
-		}
+		if (pending > NVMET_RDMA_BACKLOG)
+			return NVME_SC_CONNECT_CTRL_BUSY;
 	}
 
 	ret = nvmet_rdma_cm_accept(cm_id, queue, &event->param.conn);

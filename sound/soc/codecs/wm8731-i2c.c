@@ -11,6 +11,7 @@
  */
 
 #include <linux/i2c.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 
 #include "wm8731.h"
@@ -46,7 +47,7 @@ static int wm8731_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id wm8731_i2c_id[] = {
-	{ .name = "wm8731" },
+	{ "wm8731" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm8731_i2c_id);

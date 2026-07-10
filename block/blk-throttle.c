@@ -353,23 +353,14 @@ static void throtl_pd_online(struct blkg_policy_data *pd)
 	tg_update_has_rules(tg);
 }
 
-static void tg_release(struct rcu_head *rcu)
-{
-	struct blkg_policy_data *pd =
-		container_of(rcu, struct blkg_policy_data, rcu_head);
-	struct throtl_grp *tg = pd_to_tg(pd);
-
-	blkg_rwstat_exit(&tg->stat_bytes);
-	blkg_rwstat_exit(&tg->stat_ios);
-	kfree(tg);
-}
-
 static void throtl_pd_free(struct blkg_policy_data *pd)
 {
 	struct throtl_grp *tg = pd_to_tg(pd);
 
 	timer_delete_sync(&tg->service_queue.pending_timer);
-	call_rcu(&pd->rcu_head, tg_release);
+	blkg_rwstat_exit(&tg->stat_bytes);
+	blkg_rwstat_exit(&tg->stat_ios);
+	kfree(tg);
 }
 
 static struct throtl_grp *
@@ -1362,21 +1353,21 @@ static ssize_t tg_set_conf(struct kernfs_open_file *of,
 
 	ret = blkg_conf_open_bdev(&ctx);
 	if (ret)
-		return ret;
+		goto out_finish;
 
 	if (!blk_throtl_activated(ctx.bdev->bd_queue)) {
 		ret = blk_throtl_init(ctx.bdev->bd_disk);
 		if (ret)
-			goto close_bdev;
+			goto out_finish;
 	}
 
 	ret = blkg_conf_prep(blkcg, &blkcg_policy_throtl, &ctx);
 	if (ret)
-		goto close_bdev;
+		goto out_finish;
 
 	ret = -EINVAL;
 	if (sscanf(ctx.body, "%llu", &v) != 1)
-		goto unprep;
+		goto out_finish;
 	if (!v)
 		v = U64_MAX;
 
@@ -1390,12 +1381,8 @@ static ssize_t tg_set_conf(struct kernfs_open_file *of,
 
 	tg_conf_updated(tg, false);
 	ret = 0;
-
-unprep:
-	blkg_conf_unprep(&ctx);
-
-close_bdev:
-	blkg_conf_close_bdev(&ctx);
+out_finish:
+	blkg_conf_exit(&ctx);
 	return ret ?: nbytes;
 }
 
@@ -1550,17 +1537,17 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 
 	ret = blkg_conf_open_bdev(&ctx);
 	if (ret)
-		return ret;
+		goto out_finish;
 
 	if (!blk_throtl_activated(ctx.bdev->bd_queue)) {
 		ret = blk_throtl_init(ctx.bdev->bd_disk);
 		if (ret)
-			goto close_bdev;
+			goto out_finish;
 	}
 
 	ret = blkg_conf_prep(blkcg, &blkcg_policy_throtl, &ctx);
 	if (ret)
-		goto close_bdev;
+		goto out_finish;
 
 	tg = blkg_to_tg(ctx.blkg);
 	tg_update_carryover(tg);
@@ -1586,11 +1573,11 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 		p = tok;
 		strsep(&p, "=");
 		if (!p || (sscanf(p, "%llu", &val) != 1 && strcmp(p, "max")))
-			goto unprep;
+			goto out_finish;
 
 		ret = -ERANGE;
 		if (!val)
-			goto unprep;
+			goto out_finish;
 
 		ret = -EINVAL;
 		if (!strcmp(tok, "rbps"))
@@ -1602,7 +1589,7 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 		else if (!strcmp(tok, "wiops"))
 			v[3] = min_t(u64, val, UINT_MAX);
 		else
-			goto unprep;
+			goto out_finish;
 	}
 
 	tg->bps[READ] = v[0];
@@ -1612,10 +1599,8 @@ static ssize_t tg_set_limit(struct kernfs_open_file *of,
 
 	tg_conf_updated(tg, false);
 	ret = 0;
-unprep:
-	blkg_conf_unprep(&ctx);
-close_bdev:
-	blkg_conf_close_bdev(&ctx);
+out_finish:
+	blkg_conf_exit(&ctx);
 	return ret ?: nbytes;
 }
 
@@ -1664,7 +1649,7 @@ static void tg_flush_bios(struct throtl_grp *tg)
 	 */
 	tg_update_disptime(tg);
 
-	throtl_schedule_next_dispatch(sq->parent_sq, true);
+	throtl_schedule_pending_timer(sq, jiffies + 1);
 }
 
 static void throtl_pd_offline(struct blkg_policy_data *pd)
@@ -1683,52 +1668,11 @@ struct blkcg_policy blkcg_policy_throtl = {
 	.pd_free_fn		= throtl_pd_free,
 };
 
-static void tg_cancel_writeback_bios(struct throtl_grp *tg,
-				      struct bio_list *cancel_bios)
-{
-	struct throtl_service_queue *sq = &tg->service_queue;
-	struct throtl_data *td = sq_to_td(sq);
-	int rw;
-
-	if (tg->flags & THROTL_TG_CANCELING)
-		return;
-	tg->flags |= THROTL_TG_CANCELING;
-
-	for (rw = READ; rw <= WRITE; rw++) {
-		struct throtl_qnode *qn, *tmp;
-		unsigned int nr_bios = 0;
-
-		list_for_each_entry_safe(qn, tmp, &sq->queued[rw], node) {
-			struct bio *bio;
-
-			while ((bio = bio_list_pop(&qn->bios_iops))) {
-				sq->nr_queued_iops[rw]--;
-				bio_list_add(&cancel_bios[rw], bio);
-				nr_bios++;
-			}
-			while ((bio = bio_list_pop(&qn->bios_bps))) {
-				sq->nr_queued_bps[rw]--;
-				bio_list_add(&cancel_bios[rw], bio);
-				nr_bios++;
-			}
-
-			list_del_init(&qn->node);
-			blkg_put(tg_to_blkg(qn->tg));
-		}
-
-		td->nr_queued[rw] -= nr_bios;
-	}
-
-	throtl_dequeue_tg(tg);
-}
-
 void blk_throtl_cancel_bios(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
 	struct cgroup_subsys_state *pos_css;
 	struct blkcg_gq *blkg;
-	struct bio_list cancel_bios[2] = { };
-	int rw;
 
 	if (!blk_throtl_activated(q))
 		return;
@@ -1749,16 +1693,10 @@ void blk_throtl_cancel_bios(struct gendisk *disk)
 		 * Cancel bios here to ensure no bios are inflight after
 		 * del_gendisk.
 		 */
-		tg_cancel_writeback_bios(blkg_to_tg(blkg), cancel_bios);
+		tg_flush_bios(blkg_to_tg(blkg));
 	}
 	rcu_read_unlock();
 	spin_unlock_irq(&q->queue_lock);
-
-	for (rw = READ; rw <= WRITE; rw++) {
-		struct bio *bio;
-		while ((bio = bio_list_pop(&cancel_bios[rw])))
-			bio_io_error(bio);
-	}
 }
 
 static bool tg_within_limit(struct throtl_grp *tg, struct bio *bio, bool rw)

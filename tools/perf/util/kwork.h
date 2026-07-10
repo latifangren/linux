@@ -5,7 +5,6 @@
 #include "util/tool.h"
 #include "util/time-utils.h"
 
-#include <stdlib.h>
 #include <linux/bitmap.h>
 #include <linux/list.h>
 #include <linux/rbtree.h>
@@ -158,6 +157,7 @@ struct kwork_class {
 			  struct kwork_class *class,
 			  struct kwork_work *work,
 			  enum kwork_trace_type src_type,
+			  struct evsel *evsel,
 			  struct perf_sample *sample,
 			  struct machine *machine);
 
@@ -165,29 +165,21 @@ struct kwork_class {
 			  char *buf, int len);
 };
 
-static inline void work_exit(struct kwork_work *work)
-{
-	if (work) {
-		free(work->name);
-		work->name = NULL;
-	}
-}
-
 struct trace_kwork_handler {
 	int (*raise_event)(struct perf_kwork *kwork,
-			   struct kwork_class *class,
+			   struct kwork_class *class, struct evsel *evsel,
 			   struct perf_sample *sample, struct machine *machine);
 
 	int (*entry_event)(struct perf_kwork *kwork,
-			   struct kwork_class *class,
+			   struct kwork_class *class, struct evsel *evsel,
 			   struct perf_sample *sample, struct machine *machine);
 
 	int (*exit_event)(struct perf_kwork *kwork,
-			  struct kwork_class *class,
+			  struct kwork_class *class, struct evsel *evsel,
 			  struct perf_sample *sample, struct machine *machine);
 
 	int (*sched_switch_event)(struct perf_kwork *kwork,
-				  struct kwork_class *class,
+				  struct kwork_class *class, struct evsel *evsel,
 				  struct perf_sample *sample, struct machine *machine);
 };
 
@@ -202,7 +194,6 @@ struct __top_cpus_runtime {
 struct kwork_top_stat {
 	DECLARE_BITMAP(all_cpus_bitmap, MAX_NR_CPUS);
 	struct __top_cpus_runtime *cpus_runtime;
-	unsigned int nr_skipped_cpu;
 };
 
 struct perf_kwork {

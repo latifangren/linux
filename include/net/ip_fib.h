@@ -269,6 +269,7 @@ struct fib_dump_filter {
 	bool			filter_set;
 	bool			dump_routes;
 	bool			dump_exceptions;
+	bool			rtnl_held;
 	unsigned char		protocol;
 	unsigned char		rt_type;
 	unsigned int		flags;
@@ -374,7 +375,7 @@ static inline int fib_lookup(struct net *net, struct flowi4 *flp,
 			     struct fib_result *res, unsigned int flags)
 {
 	struct fib_table *tb;
-	int err = -EAGAIN;
+	int err = -ENETUNREACH;
 
 	flags |= FIB_LOOKUP_NOREF;
 	if (net->ipv4.fib_has_custom_rules)
@@ -388,16 +389,17 @@ static inline int fib_lookup(struct net *net, struct flowi4 *flp,
 	if (tb)
 		err = fib_table_lookup(tb, flp, res, flags);
 
-	if (err != -EAGAIN)
+	if (!err)
 		goto out;
 
 	tb = rcu_dereference_rtnl(net->ipv4.fib_default);
 	if (tb)
 		err = fib_table_lookup(tb, flp, res, flags);
 
+out:
 	if (err == -EAGAIN)
 		err = -ENETUNREACH;
-out:
+
 	rcu_read_unlock();
 
 	return err;
@@ -625,11 +627,6 @@ void free_fib_info(struct fib_info *fi);
 static inline void fib_info_hold(struct fib_info *fi)
 {
 	refcount_inc(&fi->fib_clntref);
-}
-
-static inline bool fib_info_hold_safe(struct fib_info *fi)
-{
-	return refcount_inc_not_zero(&fi->fib_clntref);
 }
 
 static inline void fib_info_put(struct fib_info *fi)

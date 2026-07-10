@@ -860,8 +860,7 @@ befs_fill_super(struct super_block *sb, struct fs_context *fc)
 	 */
 	sb->s_magic = BEFS_SUPER_MAGIC;
 	/* Set real blocksize of fs */
-	if (!sb_set_blocksize(sb, (ulong) befs_sb->block_size))
-		goto unacquire_priv_sbp;
+	sb_set_blocksize(sb, (ulong) befs_sb->block_size);
 	sb->s_op = &befs_sops;
 	sb->s_export_op = &befs_export_operations;
 	sb->s_time_min = 0;

@@ -21,7 +21,6 @@
 #include <linux/errno.h>
 #include <linux/limits.h>
 #include <linux/linkage.h>
-#include <linux/minmax.h>
 #include <linux/stddef.h>
 #include <linux/string.h>
 #include <linux/types.h>
@@ -89,6 +88,22 @@ char *strcpy(char *dest, const char *src)
 EXPORT_SYMBOL(strcpy);
 #endif
 
+#ifndef __HAVE_ARCH_STRNCPY
+char *strncpy(char *dest, const char *src, size_t count)
+{
+	char *tmp = dest;
+
+	while (count) {
+		if ((*tmp = *src) != 0)
+			src++;
+		tmp++;
+		count--;
+	}
+	return dest;
+}
+EXPORT_SYMBOL(strncpy);
+#endif
+
 #ifdef __BIG_ENDIAN
 # define ALLBUTLAST_BYTE_MASK (~255ul)
 #else
@@ -110,8 +125,11 @@ ssize_t sized_strscpy(char *dest, const char *src, size_t count)
 	 * If src is unaligned, don't cross a page boundary,
 	 * since we don't know if the next page is mapped.
 	 */
-	if ((long)src & (sizeof(long) - 1))
-		max = min(PAGE_SIZE - ((long)src & (PAGE_SIZE - 1)), max);
+	if ((long)src & (sizeof(long) - 1)) {
+		size_t limit = PAGE_SIZE - ((long)src & (PAGE_SIZE - 1));
+		if (limit < max)
+			max = limit;
+	}
 #else
 	/* If src or dest is unaligned, don't do word-at-a-time. */
 	if (((long) dest | (long) src) & (sizeof(long) - 1))

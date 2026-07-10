@@ -180,7 +180,7 @@ static int print_unex = 1;
 #include <linux/major.h>
 #include <linux/mc146818rtc.h>	/* CMOS defines */
 #include <linux/mm.h>
-#include <linux/device-id/pnp.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -5012,8 +5012,8 @@ MODULE_LICENSE("GPL");
 
 /* This doesn't actually get used other than for module information */
 static const struct pnp_device_id floppy_pnpids[] = {
-	{ .id = "PNP0700" },
-	{ }
+	{"PNP0700", 0},
+	{}
 };
 
 MODULE_DEVICE_TABLE(pnp, floppy_pnpids);

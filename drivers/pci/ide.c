@@ -170,7 +170,8 @@ void pci_ide_init(struct pci_dev *pdev)
 		pci_read_config_dword(pdev, pos + PCI_IDE_SEL_CTL, &val);
 		if (val & PCI_IDE_SEL_CTL_EN)
 			continue;
-		FIELD_MODIFY(PCI_IDE_SEL_CTL_ID, &val, PCI_IDE_RESERVED_STREAM_ID);
+		val &= ~PCI_IDE_SEL_CTL_ID;
+		val |= FIELD_PREP(PCI_IDE_SEL_CTL_ID, PCI_IDE_RESERVED_STREAM_ID);
 		pci_write_config_dword(pdev, pos + PCI_IDE_SEL_CTL, val);
 	}
 
@@ -181,7 +182,8 @@ void pci_ide_init(struct pci_dev *pdev)
 		pci_read_config_dword(pdev, pos, &val);
 		if (val & PCI_IDE_LINK_CTL_EN)
 			continue;
-		FIELD_MODIFY(PCI_IDE_LINK_CTL_ID, &val, PCI_IDE_RESERVED_STREAM_ID);
+		val &= ~PCI_IDE_LINK_CTL_ID;
+		val |= FIELD_PREP(PCI_IDE_LINK_CTL_ID, PCI_IDE_RESERVED_STREAM_ID);
 		pci_write_config_dword(pdev, pos, val);
 	}
 

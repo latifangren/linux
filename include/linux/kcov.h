@@ -21,6 +21,8 @@ enum kcov_mode {
 	KCOV_MODE_TRACE_PC = 2,
 	/* Collecting comparison operands mode. */
 	KCOV_MODE_TRACE_CMP = 3,
+	/* The process owns a KCOV remote reference. */
+	KCOV_MODE_REMOTE = 4,
 };
 
 #define KCOV_IN_CTXSW	(1 << 30)
@@ -41,11 +43,11 @@ do {						\
 /* See Documentation/dev-tools/kcov.rst for usage details. */
 void kcov_remote_start(u64 handle);
 void kcov_remote_stop(void);
-struct kcov_common_handle_id kcov_common_handle(void);
+u64 kcov_common_handle(void);
 
-static inline void kcov_remote_start_common(struct kcov_common_handle_id id)
+static inline void kcov_remote_start_common(u64 id)
 {
-	kcov_remote_start(kcov_remote_handle(KCOV_SUBSYSTEM_COMMON, id.val));
+	kcov_remote_start(kcov_remote_handle(KCOV_SUBSYSTEM_COMMON, id));
 }
 
 static inline void kcov_remote_start_usb(u64 id)
@@ -97,11 +99,11 @@ static inline void kcov_prepare_switch(struct task_struct *t) {}
 static inline void kcov_finish_switch(struct task_struct *t) {}
 static inline void kcov_remote_start(u64 handle) {}
 static inline void kcov_remote_stop(void) {}
-static inline struct kcov_common_handle_id kcov_common_handle(void)
+static inline u64 kcov_common_handle(void)
 {
-	return (struct kcov_common_handle_id){};
+	return 0;
 }
-static inline void kcov_remote_start_common(struct kcov_common_handle_id id) {}
+static inline void kcov_remote_start_common(u64 id) {}
 static inline void kcov_remote_start_usb(u64 id) {}
 static inline void kcov_remote_start_usb_softirq(u64 id) {}
 static inline void kcov_remote_stop_softirq(void) {}

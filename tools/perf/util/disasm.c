@@ -1577,11 +1577,8 @@ int symbol__disassemble(struct symbol *sym, struct annotate_args *args)
 		if (dso__decompress_kmodule_path(dso, symfs_filename, tmp, sizeof(tmp)) < 0)
 			return -1;
 
-		/* empty pathname means file wasn't actually compressed */
-		if (tmp[0] != '\0') {
-			decomp = true;
-			strcpy(symfs_filename, tmp);
-		}
+		decomp = true;
+		strcpy(symfs_filename, tmp);
 	}
 
 	/*

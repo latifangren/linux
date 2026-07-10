@@ -10,7 +10,7 @@
 
 /*  11/16/2008 MH Add description. Get current efuse area enabled word!!. */
 u8
-rtw_efuse_calculate_word_counts(u8 word_en)
+Efuse_CalculateWordCnts(u8 word_en)
 {
 	u8 word_cnts = 0;
 
@@ -26,7 +26,7 @@ rtw_efuse_calculate_word_counts(u8 word_en)
 }
 
 /*-----------------------------------------------------------------------------
- * Function:	rtw_efuse_read_1_byte
+ * Function:	EFUSE_Read1Byte
  *
  * Overview:	Copy from WMAC fot EFUSE read 1 byte.
  *
@@ -42,7 +42,7 @@ rtw_efuse_calculate_word_counts(u8 word_en)
  *
  */
 u8
-rtw_efuse_read_1_byte(
+EFUSE_Read1Byte(
 struct adapter *Adapter,
 u16		Address)
 {
@@ -76,14 +76,14 @@ u16		Address)
 				break;
 		}
 		return rtw_read8(Adapter, EFUSE_CTRL);
-	} else {
+	} else
 		return 0xFF;
-	}
-} /* rtw_efuse_read_1_byte */
+
+} /* EFUSE_Read1Byte */
 
 /*  11/16/2008 MH Read one byte from real Efuse. */
 u8
-rtw_efuse_one_byte_read(
+efuse_OneByteRead(
 struct adapter *padapter,
 u16	addr,
 u8	*data)
@@ -95,7 +95,7 @@ u8	*data)
 	/*  <20130121, Kordan> For SMIC EFUSE specificatoin. */
 	/* 0x34[11]: SW force PGMEN input of efuse to high. (for the bank selected by 0x34[9:8]) */
 	/* PHY_SetMacReg(padapter, 0x34, BIT11, 0); */
-	rtw_write16(padapter, 0x34, rtw_read16(padapter, 0x34) & (~BIT(11)));
+	rtw_write16(padapter, 0x34, rtw_read16(padapter, 0x34) & (~BIT11));
 
 	/*  -----------------e-fuse reg ctrl --------------------------------- */
 	/* address */
@@ -201,7 +201,7 @@ static void efuse_ShadowRead4Byte(struct adapter *padapter, u16 Offset, u32 *Val
 }	/*  efuse_ShadowRead4Byte */
 
 /*-----------------------------------------------------------------------------
- * Function:	rtw_efuse_shadow_map_update
+ * Function:	EFUSE_ShadowMapUpdate
  *
  * Overview:	Transfer current EFUSE content to shadow init and modify map.
  *
@@ -216,7 +216,7 @@ static void efuse_ShadowRead4Byte(struct adapter *padapter, u16 Offset, u32 *Val
  * 11/13/2008	MHC		Create Version 0.
  *
  */
-void rtw_efuse_shadow_map_update(struct adapter *padapter, u8 efuseType)
+void EFUSE_ShadowMapUpdate(struct adapter *padapter, u8 efuseType)
 {
 	struct eeprom_priv *pEEPROM = GET_EEPROM_EFUSE_PRIV(padapter);
 	u16 mapLen = 0;
@@ -230,10 +230,11 @@ void rtw_efuse_shadow_map_update(struct adapter *padapter, u8 efuseType)
 
 	/* PlatformMoveMemory((void *)&pHalData->EfuseMap[EFUSE_MODIFY_MAP][0], */
 	/* void *)&pHalData->EfuseMap[EFUSE_INIT_MAP][0], mapLen); */
-} /*  rtw_efuse_shadow_map_update */
+} /*  EFUSE_ShadowMapUpdate */
+
 
 /*-----------------------------------------------------------------------------
- * Function:	rtw_efuse_shadow_read
+ * Function:	EFUSE_ShadowRead
  *
  * Overview:	Read from efuse init map !!!!!
  *
@@ -248,7 +249,7 @@ void rtw_efuse_shadow_map_update(struct adapter *padapter, u8 efuseType)
  * 11/12/2008	MHC		Create Version 0.
  *
  */
-void rtw_efuse_shadow_read(struct adapter *padapter, u8 Type, u16 Offset, u32 *Value)
+void EFUSE_ShadowRead(struct adapter *padapter, u8 Type, u16 Offset, u32 *Value)
 {
 	if (Type == 1)
 		efuse_ShadowRead1Byte(padapter, Offset, (u8 *)Value);
@@ -257,4 +258,4 @@ void rtw_efuse_shadow_read(struct adapter *padapter, u8 Type, u16 Offset, u32 *V
 	else if (Type == 4)
 		efuse_ShadowRead4Byte(padapter, Offset, (u32 *)Value);
 
-} /* rtw_efuse_shadow_read*/
+}	/* EFUSE_ShadowRead*/

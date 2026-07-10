@@ -77,7 +77,7 @@ enum {
 struct dm_priv {
 	u8 DM_Type;
 
-#define DYNAMIC_FUNC_BT BIT(0)
+#define DYNAMIC_FUNC_BT BIT0
 
 	u8 DMFlag;
 	u8 InitDMFlag;
@@ -162,6 +162,7 @@ struct dm_priv {
 
 
 struct hal_com_data {
+	struct hal_version VersionID;
 	enum rt_multi_func MultiFunc; /*  For multi-function consideration. */
 	enum rt_polarity_ctl PolarityCtl; /*  For Wifi PDn Polarity control. */
 	enum rt_regulator_mode	RegulatorMode; /*  switching regulator or LDO */
@@ -387,8 +388,9 @@ struct hal_com_data {
 	/*  For bluetooth co-existence */
 	struct bt_coexist		bt_coexist;
 
-	/* Chip version information */
-	bool chip_normal;	/* true - normal chip, false - test chip */
+	/*  Interrupt related register information. */
+	u32 		SysIntrStatus;
+	u32 		SysIntrMask;
 };
 
 #define GET_HAL_DATA(__padapter)	((struct hal_com_data *)((__padapter)->HalData))

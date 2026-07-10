@@ -26,7 +26,6 @@ extern void local_icache_page_inv(struct page *page);
 extern void local_dcache_range_flush(unsigned long start, unsigned long end);
 extern void local_dcache_range_inv(unsigned long start, unsigned long end);
 extern void local_icache_range_inv(unsigned long start, unsigned long end);
-extern void local_icache_all_inv(void);
 
 /*
  * Data cache flushing always happen on the local cpu. Instruction cache
@@ -36,13 +35,10 @@ extern void local_icache_all_inv(void);
 #ifndef CONFIG_SMP
 #define dcache_page_flush(page)      local_dcache_page_flush(page)
 #define icache_page_inv(page)        local_icache_page_inv(page)
-#define icache_all_inv()             local_icache_all_inv()
 #else  /* CONFIG_SMP */
 #define dcache_page_flush(page)      local_dcache_page_flush(page)
 #define icache_page_inv(page)        smp_icache_page_inv(page)
-#define icache_all_inv()             smp_icache_all_inv()
 extern void smp_icache_page_inv(struct page *page);
-extern void smp_icache_all_inv(void);
 #endif /* CONFIG_SMP */
 
 /*

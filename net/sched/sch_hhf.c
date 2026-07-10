@@ -360,7 +360,7 @@ static unsigned int hhf_drop(struct Qdisc *sch, struct sk_buff **to_free)
 	if (bucket->head) {
 		struct sk_buff *skb = dequeue_head(bucket);
 
-		qdisc_qlen_dec(sch);
+		sch->q.qlen--;
 		qdisc_qstats_backlog_dec(sch, skb);
 		qdisc_drop(skb, sch, to_free);
 	}
@@ -400,8 +400,7 @@ static int hhf_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		}
 		bucket->deficit = weight * q->quantum;
 	}
-	qdisc_qlen_inc(sch);
-	if (sch->q.qlen <= sch->limit)
+	if (++sch->q.qlen <= sch->limit)
 		return NET_XMIT_SUCCESS;
 
 	prev_backlog = sch->qstats.backlog;
@@ -444,7 +443,7 @@ begin:
 
 	if (bucket->head) {
 		skb = dequeue_head(bucket);
-		qdisc_qlen_dec(sch);
+		sch->q.qlen--;
 		qdisc_qstats_backlog_dec(sch, skb);
 	}
 
@@ -462,39 +461,12 @@ begin:
 	return skb;
 }
 
-static void hhf_reset_classifier(struct hhf_sched_data *q)
-{
-	int i;
-
-	if (!q->hh_flows)
-		return;
-
-	for (i = 0; i < HH_FLOWS_CNT; i++) {
-		struct hh_flow_state *flow, *next;
-		struct list_head *head = &q->hh_flows[i];
-
-		list_for_each_entry_safe(flow, next, head, flowchain) {
-			list_del(&flow->flowchain);
-			kfree(flow);
-		}
-	}
-	WRITE_ONCE(q->hh_flows_current_cnt, 0);
-
-	for (i = 0; i < HHF_ARRAYS_CNT; i++) {
-		if (q->hhf_valid_bits[i])
-			bitmap_zero(q->hhf_valid_bits[i], HHF_ARRAYS_LEN);
-	}
-	q->hhf_arrays_reset_timestamp = hhf_time_stamp();
-}
-
 static void hhf_reset(struct Qdisc *sch)
 {
-	struct hhf_sched_data *q = qdisc_priv(sch);
 	struct sk_buff *skb;
 
 	while ((skb = hhf_dequeue(sch)) != NULL)
 		rtnl_kfree_skbs(skb, skb);
-	hhf_reset_classifier(q);
 }
 
 static void hhf_destroy(struct Qdisc *sch)

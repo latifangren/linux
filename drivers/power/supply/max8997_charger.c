@@ -268,7 +268,7 @@ static int max8997_battery_probe(struct platform_device *pdev)
 }
 
 static const struct platform_device_id max8997_battery_id[] = {
-	{ .name = "max8997-battery" },
+	{ "max8997-battery", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(platform, max8997_battery_id);

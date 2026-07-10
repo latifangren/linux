@@ -628,7 +628,8 @@ static inline unsigned long __clear_user(void __user *to, unsigned long n)
 	return res;
 }
 
-#define INLINE_COPY_USER
+#define INLINE_COPY_TO_USER
+#define INLINE_COPY_FROM_USER
 
 #define __clear_user			__clear_user
 

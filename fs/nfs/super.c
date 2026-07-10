@@ -509,10 +509,6 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 	default:
 		break;
 	}
-	if (clp->cl_xprtsec.cert_serial)
-		seq_puts(m, ",cert_serial=<redacted>");
-	if (clp->cl_xprtsec.privkey_serial)
-		seq_puts(m, ",privkey_serial=<redacted>");
 
 	if (version != 4)
 		nfs_show_mountd_options(m, nfss, showdefaults);
@@ -627,7 +623,7 @@ static void show_implementation_id(struct seq_file *m, struct nfs_server *nfss)
 
 int nfs_show_devname(struct seq_file *m, struct dentry *root)
 {
-	char *page = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	char *page = (char *) __get_free_page(GFP_KERNEL);
 	char *devname, *dummy;
 	int err = 0;
 	if (!page)
@@ -637,7 +633,7 @@ int nfs_show_devname(struct seq_file *m, struct dentry *root)
 		err = PTR_ERR(devname);
 	else
 		seq_escape(m, devname, " \t\n\\");
-	kfree(page);
+	free_page((unsigned long)page);
 	return err;
 }
 EXPORT_SYMBOL_GPL(nfs_show_devname);

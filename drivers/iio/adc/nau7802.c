@@ -8,6 +8,7 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/property.h>
 #include <linux/wait.h>
@@ -530,7 +531,7 @@ static int nau7802_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id nau7802_i2c_id[] = {
-	{ .name = "nau7802" },
+	{ "nau7802" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, nau7802_i2c_id);

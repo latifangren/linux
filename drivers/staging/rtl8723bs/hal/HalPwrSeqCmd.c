@@ -23,6 +23,7 @@ Major Change History:
 #include <drv_types.h>
 #include <HalPwrSeqCmd.h>
 
+
 /*  */
 /*  Description: */
 /*  This routine deal with the Power Configuration CMDs parsing for RTL8723/RTL8188E Series IC. */

@@ -13,4 +13,5 @@ void rtw_regd_init(struct wiphy *wiphy,
 					struct regulatory_request *request));
 void rtw_reg_notifier(struct wiphy *wiphy, struct regulatory_request *request);
 
+
 #endif

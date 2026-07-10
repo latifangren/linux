@@ -1,28 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0
-#include <linux/async.h>
-#include <linux/delay.h>
-#include <linux/dirent.h>
-#include <linux/export.h>
-#include <linux/fcntl.h>
-#include <linux/file.h>
-#include <linux/fs.h>
-#include <linux/hex.h>
 #include <linux/init.h>
-#include <linux/init_syscalls.h>
+#include <linux/async.h>
+#include <linux/export.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/types.h>
+#include <linux/fcntl.h>
+#include <linux/delay.h>
+#include <linux/string.h>
+#include <linux/dirent.h>
+#include <linux/syscalls.h>
+#include <linux/utime.h>
+#include <linux/file.h>
 #include <linux/kstrtox.h>
 #include <linux/memblock.h>
 #include <linux/mm.h>
 #include <linux/namei.h>
-#include <linux/overflow.h>
-#include <linux/security.h>
-#include <linux/slab.h>
-#include <linux/string.h>
-#include <linux/syscalls.h>
-#include <linux/types.h>
+#include <linux/init_syscalls.h>
 #include <linux/umh.h>
-#include <linux/utime.h>
-
-#include <asm/byteorder.h>
+#include <linux/security.h>
+#include <linux/overflow.h>
 
 #include "do_mounts.h"
 #include "initramfs_internal.h"
@@ -193,30 +190,26 @@ static __initdata gid_t gid;
 static __initdata unsigned rdev;
 static __initdata u32 hdr_csum;
 
-static int __init parse_header(char *s)
+static void __init parse_header(char *s)
 {
-	__be32 header[13];
-	int ret;
+	unsigned long parsed[13];
+	int i;
 
-	ret = hex2bin((u8 *)header, s + 6, sizeof(header));
-	if (ret) {
-		error("damaged header");
-		return ret;
-	}
+	for (i = 0, s += 6; i < 13; i++, s += 8)
+		parsed[i] = simple_strntoul(s, NULL, 16, 8);
 
-	ino = be32_to_cpu(header[0]);
-	mode = be32_to_cpu(header[1]);
-	uid = be32_to_cpu(header[2]);
-	gid = be32_to_cpu(header[3]);
-	nlink = be32_to_cpu(header[4]);
-	mtime = be32_to_cpu(header[5]); /* breaks in y2106 */
-	body_len = be32_to_cpu(header[6]);
-	major = be32_to_cpu(header[7]);
-	minor = be32_to_cpu(header[8]);
-	rdev = new_encode_dev(MKDEV(be32_to_cpu(header[9]), be32_to_cpu(header[10])));
-	name_len = be32_to_cpu(header[11]);
-	hdr_csum = be32_to_cpu(header[12]);
-	return 0;
+	ino = parsed[0];
+	mode = parsed[1];
+	uid = parsed[2];
+	gid = parsed[3];
+	nlink = parsed[4];
+	mtime = parsed[5]; /* breaks in y2106 */
+	body_len = parsed[6];
+	major = parsed[7];
+	minor = parsed[8];
+	rdev = new_encode_dev(MKDEV(parsed[9], parsed[10]));
+	name_len = parsed[11];
+	hdr_csum = parsed[12];
 }
 
 /* Finite-state machine */
@@ -296,8 +289,7 @@ static int __init do_header(void)
 			error("no cpio magic");
 		return 1;
 	}
-	if (parse_header(collected))
-		return 1;
+	parse_header(collected);
 	next_header = this_header + N_ALIGN(name_len) + body_len;
 	next_header = (next_header + 3) & ~3;
 	state = SkipIt;

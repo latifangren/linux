@@ -1967,9 +1967,7 @@ int adxl380_probe(struct device *dev, struct regmap *regmap,
 	st->chip_info = chip_info;
 	st->odr = ADXL380_ODR_DSM;
 
-	ret = devm_mutex_init(dev, &st->lock);
-	if (ret)
-		return ret;
+	mutex_init(&st->lock);
 
 	indio_dev->channels = adxl380_channels;
 	indio_dev->num_channels = ARRAY_SIZE(adxl380_channels);

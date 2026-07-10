@@ -19,7 +19,7 @@
  *
  * @fw_status: FW status
  * @quirk_probe: device exclusion quirk
- * @get_kind: MEI head kind helper
+ * @kind: MEI head kind
  * @dma_size: device DMA buffers size
  * @fw_ver_supported: is fw version retrievable from FW
  * @hw_trc_supported: does the hw support trc register
@@ -27,7 +27,7 @@
 struct mei_cfg {
 	const struct mei_fw_status fw_status;
 	bool (*quirk_probe)(const struct pci_dev *pdev);
-	enum mei_dev_kind (*get_kind)(const struct device *parent);
+	const char *kind;
 	size_t dma_size[DMA_DSCR_NUM];
 	u32 fw_ver_supported:1;
 	u32 hw_trc_supported:1;
@@ -105,7 +105,6 @@ static inline bool mei_me_hw_use_polling(const struct mei_me_hw *hw)
  * @MEI_ME_GSC_CFG:        Graphics System Controller
  * @MEI_ME_GSCFI_CFG:      Graphics System Controller Firmware Interface
  * @MEI_ME_CSC_CFG:        Chassis System Controller Firmware Interface
- * @MEI_ME_PCH22_IOE_CFG:  Platform Controller Hub Gen22 and newer with IOE detection
  * @MEI_ME_NUM_CFG:        Upper Sentinel.
  */
 enum mei_cfg_idx {
@@ -127,8 +126,7 @@ enum mei_cfg_idx {
 	MEI_ME_GSC_CFG,
 	MEI_ME_GSCFI_CFG,
 	MEI_ME_CSC_CFG,
-	MEI_ME_PCH22_IOE_CFG,
-	MEI_ME_NUM_CFG
+	MEI_ME_NUM_CFG,
 };
 
 const struct mei_cfg *mei_me_get_cfg(kernel_ulong_t idx);

@@ -840,7 +840,7 @@ static ssize_t iolatency_set_limit(struct kernfs_open_file *of, char *buf,
 
 	ret = blkg_conf_open_bdev(&ctx);
 	if (ret)
-		return ret;
+		goto out;
 
 	/*
 	 * blk_iolatency_init() may fail after rq_qos_add() succeeds which can
@@ -850,11 +850,11 @@ static ssize_t iolatency_set_limit(struct kernfs_open_file *of, char *buf,
 	if (!iolat_rq_qos(ctx.bdev->bd_queue))
 		ret = blk_iolatency_init(ctx.bdev->bd_disk);
 	if (ret)
-		goto close_bdev;
+		goto out;
 
 	ret = blkg_conf_prep(blkcg, &blkcg_policy_iolatency, &ctx);
 	if (ret)
-		goto close_bdev;
+		goto out;
 
 	iolat = blkg_to_lat(ctx.blkg);
 	p = ctx.body;
@@ -865,7 +865,7 @@ static ssize_t iolatency_set_limit(struct kernfs_open_file *of, char *buf,
 		char val[21];	/* 18446744073709551616 */
 
 		if (sscanf(tok, "%15[^=]=%20s", key, val) != 2)
-			goto unprep;
+			goto out;
 
 		if (!strcmp(key, "target")) {
 			u64 v;
@@ -875,9 +875,9 @@ static ssize_t iolatency_set_limit(struct kernfs_open_file *of, char *buf,
 			else if (sscanf(val, "%llu", &v) == 1)
 				lat_val = v * NSEC_PER_USEC;
 			else
-				goto unprep;
+				goto out;
 		} else {
-			goto unprep;
+			goto out;
 		}
 	}
 
@@ -889,11 +889,8 @@ static ssize_t iolatency_set_limit(struct kernfs_open_file *of, char *buf,
 	if (oldval != iolat->min_lat_nsec)
 		iolatency_clear_scaling(blkg);
 	ret = 0;
-
-unprep:
-	blkg_conf_unprep(&ctx);
-close_bdev:
-	blkg_conf_close_bdev(&ctx);
+out:
+	blkg_conf_exit(&ctx);
 	return ret ?: nbytes;
 }
 
@@ -1031,19 +1028,11 @@ static void iolatency_pd_offline(struct blkg_policy_data *pd)
 	iolatency_clear_scaling(blkg);
 }
 
-static void iolat_release(struct rcu_head *rcu)
-{
-	struct blkg_policy_data *pd =
-		container_of(rcu, struct blkg_policy_data, rcu_head);
-	struct iolatency_grp *iolat = pd_to_lat(pd);
-
-	free_percpu(iolat->stats);
-	kfree(iolat);
-}
-
 static void iolatency_pd_free(struct blkg_policy_data *pd)
 {
-	call_rcu(&pd->rcu_head, iolat_release);
+	struct iolatency_grp *iolat = pd_to_lat(pd);
+	free_percpu(iolat->stats);
+	kfree(iolat);
 }
 
 static struct cftype iolatency_files[] = {

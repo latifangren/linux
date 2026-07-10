@@ -272,9 +272,7 @@ static void for_each_fw_node(struct fw_card *card, struct fw_node *root,
 	fw_node_get(root);
 	list_add_tail(&root->link, &list);
 	parent = NULL;
-	for (node = list_first_entry(&list, typeof(*node), link);
-	     !list_entry_is_head(node, &list, link);
-	     node = list_next_entry(node, link)) {
+	list_for_each_entry(node, &list, link) {
 		node->color = card->color;
 
 		for (i = 0; i < node->port_count; i++) {

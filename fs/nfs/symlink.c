@@ -22,8 +22,6 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 
-#include "internal.h"
-
 /* Symlink caching in the page cache is even more simplistic
  * and straight-forward than readdir caching.
  */
@@ -76,5 +74,4 @@ const struct inode_operations nfs_symlink_inode_operations = {
 	.get_link	= nfs_get_link,
 	.getattr	= nfs_getattr,
 	.setattr	= nfs_setattr,
-	.fileattr_get	= nfs_fileattr_get,
 };

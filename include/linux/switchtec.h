@@ -42,7 +42,6 @@ enum switchtec_gen {
 	SWITCHTEC_GEN3,
 	SWITCHTEC_GEN4,
 	SWITCHTEC_GEN5,
-	SWITCHTEC_GEN6,
 };
 
 struct mrpc_regs {

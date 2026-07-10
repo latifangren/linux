@@ -118,6 +118,7 @@ struct rt_firmware_hdr {
 #define WMM_NORMAL_PAGE_NUM_LPQ_8723B 0x20
 #define WMM_NORMAL_PAGE_NUM_NPQ_8723B 0x20
 
+#include "HalVerDef.h"
 #include "hal_com.h"
 
 #define EFUSE_OOB_PROTECT_BYTES 15
@@ -170,7 +171,7 @@ struct c2h_evt_hdr_t {
 	u8 CmdID;
 	u8 CmdLen;
 	u8 CmdSeq;
-} __packed;
+} __attribute__((__packed__));
 
 enum { /* tag_Package_Definition */
 	PACKAGE_DEFAULT,

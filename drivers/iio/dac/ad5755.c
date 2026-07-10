@@ -827,9 +827,8 @@ static int ad5755_probe(struct spi_device *spi)
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->num_channels = AD5755_NUM_CHANNELS;
 
-	ret = devm_mutex_init(&spi->dev, &st->lock);
-	if (ret)
-		return ret;
+	mutex_init(&st->lock);
+
 
 	pdata = ad5755_parse_fw(&spi->dev);
 	if (!pdata) {

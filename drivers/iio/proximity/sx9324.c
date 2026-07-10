@@ -15,6 +15,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/log2.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pm.h>
 #include <linux/property.h>
@@ -1122,19 +1123,19 @@ static int sx9324_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(sx9324_pm_ops, sx9324_suspend, sx9324_resume);
 
 static const struct acpi_device_id sx9324_acpi_match[] = {
-	{ .id = "STH9324" },
+	{ "STH9324", SX9324_WHOAMI_VALUE },
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, sx9324_acpi_match);
 
 static const struct of_device_id sx9324_of_match[] = {
-	{ .compatible = "semtech,sx9324" },
+	{ .compatible = "semtech,sx9324", (void *)SX9324_WHOAMI_VALUE },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sx9324_of_match);
 
 static const struct i2c_device_id sx9324_id[] = {
-	{ .name = "sx9324" },
+	{ "sx9324", SX9324_WHOAMI_VALUE },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sx9324_id);

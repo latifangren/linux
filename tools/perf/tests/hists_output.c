@@ -57,6 +57,7 @@ static int add_hist_entries(struct hists *hists, struct machine *machine)
 	addr_location__init(&al);
 	for (i = 0; i < ARRAY_SIZE(fake_samples); i++) {
 		struct hist_entry_iter iter = {
+			.evsel = evsel,
 			.sample = &sample,
 			.ops = &hist_iter_normal,
 			.hide_unresolved = false,
@@ -590,7 +591,7 @@ out:
 static int test__hists_output(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = TEST_FAIL;
-	struct machines machines = { 0 };
+	struct machines machines;
 	struct machine *machine;
 	struct evsel *evsel;
 	struct evlist *evlist = evlist__new();
@@ -610,8 +611,7 @@ static int test__hists_output(struct test_suite *test __maybe_unused, int subtes
 		goto out;
 	err = TEST_FAIL;
 
-	if (machines__init(&machines))
-		goto out;
+	machines__init(&machines);
 
 	/* setup threads/dso/map/symbols also */
 	machine = setup_fake_machine(&machines);

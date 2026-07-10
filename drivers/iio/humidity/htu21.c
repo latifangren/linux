@@ -19,6 +19,7 @@
 #include <linux/kernel.h>
 #include <linux/stat.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
@@ -229,8 +230,8 @@ static int htu21_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id htu21_id[] = {
-	{ .name = "htu21", .driver_data = HTU21 },
-	{ .name = "ms8607-humidity", .driver_data = MS8607 },
+	{"htu21", HTU21},
+	{"ms8607-humidity", MS8607},
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, htu21_id);

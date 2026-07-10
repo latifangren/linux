@@ -11,11 +11,7 @@ maintainers:
 
 properties:
   compatible:
-    oneOf:
-      - const: qcom,sa8255p-ufshc
-      - items:
-          - const: qcom,sa8797p-ufshc
-          - const: qcom,sa8255p-ufshc
+    const: qcom,sa8255p-ufshc
 
   reg:
     maxItems: 1

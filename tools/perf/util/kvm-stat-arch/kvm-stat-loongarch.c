@@ -53,12 +53,14 @@ static const char * const __kvm_events_tp[] = {
 	NULL,
 };
 
-static bool event_begin(struct perf_sample *sample, struct event_key *key)
+static bool event_begin(struct evsel *evsel,
+			struct perf_sample *sample, struct event_key *key)
 {
-	return exit_event_begin(sample, key);
+	return exit_event_begin(evsel, sample, key);
 }
 
-static bool event_end(struct perf_sample *sample,
+static bool event_end(struct evsel *evsel,
+		      struct perf_sample *sample __maybe_unused,
 		      struct event_key *key __maybe_unused)
 {
 	/*
@@ -69,16 +71,17 @@ static bool event_end(struct perf_sample *sample,
 	 *   kvm:kvm_enter   means returning to vmm and then to guest
 	 *   kvm:kvm_reenter means returning to guest immediately
 	 */
-	return evsel__name_is(sample->evsel, kvm_entry_trace(EM_LOONGARCH)) ||
-	       evsel__name_is(sample->evsel, kvm_reenter_trace);
+	return evsel__name_is(evsel, kvm_entry_trace(EM_LOONGARCH)) ||
+	       evsel__name_is(evsel, kvm_reenter_trace);
 }
 
-static void event_gspr_get_key(struct perf_sample *sample, struct event_key *key)
+static void event_gspr_get_key(struct evsel *evsel,
+			       struct perf_sample *sample, struct event_key *key)
 {
 	unsigned int insn;
 
 	key->key = LOONGARCH_EXCEPTION_OTHERS;
-	insn = perf_sample__intval(sample, "inst_word");
+	insn = evsel__intval(evsel, sample, "inst_word");
 
 	switch (insn >> 24) {
 	case 0:

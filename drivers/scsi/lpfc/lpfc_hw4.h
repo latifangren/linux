@@ -3256,7 +3256,7 @@ struct lpfc_mbx_memory_dump_type3 {
 
 
 /*
- * Transceiver codes Fibre Channel SFF-8472
+ * Tranceiver codes Fibre Channel SFF-8472
  * Table 3.5.
  */
 

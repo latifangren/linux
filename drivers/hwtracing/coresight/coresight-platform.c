@@ -45,8 +45,9 @@ coresight_add_out_conn(struct device *dev,
 		}
 	}
 
+	pdata->nr_outconns++;
 	pdata->out_conns =
-		devm_krealloc_array(dev, pdata->out_conns, pdata->nr_outconns + 1,
+		devm_krealloc_array(dev, pdata->out_conns, pdata->nr_outconns,
 				    sizeof(*pdata->out_conns), GFP_KERNEL);
 	if (!pdata->out_conns)
 		return ERR_PTR(-ENOMEM);
@@ -62,8 +63,7 @@ coresight_add_out_conn(struct device *dev,
 	 * used right away.
 	 */
 	*conn = *new_conn;
-	pdata->out_conns[pdata->nr_outconns] = conn;
-	pdata->nr_outconns++;
+	pdata->out_conns[pdata->nr_outconns - 1] = conn;
 	return conn;
 }
 EXPORT_SYMBOL_GPL(coresight_add_out_conn);
@@ -86,13 +86,13 @@ int coresight_add_in_conn(struct coresight_connection *out_conn)
 			return 0;
 		}
 
+	pdata->nr_inconns++;
 	pdata->in_conns =
-		devm_krealloc_array(dev, pdata->in_conns, pdata->nr_inconns + 1,
+		devm_krealloc_array(dev, pdata->in_conns, pdata->nr_inconns,
 				    sizeof(*pdata->in_conns), GFP_KERNEL);
 	if (!pdata->in_conns)
 		return -ENOMEM;
-	pdata->in_conns[pdata->nr_inconns] = out_conn;
-	pdata->nr_inconns++;
+	pdata->in_conns[pdata->nr_inconns - 1] = out_conn;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(coresight_add_in_conn);

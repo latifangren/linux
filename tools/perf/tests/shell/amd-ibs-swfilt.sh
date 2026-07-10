@@ -1,33 +1,6 @@
 #!/bin/bash
 # AMD IBS software filtering
 
-cpu_family() {
-    grep -m1 '^cpu family[[:space:]]*:' /proc/cpuinfo \
-        | awk -F: '{gsub(/^[ \t]+/, "", $2); print $2}'
-}
-
-cpu_model() {
-    grep -m1 '^model[[:space:]]*:' /proc/cpuinfo \
-        | awk -F: '{gsub(/^[ \t]+/, "", $2); print $2}'
-}
-
-# IBS PMUs does not advertize privilege filtering capability. Rely
-# on Family / Model check.
-hw_priv_filter_supported() {
-    family=$(cpu_family)
-    model=$(cpu_model)
-
-    if (( family > 0x1a )) ||
-       { (( family == 0x1a )) &&
-         { { (( model >= 0x50 && model <= 0x5f )) ||
-             (( model >= 0x80 && model <= 0xaf )) ||
-             (( model >= 0xc0 && model <= 0xcf )); }; }; }; then
-        return 0 # True
-    else
-        return 1 # False
-    fi
-}
-
 ParanoidAndNotRoot() {
   [ "$(id -u)" != 0 ] && [ "$(cat /proc/sys/kernel/perf_event_paranoid)" -gt $1 ]
 }
@@ -50,12 +23,10 @@ echo "run perf record with modifier and swfilt"
 err=0
 
 # setting any modifiers should fail
-if ! hw_priv_filter_supported; then
-    perf record -B -e ibs_op//u -o /dev/null true 2> /dev/null
-    if [ $? -eq 0 ]; then
-        echo "[FAIL] IBS PMU should not accept exclude_kernel"
-        exit 1
-    fi
+perf record -B -e ibs_op//u -o /dev/null true 2> /dev/null
+if [ $? -eq 0 ]; then
+    echo "[FAIL] IBS PMU should not accept exclude_kernel"
+    exit 1
 fi
 
 # setting it with swfilt should be fine

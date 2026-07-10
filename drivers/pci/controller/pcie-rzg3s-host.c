@@ -35,7 +35,6 @@
 #include <linux/slab.h>
 #include <linux/units.h>
 
-#include "pci-host-common.h"
 #include "../pci.h"
 
 /* AXI registers */
@@ -1664,7 +1663,7 @@ rzg3s_pcie_host_setup(struct rzg3s_pcie_host *host,
 	if (ret)
 		dev_info(dev, "Failed to set max link speed\n");
 
-	pci_host_common_link_train_delay(host->max_link_speed);
+	msleep(PCIE_RESET_CONFIG_WAIT_MS);
 
 	return 0;
 

@@ -26,6 +26,10 @@
 #define MAX5821_EXTENDED_DAC_A			0x04
 #define MAX5821_EXTENDED_DAC_B			0x08
 
+enum max5821_device_ids {
+	ID_MAX5821,
+};
+
 struct max5821_data {
 	struct i2c_client	*client;
 	unsigned short		vref_mv;
@@ -335,7 +339,7 @@ static int max5821_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max5821_id[] = {
-	{ .name = "max5821" },
+	{ "max5821", ID_MAX5821 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max5821_id);

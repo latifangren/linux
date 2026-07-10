@@ -9,7 +9,7 @@
 #define _AUXILIARY_BUS_H_
 
 #include <linux/device.h>
-#include <linux/device-id/auxiliary.h>
+#include <linux/mod_devicetable.h>
 
 /**
  * DOC: DEVICE_LIFESPAN
@@ -62,9 +62,6 @@
  * @sysfs.irqs: irqs xarray contains irq indices which are used by the device,
  * @sysfs.lock: Synchronize irq sysfs creation,
  * @sysfs.irq_dir_exists: whether "irqs" directory exists,
- * @registration_data_rust: private data owned by the registering (parent)
- *                          driver; valid for as long as the device is
- *                          registered with the driver core,
  *
  * An auxiliary_device represents a part of its parent device's functionality.
  * It is given a name that, combined with the registering drivers
@@ -151,7 +148,6 @@ struct auxiliary_device {
 		struct mutex lock; /* Synchronize irq sysfs creation */
 		bool irq_dir_exists;
 	} sysfs;
-	void *registration_data_rust;
 };
 
 /**

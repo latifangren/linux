@@ -1699,29 +1699,34 @@ err_release:
 	return ret;
 }
 
-static const unsigned long gpio_masks[] = {
-	AD4170_GPIO_MODE_GPIO0_MSK,
-	AD4170_GPIO_MODE_GPIO1_MSK,
-	AD4170_GPIO_MODE_GPIO2_MSK,
-	AD4170_GPIO_MODE_GPIO3_MSK,
-};
-
 static int ad4170_gpio_direction_input(struct gpio_chip *gc, unsigned int offset)
 {
 	struct iio_dev *indio_dev = gpiochip_get_data(gc);
 	struct ad4170_state *st = iio_priv(indio_dev);
+	unsigned long gpio_mask;
 	int ret;
 
 	if (!iio_device_claim_direct(indio_dev))
 		return -EBUSY;
 
-	if (offset >= ARRAY_SIZE(gpio_masks)) {
+	switch (offset) {
+	case 0:
+		gpio_mask = AD4170_GPIO_MODE_GPIO0_MSK;
+		break;
+	case 1:
+		gpio_mask = AD4170_GPIO_MODE_GPIO1_MSK;
+		break;
+	case 2:
+		gpio_mask = AD4170_GPIO_MODE_GPIO2_MSK;
+		break;
+	case 3:
+		gpio_mask = AD4170_GPIO_MODE_GPIO3_MSK;
+		break;
+	default:
 		ret = -EINVAL;
 		goto err_release;
 	}
-
-	ret = regmap_update_bits(st->regmap, AD4170_GPIO_MODE_REG,
-				 gpio_masks[offset],
+	ret = regmap_update_bits(st->regmap, AD4170_GPIO_MODE_REG, gpio_mask,
 				 AD4170_GPIO_MODE_GPIO_INPUT << (2 * offset));
 
 err_release:
@@ -1735,6 +1740,7 @@ static int ad4170_gpio_direction_output(struct gpio_chip *gc,
 {
 	struct iio_dev *indio_dev = gpiochip_get_data(gc);
 	struct ad4170_state *st = iio_priv(indio_dev);
+	unsigned long gpio_mask;
 	int ret;
 
 	ret = ad4170_gpio_set(gc, offset, value);
@@ -1744,13 +1750,24 @@ static int ad4170_gpio_direction_output(struct gpio_chip *gc,
 	if (!iio_device_claim_direct(indio_dev))
 		return -EBUSY;
 
-	if (offset >= ARRAY_SIZE(gpio_masks)) {
+	switch (offset) {
+	case 0:
+		gpio_mask = AD4170_GPIO_MODE_GPIO0_MSK;
+		break;
+	case 1:
+		gpio_mask = AD4170_GPIO_MODE_GPIO1_MSK;
+		break;
+	case 2:
+		gpio_mask = AD4170_GPIO_MODE_GPIO2_MSK;
+		break;
+	case 3:
+		gpio_mask = AD4170_GPIO_MODE_GPIO3_MSK;
+		break;
+	default:
 		ret = -EINVAL;
 		goto err_release;
 	}
-
-	ret = regmap_update_bits(st->regmap, AD4170_GPIO_MODE_REG,
-				 gpio_masks[offset],
+	ret = regmap_update_bits(st->regmap, AD4170_GPIO_MODE_REG, gpio_mask,
 				 AD4170_GPIO_MODE_GPIO_OUTPUT << (2 * offset));
 
 err_release:

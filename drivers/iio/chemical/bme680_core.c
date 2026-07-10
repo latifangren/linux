@@ -128,7 +128,7 @@ struct bme680_data {
 	u16 heater_temp;
 
 	struct {
-		s32 chan[BME680_NUM_CHANNELS];
+		s32 chan[4];
 		aligned_s64 ts;
 	} scan;
 

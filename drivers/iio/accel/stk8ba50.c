@@ -11,6 +11,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/types.h>
 #include <linux/iio/buffer.h>
 #include <linux/iio/iio.h>
@@ -518,7 +519,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(stk8ba50_pm_ops, stk8ba50_suspend,
 				stk8ba50_resume);
 
 static const struct i2c_device_id stk8ba50_i2c_id[] = {
-	{ .name = "stk8ba50" },
+	{ "stk8ba50" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, stk8ba50_i2c_id);

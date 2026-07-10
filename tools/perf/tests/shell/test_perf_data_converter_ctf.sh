@@ -24,11 +24,11 @@ trap_cleanup()
 }
 trap trap_cleanup exit term int
 
-check_babeltrace2_support()
+check_babeltrace_support()
 {
-	if ! perf check feature babeltrace2-ctf-writer
+	if ! perf check feature libbabeltrace
 	then
-		echo "perf not linked with babeltrace2-ctf-writer, skipping test"
+		echo "perf not linked with libbabeltrace, skipping test"
 		exit 2
 	fi
 }
@@ -97,7 +97,7 @@ test_ctf_converter_pipe()
 	fi
 }
 
-check_babeltrace2_support
+check_babeltrace_support
 test_ctf_converter_file
 test_ctf_converter_pipe
 

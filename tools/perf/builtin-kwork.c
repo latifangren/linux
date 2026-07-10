@@ -9,7 +9,6 @@
 #include "perf.h"
 
 #include "util/data.h"
-#include "util/event.h"
 #include "util/evlist.h"
 #include "util/evsel.h"
 #include "util/header.h"
@@ -324,8 +323,8 @@ static struct kwork_work *work_search(struct rb_root_cached *root,
 		else if (cmp < 0)
 			node = node->rb_right;
 		else {
-			if (work->name == NULL && key->name != NULL)
-				work->name = strdup(key->name);
+			if (work->name == NULL)
+				work->name = key->name;
 			return work;
 		}
 	}
@@ -372,52 +371,9 @@ static struct kwork_work *work_new(struct kwork_work *key)
 
 	work->id = key->id;
 	work->cpu = key->cpu;
-	work->name = key->name ? strdup(key->name) : NULL;
+	work->name = key->name;
 	work->class = key->class;
 	return work;
-}
-
-
-static void work_delete(struct kwork_work *work)
-{
-	if (work) {
-		work_exit(work);
-		free(work);
-	}
-}
-
-static void kwork_work__free_root(struct rb_root_cached *root)
-{
-	struct rb_node *next;
-	struct kwork_work *work;
-
-	while ((next = rb_first_cached(root))) {
-		work = rb_entry(next, struct kwork_work, node);
-		rb_erase_cached(next, root);
-		work_delete(work);
-	}
-}
-
-static void perf_kwork__exit(struct perf_kwork *kwork)
-{
-	struct kwork_class *class;
-	struct kwork_atom_page *page, *tmp_page;
-
-	list_for_each_entry(class, &kwork->class_list, list) {
-		kwork_work__free_root(&class->work_root);
-	}
-
-	kwork_work__free_root(&kwork->sorted_work_root);
-
-	list_for_each_entry_safe(page, tmp_page, &kwork->atom_page_list, list) {
-		list_del_init(&page->list);
-		free(page);
-	}
-
-	INIT_LIST_HEAD(&kwork->class_list);
-	INIT_LIST_HEAD(&kwork->atom_page_list);
-	INIT_LIST_HEAD(&kwork->sort_list);
-	INIT_LIST_HEAD(&kwork->cmp_id);
 }
 
 static struct kwork_work *work_findnew(struct rb_root_cached *root,
@@ -468,9 +424,7 @@ static bool profile_event_match(struct perf_kwork *kwork,
 	u64 time = sample->time;
 	struct perf_time_interval *ptime = &kwork->ptime;
 
-	/* Guard test_bit: cpu == -1 (absent PERF_SAMPLE_CPU) would index past the bitmap */
-	if ((kwork->cpu_list != NULL) &&
-	    ((unsigned int)cpu >= MAX_NR_CPUS || !test_bit(cpu, kwork->cpu_bitmap)))
+	if ((kwork->cpu_list != NULL) && !test_bit(cpu, kwork->cpu_bitmap))
 		return false;
 
 	if (((ptime->start != 0) && (ptime->start > time)) ||
@@ -494,34 +448,31 @@ static int work_push_atom(struct perf_kwork *kwork,
 			  struct kwork_class *class,
 			  enum kwork_trace_type src_type,
 			  enum kwork_trace_type dst_type,
+			  struct evsel *evsel,
 			  struct perf_sample *sample,
 			  struct machine *machine,
 			  struct kwork_work **ret_work,
 			  bool overwrite)
 {
-	struct kwork_atom *atom = NULL, *dst_atom, *last_atom;
+	struct kwork_atom *atom, *dst_atom, *last_atom;
 	struct kwork_work *work, key;
-	int ret = 0;
 
 	BUG_ON(class->work_init == NULL);
-	class->work_init(kwork, class, &key, src_type, sample, machine);
+	class->work_init(kwork, class, &key, src_type, evsel, sample, machine);
 
 	atom = atom_new(kwork, sample);
-	if (atom == NULL) {
-		ret = -1;
-		goto out;
-	}
+	if (atom == NULL)
+		return -1;
 
 	work = work_findnew(&class->work_root, &key, &kwork->cmp_id);
 	if (work == NULL) {
 		atom_free(atom);
-		ret = -1;
-		goto out;
+		return -1;
 	}
 
 	if (!profile_event_match(kwork, work, sample)) {
 		atom_free(atom);
-		goto out;
+		return 0;
 	}
 
 	if (dst_type < KWORK_TRACE_MAX) {
@@ -548,39 +499,39 @@ static int work_push_atom(struct perf_kwork *kwork,
 	}
 
 	list_add_tail(&atom->list, &work->atom_list[src_type]);
-out:
-	work_exit(&key);
-	return ret;
+
+	return 0;
 }
 
 static struct kwork_atom *work_pop_atom(struct perf_kwork *kwork,
 					struct kwork_class *class,
 					enum kwork_trace_type src_type,
 					enum kwork_trace_type dst_type,
+					struct evsel *evsel,
 					struct perf_sample *sample,
 					struct machine *machine,
 					struct kwork_work **ret_work)
 {
-	struct kwork_atom *atom = NULL, *src_atom;
+	struct kwork_atom *atom, *src_atom;
 	struct kwork_work *work, key;
 
 	BUG_ON(class->work_init == NULL);
-	class->work_init(kwork, class, &key, src_type, sample, machine);
+	class->work_init(kwork, class, &key, src_type, evsel, sample, machine);
 
 	work = work_findnew(&class->work_root, &key, &kwork->cmp_id);
 	if (ret_work != NULL)
 		*ret_work = work;
 
 	if (work == NULL)
-		goto out;
+		return NULL;
 
 	if (!profile_event_match(kwork, work, sample))
-		goto out;
+		return NULL;
 
 	atom = list_last_entry_or_null(&work->atom_list[dst_type],
 				       struct kwork_atom, list);
 	if (atom != NULL)
-		goto out;
+		return atom;
 
 	src_atom = atom_new(kwork, sample);
 	if (src_atom != NULL)
@@ -589,9 +540,8 @@ static struct kwork_atom *work_pop_atom(struct perf_kwork *kwork,
 		if (ret_work != NULL)
 			*ret_work = NULL;
 	}
-out:
-	work_exit(&key);
-	return atom;
+
+	return NULL;
 }
 
 static struct kwork_work *find_work_by_id(struct rb_root_cached *root,
@@ -649,16 +599,18 @@ static void report_update_exit_event(struct kwork_work *work,
 
 static int report_entry_event(struct perf_kwork *kwork,
 			      struct kwork_class *class,
+			      struct evsel *evsel,
 			      struct perf_sample *sample,
 			      struct machine *machine)
 {
 	return work_push_atom(kwork, class, KWORK_TRACE_ENTRY,
-			      KWORK_TRACE_MAX, sample,
+			      KWORK_TRACE_MAX, evsel, sample,
 			      machine, NULL, true);
 }
 
 static int report_exit_event(struct perf_kwork *kwork,
 			     struct kwork_class *class,
+			     struct evsel *evsel,
 			     struct perf_sample *sample,
 			     struct machine *machine)
 {
@@ -666,7 +618,7 @@ static int report_exit_event(struct perf_kwork *kwork,
 	struct kwork_work *work = NULL;
 
 	atom = work_pop_atom(kwork, class, KWORK_TRACE_EXIT,
-			     KWORK_TRACE_ENTRY, sample,
+			     KWORK_TRACE_ENTRY, evsel, sample,
 			     machine, &work);
 	if (work == NULL)
 		return -1;
@@ -702,16 +654,18 @@ static void latency_update_entry_event(struct kwork_work *work,
 
 static int latency_raise_event(struct perf_kwork *kwork,
 			       struct kwork_class *class,
+			       struct evsel *evsel,
 			       struct perf_sample *sample,
 			       struct machine *machine)
 {
 	return work_push_atom(kwork, class, KWORK_TRACE_RAISE,
-			      KWORK_TRACE_MAX, sample,
+			      KWORK_TRACE_MAX, evsel, sample,
 			      machine, NULL, true);
 }
 
 static int latency_entry_event(struct perf_kwork *kwork,
 			       struct kwork_class *class,
+			       struct evsel *evsel,
 			       struct perf_sample *sample,
 			       struct machine *machine)
 {
@@ -719,7 +673,7 @@ static int latency_entry_event(struct perf_kwork *kwork,
 	struct kwork_work *work = NULL;
 
 	atom = work_pop_atom(kwork, class, KWORK_TRACE_ENTRY,
-			     KWORK_TRACE_RAISE, sample,
+			     KWORK_TRACE_RAISE, evsel, sample,
 			     machine, &work);
 	if (work == NULL)
 		return -1;
@@ -734,6 +688,7 @@ static int latency_entry_event(struct perf_kwork *kwork,
 
 static void timehist_save_callchain(struct perf_kwork *kwork,
 				    struct perf_sample *sample,
+				    struct evsel *evsel,
 				    struct machine *machine)
 {
 	struct symbol *sym;
@@ -753,7 +708,7 @@ static void timehist_save_callchain(struct perf_kwork *kwork,
 
 	cursor = get_tls_callchain_cursor();
 
-	if (thread__resolve_callchain(thread, cursor, sample,
+	if (thread__resolve_callchain(thread, cursor, evsel, sample,
 				      NULL, NULL, kwork->max_stack + 2) != 0) {
 		pr_debug("Failed to resolve callchain, skipping\n");
 		goto out_put;
@@ -770,7 +725,7 @@ static void timehist_save_callchain(struct perf_kwork *kwork,
 		if (sym) {
 			if (!strcmp(sym->name, "__softirqentry_text_start") ||
 			    !strcmp(sym->name, "__do_softirq"))
-				symbol__set_ignore(sym, true);
+				sym->ignore = 1;
 		}
 
 		callchain_cursor_advance(cursor);
@@ -858,16 +813,18 @@ static void timehist_print_event(struct perf_kwork *kwork,
 
 static int timehist_raise_event(struct perf_kwork *kwork,
 				struct kwork_class *class,
+				struct evsel *evsel,
 				struct perf_sample *sample,
 				struct machine *machine)
 {
 	return work_push_atom(kwork, class, KWORK_TRACE_RAISE,
-			      KWORK_TRACE_MAX, sample,
+			      KWORK_TRACE_MAX, evsel, sample,
 			      machine, NULL, true);
 }
 
 static int timehist_entry_event(struct perf_kwork *kwork,
 				struct kwork_class *class,
+				struct evsel *evsel,
 				struct perf_sample *sample,
 				struct machine *machine)
 {
@@ -875,19 +832,20 @@ static int timehist_entry_event(struct perf_kwork *kwork,
 	struct kwork_work *work = NULL;
 
 	ret = work_push_atom(kwork, class, KWORK_TRACE_ENTRY,
-			     KWORK_TRACE_RAISE, sample,
+			     KWORK_TRACE_RAISE, evsel, sample,
 			     machine, &work, true);
 	if (ret)
 		return ret;
 
 	if (work != NULL)
-		timehist_save_callchain(kwork, sample, machine);
+		timehist_save_callchain(kwork, sample, evsel, machine);
 
 	return 0;
 }
 
 static int timehist_exit_event(struct perf_kwork *kwork,
 			       struct kwork_class *class,
+			       struct evsel *evsel,
 			       struct perf_sample *sample,
 			       struct machine *machine)
 {
@@ -898,14 +856,13 @@ static int timehist_exit_event(struct perf_kwork *kwork,
 
 	addr_location__init(&al);
 	if (machine__resolve(machine, &al, sample) < 0) {
-		pr_debug("problem processing event at offset %#" PRIx64 ", skipping it\n",
-			 sample->file_offset);
+		pr_debug("Problem processing event, skipping it\n");
 		ret = -1;
 		goto out;
 	}
 
 	atom = work_pop_atom(kwork, class, KWORK_TRACE_EXIT,
-			     KWORK_TRACE_ENTRY, sample,
+			     KWORK_TRACE_ENTRY, evsel, sample,
 			     machine, &work);
 	if (work == NULL) {
 		ret = -1;
@@ -939,16 +896,18 @@ static void top_update_runtime(struct kwork_work *work,
 
 static int top_entry_event(struct perf_kwork *kwork,
 			   struct kwork_class *class,
+			   struct evsel *evsel,
 			   struct perf_sample *sample,
 			   struct machine *machine)
 {
 	return work_push_atom(kwork, class, KWORK_TRACE_ENTRY,
-			      KWORK_TRACE_MAX, sample,
+			      KWORK_TRACE_MAX, evsel, sample,
 			      machine, NULL, true);
 }
 
 static int top_exit_event(struct perf_kwork *kwork,
 			  struct kwork_class *class,
+			  struct evsel *evsel,
 			  struct perf_sample *sample,
 			  struct machine *machine)
 {
@@ -957,7 +916,7 @@ static int top_exit_event(struct perf_kwork *kwork,
 	struct kwork_atom *atom;
 
 	atom = work_pop_atom(kwork, class, KWORK_TRACE_EXIT,
-			     KWORK_TRACE_ENTRY, sample,
+			     KWORK_TRACE_ENTRY, evsel, sample,
 			     machine, &work);
 	if (!work)
 		return -1;
@@ -978,6 +937,7 @@ static int top_exit_event(struct perf_kwork *kwork,
 
 static int top_sched_switch_event(struct perf_kwork *kwork,
 				  struct kwork_class *class,
+				  struct evsel *evsel,
 				  struct perf_sample *sample,
 				  struct machine *machine)
 {
@@ -985,7 +945,7 @@ static int top_sched_switch_event(struct perf_kwork *kwork,
 	struct kwork_work *work;
 
 	atom = work_pop_atom(kwork, class, KWORK_TRACE_EXIT,
-			     KWORK_TRACE_ENTRY, sample,
+			     KWORK_TRACE_ENTRY, evsel, sample,
 			     machine, &work);
 	if (!work)
 		return -1;
@@ -995,11 +955,12 @@ static int top_sched_switch_event(struct perf_kwork *kwork,
 		atom_del(atom);
 	}
 
-	return top_entry_event(kwork, class, sample, machine);
+	return top_entry_event(kwork, class, evsel, sample, machine);
 }
 
 static struct kwork_class kwork_irq;
 static int process_irq_handler_entry_event(const struct perf_tool *tool,
+					   struct evsel *evsel,
 					   struct perf_sample *sample,
 					   struct machine *machine)
 {
@@ -1007,11 +968,12 @@ static int process_irq_handler_entry_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->entry_event)
 		return kwork->tp_handler->entry_event(kwork, &kwork_irq,
-						      sample, machine);
+						      evsel, sample, machine);
 	return 0;
 }
 
 static int process_irq_handler_exit_event(const struct perf_tool *tool,
+					  struct evsel *evsel,
 					  struct perf_sample *sample,
 					  struct machine *machine)
 {
@@ -1019,7 +981,7 @@ static int process_irq_handler_exit_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->exit_event)
 		return kwork->tp_handler->exit_event(kwork, &kwork_irq,
-						     sample, machine);
+						     evsel, sample, machine);
 	return 0;
 }
 
@@ -1044,6 +1006,7 @@ static void irq_work_init(struct perf_kwork *kwork,
 			  struct kwork_class *class,
 			  struct kwork_work *work,
 			  enum kwork_trace_type src_type __maybe_unused,
+			  struct evsel *evsel,
 			  struct perf_sample *sample,
 			  struct machine *machine __maybe_unused)
 {
@@ -1051,20 +1014,17 @@ static void irq_work_init(struct perf_kwork *kwork,
 	work->cpu = sample->cpu;
 
 	if (kwork->report == KWORK_REPORT_TOP) {
-		work->id = perf_sample__intval_common(sample, "common_pid");
+		work->id = evsel__intval_common(evsel, sample, "common_pid");
 		work->name = NULL;
 	} else {
-		work->id = perf_sample__intval(sample, "irq");
-		work->name = strdup(perf_sample__strval(sample, "name") ?: "<unknown>");
+		work->id = evsel__intval(evsel, sample, "irq");
+		work->name = evsel__strval(evsel, sample, "name");
 	}
 }
 
 static void irq_work_name(struct kwork_work *work, char *buf, int len)
 {
-	if (work->name != NULL)
-		snprintf(buf, len, "%s:%" PRIu64 "", work->name, work->id);
-	else
-		snprintf(buf, len, "%" PRIu64 "", work->id);
+	snprintf(buf, len, "%s:%" PRIu64 "", work->name, work->id);
 }
 
 static struct kwork_class kwork_irq = {
@@ -1079,6 +1039,7 @@ static struct kwork_class kwork_irq = {
 
 static struct kwork_class kwork_softirq;
 static int process_softirq_raise_event(const struct perf_tool *tool,
+				       struct evsel *evsel,
 				       struct perf_sample *sample,
 				       struct machine *machine)
 {
@@ -1086,12 +1047,13 @@ static int process_softirq_raise_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->raise_event)
 		return kwork->tp_handler->raise_event(kwork, &kwork_softirq,
-						      sample, machine);
+						      evsel, sample, machine);
 
 	return 0;
 }
 
 static int process_softirq_entry_event(const struct perf_tool *tool,
+				       struct evsel *evsel,
 				       struct perf_sample *sample,
 				       struct machine *machine)
 {
@@ -1099,12 +1061,13 @@ static int process_softirq_entry_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->entry_event)
 		return kwork->tp_handler->entry_event(kwork, &kwork_softirq,
-						      sample, machine);
+						      evsel, sample, machine);
 
 	return 0;
 }
 
 static int process_softirq_exit_event(const struct perf_tool *tool,
+				      struct evsel *evsel,
 				      struct perf_sample *sample,
 				      struct machine *machine)
 {
@@ -1112,7 +1075,7 @@ static int process_softirq_exit_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->exit_event)
 		return kwork->tp_handler->exit_event(kwork, &kwork_softirq,
-						     sample, machine);
+						     evsel, sample, machine);
 
 	return 0;
 }
@@ -1171,6 +1134,7 @@ static void softirq_work_init(struct perf_kwork *kwork,
 			      struct kwork_class *class,
 			      struct kwork_work *work,
 			      enum kwork_trace_type src_type __maybe_unused,
+			      struct evsel *evsel,
 			      struct perf_sample *sample,
 			      struct machine *machine __maybe_unused)
 {
@@ -1180,21 +1144,18 @@ static void softirq_work_init(struct perf_kwork *kwork,
 	work->cpu = sample->cpu;
 
 	if (kwork->report == KWORK_REPORT_TOP) {
-		work->id = perf_sample__intval_common(sample, "common_pid");
+		work->id = evsel__intval_common(evsel, sample, "common_pid");
 		work->name = NULL;
 	} else {
-		num = perf_sample__intval(sample, "vec");
+		num = evsel__intval(evsel, sample, "vec");
 		work->id = num;
-		work->name = evsel__softirq_name(sample->evsel, num);
+		work->name = evsel__softirq_name(evsel, num);
 	}
 }
 
 static void softirq_work_name(struct kwork_work *work, char *buf, int len)
 {
-	if (work->name != NULL)
-		snprintf(buf, len, "(s)%s:%" PRIu64 "", work->name, work->id);
-	else
-		snprintf(buf, len, "(s)%" PRIu64 "", work->id);
+	snprintf(buf, len, "(s)%s:%" PRIu64 "", work->name, work->id);
 }
 
 static struct kwork_class kwork_softirq = {
@@ -1209,6 +1170,7 @@ static struct kwork_class kwork_softirq = {
 
 static struct kwork_class kwork_workqueue;
 static int process_workqueue_activate_work_event(const struct perf_tool *tool,
+						 struct evsel *evsel,
 						 struct perf_sample *sample,
 						 struct machine *machine)
 {
@@ -1216,12 +1178,13 @@ static int process_workqueue_activate_work_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->raise_event)
 		return kwork->tp_handler->raise_event(kwork, &kwork_workqueue,
-						      sample, machine);
+						    evsel, sample, machine);
 
 	return 0;
 }
 
 static int process_workqueue_execute_start_event(const struct perf_tool *tool,
+						 struct evsel *evsel,
 						 struct perf_sample *sample,
 						 struct machine *machine)
 {
@@ -1229,12 +1192,13 @@ static int process_workqueue_execute_start_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->entry_event)
 		return kwork->tp_handler->entry_event(kwork, &kwork_workqueue,
-						      sample, machine);
+						    evsel, sample, machine);
 
 	return 0;
 }
 
 static int process_workqueue_execute_end_event(const struct perf_tool *tool,
+					       struct evsel *evsel,
 					       struct perf_sample *sample,
 					       struct machine *machine)
 {
@@ -1242,7 +1206,7 @@ static int process_workqueue_execute_end_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->exit_event)
 		return kwork->tp_handler->exit_event(kwork, &kwork_workqueue,
-						     sample, machine);
+						   evsel, sample, machine);
 
 	return 0;
 }
@@ -1270,23 +1234,19 @@ static void workqueue_work_init(struct perf_kwork *kwork __maybe_unused,
 				struct kwork_class *class,
 				struct kwork_work *work,
 				enum kwork_trace_type src_type __maybe_unused,
+				struct evsel *evsel,
 				struct perf_sample *sample,
 				struct machine *machine)
 {
 	char *modp = NULL;
-	unsigned long long function_addr = perf_sample__intval(sample, "function");
+	unsigned long long function_addr = evsel__intval(evsel,
+							 sample, "function");
 
 	work->class = class;
 	work->cpu = sample->cpu;
-	work->id = perf_sample__intval(sample, "work");
-	work->name = NULL;
-
-	if (function_addr != 0) {
-		const char *name = machine__resolve_kernel_addr(machine, &function_addr, &modp);
-
-		if (name)
-			work->name = strdup(name);
-	}
+	work->id = evsel__intval(evsel, sample, "work");
+	work->name = function_addr == 0 ? NULL :
+		machine__resolve_kernel_addr(machine, &function_addr, &modp);
 }
 
 static void workqueue_work_name(struct kwork_work *work, char *buf, int len)
@@ -1309,6 +1269,7 @@ static struct kwork_class kwork_workqueue = {
 
 static struct kwork_class kwork_sched;
 static int process_sched_switch_event(const struct perf_tool *tool,
+				      struct evsel *evsel,
 				      struct perf_sample *sample,
 				      struct machine *machine)
 {
@@ -1316,7 +1277,7 @@ static int process_sched_switch_event(const struct perf_tool *tool,
 
 	if (kwork->tp_handler->sched_switch_event)
 		return kwork->tp_handler->sched_switch_event(kwork, &kwork_sched,
-							     sample, machine);
+							     evsel, sample, machine);
 	return 0;
 }
 
@@ -1341,6 +1302,7 @@ static void sched_work_init(struct perf_kwork *kwork __maybe_unused,
 			    struct kwork_class *class,
 			    struct kwork_work *work,
 			    enum kwork_trace_type src_type,
+			    struct evsel *evsel,
 			    struct perf_sample *sample,
 			    struct machine *machine __maybe_unused)
 {
@@ -1348,17 +1310,17 @@ static void sched_work_init(struct perf_kwork *kwork __maybe_unused,
 	work->cpu = sample->cpu;
 
 	if (src_type == KWORK_TRACE_EXIT) {
-		work->id = perf_sample__intval(sample, "prev_pid");
-		work->name = strdup(perf_sample__strval(sample, "prev_comm") ?: "<unknown>");
+		work->id = evsel__intval(evsel, sample, "prev_pid");
+		work->name = strdup(evsel__strval(evsel, sample, "prev_comm"));
 	} else if (src_type == KWORK_TRACE_ENTRY) {
-		work->id = perf_sample__intval(sample, "next_pid");
-		work->name = strdup(perf_sample__strval(sample, "next_comm") ?: "<unknown>");
+		work->id = evsel__intval(evsel, sample, "next_pid");
+		work->name = strdup(evsel__strval(evsel, sample, "next_comm"));
 	}
 }
 
 static void sched_work_name(struct kwork_work *work, char *buf, int len)
 {
-	snprintf(buf, len, "%s", work->name ?: "");
+	snprintf(buf, len, "%s", work->name);
 }
 
 static struct kwork_class kwork_sched = {
@@ -1986,21 +1948,22 @@ static int perf_kwork__report(struct perf_kwork *kwork)
 }
 
 typedef int (*tracepoint_handler)(const struct perf_tool *tool,
+				  struct evsel *evsel,
 				  struct perf_sample *sample,
 				  struct machine *machine);
 
 static int perf_kwork__process_tracepoint_sample(const struct perf_tool *tool,
 						 union perf_event *event __maybe_unused,
 						 struct perf_sample *sample,
+						 struct evsel *evsel,
 						 struct machine *machine)
 {
-	struct evsel *evsel = sample->evsel;
 	int err = 0;
 
 	if (evsel->handler != NULL) {
 		tracepoint_handler f = evsel->handler;
 
-		err = f(tool, sample, machine);
+		err = f(tool, evsel, sample, machine);
 	}
 
 	return err;
@@ -2045,18 +2008,7 @@ static void top_calc_total_runtime(struct perf_kwork *kwork)
 	next = rb_first_cached(&class->work_root);
 	while (next) {
 		work = rb_entry(next, struct kwork_work, node);
-		/*
-		 * work->cpu comes from sample->cpu which is -1 when
-		 * PERF_SAMPLE_CPU is absent.  As int that's -1, but as
-		 * unsigned it exceeds MAX_NR_CPUS — skip to avoid OOB
-		 * on cpus_runtime[].
-		 */
-		/* Counted and reported in perf_kwork__top_report() */
-		if ((unsigned int)work->cpu >= MAX_NR_CPUS) {
-			stat->nr_skipped_cpu++;
-			next = rb_next(next);
-			continue;
-		}
+		BUG_ON(work->cpu >= MAX_NR_CPUS);
 		stat->cpus_runtime[work->cpu].total += work->total_runtime;
 		stat->cpus_runtime[MAX_NR_CPUS].total += work->total_runtime;
 		next = rb_next(next);
@@ -2068,8 +2020,7 @@ static void top_calc_idle_time(struct perf_kwork *kwork,
 {
 	struct kwork_top_stat *stat = &kwork->top_stat;
 
-	/* See comment in top_calc_total_runtime() */
-	if (work->id == 0 && (unsigned int)work->cpu < MAX_NR_CPUS) {
+	if (work->id == 0) {
 		stat->cpus_runtime[work->cpu].idle += work->total_runtime;
 		stat->cpus_runtime[MAX_NR_CPUS].idle += work->total_runtime;
 	}
@@ -2080,10 +2031,6 @@ static void top_calc_irq_runtime(struct perf_kwork *kwork,
 				 struct kwork_work *work)
 {
 	struct kwork_top_stat *stat = &kwork->top_stat;
-
-	/* See comment in top_calc_total_runtime() */
-	if ((unsigned int)work->cpu >= MAX_NR_CPUS)
-		return;
 
 	if (type == KWORK_CLASS_IRQ) {
 		stat->cpus_runtime[work->cpu].irq += work->total_runtime;
@@ -2137,19 +2084,12 @@ static void top_calc_cpu_usage(struct perf_kwork *kwork)
 		if (work->total_runtime == 0)
 			goto next;
 
-		/* See comment in top_calc_total_runtime() */
-		if ((unsigned int)work->cpu >= MAX_NR_CPUS)
-			goto next;
-
 		__set_bit(work->cpu, stat->all_cpus_bitmap);
 
 		top_subtract_irq_runtime(kwork, work);
 
-		/* Guard against division by zero if no runtime was accumulated */
-		if (stat->cpus_runtime[work->cpu].total) {
-			work->cpu_usage = work->total_runtime * 10000 /
-				stat->cpus_runtime[work->cpu].total;
-		}
+		work->cpu_usage = work->total_runtime * 10000 /
+			stat->cpus_runtime[work->cpu].total;
 
 		top_calc_idle_time(kwork, work);
 next:
@@ -2162,8 +2102,7 @@ static void top_calc_load_runtime(struct perf_kwork *kwork,
 {
 	struct kwork_top_stat *stat = &kwork->top_stat;
 
-	/* See comment in top_calc_total_runtime() */
-	if (work->id != 0 && (unsigned int)work->cpu < MAX_NR_CPUS) {
+	if (work->id != 0) {
 		stat->cpus_runtime[work->cpu].load += work->total_runtime;
 		stat->cpus_runtime[MAX_NR_CPUS].load += work->total_runtime;
 	}
@@ -2189,10 +2128,8 @@ static void top_merge_tasks(struct perf_kwork *kwork)
 		rb_erase_cached(node, &class->work_root);
 		data = rb_entry(node, struct kwork_work, node);
 
-		if (!profile_name_match(kwork, data)) {
-			work_delete(data);
+		if (!profile_name_match(kwork, data))
 			continue;
-		}
 
 		cpu = data->cpu;
 		merged_work = find_work_by_id(&merged_root, data->id,
@@ -2200,17 +2137,11 @@ static void top_merge_tasks(struct perf_kwork *kwork)
 		if (!merged_work) {
 			work_insert(&merged_root, data, &kwork->cmp_id);
 		} else {
-			if (merged_work->name == NULL && data->name != NULL)
-				merged_work->name = strdup(data->name);
-
 			merged_work->total_runtime += data->total_runtime;
 			merged_work->cpu_usage += data->cpu_usage;
 		}
 
 		top_calc_load_runtime(kwork, data);
-
-		if (merged_work)
-			work_delete(data);
 	}
 
 	work_sort(kwork, class, &merged_root);
@@ -2237,13 +2168,6 @@ static void perf_kwork__top_report(struct perf_kwork *kwork)
 
 next:
 		next = rb_next(next);
-	}
-
-	if (kwork->top_stat.nr_skipped_cpu) {
-		printf("  Warning: %u work entries with invalid CPU were excluded from totals.\n"
-		       "  Task runtimes may appear inflated (IRQ time not subtracted).\n"
-		       "  Consider re-recording with PERF_SAMPLE_CPU enabled.\n",
-		       kwork->top_stat.nr_skipped_cpu);
 	}
 
 	printf("\n");
@@ -2362,7 +2286,7 @@ static void setup_event_list(struct perf_kwork *kwork,
 static int perf_kwork__record(struct perf_kwork *kwork,
 			      int argc, const char **argv)
 {
-	const char **rec_argv, **to_free = NULL;
+	const char **rec_argv;
 	unsigned int rec_argc, i, j;
 	struct kwork_class *class;
 	int ret;
@@ -2399,27 +2323,16 @@ static int perf_kwork__record(struct perf_kwork *kwork,
 
 	BUG_ON(i != rec_argc);
 
-	/* Save the pointers as the array will be mutated by cmd_record. */
-	to_free = calloc(rec_argc + 1, sizeof(char *));
-	if (to_free == NULL) {
-		ret = -ENOMEM;
-		goto EXIT;
-	}
-
 	pr_debug("record comm: ");
-	for (j = 0; j < rec_argc; j++) {
+	for (j = 0; j < rec_argc; j++)
 		pr_debug("%s ", rec_argv[j]);
-		to_free[j] = rec_argv[j];
-	}
 	pr_debug("\n");
 
 	ret = cmd_record(i, rec_argv);
 
 EXIT:
 	for (i = 0; i < rec_argc; i++)
-		free((void *)(to_free ? to_free[i] : rec_argv[i]));
-
-	free(to_free);
+		free((void *)rec_argv[i]);
 	free(rec_argv);
 	return ret;
 }
@@ -2562,7 +2475,6 @@ int cmd_kwork(int argc, const char **argv)
 	const char *const kwork_subcommands[] = {
 		"record", "report", "latency", "timehist", "top", NULL
 	};
-	int ret = 0;
 
 	perf_tool__init(&kwork.tool, /*ordered_events=*/true);
 	kwork.tool.mmap	  = perf_event__process_mmap;
@@ -2579,7 +2491,7 @@ int cmd_kwork(int argc, const char **argv)
 
 	if (strlen(argv[0]) > 2 && strstarts("record", argv[0])) {
 		setup_event_list(&kwork, kwork_options, kwork_usage);
-		ret = perf_kwork__record(&kwork, argc, argv);
+		return perf_kwork__record(&kwork, argc, argv);
 	} else if (strlen(argv[0]) > 2 && strstarts("report", argv[0])) {
 		kwork.sort_order = default_report_sort_order;
 		if (argc > 1) {
@@ -2590,7 +2502,7 @@ int cmd_kwork(int argc, const char **argv)
 		kwork.report = KWORK_REPORT_RUNTIME;
 		setup_sorting(&kwork, report_options, report_usage);
 		setup_event_list(&kwork, kwork_options, kwork_usage);
-		ret = perf_kwork__report(&kwork);
+		return perf_kwork__report(&kwork);
 	} else if (strlen(argv[0]) > 2 && strstarts("latency", argv[0])) {
 		kwork.sort_order = default_latency_sort_order;
 		if (argc > 1) {
@@ -2601,7 +2513,7 @@ int cmd_kwork(int argc, const char **argv)
 		kwork.report = KWORK_REPORT_LATENCY;
 		setup_sorting(&kwork, latency_options, latency_usage);
 		setup_event_list(&kwork, kwork_options, kwork_usage);
-		ret = perf_kwork__report(&kwork);
+		return perf_kwork__report(&kwork);
 	} else if (strlen(argv[0]) > 2 && strstarts("timehist", argv[0])) {
 		if (argc > 1) {
 			argc = parse_options(argc, argv, timehist_options, timehist_usage, 0);
@@ -2610,7 +2522,7 @@ int cmd_kwork(int argc, const char **argv)
 		}
 		kwork.report = KWORK_REPORT_TIMEHIST;
 		setup_event_list(&kwork, kwork_options, kwork_usage);
-		ret = perf_kwork__timehist(&kwork);
+		return perf_kwork__timehist(&kwork);
 	} else if (strlen(argv[0]) > 2 && strstarts("top", argv[0])) {
 		kwork.sort_order = default_top_sort_order;
 		if (argc > 1) {
@@ -2623,14 +2535,12 @@ int cmd_kwork(int argc, const char **argv)
 			kwork.event_list_str = "sched, irq, softirq";
 		setup_event_list(&kwork, kwork_options, kwork_usage);
 		setup_sorting(&kwork, top_options, top_usage);
-		ret = perf_kwork__top(&kwork);
+		return perf_kwork__top(&kwork);
 	} else
 		usage_with_options(kwork_usage, kwork_options);
-
-	perf_kwork__exit(&kwork);
 
 	/* free usage string allocated by parse_options_subcommand */
 	free((void *)kwork_usage[0]);
 
-	return ret;
+	return 0;
 }

@@ -597,19 +597,19 @@ void kernfs_put(struct kernfs_node *kn)
 	 */
 	parent = kernfs_parent(kn);
 
-	if (atomic_read(&kn->active) != KN_DEACTIVATED_BIAS) {
-		guard(rcu)();
-		WARN_ONCE(1,
-			  "kernfs_put: %s/%s: released with incorrect active_ref %d\n",
-			  parent ? rcu_dereference(parent->name) : "",
-			  rcu_dereference(kn->name), atomic_read(&kn->active));
-	}
+	WARN_ONCE(atomic_read(&kn->active) != KN_DEACTIVATED_BIAS,
+		  "kernfs_put: %s/%s: released with incorrect active_ref %d\n",
+		  parent ? rcu_dereference(parent->name) : "",
+		  rcu_dereference(kn->name), atomic_read(&kn->active));
 
 	if (kernfs_type(kn) == KERNFS_LINK)
 		kernfs_put(kn->symlink.target_kn);
 
-	if (kn->iattr)
-		simple_xattrs_free(&root->xa_cache, &kn->iattr->xattrs, NULL);
+	if (kn->iattr && kn->iattr->xattrs) {
+		simple_xattrs_free(kn->iattr->xattrs, NULL);
+		kfree(kn->iattr->xattrs);
+		kn->iattr->xattrs = NULL;
+	}
 
 	spin_lock(&root->kernfs_idr_lock);
 	idr_remove(&root->ino_idr, (u32)kernfs_ino(kn));
@@ -624,7 +624,6 @@ void kernfs_put(struct kernfs_node *kn)
 	} else {
 		/* just released the root kn, free @root too */
 		idr_destroy(&root->ino_idr);
-		simple_xattr_cache_cleanup(&root->xa_cache);
 		kfree_rcu(root, rcu);
 	}
 }
@@ -701,9 +700,6 @@ static struct kernfs_node *__kernfs_new_node(struct kernfs_root *root,
 	}
 
 	if (parent) {
-		kernfs_get(parent);
-		rcu_assign_pointer(kn->__parent, parent);
-
 		ret = security_kernfs_init_security(parent, kn);
 		if (ret)
 			goto err_out4;
@@ -712,10 +708,11 @@ static struct kernfs_node *__kernfs_new_node(struct kernfs_root *root,
 	return kn;
 
  err_out4:
-	RCU_INIT_POINTER(kn->__parent, NULL);
-	kernfs_put(parent);
 	if (kn->iattr) {
-		simple_xattrs_free(&root->xa_cache, &kn->iattr->xattrs, NULL);
+		if (kn->iattr->xattrs) {
+			simple_xattrs_free(kn->iattr->xattrs, NULL);
+			kfree(kn->iattr->xattrs);
+		}
 		kmem_cache_free(kernfs_iattrs_cache, kn->iattr);
 	}
  err_out3:
@@ -750,6 +747,10 @@ struct kernfs_node *kernfs_new_node(struct kernfs_node *parent,
 
 	kn = __kernfs_new_node(kernfs_root(parent), parent,
 			       name, mode, uid, gid, flags);
+	if (kn) {
+		kernfs_get(parent);
+		rcu_assign_pointer(kn->__parent, parent);
+	}
 	return kn;
 }
 

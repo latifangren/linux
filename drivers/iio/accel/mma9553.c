@@ -6,6 +6,7 @@
 
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/iio/iio.h>
@@ -1218,7 +1219,7 @@ static const struct acpi_device_id mma9553_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, mma9553_acpi_match);
 
 static const struct i2c_device_id mma9553_id[] = {
-	{ .name = "mma9553" },
+	{ "mma9553" },
 	{ }
 };
 

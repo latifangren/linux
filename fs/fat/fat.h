@@ -10,8 +10,6 @@
 #include <linux/fs_context.h>
 #include <linux/fs_parser.h>
 
-struct file_kattr;
-
 /*
  * vfat shortname flags
  */
@@ -410,7 +408,6 @@ extern void fat_truncate_blocks(struct inode *inode, loff_t offset);
 extern int fat_getattr(struct mnt_idmap *idmap,
 		       const struct path *path, struct kstat *stat,
 		       u32 request_mask, unsigned int flags);
-int fat_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
 extern int fat_file_fsync(struct file *file, loff_t start, loff_t end,
 			  int datasync);
 

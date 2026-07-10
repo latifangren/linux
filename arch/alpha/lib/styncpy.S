@@ -1,3 +1,4 @@
+#include "strncpy.S"
 #ifdef CONFIG_ALPHA_EV67
 #include "ev67-strncat.S"
 #else

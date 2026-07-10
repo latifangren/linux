@@ -117,12 +117,9 @@ int damon_hot_score(struct damon_ctx *c, struct damon_region *r,
 		damon_max_nr_accesses(&c->attrs);
 
 	age_in_sec = (unsigned long)r->age * c->attrs.aggr_interval / 1000000;
-	if (age_in_sec)
-		age_in_log = min_t(int, ilog2(age_in_sec) + 1,
-				DAMON_MAX_AGE_IN_LOG);
-	else
-		age_in_log = 0;
-
+	for (age_in_log = 0; age_in_log < DAMON_MAX_AGE_IN_LOG && age_in_sec;
+			age_in_log++, age_in_sec >>= 1)
+		;
 
 	/* If frequency is 0, higher age means it's colder */
 	if (freq_subscore == 0)
@@ -143,7 +140,6 @@ int damon_hot_score(struct damon_ctx *c, struct damon_region *r,
 	 * Transform it to fit in [0, DAMOS_MAX_SCORE]
 	 */
 	hotness = hotness * DAMOS_MAX_SCORE / DAMON_MAX_SUBSCORE;
-	hotness = max(min(hotness, DAMOS_MAX_SCORE), 0);
 
 	return hotness;
 }

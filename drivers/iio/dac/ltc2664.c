@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/math64.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
@@ -674,9 +675,7 @@ static int ltc2664_probe(struct spi_device *spi)
 
 	st->chip_info = chip_info;
 
-	ret = devm_mutex_init(dev, &st->lock);
-	if (ret)
-		return ret;
+	mutex_init(&st->lock);
 
 	st->regmap = devm_regmap_init_spi(spi, &ltc2664_regmap_config);
 	if (IS_ERR(st->regmap))

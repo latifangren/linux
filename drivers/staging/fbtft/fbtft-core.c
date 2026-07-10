@@ -187,7 +187,8 @@ void fbtft_register_backlight(struct fbtft_par *par)
 				       &fbtft_bl_ops, &bl_props);
 	if (IS_ERR(bd)) {
 		dev_err(par->info->device,
-			"cannot register backlight device (%pe)\n", bd);
+			"cannot register backlight device (%ld)\n",
+			PTR_ERR(bd));
 		return;
 	}
 	par->info->bl_dev = bd;

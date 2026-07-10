@@ -5,8 +5,381 @@
 /dts-v1/;
 
 #include "sm6125-xiaomi-ginkgo-common.dtsi"
+#include "pmi632.dtsi"
+#include <dt-bindings/clock/qcom,gcc-sm6125.h>
+#include <dt-bindings/power/qcom-rpmpd.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/firmware/qcom,scm.h>
 
 / {
-	model = "Xiaomi Redmi Note 8";
+	model = "Xiaomi Redmi Note 8 (Mainline Extended)";
 	compatible = "xiaomi,ginkgo", "qcom,sm6125";
+
+	aliases {
+		bluetooth0 = &bluetooth;
+	};
+	
+	smp2p-adsp {
+		compatible = "qcom,smp2p";
+		qcom,smem = <443 429>;
+		mboxes = <&apcs_glb 10>;
+		interrupts = <GIC_SPI 393 IRQ_TYPE_EDGE_RISING>;
+		qcom,local-pid = <0>;
+		qcom,remote-pid = <2>;
+
+		adsp_smp2p_out: master-kernel {
+			qcom,entry-name = "master-kernel";
+			#qcom,smem-state-cells = <1>;
+		};
+
+		adsp_smp2p_in: slave-kernel {
+			interrupt-controller;
+			qcom,entry-name = "slave-kernel";
+			#interrupt-cells = <2>;
+		};
+	};
+
+	smp2p-cdsp {
+		compatible = "qcom,smp2p";
+		qcom,smem = <94 432>;
+		mboxes = <&apcs_glb 30>;
+		interrupts = <GIC_SPI 263 IRQ_TYPE_EDGE_RISING>;
+		qcom,local-pid = <0>;
+		qcom,remote-pid = <5>;
+
+		cdsp_smp2p_out: master-kernel {
+			qcom,entry-name = "master-kernel";
+			#qcom,smem-state-cells = <1>;
+		};
+
+		cdsp_smp2p_in: slave-kernel {
+			interrupt-controller;
+			qcom,entry-name = "slave-kernel";
+			#interrupt-cells = <2>;
+		};
+	};
+
+	smp2p-mpss {
+		compatible = "qcom,smp2p";
+		qcom,smem = <435>, <428>;
+
+		interrupts = <GIC_SPI 70 IRQ_TYPE_EDGE_RISING>;
+
+		mboxes = <&apcs_glb 14>;
+
+		qcom,local-pid = <0>;
+		qcom,remote-pid = <1>;
+
+		modem_smp2p_out: master-kernel {
+			qcom,entry-name = "master-kernel";
+			#qcom,smem-state-cells = <1>;
+		};
+
+		modem_smp2p_in: slave-kernel {
+			qcom,entry-name = "slave-kernel";
+
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+
+		ipa_smp2p_out: ipa-ap-to-modem {
+			qcom,entry-name = "ipa";
+			#qcom,smem-state-cells = <1>;
+		};
+
+		ipa_smp2p_in: ipa-modem-to-ap {
+			qcom,entry-name = "ipa";
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+	};
+
+	soc@0 {
+		sram@c125000 {
+			compatible = "qcom,sm6125-imem", "syscon", "simple-mfd";
+			reg = <0x0c125000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x0c125000 0x1000>;
+
+			ipa_modem_tables: modem-tables@0 {
+				reg = <0x0 0x800>;
+			};
+		};
+
+		cryptobam: dma-controller@1b04000 {
+			compatible = "qcom,bam-v1.7.4", "qcom,bam-v1.7.0";
+			reg = <0x01b04000 0x24000>;
+			interrupts = <GIC_SPI 247 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&rpmcc RPM_SMD_CE1_CLK>;
+			clock-names = "bam_clk";
+			#dma-cells = <1>;
+			qcom,ee = <0>;
+			qcom,controlled-remotely;
+			iommus = <&apps_smmu 0x92 0>,
+				 <&apps_smmu 0x94 0x11>,
+				 <&apps_smmu 0x96 0x11>,
+				 <&apps_smmu 0x98 0x1>,
+				 <&apps_smmu 0x9f 0>;
+		};
+
+		crypto: crypto@1b3a000 {
+			compatible = "qcom,sm6125-qce", "qcom,ipq4019-qce", "qcom,qce";
+			reg = <0x01b3a000 0x6000>;
+			clocks = <&rpmcc RPM_SMD_CE1_CLK>;
+			clock-names = "core";
+
+			dmas = <&cryptobam 6>, <&cryptobam 7>;
+			dma-names = "rx", "tx";
+			iommus = <&apps_smmu 0x92 0>,
+				 <&apps_smmu 0x94 0x11>,
+				 <&apps_smmu 0x96 0x11>,
+				 <&apps_smmu 0x98 0x1>,
+				 <&apps_smmu 0x9f 0>;
+		};
+
+		remoteproc_adsp: remoteproc@ab00000 {
+			compatible = "qcom,sm6125-adsp-pas", "qcom,sm6115-adsp-pas";
+			reg = <0x0ab00000 0x4040>;
+			firmware-name = "qcom/sm6125/xiaomi/ginkgo/adsp.mdt";
+
+			interrupts-extended = <&intc GIC_SPI 396 IRQ_TYPE_EDGE_RISING>,
+					      <&adsp_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+					      <&adsp_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
+					      <&adsp_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
+					      <&adsp_smp2p_in 3 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "wdog", "fatal", "ready", "handover", "stop-ack";
+
+			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
+			clock-names = "xo";
+
+			power-domains = <&rpmpd SM6125_VDDCX>,
+					<&rpmpd SM6125_VDDMX>;
+
+			memory-region = <&adsp_pil_mem>;
+
+			qcom,smem-states = <&adsp_smp2p_out 0>;
+			qcom,smem-state-names = "stop";
+
+			status = "okay";
+		};
+
+		remoteproc_cdsp: remoteproc@b300000 {
+			compatible = "qcom,sm6125-cdsp-pas", "qcom,sm6115-cdsp-pas";
+			reg = <0x0b300000 0x4040>;
+			firmware-name = "qcom/sm6125/xiaomi/ginkgo/cdsp.mdt";
+
+			interrupts-extended = <&intc GIC_SPI 265 IRQ_TYPE_EDGE_RISING>,
+					      <&cdsp_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+					      <&cdsp_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
+					      <&cdsp_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
+					      <&cdsp_smp2p_in 3 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "wdog", "fatal", "ready", "handover", "stop-ack";
+
+			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
+			clock-names = "xo";
+
+			power-domains = <&rpmpd SM6125_VDDCX>;
+
+			memory-region = <&cdsp_mem>;
+
+			qcom,smem-states = <&cdsp_smp2p_out 0>;
+			qcom,smem-state-names = "stop";
+
+			status = "okay";
+		};
+
+		remoteproc_mpss: remoteproc@6080000 {
+			compatible = "qcom,sm6115-mpss-pas";
+			reg = <0x06080000 0x10000>;
+
+			interrupts-extended = <&intc GIC_SPI 307 IRQ_TYPE_EDGE_RISING>,
+					      <&modem_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+					      <&modem_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
+					      <&modem_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
+					      <&modem_smp2p_in 3 IRQ_TYPE_EDGE_RISING>,
+					      <&modem_smp2p_in 7 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "wdog", "fatal", "ready", "handover",
+					  "stop-ack", "shutdown-ack";
+
+			clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
+			clock-names = "xo";
+
+			power-domains = <&rpmpd SM6125_VDDCX>;
+
+			memory-region = <&modem_mem>;
+
+			qcom,smem-states = <&modem_smp2p_out 0>;
+			qcom,smem-state-names = "stop";
+
+			status = "okay";
+
+			glink-edge {
+				interrupts = <GIC_SPI 68 IRQ_TYPE_EDGE_RISING>;
+				label = "mpss";
+				qcom,remote-pid = <1>;
+				mboxes = <&apcs_glb 12>;
+
+				qrtr {
+					compatible = "qcom,glink-qrtr";
+					qcom,glink-channels = "IPCRTR";
+				};
+			};
+		};
+
+		ipa: ipa@5800000 { 
+			compatible = "qcom,sm6125-ipa", "qcom,sc7180-ipa"; 
+			reg = <0x05800000 0x34000>, 
+					<0x05830000 0x4000>, 
+					<0x05804000 0x2c000>;
+			reg-names = "ipa-reg", "ipa-shared", "gsi"; 
+			interrupts-extended = <&intc GIC_SPI 257 IRQ_TYPE_EDGE_RISING>, 
+								  <&intc GIC_SPI 259 IRQ_TYPE_EDGE_RISING>; 
+			interrupt-names = "ipa", "gsi"; 
+			clocks = <&rpmcc RPM_SMD_IPA_CLK>; 
+			clock-names = "core"; 
+			iommus = <&apps_smmu 0x720 0x0>, <&apps_smmu 0x722 0x0>; 
+			qcom,smem-states = <&ipa_smp2p_out 0>, <&ipa_smp2p_out 1>; 
+			qcom,smem-state-names = "ipa-clock-enabled-valid", "ipa-clock-enabled"; 
+			memory-region = <&ipa_fw_mem>, <&ipa_gsi_mem>; 
+			status = "okay"; 
+		};
+
+		wifi: wifi@c800000 {
+			compatible = "qcom,wcn3990-wifi";
+			reg = <0x0c800000 0x800000>;
+			reg-names = "membase";
+			memory-region = <&wlan_msa_mem>;
+
+			vdd-0.8-cx-mx-supply = <&vreg_l8a>;
+			vdd-1.8-xo-supply = <&vreg_l16a>;
+			vdd-1.3-rfa-supply = <&vreg_l17a>;
+			vdd-3.3-ch0-supply = <&vreg_l23a>;
+			vdd-3.3-ch1-supply = <&vreg_l23a>;
+			qcom,calibration-variant = "xiaomi_ginkgo";
+
+			interrupts = <GIC_SPI 358 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 359 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 360 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 361 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 362 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 364 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 365 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 366 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 367 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 368 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 369 IRQ_TYPE_LEVEL_HIGH>;
+
+			iommus = <&apps_smmu 0x80 0x1>;
+			status = "okay";
+		};
+	};
+};
+
+&qupv3_id_1 {
+	status = "okay";
+
+	uart9: serial@4c90000 {
+		compatible = "qcom,geni-uart";
+		reg = <0x04c90000 0x4000>;
+		clocks = <&gcc GCC_QUPV3_WRAP1_S4_CLK>;
+		clock-names = "se";
+		interrupts = <GIC_SPI 312 IRQ_TYPE_LEVEL_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&qup_uart9_ctsrx_default &qup_uart9_rts_default &qup_uart9_tx_default &qup_uart9_rx_default>;
+		status = "okay";
+
+		bluetooth: bluetooth {
+			compatible = "qcom,wcn3990-bt";
+
+			vdref-supply = <&vreg_l17a>;
+			vddio-supply = <&vreg_l9a>;
+			vddxo-supply = <&vreg_l16a>;
+			vddrf-supply = <&vreg_l17a>;
+			vddch0-supply = <&vreg_l23a>;
+
+			max-speed = <3200000>;
+		};
+	};
+};
+
+&tlmm {
+	qup_uart9_ctsrx_default: qup-uart9-ctsrx-default-state {
+		pins = "gpio10", "gpio13";
+		function = "qup14";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart9_tx_default: qup-uart9-tx-default-state {
+		pins = "gpio12";
+		function = "qup14";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart9_rx_default: qup-uart9-rx-default-state {
+		pins = "gpio10";
+		function = "qup14";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart9_rts_default: qup-uart9-rts-default-state {
+		pins = "gpio11";
+		function = "qup14";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+};
+
+&pmi632_lpg {
+	status = "okay";
+
+	multi-led {
+		color = <LED_COLOR_ID_RGB>;
+		function = LED_FUNCTION_STATUS;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		led@1 {
+			reg = <1>;
+			color = <LED_COLOR_ID_RED>;
+		};
+
+		led@2 {
+			reg = <2>;
+			color = <LED_COLOR_ID_GREEN>;
+		};
+
+		led@3 {
+			reg = <3>;
+			color = <LED_COLOR_ID_BLUE>;
+		};
+	};
+};
+
+&pmi632_vib {
+	status = "okay";
+};
+
+&dispcc {
+	status = "disabled";
+};
+
+&reserved_memory {
+	rmtfs_mem: memory@89b01000 {
+		compatible = "qcom,rmtfs-mem";
+		reg = <0x0 0x89b01000 0x0 0x200000>;
+		no-map;
+
+		qcom,client-id = <1>;
+		qcom,vmid = <QCOM_SCM_VMID_MSS_MSA QCOM_SCM_VMID_NAV>;
+	};
+};
+
+&rng {
+	status = "disabled";
 };

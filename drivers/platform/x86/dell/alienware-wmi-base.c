@@ -12,13 +12,8 @@
 #include <linux/cleanup.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
-#include <linux/types.h>
 #include <linux/dmi.h>
 #include <linux/leds.h>
-
-#include <asm/byteorder.h>
-
 #include "alienware-wmi.h"
 
 MODULE_AUTHOR("Mario Limonciello <mario.limonciello@outlook.com>");
@@ -155,22 +150,22 @@ u8 alienware_interface;
 int alienware_wmi_command(struct wmi_device *wdev, u32 method_id,
 			  void *in_args, size_t in_size, u32 *out_data)
 {
-	struct wmi_buffer out, in = {
-		.data = in_args,
-		.length = in_size,
-	};
-	int ret;
+	struct acpi_buffer out = {ACPI_ALLOCATE_BUFFER, NULL};
+	struct acpi_buffer in = {in_size, in_args};
+	acpi_status ret;
 
-	if (!out_data)
-		return wmidev_invoke_procedure(wdev, 0, method_id, &in);
+	ret = wmidev_evaluate_method(wdev, 0, method_id, &in, out_data ? &out : NULL);
+	if (ACPI_FAILURE(ret))
+		return -EIO;
 
-	ret = wmidev_invoke_method(wdev, 0, method_id, &in, &out,
-				   sizeof(*out_data));
-	if (ret)
-		return ret;
+	union acpi_object *obj __free(kfree) = out.pointer;
 
-	__le32 *data __free(kfree) = out.data;
-	*out_data = le32_to_cpu(*data);
+	if (out_data) {
+		if (obj && obj->type == ACPI_TYPE_INTEGER)
+			*out_data = (u32)obj->integer.value;
+		else
+			return -ENOMSG;
+	}
 
 	return 0;
 }

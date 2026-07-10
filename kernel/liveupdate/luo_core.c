@@ -36,10 +36,6 @@
  *
  * LUO uses Kexec Handover to transfer memory state from the current kernel to
  * the next kernel. For more details see Documentation/core-api/kho/index.rst.
- *
- * .. note::
- *     To enable LUO, boot the kernel with the ``liveupdate=on`` command line
- *     parameter.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -54,19 +50,22 @@
 #include <linux/kexec_handover.h>
 #include <linux/kho/abi/luo.h>
 #include <linux/kobject.h>
+#include <linux/libfdt.h>
 #include <linux/liveupdate.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/rwsem.h>
 #include <linux/sizes.h>
 #include <linux/string.h>
+#include <linux/unaligned.h>
 
 #include "kexec_handover_internal.h"
 #include "luo_internal.h"
 
 static struct {
 	bool enabled;
-	struct luo_ser *luo_ser_out;
+	void *fdt_out;
+	void *fdt_in;
 	u64 liveupdate_num;
 } luo_global;
 
@@ -83,10 +82,9 @@ early_param("liveupdate", early_liveupdate_param);
 
 static int __init luo_early_startup(void)
 {
-	phys_addr_t luo_ser_phys;
-	struct luo_ser *luo_ser;
-	size_t len;
-	int err;
+	phys_addr_t fdt_phys;
+	int err, ln_size;
+	const void *ptr;
 
 	if (!kho_is_enabled()) {
 		if (liveupdate_enabled())
@@ -95,43 +93,48 @@ static int __init luo_early_startup(void)
 		return 0;
 	}
 
-	/* Retrieve LUO state from KHO. */
-	err = kho_retrieve_subtree(LUO_KHO_ENTRY_NAME, &luo_ser_phys, &len);
+	/* Retrieve LUO subtree, and verify its format. */
+	err = kho_retrieve_subtree(LUO_FDT_KHO_ENTRY_NAME, &fdt_phys, NULL);
 	if (err) {
 		if (err != -ENOENT) {
-			pr_err("failed to retrieve LUO state '%s' from KHO: %pe\n",
-			       LUO_KHO_ENTRY_NAME, ERR_PTR(err));
+			pr_err("failed to retrieve FDT '%s' from KHO: %pe\n",
+			       LUO_FDT_KHO_ENTRY_NAME, ERR_PTR(err));
 			return err;
 		}
 
 		return 0;
 	}
 
-	if (len < sizeof(*luo_ser)) {
-		pr_err("LUO state is too small (%zu < %zu)\n", len, sizeof(*luo_ser));
+	luo_global.fdt_in = phys_to_virt(fdt_phys);
+	err = fdt_node_check_compatible(luo_global.fdt_in, 0,
+					LUO_FDT_COMPATIBLE);
+	if (err) {
+		pr_err("FDT '%s' is incompatible with '%s' [%d]\n",
+		       LUO_FDT_KHO_ENTRY_NAME, LUO_FDT_COMPATIBLE, err);
+
 		return -EINVAL;
 	}
 
-	luo_ser = phys_to_virt(luo_ser_phys);
-	if (strncmp(luo_ser->compatible, LUO_ABI_COMPATIBLE, LUO_ABI_COMPAT_LEN)) {
-		pr_err("LUO state is incompatible with '%s'\n", LUO_ABI_COMPATIBLE);
+	ln_size = 0;
+	ptr = fdt_getprop(luo_global.fdt_in, 0, LUO_FDT_LIVEUPDATE_NUM,
+			  &ln_size);
+	if (!ptr || ln_size != sizeof(luo_global.liveupdate_num)) {
+		pr_err("Unable to get live update number '%s' [%d]\n",
+		       LUO_FDT_LIVEUPDATE_NUM, ln_size);
+
 		return -EINVAL;
 	}
 
-	luo_global.liveupdate_num = luo_ser->liveupdate_num;
+	luo_global.liveupdate_num = get_unaligned((u64 *)ptr);
 	pr_info("Retrieved live update data, liveupdate number: %lld\n",
 		luo_global.liveupdate_num);
 
-	err = luo_session_setup_incoming(luo_ser->sessions_pa);
+	err = luo_session_setup_incoming(luo_global.fdt_in);
 	if (err)
-		goto out_free_ser;
+		return err;
 
-	luo_flb_setup_incoming(luo_ser->flbs_pa);
+	err = luo_flb_setup_incoming(luo_global.fdt_in);
 
-	err = 0;
-
-out_free_ser:
-	kho_restore_free(luo_ser);
 	return err;
 }
 
@@ -150,38 +153,42 @@ static int __init liveupdate_early_init(void)
 }
 early_initcall(liveupdate_early_init);
 
-/* Called during boot to create outgoing LUO state */
-static int __init luo_state_setup(void)
+/* Called during boot to create outgoing LUO fdt tree */
+static int __init luo_fdt_setup(void)
 {
-	struct luo_ser *luo_ser;
+	const u64 ln = luo_global.liveupdate_num + 1;
+	void *fdt_out;
 	int err;
 
-	luo_ser = kho_alloc_preserve(sizeof(*luo_ser));
-	if (IS_ERR(luo_ser)) {
-		pr_err("failed to allocate/preserve LUO state memory\n");
-		return PTR_ERR(luo_ser);
+	fdt_out = kho_alloc_preserve(LUO_FDT_SIZE);
+	if (IS_ERR(fdt_out)) {
+		pr_err("failed to allocate/preserve FDT memory\n");
+		return PTR_ERR(fdt_out);
 	}
 
-	strscpy(luo_ser->compatible, LUO_ABI_COMPATIBLE, sizeof(luo_ser->compatible));
-	luo_ser->liveupdate_num = luo_global.liveupdate_num + 1;
-
-	luo_session_setup_outgoing(&luo_ser->sessions_pa);
-
-	err = luo_flb_setup_outgoing(&luo_ser->flbs_pa);
+	err = fdt_create(fdt_out, LUO_FDT_SIZE);
+	err |= fdt_finish_reservemap(fdt_out);
+	err |= fdt_begin_node(fdt_out, "");
+	err |= fdt_property_string(fdt_out, "compatible", LUO_FDT_COMPATIBLE);
+	err |= fdt_property(fdt_out, LUO_FDT_LIVEUPDATE_NUM, &ln, sizeof(ln));
+	err |= luo_session_setup_outgoing(fdt_out);
+	err |= luo_flb_setup_outgoing(fdt_out);
+	err |= fdt_end_node(fdt_out);
+	err |= fdt_finish(fdt_out);
 	if (err)
-		goto exit_free_luo_ser;
+		goto exit_free;
 
-	err = kho_add_subtree(LUO_KHO_ENTRY_NAME, luo_ser, sizeof(*luo_ser));
+	err = kho_add_subtree(LUO_FDT_KHO_ENTRY_NAME, fdt_out,
+			      fdt_totalsize(fdt_out));
 	if (err)
-		goto exit_free_luo_ser;
-
-	luo_global.luo_ser_out = luo_ser;
+		goto exit_free;
+	luo_global.fdt_out = fdt_out;
 
 	return 0;
 
-exit_free_luo_ser:
-	kho_unpreserve_free(luo_ser);
-	pr_err("failed to prepare LUO state: %d\n", err);
+exit_free:
+	kho_unpreserve_free(fdt_out);
+	pr_err("failed to prepare LUO FDT: %d\n", err);
 
 	return err;
 }
@@ -197,7 +204,7 @@ static int __init luo_late_startup(void)
 	if (!liveupdate_enabled())
 		return 0;
 
-	err = luo_state_setup();
+	err = luo_fdt_setup();
 	if (err)
 		luo_global.enabled = false;
 

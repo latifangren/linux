@@ -109,7 +109,6 @@ static int qcom_add_minidump_segments(struct rproc *rproc, struct minidump_subsy
 	struct minidump_region __iomem *ptr;
 	struct minidump_region region;
 	int seg_cnt, i;
-	int ret = 0;
 	dma_addr_t da;
 	size_t size;
 	char *name;
@@ -130,22 +129,17 @@ static int qcom_add_minidump_segments(struct rproc *rproc, struct minidump_subsy
 		if (le32_to_cpu(region.valid) == MINIDUMP_REGION_VALID) {
 			name = kstrndup(region.name, MAX_REGION_NAME_LENGTH - 1, GFP_KERNEL);
 			if (!name) {
-				ret = -ENOMEM;
-				break;
+				iounmap(ptr);
+				return -ENOMEM;
 			}
 			da = le64_to_cpu(region.address);
 			size = le64_to_cpu(region.size);
-			ret = rproc_coredump_add_custom_segment(rproc, da, size, rproc_dumpfn_t,
-								name);
-			if (ret) {
-				kfree(name);
-				break;
-			}
+			rproc_coredump_add_custom_segment(rproc, da, size, rproc_dumpfn_t, name);
 		}
 	}
 
 	iounmap(ptr);
-	return ret;
+	return 0;
 }
 
 void qcom_minidump(struct rproc *rproc, unsigned int minidump_id,
