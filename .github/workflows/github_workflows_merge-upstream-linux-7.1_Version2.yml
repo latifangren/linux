@@ -1,0 +1,98 @@
+name: Merge upstream linux-7.1 into Amlogic-linux-7.1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  merge-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream stable remote
+        run: |
+          git remote add upstream https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git || true
+
+      - name: Fetch upstream linux-7.1.y
+        run: git fetch --no-tags upstream +refs/heads/linux-7.1.y:refs/remotes/upstream/linux-7.1.y
+
+      - name: Checkout target branch
+        run: |
+          if git show-ref --verify --quiet refs/heads/Amlogic-linux-7.1; then
+            git checkout Amlogic-linux-7.1
+          else
+            git checkout -b Amlogic-linux-7.1 origin/Amlogic-linux-7.1 || git checkout -b Amlogic-linux-7.1
+          fi
+
+      - name: Attempt merge from upstream/linux-7.1.y
+        id: merge
+        run: |
+          set -euo pipefail
+          git fetch upstream linux-7.1.y
+          if git merge --no-ff --no-edit upstream/linux-7.1.y; then
+            echo "merged=success" >> "$GITHUB_OUTPUT"
+            git push origin Amlogic-linux-7.1
+          else
+            echo "merged=conflict" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+            git status --porcelain > merge_status.txt || true
+            git ls-files -u | awk '{print $4}' | sort -u > conflicts.txt || true
+          fi
+
+      - name: Create issue when merge produced conflicts
+        if: steps.merge.outputs.merged == 'conflict'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let conflicts = '';
+            try { conflicts = fs.readFileSync('conflicts.txt', 'utf8').trim(); } catch (e) { conflicts = ''; }
+            const status = fs.existsSync('merge_status.txt') ? fs.readFileSync('merge_status.txt', 'utf8') : '';
+            const body = `Automatic merge of upstream linux-7.1.y into branch Amlogic-linux-7.1 failed due to conflicts.\n\n` +
+              (conflicts ? `Conflicting files:\n\n${conflicts}\n\n` : '') +
+              `Git status output:\n\n\n${status}\n\n` +
+              `Suggested next steps:\n` +
+              `1. Run the same workflow locally or in a dev environment: add remote upstream (https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git), fetch linux-7.1.y, checkout Amlogic-linux-7.1 and run: git merge --no-ff upstream/linux-7.1.y\n` +
+              `2. Resolve conflicts by editing the listed files, test build, then: git add <file>; git commit; git push origin Amlogic-linux-7.1\n` +
+              `3. If you want my help resolving conflicts, paste the conflicting hunks or push the result and mention this issue.\n\n` +
+              `This issue was created automatically by a workflow attempting to merge upstream linux-7.1.y.`;
+            await github.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Merge conflict: upstream linux-7.1.y → Amlogic-linux-7.1',
+              body: body
+            });
+
+      - name: Comment on success (create PR placeholder)
+        if: steps.merge.outputs.merged == 'success'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const title = 'Update Amlogic to Linux 7.1 (merge upstream linux-7.1.y)';
+            const body = `This branch (Amlogic-linux-7.1) has been updated by merging upstream/linux-7.1.y into it.\n\n` +
+              `Checklist:\n` +
+              `- [ ] Kernel builds locally (make) with target defconfig\n` +
+              `- [ ] Device boots on target hardware or in QEMU\n` +
+              `- [ ] Vendor Amlogic patches reviewed and ported where necessary\n\n` +
+              `If everything looks good, create a Pull Request to merge Amlogic-linux-7.1 into Amlogic (or into your main integration branch).`;
+            await github.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '[Automation] upstream/linux-7.1.y merged into Amlogic-linux-7.1',
+              body: body
+            });
